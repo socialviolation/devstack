@@ -28,6 +28,22 @@ func runInit(cmd *cobra.Command, args []string) error {
 	defaultService := viper.GetString("default_service")
 	workspacePath := viper.GetString("workspace")
 
+	// Auto-detect workspace from cwd if not explicitly set
+	if workspacePath == "" {
+		if ws, err := workspace.DetectFromCwd(); err == nil {
+			workspacePath = ws.Path
+			fmt.Fprintf(os.Stderr, "Auto-detected workspace: %s\n", ws.Name)
+		}
+	}
+
+	// Auto-detect default service from cwd basename if not explicitly set
+	if defaultService == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			defaultService = filepath.Base(cwd)
+			fmt.Fprintf(os.Stderr, "Auto-detected default service: %s\n", defaultService)
+		}
+	}
+
 	agentsFile := filepath.Join(".", "AGENTS.md")
 
 	// Check if file already contains our section to avoid duplicates
@@ -54,16 +70,16 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Inject Stop hook into .claude/settings.local.json
 	if defaultService == "" {
-		fmt.Fprintln(os.Stderr, "No default service configured — skipping Stop hook injection.")
+		fmt.Fprintln(os.Stderr, "Could not determine default service — skipping Stop hook injection.")
 	} else {
 		if err := injectStopHook(defaultService, workspacePath); err != nil {
 			return fmt.Errorf("failed to inject Stop hook: %w", err)
 		}
 	}
 
-	// Auto-register workspace if DEVSTACK_WORKSPACE is set
+	// Auto-register workspace
 	if workspacePath == "" {
-		fmt.Fprintln(os.Stderr, "No workspace configured (DEVSTACK_WORKSPACE not set) — skipping workspace registration.")
+		fmt.Fprintln(os.Stderr, "Could not determine workspace — skipping workspace registration.")
 		return nil
 	}
 
