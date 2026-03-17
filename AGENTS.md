@@ -165,12 +165,14 @@ Prefer CLI over MCP tools when starting services that have dependencies.
 |---------|-------------|
 | `devstack status` | Same as the MCP `status` tool — live service table with ports |
 | `devstack enable <service>` | Start a service **and all its declared dependencies** (reads `.devstack.json`) |
-| `devstack enable --group=<name>` | Start a named group of services with dep resolution |
+| `devstack enable --group=<name>` | Start a named group of services with dep resolution. Use `devstack groups list` to see available groups. |
 | `devstack disable <service>` | Stop one service; leaves other services running |
 | `devstack start` | Start the Tilt daemon for this workspace (required before MCP tools work) |
 | `devstack down` | Stop the Tilt daemon — **this breaks all MCP tools until `devstack start` is run again** |
 | `devstack deps show` | Show declared service dependencies |
 | `devstack deps add <svc> <dep>` | Declare that `<svc>` depends on `<dep>` |
+| `devstack groups list` | List all declared groups and their members — **check this before creating a new group** |
+| `devstack groups add <group> <svc> [svc...]` | Add services to a group (creates it if it doesn't exist) |
 > Jaeger (http://localhost:16686) receives traces from all instrumented services. Use MCP `traces`/`trace_search`/`trace_detail` tools to query by service, trace ID, or business attributes.
 
 ### Service Dependencies

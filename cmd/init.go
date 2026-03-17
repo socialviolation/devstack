@@ -46,27 +46,25 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	agentsFile := filepath.Join(".", "AGENTS.md")
 
-	// Check if file already contains our section to avoid duplicates
+	// Read existing content (if any), strip any previous devstack section, then re-append.
 	existing, err := os.ReadFile(agentsFile)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to read AGENTS.md: %w", err)
 	}
-	if strings.Contains(string(existing), "## Dev Stack (devstack MCP)") {
-		fmt.Fprintln(os.Stderr, "AGENTS.md already contains devstack MCP instructions — skipping.")
-	} else {
-		f, err := os.OpenFile(agentsFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			return fmt.Errorf("failed to open AGENTS.md: %w", err)
-		}
-		defer f.Close()
 
-		_, err = f.WriteString(buildInstructions(defaultService, workspacePath))
-		if err != nil {
-			return fmt.Errorf("failed to write to AGENTS.md: %w", err)
-		}
-
-		fmt.Fprintf(os.Stderr, "✓ devstack MCP instructions appended to %s\n", agentsFile)
+	const sectionHeader = "## Dev Stack (devstack MCP)"
+	stripped := string(existing)
+	if idx := strings.Index(stripped, "\n"+sectionHeader); idx != -1 {
+		stripped = stripped[:idx]
+	} else if strings.HasPrefix(stripped, sectionHeader) {
+		stripped = ""
 	}
+
+	instructions := buildInstructions(defaultService, workspacePath)
+	if err := os.WriteFile(agentsFile, []byte(stripped+instructions), 0644); err != nil {
+		return fmt.Errorf("failed to write AGENTS.md: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "✓ devstack MCP instructions written to %s\n", agentsFile)
 
 	// Inject Stop hook into .claude/settings.local.json
 	if defaultService == "" {
@@ -265,12 +263,14 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"|---------|-------------|\n" +
 		"| `devstack status` | Same as the MCP `status` tool — live service table with ports |\n" +
 		"| `devstack enable <service>` | Start a service **and all its declared dependencies** (reads `.devstack.json`) |\n" +
-		"| `devstack enable --group=<name>` | Start a named group of services with dep resolution |\n" +
+		"| `devstack enable --group=<name>` | Start a named group of services with dep resolution. Use `devstack groups list` to see available groups. |\n" +
 		"| `devstack disable <service>` | Stop one service; leaves other services running |\n" +
 		"| `devstack start` | Start the Tilt daemon for this workspace (required before MCP tools work) |\n" +
 		"| `devstack down` | Stop the Tilt daemon — **this breaks all MCP tools until `devstack start` is run again** |\n" +
 		"| `devstack deps show` | Show declared service dependencies |\n" +
 		"| `devstack deps add <svc> <dep>` | Declare that `<svc>` depends on `<dep>` |\n" +
+		"| `devstack groups list` | List all declared groups and their members — **check this before creating a new group** |\n" +
+		"| `devstack groups add <group> <svc> [svc...]` | Add services to a group (creates it if it doesn't exist) |\n" +
 		"> Jaeger (http://localhost:16686) receives traces from all instrumented services. Use MCP `traces`/`trace_search`/`trace_detail` tools to query by service, trace ID, or business attributes.\n\n" +
 		"### Service Dependencies\n\n" +
 		"Dependencies are declared in `" + devstackJsonPath + "`. When you run `devstack enable <service>`, devstack reads this file and starts all deps first, in order.\n\n" +
