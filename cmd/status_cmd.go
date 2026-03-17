@@ -55,6 +55,21 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	return runStatusAll()
 }
 
+// actualTiltPort reads the PID file for a workspace and extracts the port Tilt
+// is actually running on from /proc/<pid>/cmdline. Returns 0 if not determinable.
+func actualTiltPort(wsName string) int {
+	pidFile := workspace.PIDFile(wsName)
+	pidData, err := os.ReadFile(pidFile)
+	if err != nil {
+		return 0
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
+	if err != nil {
+		return 0
+	}
+	return tiltPortFromPID(pid)
+}
+
 // runStatusAll shows a summary table of all registered workspaces.
 func runStatusAll() error {
 	workspaces, err := workspace.All()
@@ -166,9 +181,20 @@ func runStatusWorkspace(wsFlag string) error {
 	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
 	view, err := tiltClient.GetView()
 	if err != nil {
-		fmt.Printf("Workspace '%s': Tilt is not running on port %d.\n", ws.Name, ws.TiltPort)
-		fmt.Printf("Start it with: devstack start --workspace=%s\n", ws.Name)
-		return nil
+		// Port may have drifted — check the PID file and scan for the actual port
+		if actual := actualTiltPort(ws.Name); actual != 0 && actual != ws.TiltPort {
+			if err := workspace.UpdatePort(ws.Name, actual); err == nil {
+				fmt.Fprintf(os.Stderr, "Port drift detected: updated registry %d → %d\n", ws.TiltPort, actual)
+				ws.TiltPort = actual
+				tiltClient = tilt.NewClient("localhost", ws.TiltPort)
+				view, err = tiltClient.GetView()
+			}
+		}
+		if err != nil {
+			fmt.Printf("Workspace '%s': Tilt is not running on port %d.\n", ws.Name, ws.TiltPort)
+			fmt.Printf("Start it with: devstack start --workspace=%s\n", ws.Name)
+			return nil
+		}
 	}
 
 	if len(view.UiResources) == 0 {

@@ -200,6 +200,21 @@ func OtelContainerName(name string) string {
 	return fmt.Sprintf("devstack-otel-%s", name)
 }
 
+// UpdatePort updates the TiltPort for a named workspace in the registry.
+func UpdatePort(name string, port int) error {
+	workspaces, err := Load()
+	if err != nil {
+		return err
+	}
+	for i, ws := range workspaces {
+		if strings.ToLower(ws.Name) == strings.ToLower(name) {
+			workspaces[i].TiltPort = port
+			return Save(workspaces)
+		}
+	}
+	return fmt.Errorf("workspace %q not found", name)
+}
+
 // NextPort returns the next available Tilt port (max existing port + 1, minimum 10350).
 // If no workspaces are registered, returns 10350.
 func NextPort() (int, error) {
