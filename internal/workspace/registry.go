@@ -194,6 +194,12 @@ func DetectFromCwd() (*Workspace, error) {
 	return nil, fmt.Errorf("not inside a registered devstack workspace. Run: devstack register")
 }
 
+// OtelContainerName returns the Docker container name for the Aspire Dashboard OTEL
+// backend associated with the given workspace name.
+func OtelContainerName(name string) string {
+	return fmt.Sprintf("devstack-otel-%s", name)
+}
+
 // NextPort returns the next available Tilt port (max existing port + 1, minimum 10350).
 // If no workspaces are registered, returns 10350.
 func NextPort() (int, error) {
