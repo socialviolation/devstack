@@ -1,8 +1,8 @@
 # devstack
 
-An MCP (Model Context Protocol) server that gives Claude Code programmatic control over the Navexa microservices development stack via [Tilt](https://tilt.dev).
+An MCP (Model Context Protocol) server that gives Claude Code programmatic control over any [Tilt](https://tilt.dev)-managed development stack.
 
-Instead of running CLI commands manually, Claude can start, stop, restart, and diagnose services directly — e.g. _"what happened to the trade importer in the last 15 minutes?"_ or _"start the API and frontend"_.
+Instead of running CLI commands manually, Claude can start, stop, restart, and diagnose services directly — e.g. _"what happened to the API in the last 15 minutes?"_ or _"start the frontend and worker"_.
 
 ## Commands
 
@@ -39,18 +39,7 @@ Instead of running CLI commands manually, Claude can start, stop, restart, and d
 |------|-------------|
 | `set_environment` | Switch services between Development / Staging / Production |
 
-Service names can be canonical (e.g. `nxTradeImporter`) or aliased (e.g. `trade importer`, `api`, `frontend`).
-
-## Managed Services
-
-| Service | Stack | Port |
-|---------|-------|------|
-| navexa-api | .NET 8 | 63290 |
-| navexa-frontend | Angular | 4200 |
-| nxTradeImporter | .NET 8 | 5178 |
-| nxFileImporter | .NET 8 | 5001 |
-| ai-file-importer | Python | — |
-| ssh-tunnel | SSH | — |
+Service names are resolved live from Tilt. Aliases can be configured per-workspace via `SetAliases()` — if none are set, exact name matching is used.
 
 ## Setup
 
@@ -67,19 +56,63 @@ go install .
 ### First-time setup
 
 ```bash
-# Register the workspace
-devstack register --path=/home/nick/dev/navexa
+# 1. Register your workspace
+devstack register --name=myproject --path=/path/to/workspace
 
-# Start Tilt daemon
-devstack start
+# 2. Start Tilt daemon
+devstack start --workspace=myproject
 
-# Inject MCP instructions into AGENTS.md
-devstack init
-
-# Register with Claude Code (user-scoped, one-time)
+# 3. Register devstack with Claude Code (one-time, user-scoped)
 claude mcp add --scope user --transport stdio devstack \
-  --env TILT_PORT=10350 \
   -- devstack serve --transport=stdio
+
+# 4. Inject MCP instructions into AGENTS.md (run inside your project repo)
+DEVSTACK_WORKSPACE=/path/to/workspace devstack init
+```
+
+### Per-repo MCP config (`.mcp.json`)
+
+To scope devstack to a specific project with a default service and port:
+
+```json
+{
+  "mcpServers": {
+    "devstack": {
+      "type": "stdio",
+      "command": "devstack",
+      "args": ["serve", "--transport=stdio"],
+      "env": {
+        "TILT_PORT": "10350",
+        "DEVSTACK_DEFAULT_SERVICE": "my-api",
+        "DEVSTACK_WORKSPACE": "/path/to/workspace"
+      }
+    }
+  }
+}
+```
+
+### Stop hook (auto-shutdown on session end)
+
+`devstack init` automatically injects a Stop hook into `.claude/settings.local.json` when `DEVSTACK_DEFAULT_SERVICE` is set. It stops the default service when the Claude session ends, skipping shutdown if other sessions are still active.
+
+To inject manually:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "devstack stop --default-service=my-api --if-last-session --workspace=/path/to/workspace"
+          }
+        ]
+      }
+    ]
+  }
+}
 ```
 
 ## Configuration
@@ -88,7 +121,7 @@ claude mcp add --scope user --transport stdio devstack \
 |---------------------|---------|---------|
 | `TILT_PORT` | `10350` | Tilt API port |
 | `TILT_HOST` | `localhost` | Tilt API host |
-| `NVXDEV_DEFAULT_SERVICE` | — | Default service for MCP tools |
+| `DEVSTACK_DEFAULT_SERVICE` | — | Default service when no `name` arg is provided |
 | `DEVSTACK_WORKSPACE` | — | Root workspace directory |
 
 **Runtime files:**
