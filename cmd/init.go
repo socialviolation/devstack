@@ -9,6 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"devstack/internal/workspace"
 )
 
 var initCmd = &cobra.Command{
@@ -24,7 +26,7 @@ func init() {
 
 func runInit(cmd *cobra.Command, args []string) error {
 	defaultService := viper.GetString("default_service")
-	workspace := viper.GetString("workspace")
+	workspacePath := viper.GetString("workspace")
 
 	agentsFile := filepath.Join(".", "AGENTS.md")
 
@@ -42,7 +44,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 		defer f.Close()
 
-		_, err = f.WriteString(buildInstructions(defaultService, workspace))
+		_, err = f.WriteString(buildInstructions(defaultService, workspacePath))
 		if err != nil {
 			return fmt.Errorf("failed to write to AGENTS.md: %w", err)
 		}
@@ -53,13 +55,33 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// Inject Stop hook into .claude/settings.local.json
 	if defaultService == "" {
 		fmt.Fprintln(os.Stderr, "No default service configured — skipping Stop hook injection.")
+	} else {
+		if err := injectStopHook(defaultService, workspacePath); err != nil {
+			return fmt.Errorf("failed to inject Stop hook: %w", err)
+		}
+	}
+
+	// Auto-register workspace if DEVSTACK_WORKSPACE is set
+	if workspacePath == "" {
+		fmt.Fprintln(os.Stderr, "No workspace configured (DEVSTACK_WORKSPACE not set) — skipping workspace registration.")
 		return nil
 	}
 
-	if err := injectStopHook(defaultService, workspace); err != nil {
-		return fmt.Errorf("failed to inject Stop hook: %w", err)
+	absPath, err := filepath.Abs(workspacePath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve workspace path: %w", err)
 	}
 
+	ws := workspace.Workspace{
+		Name:     filepath.Base(absPath),
+		Path:     absPath,
+		TiltPort: 0, // auto-assign
+	}
+	if err := workspace.Register(ws); err != nil {
+		return fmt.Errorf("failed to register workspace: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "✓ Workspace '%s' registered at %s\n", ws.Name, absPath)
 	return nil
 }
 
@@ -80,10 +102,10 @@ type hookItem struct {
 	Command string `json:"command"`
 }
 
-func injectStopHook(defaultService string, workspace string) error {
+func injectStopHook(defaultService string, workspacePath string) error {
 	claudeDir := filepath.Join(".", ".claude")
 	settingsFile := filepath.Join(claudeDir, "settings.local.json")
-	hookCommand := fmt.Sprintf("devstack stop --default-service=%s --if-last-session --workspace=%s", defaultService, workspace)
+	hookCommand := fmt.Sprintf("devstack stop --default-service=%s --if-last-session --workspace=%s", defaultService, workspacePath)
 
 	// Load existing settings (or start fresh)
 	var rawData map[string]json.RawMessage
@@ -156,15 +178,15 @@ func injectStopHook(defaultService string, workspace string) error {
 	return nil
 }
 
-func buildInstructions(defaultService string, workspace string) string {
+func buildInstructions(defaultService string, workspacePath string) string {
 	defaultServiceLine := ""
 	if defaultService != "" {
 		defaultServiceLine = fmt.Sprintf("The default service for this repo is `%s` — tool calls omitting `name` use it automatically.\n\n", defaultService)
 	}
 
 	workspaceLine := ""
-	if workspace != "" {
-		workspaceLine = fmt.Sprintf("This repo belongs to the devstack workspace at `%s` (Tilt manages all services within it).\n", workspace)
+	if workspacePath != "" {
+		workspaceLine = fmt.Sprintf("This repo belongs to the devstack workspace at `%s` (Tilt manages all services within it).\n", workspacePath)
 	}
 
 	stopHookLine := ""

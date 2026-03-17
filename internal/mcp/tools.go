@@ -33,7 +33,7 @@ func RegisterTools(mcpServer *server.MCPServer, tiltClient *tilt.Client, default
 
 func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 	tool := mcp.NewTool("status",
-		mcp.WithDescription("Show the current status of all services in the Navexa dev stack managed by Tilt. Returns a table of service name, build status, runtime status, and last error."),
+		mcp.WithDescription("Show the current status of all services in the Navexa dev stack managed by Tilt. Returns a table of service name, build status, runtime status, and last error. For system-wide status across all workspaces, run `devstack status` from the terminal."),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

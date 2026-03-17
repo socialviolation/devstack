@@ -1,0 +1,154 @@
+package cmd
+
+import (
+	"fmt"
+	"net/http"
+	"os"
+	"os/exec"
+	"strconv"
+	"syscall"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"devstack/internal/workspace"
+)
+
+var startCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start Tilt for a workspace as a background daemon",
+	Long:  `Start Tilt (tilt up) as a detached background daemon for the given workspace. Logs are written to ~/.local/share/devstack/<name>/tilt.log and the PID is tracked in tilt.pid.`,
+	RunE:  runStart,
+}
+
+func init() {
+	rootCmd.AddCommand(startCmd)
+	startCmd.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
+}
+
+func runStart(cmd *cobra.Command, args []string) error {
+	wsFlag, _ := cmd.Flags().GetString("workspace")
+
+	// 1. Resolve workspace
+	ws, err := resolveWorkspace(wsFlag)
+	if err != nil {
+		return err
+	}
+
+	pidFile := workspace.PIDFile(ws.Name)
+	logFile := workspace.LogFile(ws.Name)
+	dataDir := workspace.DataDir(ws.Name)
+
+	// 2. Check if Tilt already running via API
+	apiURL := fmt.Sprintf("http://localhost:%d/api/view", ws.TiltPort)
+	if isTiltReachable(apiURL) {
+		fmt.Printf("Tilt already running for '%s'\n", ws.Name)
+		return nil
+	}
+
+	// 3. Check if PID file exists and process is alive
+	if pidData, err := os.ReadFile(pidFile); err == nil {
+		pid, parseErr := strconv.Atoi(string(pidData))
+		if parseErr == nil {
+			if isProcessAlive(pid) {
+				fmt.Printf("Tilt is already running (pid %d)\n", pid)
+				return nil
+			}
+			// Stale PID file — remove it
+			os.Remove(pidFile)
+		}
+	}
+
+	// 4. Create data dir
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return fmt.Errorf("failed to create data directory %s: %w", dataDir, err)
+	}
+
+	// 5. Open log file
+	lf, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open log file %s: %w", logFile, err)
+	}
+	defer lf.Close()
+
+	// 6. Start daemon
+	tiltCmd := exec.Command("tilt", "up", "--host", "0.0.0.0", "--port", strconv.Itoa(ws.TiltPort))
+	tiltCmd.Dir = ws.Path
+	tiltCmd.Stdout = lf
+	tiltCmd.Stderr = lf
+	tiltCmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+
+	if err := tiltCmd.Start(); err != nil {
+		return fmt.Errorf("failed to start tilt: %w", err)
+	}
+
+	pid := tiltCmd.Process.Pid
+
+	// 7. Write PID file
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
+		// Kill the process we just started if we can't track it
+		tiltCmd.Process.Kill()
+		return fmt.Errorf("failed to write PID file: %w", err)
+	}
+
+	// 8. Poll until Tilt is reachable (up to 45s, every 2s)
+	fmt.Printf("Starting Tilt for '%s'", ws.Name)
+	deadline := time.Now().Add(45 * time.Second)
+	reached := false
+	for time.Now().Before(deadline) {
+		if isTiltReachable(apiURL) {
+			reached = true
+			break
+		}
+		fmt.Print(".")
+		time.Sleep(2 * time.Second)
+	}
+	fmt.Println()
+
+	// 9. Print result
+	if reached {
+		fmt.Printf("✓ Tilt started (pid %d, port %d, logs: %s)\n", pid, ws.TiltPort, logFile)
+	} else {
+		fmt.Printf("Tilt started but not yet reachable — logs: %s\n", logFile)
+	}
+
+	return nil
+}
+
+// resolveWorkspace resolves a workspace by name/path flag or auto-detects from cwd.
+func resolveWorkspace(flag string) (*workspace.Workspace, error) {
+	if flag == "" {
+		return workspace.DetectFromCwd()
+	}
+
+	// Try by name first, then by path
+	ws, err := workspace.FindByName(flag)
+	if err == nil {
+		return ws, nil
+	}
+
+	ws, err = workspace.FindByPath(flag)
+	if err == nil {
+		return ws, nil
+	}
+
+	return nil, fmt.Errorf("workspace %q not found by name or path", flag)
+}
+
+// isTiltReachable returns true if the Tilt API is responding at the given URL.
+func isTiltReachable(url string) bool {
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+// isProcessAlive returns true if a process with the given PID exists and is running.
+func isProcessAlive(pid int) bool {
+	statusPath := fmt.Sprintf("/proc/%d/status", pid)
+	_, err := os.Stat(statusPath)
+	return err == nil
+}
