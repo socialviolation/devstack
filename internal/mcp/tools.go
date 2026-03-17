@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -655,14 +656,132 @@ func registerTraceSearchTool(mcpServer *server.MCPServer) {
 	})
 }
 
+type serviceAnalysis struct {
+	name        string
+	logErrors   []string
+	logErr      error
+	traces      []jaegerTrace
+	traceErr    error
+}
+
+func analyseService(svcName string, tiltClient *tilt.Client, sinceMinutes int) serviceAnalysis {
+	a := serviceAnalysis{name: svcName}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Fetch log errors from Tilt
+	go func() {
+		defer wg.Done()
+		raw, err := tiltClient.RunCLI("logs", "--tail=500", svcName)
+		if err != nil {
+			a.logErr = err
+			return
+		}
+		a.logErrors = filterErrorLines(raw)
+	}()
+
+	// Fetch traces from Jaeger
+	go func() {
+		defer wg.Done()
+		params := fmt.Sprintf("service=%s&limit=50&%s", svcName, timeWindowParams(sinceMinutes))
+		result, err := jaegerGetTraces(params)
+		if err != nil {
+			a.traceErr = err
+			return
+		}
+		a.traces = result.Data
+	}()
+
+	wg.Wait()
+	return a
+}
+
+func formatServiceAnalysis(a *serviceAnalysis, sinceMinutes int) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "=== %s (last %d min) ===\n\n", a.name, sinceMinutes)
+
+	// --- Traces section ---
+	if a.traceErr != nil {
+		fmt.Fprintf(&sb, "TRACES — unavailable (%v)\n\n", a.traceErr)
+	} else if len(a.traces) == 0 {
+		sb.WriteString("TRACES — no data (service may not be instrumented or Jaeger is empty)\n\n")
+	} else {
+		var errTraces []jaegerTrace
+		okCount := 0
+		for _, t := range a.traces {
+			hasErr := false
+			for i := range t.Spans {
+				if spanHasError(&t.Spans[i]) {
+					hasErr = true
+					break
+				}
+			}
+			if hasErr {
+				errTraces = append(errTraces, t)
+			} else {
+				okCount++
+			}
+		}
+
+		fmt.Fprintf(&sb, "TRACES — %d errors, %d ok\n", len(errTraces), okCount)
+
+		for _, t := range errTraces {
+			root := findRootSpan(&t)
+			if root == nil {
+				continue
+			}
+			ts := time.UnixMicro(root.StartTime).Local().Format("15:04:05")
+			traceShort := t.TraceID
+			if len(traceShort) > 16 {
+				traceShort = traceShort[:16] + ".."
+			}
+			durationMs := float64(root.Duration) / 1000.0
+			fmt.Fprintf(&sb, "  [ERROR] %s  %s  %s  %.1fms\n", ts, traceShort, root.OperationName, durationMs)
+
+			// Print business attributes and error details from the failing span(s)
+			for i := range t.Spans {
+				sp := &t.Spans[i]
+				if !spanHasError(sp) {
+					continue
+				}
+				for _, tag := range sp.Tags {
+					switch tag.Key {
+					case "portfolio.id", "user.id", "process.id", "file.type", "provider.id":
+						fmt.Fprintf(&sb, "          %s: %v\n", tag.Key, tag.Value)
+					case "exception.message", "error.message", "otel.status_description":
+						fmt.Fprintf(&sb, "          error: %v\n", tag.Value)
+					}
+				}
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	// --- Log errors section ---
+	if a.logErr != nil {
+		fmt.Fprintf(&sb, "LOG ERRORS — unavailable (%v)\n\n", a.logErr)
+	} else if len(a.logErrors) == 0 {
+		sb.WriteString("LOG ERRORS — none\n\n")
+	} else {
+		fmt.Fprintf(&sb, "LOG ERRORS — %d lines\n", len(a.logErrors))
+		for _, line := range a.logErrors {
+			fmt.Fprintf(&sb, "  %s\n", line)
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
+}
+
 func registerWhatHappenedTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
 	tool := mcp.NewTool("what_happened",
-		mcp.WithDescription("Diagnose recent errors across services. Pulls recent logs, filters for errors/exceptions/panics, and returns a per-service chronological summary. The 'what the fuck happened' tool. If name is omitted and a default service is configured (DEVSTACK_DEFAULT_SERVICE), scans that service only. Otherwise scans all services."),
+		mcp.WithDescription("Diagnose recent errors across services by correlating both log output and distributed traces. For each service, shows: TRACES (error counts, failing operations, business attributes like portfolio.id/user.id, and error messages from Jaeger) and LOG ERRORS (exception/panic/error lines from stdout). Use this as the first diagnostic tool — it gives a complete picture without needing to call traces and logs separately."),
 		mcp.WithString("name",
 			mcp.Description("Optional service name. If empty and a default service is set for this repo, uses that. Otherwise all services are scanned."),
 		),
 		mcp.WithNumber("since_minutes",
-			mcp.Description("Approximate time window in minutes for context (informational label). Defaults to 15."),
+			mcp.Description("Time window to look back. Defaults to 15."),
 		),
 	)
 
@@ -678,12 +797,6 @@ func registerWhatHappenedTool(mcpServer *server.MCPServer, tiltClient *tilt.Clie
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		type serviceResult struct {
-			name  string
-			lines []string
-			err   error
-		}
-
 		var services []string
 		if name != "" {
 			resolved, err := tilt.ResolveService(name, view)
@@ -697,38 +810,20 @@ func registerWhatHappenedTool(mcpServer *server.MCPServer, tiltClient *tilt.Clie
 			}
 		}
 
-		results := make([]serviceResult, len(services))
+		analyses := make([]serviceAnalysis, len(services))
 		var wg sync.WaitGroup
 		for i, svc := range services {
 			wg.Add(1)
 			go func(idx int, svcName string) {
 				defer wg.Done()
-				raw, err := tiltClient.RunCLI("logs", "--tail=500", svcName)
-				results[idx] = serviceResult{
-					name:  svcName,
-					lines: filterErrorLines(raw),
-					err:   err,
-				}
+				analyses[idx] = analyseService(svcName, tiltClient, sinceMinutes)
 			}(i, svc)
 		}
 		wg.Wait()
 
 		var sb strings.Builder
-		for _, r := range results {
-			fmt.Fprintf(&sb, "=== %s (last %d min) ===\n", r.name, sinceMinutes)
-			if r.err != nil {
-				fmt.Fprintf(&sb, "ERROR fetching logs: %v\n\n", r.err)
-				continue
-			}
-			if len(r.lines) == 0 {
-				sb.WriteString("No errors found.\n\n")
-			} else {
-				for _, line := range r.lines {
-					sb.WriteString(line)
-					sb.WriteString("\n")
-				}
-				sb.WriteString("\n")
-			}
+		for i := range analyses {
+			sb.WriteString(formatServiceAnalysis(&analyses[i], sinceMinutes))
 		}
 
 		return mcp.NewToolResultText(sb.String()), nil
