@@ -10,20 +10,20 @@ import (
 	"devstack/internal/tilt"
 )
 
-var enableCmd = &cobra.Command{
-	Use:   "enable [service]",
-	Short: "Enable a service (or group) in the workspace by triggering it with its dependencies",
-	Long: `Enable a service by resolving its dependencies and triggering them all via tilt.
+var svcStartCmd = &cobra.Command{
+	Use:   "start [service]",
+	Short: "Start a service (and its dependencies) in the workspace",
+	Long: `Start a service by resolving its dependencies and triggering them all via Tilt.
 
 Deps are started first (in dependency order), then the requested service.
-Use --group to enable all services in a named group.`,
+Use --group to start all services in a named group.`,
 	RunE: runEnable,
 }
 
 func init() {
-	rootCmd.AddCommand(enableCmd)
-	enableCmd.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
-	enableCmd.Flags().String("group", "", "Enable a named group of services instead of a single service")
+	rootCmd.AddCommand(svcStartCmd)
+	svcStartCmd.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
+	svcStartCmd.Flags().String("group", "", "Start a named group of services instead of a single service")
 }
 
 func runEnable(cmd *cobra.Command, args []string) error {
@@ -31,7 +31,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 	groupFlag, _ := cmd.Flags().GetString("group")
 
 	if groupFlag == "" && len(args) == 0 {
-		return fmt.Errorf("must specify a service name or --group=<name>")
+		return fmt.Errorf("must specify a service name or --group=<name>\nUsage: devstack start <service>\n       devstack start --group=<name>")
 	}
 
 	ws, err := resolveWorkspace(wsFlag)
@@ -75,7 +75,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		toTrigger = resolved
 	}
 
-	fmt.Printf("Enabling: %s\n", strings.Join(toTrigger, ", "))
+	fmt.Printf("Starting: %s\n", strings.Join(toTrigger, ", "))
 
 	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
 	for _, svc := range toTrigger {
@@ -90,7 +90,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 			fmt.Print(out)
 		}
 	}
-	fmt.Printf("✓ Triggered: %s\n", strings.Join(toTrigger, ", "))
+	fmt.Printf("✓ Started: %s\n", strings.Join(toTrigger, ", "))
 
 	return nil
 }

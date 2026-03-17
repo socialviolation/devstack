@@ -222,7 +222,7 @@ func buildInstructions(defaultService string, workspacePath string) string {
 
 	stopHookLine := ""
 	if defaultService != "" {
-		stopHookLine = fmt.Sprintf("\n> Note: a Stop hook is configured to call `devstack disable %s` when this Claude session ends.\n", defaultService)
+		stopHookLine = fmt.Sprintf("\n> Note: a Stop hook is configured to call `devstack stop %s` when this Claude session ends.\n", defaultService)
 	}
 
 	devstackJsonPath := ".devstack.json"
@@ -234,10 +234,10 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"| Tool | Args | What it does |\n" +
 		"|------|------|--------------|\n" +
 		"| `status` | — | List all services with build status, runtime status, and ports. **Always call this first** — do not guess service names. |\n" +
-		"| `start` | `name` (optional) | Tell Tilt to start/build a single service. Does not resolve dependencies — use `devstack enable` (CLI) if deps are needed. |\n" +
+		"| `start` | `name` (optional) | Tell Tilt to start/build a single service. Does not resolve dependencies — use `devstack start` (CLI) if deps are needed. |\n" +
 		"| `restart` | `name` (optional) | Rebuild and restart a service. Use after code changes. |\n" +
 		"| `stop` | `name` (optional) | Stop a single service without touching others. |\n" +
-		"| `start_all` | `services` (comma-separated, optional) | Start multiple services at once. Does not resolve dependencies — use `devstack enable --group` for dep-aware startup. |\n" +
+		"| `start_all` | `services` (comma-separated, optional) | Start multiple services at once. Does not resolve dependencies — use `devstack start --group` for dep-aware startup. |\n" +
 		"| `stop_all` | — | Stop all services. Tilt daemon keeps running. |\n" +
 		"| `logs` | `name` (optional), `lines` (default 100) | Fetch recent log output from a service. |\n" +
 		"| `errors` | `name` (optional), `lines` (default 50) | Fetch error lines from a service (or all services if name omitted). Use for a quick scan before calling `what_happened`. |\n" +
@@ -257,15 +257,15 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"```\n" +
 		"1. devstack status                         # CLI: check if Tilt is running\n" +
 		"                                           #   if output says 'stopped' → go to step 2\n" +
-		"                                           #   if services show BUILD/RUNTIME 'none' → Tilt is running,\n" +
-		"                                           #   services just haven't been enabled yet → go to step 3\n" +
-		"2. devstack start                          # start Tilt daemon (only if stopped)\n" +
+		"                                           #   if services show STATUS 'idle' → Tilt is running,\n" +
+		"                                           #   services just haven't been started yet → go to step 3\n" +
+		"2. devstack up                             # start Tilt daemon (only if stopped)\n" +
 		"3. devstack groups find " + defaultService + " # find the group(s) this service belongs to\n" +
-		"4. devstack enable --group=<name>          # enable that group (resolves deps, starts in order)\n" +
+		"4. devstack start --group=<name>           # start that group (resolves deps, starts in order)\n" +
 		"```\n\n" +
 		"Start the group associated with the current service — **not all services**. If multiple groups are returned by `groups find`, pick the smallest one that covers what the user needs, or ask.\n\n" +
-		"If no group exists for this service, use `devstack enable " + defaultService + "` to start it and its declared dependencies only.\n\n" +
-		"**Do not use the MCP `start` or `start_all` tools to spin up services** — they do not resolve dependencies and fail if Tilt is not yet running. Always use `devstack enable` from the shell.\n\n" +
+		"If no group exists for this service, use `devstack start " + defaultService + "` to start it and its declared dependencies only.\n\n" +
+		"**Do not use the MCP `start` or `start_all` tools to spin up services** — they do not resolve dependencies and fail if Tilt is not yet running. Always use `devstack start` from the shell.\n\n" +
 		"### MCP Tools\n\n" +
 		tools + "\n" +
 		"### Shell CLI\n\n" +
@@ -274,11 +274,11 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"| Command | What it does |\n" +
 		"|---------|-------------|\n" +
 		"| `devstack status` | Show per-service status for the current workspace — build/runtime state and ports |\n" +
-		"| `devstack enable <service>` | Start a service **and all its declared dependencies** (reads `.devstack.json`) |\n" +
-		"| `devstack enable --group=<name>` | Start a named group of services with dep resolution |\n" +
-		"| `devstack disable <service>` | Stop one service; leaves other services running |\n" +
-		"| `devstack start` | Start the Tilt daemon for this workspace (required before MCP tools work) |\n" +
-		"| `devstack down` | Stop the Tilt daemon — **this breaks all MCP tools until `devstack start` is run again** |\n" +
+		"| `devstack start <service>` | Start a service **and all its declared dependencies** (reads `.devstack.json`) |\n" +
+		"| `devstack start --group=<name>` | Start a named group of services with dep resolution |\n" +
+		"| `devstack stop <service>` | Stop one service; leaves other services running |\n" +
+		"| `devstack up` | Start the Tilt daemon for this workspace (required before MCP tools work) |\n" +
+		"| `devstack down` | Stop the Tilt daemon — **this breaks all MCP tools until `devstack up` is run again** |\n" +
 		"| `devstack groups find <service>` | Show which groups contain a service — use this to find the right group to enable |\n" +
 		"| `devstack groups list` | List all declared groups and their members |\n" +
 		"| `devstack groups add <group> <svc> [svc...]` | Add services to a group (creates it if it doesn't exist) |\n" +
@@ -289,7 +289,7 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"\n" +
 		"> Jaeger (http://localhost:16686) receives traces from all instrumented services. Use MCP `traces`/`trace_search`/`trace_detail` tools to query by service, trace ID, or business attributes.\n\n" +
 		"### Service Dependencies\n\n" +
-		"Dependencies are declared in `" + devstackJsonPath + "`. When you run `devstack enable <service>`, devstack reads this file and starts all deps first, in order.\n\n" +
+		"Dependencies are declared in `" + devstackJsonPath + "`. When you run `devstack start <service>`, devstack reads this file and starts all deps first, in order.\n\n" +
 		"**How to add a dependency**\n\n" +
 		"Use the CLI — do not hand-edit the JSON:\n\n" +
 		"```\n" +
@@ -299,7 +299,7 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"```\n" +
 		"devstack deps add service-a service-b   # declare the dependency\n" +
 		"devstack deps show service-a            # verify: shows resolved start order\n" +
-		"devstack enable service-a              # now starts service-b first, then service-a\n" +
+		"devstack start service-a               # now starts service-b first, then service-a\n" +
 		"```\n\n" +
 		"Add a dep only when a service consistently fails to start because another service is not running. Do not add deps speculatively. **Confirm before adding** — `.devstack.json` is committed to the repo and shared.\n"
 }

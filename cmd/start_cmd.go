@@ -15,16 +15,17 @@ import (
 	"devstack/internal/workspace"
 )
 
-var startCmd = &cobra.Command{
-	Use:   "start",
-	Short: "Start Tilt for a workspace as a background daemon",
-	Long:  `Start Tilt (tilt up) as a detached background daemon for the given workspace. Logs are written to ~/.local/share/devstack/<name>/tilt.log and the PID is tracked in tilt.pid.`,
-	RunE:  runStart,
+var upCmd = &cobra.Command{
+	Use:     "up",
+	Aliases: []string{"start"},
+	Short:   "Start Tilt for a workspace as a background daemon",
+	Long:    `Start Tilt (tilt up) as a detached background daemon for the given workspace. Logs are written to ~/.local/share/devstack/<name>/tilt.log and the PID is tracked in tilt.pid.`,
+	RunE:    runStart,
 }
 
 func init() {
-	rootCmd.AddCommand(startCmd)
-	startCmd.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
+	rootCmd.AddCommand(upCmd)
+	upCmd.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
 }
 
 func runStart(cmd *cobra.Command, args []string) error {

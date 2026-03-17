@@ -284,7 +284,14 @@ func runStatusWorkspace(wsFlag string) error {
 	// Load workspace config for service paths
 	cfg, _ := config.Load(ws.Path)
 
-	fmt.Printf("Workspace: %s  %s  (Tilt :%d)\n\n", ws.Name, ws.Path, ws.TiltPort)
+	jaegerStatus := "stopped"
+	if isOtelRunning(workspace.OtelContainerName(ws.Name)) {
+		jaegerStatus = "running (:16686)"
+	}
+
+	fmt.Printf("Workspace: %s  %s\n", ws.Name, ws.Path)
+	fmt.Printf("  Tilt:    running (:%d)\n", ws.TiltPort)
+	fmt.Printf("  Jaeger:  %s\n\n", jaegerStatus)
 	fmt.Printf("%-24s %-10s %-14s %-30s %s\n", "SERVICE", "STATUS", "PORT(S)", "DIR", "UPTIME")
 	fmt.Println(strings.Repeat("─", 96))
 

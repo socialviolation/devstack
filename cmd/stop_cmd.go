@@ -12,30 +12,47 @@ import (
 )
 
 var stopCmd = &cobra.Command{
-	Use:   "stop",
-	Short: "Stop a service in the dev stack",
-	Long:  `Stop (disable) a service managed by Tilt. Use --if-last-session to skip stopping when other Claude sessions are active.`,
-	RunE:  runStop,
+	Use:   "stop [service]",
+	Short: "Stop a service in the workspace",
+	Long: `Stop a service managed by Tilt. If no service name is given, uses the default service
+(DEVSTACK_DEFAULT_SERVICE or --default-service flag).
+
+Use --if-last-session to skip stopping when other Claude sessions are still active
+in the same workspace (used by the Claude Stop hook).`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runStop,
 }
 
 func init() {
 	rootCmd.AddCommand(stopCmd)
+	stopCmd.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
 	stopCmd.Flags().Bool("if-last-session", false, "Only stop if this is the last active Claude session in the workspace")
 }
 
 func runStop(cmd *cobra.Command, args []string) error {
-	defaultService := viper.GetString("default_service")
-	workspace := viper.GetString("workspace")
+	wsFlag, _ := cmd.Flags().GetString("workspace")
 	ifLastSession, _ := cmd.Flags().GetBool("if-last-session")
 
-	if defaultService == "" {
-		return fmt.Errorf("no service specified: use --default-service or DEVSTACK_DEFAULT_SERVICE")
+	// Resolve service name
+	service := ""
+	if len(args) > 0 {
+		service = args[0]
+	} else {
+		service = viper.GetString("default_service")
+		if service == "" {
+			return fmt.Errorf("no service specified: pass a service name or set DEVSTACK_DEFAULT_SERVICE")
+		}
 	}
 
-	if ifLastSession && workspace != "" {
-		count, err := countClaudeSessionsInWorkspace(workspace)
+	ws, err := resolveWorkspace(wsFlag)
+	if err != nil {
+		return err
+	}
+
+	// --if-last-session check
+	if ifLastSession {
+		count, err := countClaudeSessionsInWorkspace(ws.Path)
 		if err != nil {
-			// Non-fatal: if we can't check, proceed with stop
 			fmt.Fprintf(os.Stderr, "Warning: could not check active Claude sessions: %v — proceeding with stop\n", err)
 		} else if count > 1 {
 			fmt.Fprintf(os.Stderr, "Other Claude sessions active — skipping service stop.\n")
@@ -43,19 +60,15 @@ func runStop(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	tiltClient := tilt.NewClient(
-		viper.GetString("tilt.host"),
-		viper.GetInt("tilt.port"),
-	)
-
+	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
 	view, err := tiltClient.GetView()
 	if err != nil {
 		return fmt.Errorf("Tilt is not running: %w", err)
 	}
 
-	resolved, err := tilt.ResolveService(defaultService, view)
+	resolved, err := tilt.ResolveService(service, view)
 	if err != nil {
-		return fmt.Errorf("could not resolve service %q: %w", defaultService, err)
+		return fmt.Errorf("could not resolve service %q: %w", service, err)
 	}
 
 	out, err := tiltClient.RunCLI("disable", resolved)
@@ -63,7 +76,10 @@ func runStop(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to stop %q: %v\n%s", resolved, err, out)
 	}
 
-	fmt.Fprintf(os.Stderr, "Stopped service %q.\n%s", resolved, out)
+	if out != "" {
+		fmt.Print(out)
+	}
+	fmt.Printf("✓ Stopped: %s\n", resolved)
 	return nil
 }
 
@@ -77,27 +93,23 @@ func countClaudeSessionsInWorkspace(workspace string) (int, error) {
 
 	count := 0
 	for _, entry := range entries {
-		// Only numeric directories are PIDs
 		name := entry.Name()
 		if !isNumeric(name) {
 			continue
 		}
 
-		// Check if the process cmdline contains "claude"
 		cmdlineBytes, err := os.ReadFile(fmt.Sprintf("/proc/%s/cmdline", name))
 		if err != nil {
-			continue // process may have exited or we lack permission
+			continue
 		}
-		// cmdline uses null bytes as separators
 		cmdline := strings.ReplaceAll(string(cmdlineBytes), "\x00", " ")
 		if !strings.Contains(cmdline, "claude") {
 			continue
 		}
 
-		// Check if the process cwd is under the workspace
 		cwd, err := os.Readlink(fmt.Sprintf("/proc/%s/cwd", name))
 		if err != nil {
-			continue // skip if we can't read cwd (permission error etc.)
+			continue
 		}
 
 		if strings.HasPrefix(cwd, workspace) {

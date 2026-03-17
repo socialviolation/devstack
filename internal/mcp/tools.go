@@ -52,7 +52,7 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 
 		var sb strings.Builder
 		sb.WriteString("Tilt is running.\n")
-		sb.WriteString("BUILD/RUNTIME 'none' = service is idle (manual trigger mode, not yet started). Use `devstack enable <service>` to start.\n\n")
+		sb.WriteString("STATUS 'idle' = service not yet started (manual trigger mode). Use `devstack start <service>` or `devstack start --group=<name>` from the shell.\n\n")
 		fmt.Fprintf(&sb, "%-24s %-14s %-14s %s\n", "SERVICE", "BUILD", "RUNTIME", "ERROR")
 		fmt.Fprintf(&sb, "%s\n", strings.Repeat("-", 80))
 
