@@ -16,7 +16,7 @@ import (
 // errorRegex matches common error-indicating log keywords.
 var errorRegex = regexp.MustCompile(`(?i)(error|exception|panic|fatal|fail)`)
 
-// RegisterTools registers all nvxdev service control tools with the given MCP server.
+// RegisterTools registers all devstack service control tools with the given MCP server.
 // defaultService is used as a fallback when a tool's name argument is omitted.
 func RegisterTools(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
 	registerStatusTool(mcpServer, tiltClient)
@@ -33,7 +33,7 @@ func RegisterTools(mcpServer *server.MCPServer, tiltClient *tilt.Client, default
 
 func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 	tool := mcp.NewTool("status",
-		mcp.WithDescription("Show the current status of all services in the Navexa dev stack managed by Tilt. Returns a table of service name, build status, runtime status, and last error. For system-wide status across all workspaces, run `devstack status` from the terminal."),
+		mcp.WithDescription("Show the current status of all services in the dev stack managed by Tilt. Returns a table of service name, build status, runtime status, and last error. For system-wide status across all workspaces, run `devstack status` from the terminal."),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -76,9 +76,9 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 
 func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
 	tool := mcp.NewTool("start",
-		mcp.WithDescription("Start (trigger a build/run for) a specific service in the Navexa dev stack. If name is omitted, uses the default service for this repo (set via NVXDEV_DEFAULT_SERVICE)."),
+		mcp.WithDescription("Start (trigger a build/run for) a specific service in the dev stack. If name is omitted, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
 		mcp.WithString("name",
-			mcp.Description("The service name to start. Can be the exact Tilt resource name or a human-friendly alias (e.g. 'api', 'frontend', 'trade importer'). If omitted, uses the default service for this repo."),
+			mcp.Description("The service name to start. Can be the exact Tilt resource name or a configured alias. If omitted, uses the default service for this repo."),
 		),
 	)
 
@@ -112,9 +112,9 @@ func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, def
 
 func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
 	tool := mcp.NewTool("restart",
-		mcp.WithDescription("Restart a specific service in the Navexa dev stack by triggering a rebuild. If name is omitted, uses the default service for this repo (set via NVXDEV_DEFAULT_SERVICE)."),
+		mcp.WithDescription("Restart a specific service in the dev stack by triggering a rebuild. If name is omitted, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
 		mcp.WithString("name",
-			mcp.Description("The service name to restart. Can be the exact Tilt resource name or a human-friendly alias (e.g. 'api', 'frontend', 'trade importer'). If omitted, uses the default service for this repo."),
+			mcp.Description("The service name to restart. Can be the exact Tilt resource name or a configured alias. If omitted, uses the default service for this repo."),
 		),
 	)
 
@@ -148,9 +148,9 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 
 func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
 	tool := mcp.NewTool("stop",
-		mcp.WithDescription("Stop (disable) a specific service in the Navexa dev stack. If name is omitted, uses the default service for this repo (set via NVXDEV_DEFAULT_SERVICE)."),
+		mcp.WithDescription("Stop (disable) a specific service in the dev stack. If name is omitted, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
 		mcp.WithString("name",
-			mcp.Description("The service name to stop. Can be the exact Tilt resource name or a human-friendly alias (e.g. 'api', 'frontend', 'trade importer'). If omitted, uses the default service for this repo."),
+			mcp.Description("The service name to stop. Can be the exact Tilt resource name or a configured alias. If omitted, uses the default service for this repo."),
 		),
 	)
 
@@ -184,7 +184,7 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 
 func registerStartAllTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 	tool := mcp.NewTool("start_all",
-		mcp.WithDescription("Start (trigger) all services in the Navexa dev stack, or a specific subset. Optionally provide a comma-separated list of service names to start only those services."),
+		mcp.WithDescription("Start (trigger) all services in the dev stack, or a specific subset. Optionally provide a comma-separated list of service names to start only those services."),
 		mcp.WithString("services",
 			mcp.Description("Optional comma-separated list of service names to start. If empty, all services are started."),
 		),
@@ -247,7 +247,7 @@ func registerStartAllTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) 
 
 func registerStopAllTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 	tool := mcp.NewTool("stop_all",
-		mcp.WithDescription("Stop (disable) all services in the Navexa dev stack."),
+		mcp.WithDescription("Stop (disable) all services in the dev stack."),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -277,9 +277,9 @@ func registerStopAllTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 
 func registerLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
 	tool := mcp.NewTool("logs",
-		mcp.WithDescription("Fetch recent log output for a specific service in the Navexa dev stack. If name is omitted, uses the default service for this repo (set via NVXDEV_DEFAULT_SERVICE)."),
+		mcp.WithDescription("Fetch recent log output for a specific service in the dev stack. If name is omitted, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
 		mcp.WithString("name",
-			mcp.Description("The service name. Can be the exact Tilt resource name or a human-friendly alias (e.g. 'api', 'trade importer'). If omitted, uses the default service for this repo."),
+			mcp.Description("The service name. Can be the exact Tilt resource name or a configured alias. If omitted, uses the default service for this repo."),
 		),
 		mcp.WithNumber("lines",
 			mcp.Description("Number of log lines to return. Defaults to 100."),
@@ -328,7 +328,7 @@ func filterErrorLines(raw string) []string {
 
 func registerErrorsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
 	tool := mcp.NewTool("errors",
-		mcp.WithDescription("Get error lines from service logs. If no service name is given and a default service is configured (NVXDEV_DEFAULT_SERVICE), scans that service. Otherwise scans all services in parallel."),
+		mcp.WithDescription("Get error lines from service logs. If no service name is given and a default service is configured (DEVSTACK_DEFAULT_SERVICE), scans that service. Otherwise scans all services in parallel."),
 		mcp.WithString("name",
 			mcp.Description("Optional service name. If empty and a default service is set for this repo, uses that. Otherwise all services are scanned."),
 		),
@@ -415,34 +415,36 @@ func registerErrorsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, de
 
 func registerSetEnvironmentTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 	tool := mcp.NewTool("set_environment",
-		mcp.WithDescription("Switch the active environment for .NET services and the Python importer (Development or Production). NOTE: the frontend (navexa-frontend) is NOT affected — it uses a build-time Angular configuration and requires a manual rebuild to switch environments."),
-		mcp.WithString("env",
+		mcp.WithDescription("Pass an arbitrary key=value argument to Tilt via `tilt args -- key=value`. Use this to change runtime configuration (e.g. environment, feature flags) for services managed by Tilt. Tilt will restart affected services automatically."),
+		mcp.WithString("key",
 			mcp.Required(),
-			mcp.Description("The environment to switch to. Must be one of: Development, Staging, Production."),
+			mcp.Description("The argument key to set (e.g. 'env', 'debug', 'profile')."),
+		),
+		mcp.WithString("value",
+			mcp.Required(),
+			mcp.Description("The value to assign to the key (e.g. 'production', 'true', 'staging')."),
 		),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		env := request.GetString("env", "")
-		switch env {
-		case "Development", "Staging", "Production":
-			// valid
-		default:
-			return mcp.NewToolResultError("env must be one of: Development, Staging, Production"), nil
+		key := request.GetString("key", "")
+		value := request.GetString("value", "")
+		if key == "" {
+			return mcp.NewToolResultError("key must not be empty"), nil
 		}
 
-		out, err := tiltClient.RunCLI("args", "--", fmt.Sprintf("env=%s", env))
+		out, err := tiltClient.RunCLI("args", "--", fmt.Sprintf("%s=%s", key, value))
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to set environment: %v\n%s", err, out)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("failed to set %s=%s: %v\n%s", key, value, err, out)), nil
 		}
 
-		return mcp.NewToolResultText(fmt.Sprintf("Environment set to %s. Tilt will restart affected services.", env)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("Set %s=%s. Tilt will restart affected services.", key, value)), nil
 	})
 }
 
 func registerWhatHappenedTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
 	tool := mcp.NewTool("what_happened",
-		mcp.WithDescription("Diagnose recent errors across services. Pulls recent logs, filters for errors/exceptions/panics, and returns a per-service chronological summary. The 'what the fuck happened' tool. If name is omitted and a default service is configured (NVXDEV_DEFAULT_SERVICE), scans that service only. Otherwise scans all services."),
+		mcp.WithDescription("Diagnose recent errors across services. Pulls recent logs, filters for errors/exceptions/panics, and returns a per-service chronological summary. The 'what the fuck happened' tool. If name is omitted and a default service is configured (DEVSTACK_DEFAULT_SERVICE), scans that service only. Otherwise scans all services."),
 		mcp.WithString("name",
 			mcp.Description("Optional service name. If empty and a default service is set for this repo, uses that. Otherwise all services are scanned."),
 		),

@@ -29,7 +29,7 @@ func runStop(cmd *cobra.Command, args []string) error {
 	ifLastSession, _ := cmd.Flags().GetBool("if-last-session")
 
 	if defaultService == "" {
-		return fmt.Errorf("no service specified: use --default-service or NVXDEV_DEFAULT_SERVICE")
+		return fmt.Errorf("no service specified: use --default-service or DEVSTACK_DEFAULT_SERVICE")
 	}
 
 	if ifLastSession && workspace != "" {

@@ -12,9 +12,9 @@ var cfgFile string
 
 var rootCmd = &cobra.Command{
 	Use:   "devstack",
-	Short: "Navexa dev stack MCP server",
+	Short: "Tilt MCP server",
 	Long: `An MCP (Model Context Protocol) server that bridges Tilt's dev stack
-interface to Claude Code, enabling AI assistants to manage the Navexa dev stack.`,
+interface to Claude Code, enabling AI assistants to manage the dev stack.`,
 }
 
 func Execute() {
@@ -34,7 +34,7 @@ func init() {
 	rootCmd.PersistentFlags().String("tilt-host", "localhost", "Tilt API host")
 
 	// Default service context
-	rootCmd.PersistentFlags().String("default-service", "", "Default service name when none is specified (env: NVXDEV_DEFAULT_SERVICE)")
+	rootCmd.PersistentFlags().String("default-service", "", "Default service name when none is specified (env: DEVSTACK_DEFAULT_SERVICE)")
 
 	// Workspace root directory
 	rootCmd.PersistentFlags().String("workspace", "", "Root directory containing all projects managed by this devstack (env: DEVSTACK_WORKSPACE)")
@@ -59,7 +59,7 @@ func initConfig() {
 	// Environment variable bindings
 	viper.BindEnv("tilt.port", "TILT_PORT")
 	viper.BindEnv("tilt.host", "TILT_HOST")
-	viper.BindEnv("default_service", "NVXDEV_DEFAULT_SERVICE")
+	viper.BindEnv("default_service", "DEVSTACK_DEFAULT_SERVICE")
 	viper.BindEnv("workspace", "DEVSTACK_WORKSPACE")
 
 	viper.AutomaticEnv()

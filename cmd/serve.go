@@ -18,7 +18,7 @@ import (
 var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Start the MCP server",
-	Long:  `Start the nvxdev MCP server with HTTP or stdio transport.`,
+	Long:  `Start the devstack MCP server with HTTP or stdio transport.`,
 	RunE:  runServe,
 }
 
@@ -50,7 +50,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 func serveStdio() error {
 	mcpServer := server.NewMCPServer(
-		"navexa_dev",
+		"devstack",
 		"1.0.0",
 		server.WithToolCapabilities(true),
 	)
@@ -77,7 +77,7 @@ func serveStdio() error {
 	defaultService := viper.GetString("default_service")
 	nvxmcp.RegisterTools(mcpServer, tiltClient, defaultService)
 
-	log.Printf("Starting navexa_dev MCP server with stdio transport")
+	log.Printf("Starting devstack MCP server with stdio transport")
 
 	return server.ServeStdio(mcpServer)
 }

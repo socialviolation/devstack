@@ -16,7 +16,7 @@ import (
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Append dev stack MCP instructions to AGENTS.md",
-	Long:  `Appends LLM instructions for the navexa_dev MCP tools to AGENTS.md in the current directory.`,
+	Long:  `Appends LLM instructions for the devstack MCP tools to AGENTS.md in the current directory.`,
 	RunE:  runInit,
 }
 
@@ -35,8 +35,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to read AGENTS.md: %w", err)
 	}
-	if strings.Contains(string(existing), "## Dev Stack (navexa_dev MCP)") {
-		fmt.Fprintln(os.Stderr, "AGENTS.md already contains navexa_dev MCP instructions — skipping.")
+	if strings.Contains(string(existing), "## Dev Stack (devstack MCP)") {
+		fmt.Fprintln(os.Stderr, "AGENTS.md already contains devstack MCP instructions — skipping.")
 	} else {
 		f, err := os.OpenFile(agentsFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
@@ -49,7 +49,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to write to AGENTS.md: %w", err)
 		}
 
-		fmt.Fprintf(os.Stderr, "✓ navexa_dev MCP instructions appended to %s\n", agentsFile)
+		fmt.Fprintf(os.Stderr, "✓ devstack MCP instructions appended to %s\n", agentsFile)
 	}
 
 	// Inject Stop hook into .claude/settings.local.json
@@ -206,17 +206,16 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"| `logs` | `name` (optional), `lines` (default 100) | User wants to see output or recent activity from a service |\n" +
 		"| `errors` | `name` (optional), `lines` (default 50) | User asks if there are errors, or something seems broken |\n" +
 		"| `what_happened` | `name` (optional), `since_minutes` (default 15) | User asks what went wrong, why something failed, or \"what happened to X\" |\n" +
-		"| `set_environment` | `env`: Development or Production | User wants to switch the stack between dev and prod config |\n"
+		"| `set_environment` | `key`, `value` | User wants to change a Tilt argument (e.g. environment, feature flag) |\n"
 
-	return "\n## Dev Stack (navexa_dev MCP)\n\n" +
-		"You have access to the **navexa_dev** MCP server which controls the Navexa dev stack.\n" +
+	return "\n## Dev Stack (devstack MCP)\n\n" +
+		"You have access to the **devstack** MCP server which controls the dev stack.\n" +
 		workspaceLine +
 		defaultServiceLine +
 		"\nCall `status` to see all running services and their current state. Service names are discovered live from Tilt — do not guess them.\n\n" +
 		"Tilt must be running for tools to work. If a tool returns \"Tilt is not running\", ask the user to run `tilt up` in the workspace directory.\n" +
 		stopHookLine + "\n" +
 		"### Tools\n\n" + tools + "\n" +
-		"### Environment switching\n\n" +
-		"`set_environment` switches .NET services and the Python importer between Development and Production.\n" +
-		"The frontend (navexa-frontend) is NOT affected — it requires a manual rebuild to change environments.\n"
+		"### Tilt arguments\n\n" +
+		"`set_environment` passes arbitrary key=value arguments to Tilt, which will restart affected services managed by Tilt.\n"
 }
