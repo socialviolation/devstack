@@ -125,17 +125,18 @@ For more details, see README.md and docs/QUICKSTART.md.
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 
+
 ## Dev Stack (devstack MCP)
 
 devstack is an MCP server that controls this workspace's services via Tilt (a local process orchestrator).
-Workspace: `/tmp/test-init-ws`
-Default service: `fake-svc` — MCP tools that accept `name` use this when `name` is omitted.
+Workspace: `/home/nick/dev/navexa`
+Default service: `navexa-api` — MCP tools that accept `name` use this when `name` is omitted.
 
 **First step**: always call `status` to see what's running and get exact service names before taking any action.
 
 **If Tilt is not running**: call `devstack start` from the shell before using any MCP tools.
 
-> Note: a Stop hook is configured to call `devstack disable fake-svc` when this Claude session ends.
+> Note: a Stop hook is configured to call `devstack disable navexa-api` when this Claude session ends.
 
 ### MCP Tools
 
@@ -149,7 +150,10 @@ Default service: `fake-svc` — MCP tools that accept `name` use this when `name
 | `stop_all` | — | Stop all services. Tilt daemon keeps running. |
 | `logs` | `name` (optional), `lines` (default 100) | Fetch recent log output from a service. |
 | `errors` | `name` (optional), `lines` (default 50) | Fetch current error lines from a service — raw stderr/failure output. |
-| `what_happened` | `name` (optional), `since_minutes` (default 15) | Get a chronological timeline of recent events: crashes, restarts, errors. Use this to diagnose *why* something broke, not just *what* is broken. |
+| `what_happened` | `name` (optional), `since_minutes` (default 15) | **Start here when something is broken.** Correlates Jaeger traces + Tilt logs in one view: shows error trace count, failing operations, business attributes (portfolio.id, user.id), error messages, and raw log error lines. Degrades gracefully if Jaeger is not running. |
+| `traces` | `service` (optional), `limit` (default 20), `since_minutes` (default 30) | List recent traces from Jaeger — timestamp, trace ID, operation, service, duration, ok/error. Use to see recent request activity. |
+| `trace_detail` | `trace_id` (required) | Full span tree for a trace: every span with service, operation, duration, status, and business attributes. Use after finding a trace_id from `traces` or `trace_search`. |
+| `trace_search` | `attribute` (required), `value` (required), `service` (optional), `limit` (default 10), `since_minutes` (default 60) | Find traces by business attribute — e.g. `attribute=portfolio.id value=123`. Searches one or all services. Use when a user reports a broken import or request. |
 | `set_environment` | `key`, `value` | Set a named Tilt argument, causing Tilt to reload affected services. Valid keys are declared in the Tiltfile via `config.parse` — grep the Tiltfile or ask the user what arg to set. Example: `key=ENV value=Staging` switches all .NET services to Staging. |
 
 ### Shell CLI
@@ -168,13 +172,13 @@ Prefer CLI over MCP tools when starting services that have dependencies.
 | `devstack open` | Open the Tilt UI in a browser |
 | `devstack deps show` | Show declared service dependencies |
 | `devstack deps add <svc> <dep>` | Declare that `<svc>` depends on `<dep>` |
-| `devstack otel open` | Open Aspire Dashboard (OTEL traces + logs UI) in browser |
+| `devstack otel open` | Open Jaeger UI (OTEL traces) in browser |
 
-> The Aspire Dashboard (http://localhost:18888) receives traces and logs from all instrumented services. Query by service, trace ID, or business attributes (user ID, portfolio ID).
+> Jaeger (http://localhost:16686) receives traces from all instrumented services (OTLP on :4318). Use MCP `traces`/`trace_search`/`trace_detail` tools or the Jaeger UI to query by service, trace ID, or business attributes.
 
 ### Service Dependencies
 
-Dependencies are declared in `/tmp/test-init-ws/.devstack.json`. When you run `devstack enable <service>`, devstack reads this file and starts all deps first, in order.
+Dependencies are declared in `/home/nick/dev/navexa/.devstack.json`. When you run `devstack enable <service>`, devstack reads this file and starts all deps first, in order.
 
 **How to add a dependency**
 

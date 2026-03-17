@@ -243,7 +243,10 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"| `stop_all` | — | Stop all services. Tilt daemon keeps running. |\n" +
 		"| `logs` | `name` (optional), `lines` (default 100) | Fetch recent log output from a service. |\n" +
 		"| `errors` | `name` (optional), `lines` (default 50) | Fetch current error lines from a service — raw stderr/failure output. |\n" +
-		"| `what_happened` | `name` (optional), `since_minutes` (default 15) | Get a chronological timeline of recent events: crashes, restarts, errors. Use this to diagnose *why* something broke, not just *what* is broken. |\n" +
+		"| `what_happened` | `name` (optional), `since_minutes` (default 15) | **Start here when something is broken.** Correlates Jaeger traces + Tilt logs in one view: shows error trace count, failing operations, business attributes (portfolio.id, user.id), error messages, and raw log error lines. Degrades gracefully if Jaeger is not running. |\n" +
+		"| `traces` | `service` (optional), `limit` (default 20), `since_minutes` (default 30) | List recent traces from Jaeger — timestamp, trace ID, operation, service, duration, ok/error. Use to see recent request activity. |\n" +
+		"| `trace_detail` | `trace_id` (required) | Full span tree for a trace: every span with service, operation, duration, status, and business attributes. Use after finding a trace_id from `traces` or `trace_search`. |\n" +
+		"| `trace_search` | `attribute` (required), `value` (required), `service` (optional), `limit` (default 10), `since_minutes` (default 60) | Find traces by business attribute — e.g. `attribute=portfolio.id value=123`. Searches one or all services. Use when a user reports a broken import or request. |\n" +
 		"| `set_environment` | `key`, `value` | Set a named Tilt argument, causing Tilt to reload affected services. Valid keys are declared in the Tiltfile via `config.parse` — grep the Tiltfile or ask the user what arg to set. Example: `key=ENV value=Staging` switches all .NET services to Staging. |\n"
 
 	return "\n## Dev Stack (devstack MCP)\n\n" +
