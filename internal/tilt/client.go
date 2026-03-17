@@ -40,12 +40,19 @@ type EndpointLink struct {
 	Name string `json:"name"`
 }
 
+// DisableStatus holds the enabled/disabled state of a resource.
+type DisableStatus struct {
+	State string `json:"state"` // "Enabled" or "Disabled"
+}
+
 // UIResourceStatus holds the runtime and build state of a resource.
 type UIResourceStatus struct {
-	BuildHistory  []BuildRecord  `json:"buildHistory"`
-	RuntimeStatus string         `json:"runtimeStatus"`
-	UpdateStatus  string         `json:"updateStatus"`
-	EndpointLinks []EndpointLink `json:"endpointLinks"`
+	BuildHistory   []BuildRecord  `json:"buildHistory"`
+	RuntimeStatus  string         `json:"runtimeStatus"`
+	UpdateStatus   string         `json:"updateStatus"`
+	EndpointLinks  []EndpointLink `json:"endpointLinks"`
+	LastDeployTime *string        `json:"lastDeployTime"`
+	DisableStatus  *DisableStatus `json:"disableStatus"`
 }
 
 // BuildRecord represents a single build attempt.

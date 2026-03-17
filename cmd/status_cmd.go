@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"devstack/internal/config"
 	"devstack/internal/tilt"
 	"devstack/internal/workspace"
 )
@@ -171,6 +173,83 @@ func runStatusAll() error {
 	return nil
 }
 
+// serviceStatus derives a human-readable status from Tilt resource state.
+func serviceStatus(r tilt.UIResource) string {
+	if r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
+		return "disabled"
+	}
+	switch r.Status.RuntimeStatus {
+	case "ok":
+		return "running"
+	case "pending":
+		return "starting"
+	case "error":
+		return "error"
+	}
+	if r.Status.UpdateStatus == "running" {
+		return "building"
+	}
+	if r.Status.UpdateStatus == "error" {
+		return "error"
+	}
+	return "idle"
+}
+
+// extractPorts turns endpoint URLs into compact ":PORT" strings.
+func extractPorts(links []tilt.EndpointLink) string {
+	if len(links) == 0 {
+		return "-"
+	}
+	parts := make([]string, 0, len(links))
+	for _, ep := range links {
+		u, err := url.Parse(ep.URL)
+		if err == nil && u.Port() != "" {
+			parts = append(parts, ":"+u.Port())
+		} else {
+			parts = append(parts, ep.URL)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// formatUptime returns a human-readable duration since an RFC3339 timestamp.
+// Returns "-" if the timestamp is empty, null, or in the future.
+func formatUptime(ts *string) string {
+	if ts == nil || *ts == "" {
+		return "-"
+	}
+	t, err := time.Parse(time.RFC3339Nano, *ts)
+	if err != nil {
+		return "-"
+	}
+	d := time.Since(t)
+	if d < 0 {
+		return "-"
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	s := int(d.Seconds()) % 60
+	if h > 0 {
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
+	if m > 0 {
+		return fmt.Sprintf("%dm %ds", m, s)
+	}
+	return fmt.Sprintf("%ds", s)
+}
+
+// shortDir shortens a path by replacing the home directory prefix with ~.
+func shortDir(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	if strings.HasPrefix(path, home) {
+		return "~" + path[len(home):]
+	}
+	return path
+}
+
 // runStatusWorkspace shows per-service detail for a specific workspace.
 func runStatusWorkspace(wsFlag string) error {
 	ws, err := resolveWorkspace(wsFlag)
@@ -202,38 +281,31 @@ func runStatusWorkspace(wsFlag string) error {
 		return nil
 	}
 
-	fmt.Printf("Workspace: %s (%s)\n\n", ws.Name, ws.Path)
-	fmt.Printf("%-28s %-14s %-14s %-28s %s\n", "SERVICE", "BUILD", "RUNTIME", "PORTS", "ERROR")
-	fmt.Println(strings.Repeat("-", 100))
+	// Load workspace config for service paths
+	cfg, _ := config.Load(ws.Path)
+
+	fmt.Printf("Workspace: %s  %s  (Tilt :%d)\n\n", ws.Name, ws.Path, ws.TiltPort)
+	fmt.Printf("%-24s %-10s %-14s %-30s %s\n", "SERVICE", "STATUS", "PORT(S)", "DIR", "UPTIME")
+	fmt.Println(strings.Repeat("─", 96))
 
 	for _, r := range view.UiResources {
-		buildStatus := r.Status.UpdateStatus
-		if buildStatus == "" {
-			buildStatus = "unknown"
-		}
-		runtimeStatus := r.Status.RuntimeStatus
-		if runtimeStatus == "" {
-			runtimeStatus = "unknown"
-		}
-		lastError := ""
-		if len(r.Status.BuildHistory) > 0 {
-			lastError = r.Status.BuildHistory[0].Error
-		}
-		if len(lastError) > 40 {
-			lastError = lastError[:37] + "..."
-		}
-		ports := "-"
-		if len(r.Status.EndpointLinks) > 0 {
-			urls := make([]string, 0, len(r.Status.EndpointLinks))
-			for _, ep := range r.Status.EndpointLinks {
-				urls = append(urls, ep.URL)
+		status := serviceStatus(r)
+		ports := extractPorts(r.Status.EndpointLinks)
+
+		dir := "-"
+		if cfg != nil {
+			if p, ok := cfg.ServicePaths[r.Metadata.Name]; ok {
+				dir = shortDir(p)
 			}
-			ports = strings.Join(urls, ", ")
 		}
-		if len(ports) > 26 {
-			ports = ports[:23] + "..."
+
+		uptime := "-"
+		if status == "running" || status == "building" {
+			uptime = formatUptime(r.Status.LastDeployTime)
 		}
-		fmt.Printf("%-28s %-14s %-14s %-28s %s\n", r.Metadata.Name, buildStatus, runtimeStatus, ports, lastError)
+
+		fmt.Printf("%-24s %-10s %-14s %-30s %s\n",
+			r.Metadata.Name, status, ports, dir, uptime)
 	}
 
 	return nil
