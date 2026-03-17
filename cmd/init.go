@@ -254,18 +254,24 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"| `devstack deps show` | Show declared service dependencies |\n" +
 		"| `devstack deps add <svc> <dep>` | Declare that `<svc>` depends on `<dep>` |\n\n" +
 		"### Service Dependencies\n\n" +
-		"Dependencies are declared in `" + devstackJsonPath + "`. When you run `devstack enable <service>`, all deps are started first.\n\n" +
-		"Format:\n" +
-		"```json\n" +
-		"{\n" +
-		"  \"deps\": {\n" +
-		"    \"service-a\": [\"service-b\", \"service-c\"],\n" +
-		"    \"service-d\": [\"service-b\"]\n" +
-		"  },\n" +
-		"  \"groups\": {\n" +
-		"    \"backend\": [\"service-b\", \"service-c\", \"service-a\"]\n" +
-		"  }\n" +
-		"}\n" +
+		"Dependencies are declared in `" + devstackJsonPath + "`. When you run `devstack enable <service>`, devstack reads this file and starts all deps first, in order.\n\n" +
+		"**How to add a dependency**\n\n" +
+		"Use the CLI — do not hand-edit the JSON:\n\n" +
+		"```\n" +
+		"devstack deps add <service> <dependency>\n" +
 		"```\n\n" +
-		"If you determine that a service is missing a dependency (e.g. it fails to connect on startup), **confirm with the user** before editing `.devstack.json` — this file is shared and committed to the repo.\n"
+		"Example: you are working on `service-a` and it fails to connect because `service-b` is not running:\n\n" +
+		"```\n" +
+		"devstack deps add service-a service-b   # declare the dependency\n" +
+		"devstack deps show service-a            # verify: shows resolved start order\n" +
+		"devstack enable service-a              # now starts service-b first, then service-a\n" +
+		"```\n\n" +
+		"**When to add a dependency**\n\n" +
+		"Add a dep when a service consistently fails to start because another service is not running — e.g. a connection refused error on startup pointing at another service in this workspace. Do not add deps speculatively.\n\n" +
+		"**Confirm before adding** — `.devstack.json` is committed to the repo and shared. Ask the user before running `devstack deps add` if you are not certain the dependency is real.\n\n" +
+		"**Check existing deps first**\n\n" +
+		"```\n" +
+		"devstack deps show              # all declared deps\n" +
+		"devstack deps show <service>    # resolved start order for one service\n" +
+		"```\n"
 }
