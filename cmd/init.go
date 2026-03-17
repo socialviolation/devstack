@@ -291,5 +291,22 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"```\n" +
 		"devstack deps show              # all declared deps\n" +
 		"devstack deps show <service>    # resolved start order for one service\n" +
+		"```\n\n" +
+		"### Adding New Services\n\n" +
+		"To add a new service to this workspace, run from the workspace root:\n\n" +
+		"```\n" +
+		"devstack onboard <service-name> <service-path>\n" +
+		"```\n\n" +
+		"This will:\n" +
+		"1. Auto-detect the service language (dotnet, go, python, node) from files in `<service-path>`\n" +
+		"2. Append a `local_resource(...)` block to the workspace Tiltfile\n" +
+		"3. Register the service path in `.devstack.json`\n" +
+		"4. Write `.mcp.json` into the service directory (wires up devstack MCP)\n" +
+		"5. Append devstack instructions to `AGENTS.md` in the service directory\n\n" +
+		"Options:\n" +
+		"```\n" +
+		"devstack onboard <name> <path> --port=<port>    # specify HTTP port for readiness probe\n" +
+		"devstack onboard <name> <path> --lang=<lang>    # override language detection\n" +
+		"devstack onboard <name> <path> --label=<label>  # override Tiltfile label\n" +
 		"```\n"
 }

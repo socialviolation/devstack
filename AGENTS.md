@@ -124,3 +124,105 @@ For more details, see README.md and docs/QUICKSTART.md.
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
+
+## Dev Stack (devstack MCP)
+
+devstack is an MCP server that controls this workspace's services via Tilt (a local process orchestrator).
+Workspace: `/tmp/test-init-ws`
+Default service: `fake-svc` — MCP tools that accept `name` use this when `name` is omitted.
+
+**First step**: always call `status` to see what's running and get exact service names before taking any action.
+
+**If Tilt is not running**: call `devstack start` from the shell before using any MCP tools.
+
+> Note: a Stop hook is configured to call `devstack disable fake-svc` when this Claude session ends.
+
+### MCP Tools
+
+| Tool | Args | What it does |
+|------|------|--------------|
+| `status` | — | List all services with build status, runtime status, and ports. **Always call this first** — do not guess service names. |
+| `start` | `name` (optional) | Tell Tilt to start/build a single service. Does not resolve dependencies — use `devstack enable` (CLI) if deps are needed. |
+| `restart` | `name` (optional) | Rebuild and restart a service. Use after code changes. |
+| `stop` | `name` (optional) | Stop a single service without touching others. |
+| `start_all` | `services` (comma-separated, optional) | Start multiple services at once. Omit `services` to start everything. |
+| `stop_all` | — | Stop all services. Tilt daemon keeps running. |
+| `logs` | `name` (optional), `lines` (default 100) | Fetch recent log output from a service. |
+| `errors` | `name` (optional), `lines` (default 50) | Fetch current error lines from a service — raw stderr/failure output. |
+| `what_happened` | `name` (optional), `since_minutes` (default 15) | Get a chronological timeline of recent events: crashes, restarts, errors. Use this to diagnose *why* something broke, not just *what* is broken. |
+| `set_environment` | `key`, `value` | Set a named Tilt argument, causing Tilt to reload affected services. Valid keys are declared in the Tiltfile via `config.parse` — grep the Tiltfile or ask the user what arg to set. Example: `key=ENV value=Staging` switches all .NET services to Staging. |
+
+### Shell CLI
+
+Use the shell CLI for lifecycle management and dependency-aware service control.
+Prefer CLI over MCP tools when starting services that have dependencies.
+
+| Command | What it does |
+|---------|-------------|
+| `devstack status` | Same as the MCP `status` tool — live service table with ports |
+| `devstack enable <service>` | Start a service **and all its declared dependencies** (reads `.devstack.json`) |
+| `devstack enable --group=<name>` | Start a named group of services with dep resolution |
+| `devstack disable <service>` | Stop one service; leaves other services running |
+| `devstack start` | Start the Tilt daemon for this workspace (required before MCP tools work) |
+| `devstack down` | Stop the Tilt daemon — **this breaks all MCP tools until `devstack start` is run again** |
+| `devstack open` | Open the Tilt UI in a browser |
+| `devstack deps show` | Show declared service dependencies |
+| `devstack deps add <svc> <dep>` | Declare that `<svc>` depends on `<dep>` |
+| `devstack otel open` | Open Aspire Dashboard (OTEL traces + logs UI) in browser |
+
+> The Aspire Dashboard (http://localhost:18888) receives traces and logs from all instrumented services. Query by service, trace ID, or business attributes (user ID, portfolio ID).
+
+### Service Dependencies
+
+Dependencies are declared in `/tmp/test-init-ws/.devstack.json`. When you run `devstack enable <service>`, devstack reads this file and starts all deps first, in order.
+
+**How to add a dependency**
+
+Use the CLI — do not hand-edit the JSON:
+
+```
+devstack deps add <service> <dependency>
+```
+
+Example: you are working on `service-a` and it fails to connect because `service-b` is not running:
+
+```
+devstack deps add service-a service-b   # declare the dependency
+devstack deps show service-a            # verify: shows resolved start order
+devstack enable service-a              # now starts service-b first, then service-a
+```
+
+**When to add a dependency**
+
+Add a dep when a service consistently fails to start because another service is not running — e.g. a connection refused error on startup pointing at another service in this workspace. Do not add deps speculatively.
+
+**Confirm before adding** — `.devstack.json` is committed to the repo and shared. Ask the user before running `devstack deps add` if you are not certain the dependency is real.
+
+**Check existing deps first**
+
+```
+devstack deps show              # all declared deps
+devstack deps show <service>    # resolved start order for one service
+```
+
+### Adding New Services
+
+To add a new service to this workspace, run from the workspace root:
+
+```
+devstack onboard <service-name> <service-path>
+```
+
+This will:
+1. Auto-detect the service language (dotnet, go, python, node) from files in `<service-path>`
+2. Append a `local_resource(...)` block to the workspace Tiltfile
+3. Register the service path in `.devstack.json`
+4. Write `.mcp.json` into the service directory (wires up devstack MCP)
+5. Append devstack instructions to `AGENTS.md` in the service directory
+
+Options:
+```
+devstack onboard <name> <path> --port=<port>    # specify HTTP port for readiness probe
+devstack onboard <name> <path> --lang=<lang>    # override language detection
+devstack onboard <name> <path> --label=<label>  # override Tiltfile label
+```
