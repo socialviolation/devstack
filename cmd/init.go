@@ -213,9 +213,35 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		workspaceLine +
 		defaultServiceLine +
 		"\nCall `status` to see all running services and their current state. Service names are discovered live from Tilt — do not guess them.\n\n" +
-		"Tilt must be running for tools to work. If a tool returns \"Tilt is not running\", ask the user to run `tilt up` in the workspace directory.\n" +
+		"Tilt must be running for tools to work. If a tool returns \"Tilt is not running\", run: `devstack start` to start Tilt for this workspace.\n" +
 		stopHookLine + "\n" +
-		"### Tools\n\n" + tools + "\n" +
+		"### MCP Tools\n\n" + tools + "\n" +
 		"### Tilt arguments\n\n" +
-		"`set_environment` passes arbitrary key=value arguments to Tilt, which will restart affected services managed by Tilt.\n"
+		"`set_environment` passes arbitrary key=value arguments to Tilt, which will restart affected services managed by Tilt.\n\n" +
+		"### Dev Stack CLI\n\n" +
+		"Run these commands from the shell to manage the dev stack:\n\n" +
+		"    devstack status              # services in this workspace + ports, build/runtime status\n" +
+		"    devstack status --system     # all registered workspaces\n" +
+		"    devstack enable <service>    # start a service and all its dependencies\n" +
+		"    devstack disable <service>   # stop a specific service\n" +
+		"    devstack enable --group=<name>  # start a named group of services\n" +
+		"    devstack start               # start Tilt daemon for this workspace\n" +
+		"    devstack down                # stop Tilt daemon\n" +
+		"    devstack open                # open Tilt UI in browser\n\n" +
+		"Run `devstack status` to discover live service names and ports — do not guess them.\n\n" +
+		"### Service Dependencies\n\n" +
+		"Service dependencies are declared in `.devstack.json` at the workspace root (e.g. `" + workspacePath + "/.devstack.json`).\n\n" +
+		"When you discover that service A requires service B to be running, add it to the `deps` map:\n\n" +
+		"```json\n" +
+		"{\n" +
+		"  \"deps\": {\n" +
+		"    \"ai-file-importer\": [\"nxFileImporter\", \"navexa-api\"],\n" +
+		"    \"navexa-frontend\": [\"navexa-api\"]\n" +
+		"  },\n" +
+		"  \"groups\": {\n" +
+		"    \"backend\": [\"navexa-api\", \"nxFileImporter\", \"nxTradeImporter\"]\n" +
+		"  }\n" +
+		"}\n" +
+		"```\n\n" +
+		"`devstack enable <service>` reads this file and automatically starts all dependencies before the requested service. You can edit `.devstack.json` directly to register new dependencies.\n"
 }
