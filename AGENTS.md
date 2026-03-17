@@ -169,12 +169,9 @@ Prefer CLI over MCP tools when starting services that have dependencies.
 | `devstack disable <service>` | Stop one service; leaves other services running |
 | `devstack start` | Start the Tilt daemon for this workspace (required before MCP tools work) |
 | `devstack down` | Stop the Tilt daemon — **this breaks all MCP tools until `devstack start` is run again** |
-| `devstack open` | Open the Tilt UI in a browser |
 | `devstack deps show` | Show declared service dependencies |
 | `devstack deps add <svc> <dep>` | Declare that `<svc>` depends on `<dep>` |
-| `devstack otel open` | Open Jaeger UI (OTEL traces) in browser |
-
-> Jaeger (http://localhost:16686) receives traces from all instrumented services (OTLP on :4318). Use MCP `traces`/`trace_search`/`trace_detail` tools or the Jaeger UI to query by service, trace ID, or business attributes.
+> Jaeger (http://localhost:16686) receives traces from all instrumented services. Use MCP `traces`/`trace_search`/`trace_detail` tools to query by service, trace ID, or business attributes.
 
 ### Service Dependencies
 
