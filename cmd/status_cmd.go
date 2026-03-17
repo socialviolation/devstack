@@ -299,10 +299,7 @@ func runStatusWorkspace(wsFlag string) error {
 			}
 		}
 
-		uptime := "-"
-		if status == "running" || status == "building" {
-			uptime = formatUptime(r.Status.LastDeployTime)
-		}
+		uptime := formatUptime(r.Status.LastDeployTime)
 
 		fmt.Printf("%-24s %-10s %-14s %-30s %s\n",
 			r.Metadata.Name, status, ports, dir, uptime)
