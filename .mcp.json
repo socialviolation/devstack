@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "navexa_dev": {
+    "devstack": {
       "type": "stdio",
       "command": "devstack",
       "args": [

@@ -9,11 +9,18 @@ Instead of running CLI commands manually, Claude can start, stop, restart, and d
 | Command | Purpose |
 |---------|---------|
 | `devstack serve` | Start the MCP server (stdio transport) |
-| `devstack init` | Inject MCP instructions into `AGENTS.md` + register Stop hook |
-| `devstack register` | Register a workspace in the global registry |
+| `devstack init` | Write MCP instructions into `AGENTS.md`, inject Stop hook, register workspace, start Jaeger |
 | `devstack start` | Start the Tilt daemon for a workspace |
 | `devstack down` | Shut down the Tilt daemon |
-| `devstack stop` | Stop a specific service |
+| `devstack status` | Show service status table with ports |
+| `devstack enable <service>` | Start a service and all its declared dependencies |
+| `devstack disable <service>` | Stop a service |
+| `devstack onboard <name> <path>` | Add a new service to the workspace (auto-detects lang, writes Tiltfile block, `.mcp.json`, `AGENTS.md`) |
+| `devstack groups list` | List all service groups |
+| `devstack groups add <group> <svc>...` | Add services to a group |
+| `devstack deps add <svc> <dep>` | Declare a service dependency |
+| `devstack deps show [service]` | Show dependency graph or resolved start order |
+| `devstack otel start/stop/status` | Manage the Jaeger OTEL container |
 
 ## MCP Tools (available to Claude)
 
@@ -32,14 +39,21 @@ Instead of running CLI commands manually, Claude can start, stop, restart, and d
 |------|-------------|
 | `logs` | Fetch raw logs from a service |
 | `errors` | Extract error lines (error, exception, panic, fatal, fail) |
-| `what_happened` | Aggregate errors across all services with timestamps |
+| `what_happened` | Correlates Jaeger traces + Tilt log errors in one view — start here when something is broken |
+
+### Traces (Jaeger)
+| Tool | Description |
+|------|-------------|
+| `traces` | List recent traces by service — timestamp, operation, duration, ok/error |
+| `trace_detail` | Full span tree for a trace ID — service, operation, duration, business attributes |
+| `trace_search` | Find traces by business attribute (`portfolio.id`, `user.id`, etc.) across one or all services |
 
 ### Configuration
 | Tool | Description |
 |------|-------------|
-| `set_environment` | Switch services between Development / Staging / Production |
+| `set_environment` | Pass a key=value arg to Tilt, causing affected services to reload |
 
-Service names are resolved live from Tilt. Aliases can be configured per-workspace via `SetAliases()` — if none are set, exact name matching is used.
+Service names are resolved live from Tilt.
 
 ## Setup
 
