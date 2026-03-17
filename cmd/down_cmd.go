@@ -71,5 +71,17 @@ func runDown(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("✓ Tilt stopped for '%s'\n", ws.Name)
+
+	// 5. Stop Jaeger
+	containerName := workspace.OtelContainerName(ws.Name)
+	if isOtelRunning(containerName) {
+		fmt.Printf("Stopping Jaeger...")
+		if err := stopOtel(containerName); err != nil {
+			fmt.Fprintf(os.Stderr, " failed: %v\n", err)
+		} else {
+			fmt.Println(" ✓")
+		}
+	}
+
 	return nil
 }
