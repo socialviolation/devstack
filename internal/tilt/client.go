@@ -34,11 +34,18 @@ type UIResource struct {
 	Status UIResourceStatus `json:"status"`
 }
 
+// EndpointLink represents a named URL exposed by a service.
+type EndpointLink struct {
+	URL  string `json:"url"`
+	Name string `json:"name"`
+}
+
 // UIResourceStatus holds the runtime and build state of a resource.
 type UIResourceStatus struct {
-	BuildHistory  []BuildRecord `json:"buildHistory"`
-	RuntimeStatus string        `json:"runtimeStatus"`
-	UpdateStatus  string        `json:"updateStatus"`
+	BuildHistory  []BuildRecord  `json:"buildHistory"`
+	RuntimeStatus string         `json:"runtimeStatus"`
+	UpdateStatus  string         `json:"updateStatus"`
+	EndpointLinks []EndpointLink `json:"endpointLinks"`
 }
 
 // BuildRecord represents a single build attempt.
@@ -49,13 +56,13 @@ type BuildRecord struct {
 }
 
 // aliases maps human-friendly service names to their Tilt resource names.
-var aliases = map[string]string{
-	"trade importer": "nxTradeImporter",
-	"file importer":  "nxFileImporter",
-	"ai importer":    "ai-file-importer",
-	"api":            "navexa-api",
-	"frontend":       "navexa-frontend",
-	"tunnel":         "ssh-tunnel",
+// Populated via SetAliases at startup; empty by default (exact match only).
+var aliases = map[string]string{}
+
+// SetAliases replaces the alias map with the provided map.
+// Keys are lower-cased human-friendly names; values are exact Tilt resource names.
+func SetAliases(m map[string]string) {
+	aliases = m
 }
 
 // isRealService returns true if the resource name is a real service (not a

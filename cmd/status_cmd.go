@@ -29,15 +29,29 @@ With --workspace: prints a per-service detail table for that workspace.`,
 func init() {
 	rootCmd.AddCommand(statusCmd)
 	statusCmd.Flags().String("workspace", "", "Workspace name or path — show per-service detail for this workspace")
+	statusCmd.Flags().Bool("system", false, "Show system-wide status across all registered workspaces")
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
 	wsFlag, _ := cmd.Flags().GetString("workspace")
+	systemFlag, _ := cmd.Flags().GetBool("system")
 
+	// If --system requested, always show system-wide view
+	if systemFlag {
+		return runStatusAll()
+	}
+
+	// If --workspace provided, use it directly
 	if wsFlag != "" {
 		return runStatusWorkspace(wsFlag)
 	}
 
+	// Auto-detect workspace from cwd
+	if ws, err := workspace.DetectFromCwd(); err == nil {
+		return runStatusWorkspace(ws.Name)
+	}
+
+	// No workspace detected — fall back to system-wide view
 	return runStatusAll()
 }
 
@@ -163,8 +177,8 @@ func runStatusWorkspace(wsFlag string) error {
 	}
 
 	fmt.Printf("Workspace: %s (%s)\n\n", ws.Name, ws.Path)
-	fmt.Printf("%-24s %-14s %-14s %s\n", "SERVICE", "BUILD", "RUNTIME", "ERROR")
-	fmt.Println(strings.Repeat("-", 80))
+	fmt.Printf("%-28s %-14s %-14s %-28s %s\n", "SERVICE", "BUILD", "RUNTIME", "PORTS", "ERROR")
+	fmt.Println(strings.Repeat("-", 100))
 
 	for _, r := range view.UiResources {
 		buildStatus := r.Status.UpdateStatus
@@ -179,10 +193,21 @@ func runStatusWorkspace(wsFlag string) error {
 		if len(r.Status.BuildHistory) > 0 {
 			lastError = r.Status.BuildHistory[0].Error
 		}
-		if len(lastError) > 60 {
-			lastError = lastError[:57] + "..."
+		if len(lastError) > 40 {
+			lastError = lastError[:37] + "..."
 		}
-		fmt.Printf("%-24s %-14s %-14s %s\n", r.Metadata.Name, buildStatus, runtimeStatus, lastError)
+		ports := "-"
+		if len(r.Status.EndpointLinks) > 0 {
+			urls := make([]string, 0, len(r.Status.EndpointLinks))
+			for _, ep := range r.Status.EndpointLinks {
+				urls = append(urls, ep.URL)
+			}
+			ports = strings.Join(urls, ", ")
+		}
+		if len(ports) > 26 {
+			ports = ports[:23] + "..."
+		}
+		fmt.Printf("%-28s %-14s %-14s %-28s %s\n", r.Metadata.Name, buildStatus, runtimeStatus, ports, lastError)
 	}
 
 	return nil
