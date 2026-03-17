@@ -36,21 +36,13 @@ var depsShowCmd = &cobra.Command{
 	RunE:  runDepsShow,
 }
 
-var depsListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all service dependencies (alias for 'deps show')",
-	Args:  cobra.NoArgs,
-	RunE:  runDepsShow,
-}
-
 func init() {
 	rootCmd.AddCommand(depsCmd)
 	depsCmd.AddCommand(depsAddCmd)
 	depsCmd.AddCommand(depsRemoveCmd)
 	depsCmd.AddCommand(depsShowCmd)
-	depsCmd.AddCommand(depsListCmd)
 
-	for _, sub := range []*cobra.Command{depsAddCmd, depsRemoveCmd, depsShowCmd, depsListCmd} {
+	for _, sub := range []*cobra.Command{depsAddCmd, depsRemoveCmd, depsShowCmd} {
 		sub.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
 	}
 }
