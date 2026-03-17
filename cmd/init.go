@@ -195,69 +195,77 @@ func injectStopHook(defaultService string, workspacePath string) error {
 }
 
 func buildInstructions(defaultService string, workspacePath string) string {
-	defaultServiceLine := ""
-	if defaultService != "" {
-		defaultServiceLine = fmt.Sprintf("The default service for this repo is `%s` — tool calls omitting `name` use it automatically.\n\n", defaultService)
-	}
-
+	// --- context lines (only emitted when values are known) ---
 	workspaceLine := ""
 	if workspacePath != "" {
-		workspaceLine = fmt.Sprintf("This repo belongs to the devstack workspace at `%s` (Tilt manages all services within it).\n", workspacePath)
+		workspaceLine = fmt.Sprintf("Workspace: `%s`\n", workspacePath)
+	}
+
+	defaultServiceLine := ""
+	if defaultService != "" {
+		defaultServiceLine = fmt.Sprintf("Default service: `%s` — MCP tools that accept `name` use this when `name` is omitted.\n", defaultService)
 	}
 
 	stopHookLine := ""
 	if defaultService != "" {
-		stopHookLine = fmt.Sprintf("\nA Stop hook will automatically stop `%s` when your Claude session ends (skipped if other sessions are active).\n", defaultService)
+		stopHookLine = fmt.Sprintf("\n> Note: a Stop hook is configured to call `devstack disable %s` when this Claude session ends.\n", defaultService)
+	}
+
+	devstackJsonPath := ".devstack.json"
+	if workspacePath != "" {
+		devstackJsonPath = workspacePath + "/.devstack.json"
 	}
 
 	tools := "" +
-		"| Tool | Args | Use when |\n" +
-		"|------|------|----------|\n" +
-		"| `status` | — | User asks what's running, what's broken, or the state of the stack |\n" +
-		"| `start` | `name` (optional) | User wants to start or run a service |\n" +
-		"| `restart` | `name` (optional) | User wants to restart or rebuild a service |\n" +
-		"| `stop` | `name` (optional) | User wants to stop or kill a service |\n" +
-		"| `start_all` | `services` (optional, comma-separated) | User wants to spin up the whole stack or multiple services |\n" +
-		"| `stop_all` | — | User wants to tear down the stack |\n" +
-		"| `logs` | `name` (optional), `lines` (default 100) | User wants to see output or recent activity from a service |\n" +
-		"| `errors` | `name` (optional), `lines` (default 50) | User asks if there are errors, or something seems broken |\n" +
-		"| `what_happened` | `name` (optional), `since_minutes` (default 15) | User asks what went wrong, why something failed, or \"what happened to X\" |\n" +
-		"| `set_environment` | `key`, `value` | User wants to change a Tilt argument (e.g. environment, feature flag) |\n"
+		"| Tool | Args | What it does |\n" +
+		"|------|------|--------------|\n" +
+		"| `status` | — | List all services with build status, runtime status, and ports. **Always call this first** — do not guess service names. |\n" +
+		"| `start` | `name` (optional) | Tell Tilt to start/build a single service. Does not resolve dependencies — use `devstack enable` (CLI) if deps are needed. |\n" +
+		"| `restart` | `name` (optional) | Rebuild and restart a service. Use after code changes. |\n" +
+		"| `stop` | `name` (optional) | Stop a single service without touching others. |\n" +
+		"| `start_all` | `services` (comma-separated, optional) | Start multiple services at once. Omit `services` to start everything. |\n" +
+		"| `stop_all` | — | Stop all services. Tilt daemon keeps running. |\n" +
+		"| `logs` | `name` (optional), `lines` (default 100) | Fetch recent log output from a service. |\n" +
+		"| `errors` | `name` (optional), `lines` (default 50) | Fetch current error lines from a service — raw stderr/failure output. |\n" +
+		"| `what_happened` | `name` (optional), `since_minutes` (default 15) | Get a chronological timeline of recent events: crashes, restarts, errors. Use this to diagnose *why* something broke, not just *what* is broken. |\n" +
+		"| `set_environment` | `key`, `value` | Set a named Tilt argument, causing Tilt to reload affected services. Valid keys are declared in the Tiltfile via `config.parse` — grep the Tiltfile or ask the user what arg to set. Example: `key=ENV value=Staging` switches all .NET services to Staging. |\n"
 
 	return "\n## Dev Stack (devstack MCP)\n\n" +
-		"You have access to the **devstack** MCP server which controls the dev stack.\n" +
+		"devstack is an MCP server that controls this workspace's services via Tilt (a local process orchestrator).\n" +
 		workspaceLine +
 		defaultServiceLine +
-		"\nCall `status` to see all running services and their current state. Service names are discovered live from Tilt — do not guess them.\n\n" +
-		"Tilt must be running for tools to work. If a tool returns \"Tilt is not running\", run: `devstack start` to start Tilt for this workspace.\n" +
+		"\n**First step**: always call `status` to see what's running and get exact service names before taking any action.\n\n" +
+		"**If Tilt is not running**: call `devstack start` from the shell before using any MCP tools.\n" +
 		stopHookLine + "\n" +
-		"### MCP Tools\n\n" + tools + "\n" +
-		"### Tilt arguments\n\n" +
-		"`set_environment` passes arbitrary key=value arguments to Tilt, which will restart affected services managed by Tilt.\n\n" +
-		"### Dev Stack CLI\n\n" +
-		"Run these commands from the shell to manage the dev stack:\n\n" +
-		"    devstack status              # services in this workspace + ports, build/runtime status\n" +
-		"    devstack status --system     # all registered workspaces\n" +
-		"    devstack enable <service>    # start a service and all its dependencies\n" +
-		"    devstack disable <service>   # stop a specific service\n" +
-		"    devstack enable --group=<name>  # start a named group of services\n" +
-		"    devstack start               # start Tilt daemon for this workspace\n" +
-		"    devstack down                # stop Tilt daemon\n" +
-		"    devstack open                # open Tilt UI in browser\n\n" +
-		"Run `devstack status` to discover live service names and ports — do not guess them.\n\n" +
+		"### MCP Tools\n\n" +
+		tools + "\n" +
+		"### Shell CLI\n\n" +
+		"Use the shell CLI for lifecycle management and dependency-aware service control.\n" +
+		"Prefer CLI over MCP tools when starting services that have dependencies.\n\n" +
+		"| Command | What it does |\n" +
+		"|---------|-------------|\n" +
+		"| `devstack status` | Same as the MCP `status` tool — live service table with ports |\n" +
+		"| `devstack enable <service>` | Start a service **and all its declared dependencies** (reads `.devstack.json`) |\n" +
+		"| `devstack enable --group=<name>` | Start a named group of services with dep resolution |\n" +
+		"| `devstack disable <service>` | Stop one service; leaves other services running |\n" +
+		"| `devstack start` | Start the Tilt daemon for this workspace (required before MCP tools work) |\n" +
+		"| `devstack down` | Stop the Tilt daemon — **this breaks all MCP tools until `devstack start` is run again** |\n" +
+		"| `devstack open` | Open the Tilt UI in a browser |\n" +
+		"| `devstack deps show` | Show declared service dependencies |\n" +
+		"| `devstack deps add <svc> <dep>` | Declare that `<svc>` depends on `<dep>` |\n\n" +
 		"### Service Dependencies\n\n" +
-		"Service dependencies are declared in `.devstack.json` at the workspace root (e.g. `" + workspacePath + "/.devstack.json`).\n\n" +
-		"When you discover that service A requires service B to be running, add it to the `deps` map:\n\n" +
+		"Dependencies are declared in `" + devstackJsonPath + "`. When you run `devstack enable <service>`, all deps are started first.\n\n" +
+		"Format:\n" +
 		"```json\n" +
 		"{\n" +
 		"  \"deps\": {\n" +
-		"    \"ai-file-importer\": [\"nxFileImporter\", \"navexa-api\"],\n" +
-		"    \"navexa-frontend\": [\"navexa-api\"]\n" +
+		"    \"service-a\": [\"service-b\", \"service-c\"],\n" +
+		"    \"service-d\": [\"service-b\"]\n" +
 		"  },\n" +
 		"  \"groups\": {\n" +
-		"    \"backend\": [\"navexa-api\", \"nxFileImporter\", \"nxTradeImporter\"]\n" +
+		"    \"backend\": [\"service-b\", \"service-c\", \"service-a\"]\n" +
 		"  }\n" +
 		"}\n" +
 		"```\n\n" +
-		"`devstack enable <service>` reads this file and automatically starts all dependencies before the requested service. You can edit `.devstack.json` directly to register new dependencies.\n"
+		"If you determine that a service is missing a dependency (e.g. it fails to connect on startup), **confirm with the user** before editing `.devstack.json` — this file is shared and committed to the repo.\n"
 }
