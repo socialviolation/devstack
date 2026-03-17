@@ -136,11 +136,14 @@ Default service: `navexa-api` — MCP tools that accept `name` use this when `na
 
 ### Spinning up the dev stack
 
-When asked to start or spin up services, follow this sequence:
+The MCP `status` tool and `start`/`start_all` tools **require Tilt to already be running**. Always use the shell CLI to spin up.
 
 ```
-1. devstack status                         # check if Tilt is running
-2. devstack start                          # start Tilt daemon only if not running
+1. devstack status                         # CLI: check if Tilt is running
+                                           #   if output says 'stopped' → go to step 2
+                                           #   if services show BUILD/RUNTIME 'none' → Tilt is running,
+                                           #   services just haven't been enabled yet → go to step 3
+2. devstack start                          # start Tilt daemon (only if stopped)
 3. devstack groups find navexa-api # find the group(s) this service belongs to
 4. devstack enable --group=<name>          # enable that group (resolves deps, starts in order)
 ```
@@ -149,7 +152,7 @@ Start the group associated with the current service — **not all services**. If
 
 If no group exists for this service, use `devstack enable navexa-api` to start it and its declared dependencies only.
 
-**Do not use the MCP `start` or `start_all` tools to spin up services** — they do not resolve dependencies. Always use `devstack enable` from the shell.
+**Do not use the MCP `start` or `start_all` tools to spin up services** — they do not resolve dependencies and fail if Tilt is not yet running. Always use `devstack enable` from the shell.
 
 ### MCP Tools
 

@@ -253,16 +253,19 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		defaultServiceLine +
 		stopHookLine + "\n" +
 		"### Spinning up the dev stack\n\n" +
-		"When asked to start or spin up services, follow this sequence:\n\n" +
+		"The MCP `status` tool and `start`/`start_all` tools **require Tilt to already be running**. Always use the shell CLI to spin up.\n\n" +
 		"```\n" +
-		"1. devstack status                         # check if Tilt is running\n" +
-		"2. devstack start                          # start Tilt daemon only if not running\n" +
+		"1. devstack status                         # CLI: check if Tilt is running\n" +
+		"                                           #   if output says 'stopped' → go to step 2\n" +
+		"                                           #   if services show BUILD/RUNTIME 'none' → Tilt is running,\n" +
+		"                                           #   services just haven't been enabled yet → go to step 3\n" +
+		"2. devstack start                          # start Tilt daemon (only if stopped)\n" +
 		"3. devstack groups find " + defaultService + " # find the group(s) this service belongs to\n" +
 		"4. devstack enable --group=<name>          # enable that group (resolves deps, starts in order)\n" +
 		"```\n\n" +
 		"Start the group associated with the current service — **not all services**. If multiple groups are returned by `groups find`, pick the smallest one that covers what the user needs, or ask.\n\n" +
 		"If no group exists for this service, use `devstack enable " + defaultService + "` to start it and its declared dependencies only.\n\n" +
-		"**Do not use the MCP `start` or `start_all` tools to spin up services** — they do not resolve dependencies. Always use `devstack enable` from the shell.\n\n" +
+		"**Do not use the MCP `start` or `start_all` tools to spin up services** — they do not resolve dependencies and fail if Tilt is not yet running. Always use `devstack enable` from the shell.\n\n" +
 		"### MCP Tools\n\n" +
 		tools + "\n" +
 		"### Shell CLI\n\n" +

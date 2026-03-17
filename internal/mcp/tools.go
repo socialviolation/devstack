@@ -51,23 +51,24 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 		}
 
 		var sb strings.Builder
+		sb.WriteString("Tilt is running.\n")
+		sb.WriteString("BUILD/RUNTIME 'none' = service is idle (manual trigger mode, not yet started). Use `devstack enable <service>` to start.\n\n")
 		fmt.Fprintf(&sb, "%-24s %-14s %-14s %s\n", "SERVICE", "BUILD", "RUNTIME", "ERROR")
 		fmt.Fprintf(&sb, "%s\n", strings.Repeat("-", 80))
 
 		for _, r := range view.UiResources {
 			buildStatus := r.Status.UpdateStatus
 			if buildStatus == "" {
-				buildStatus = "unknown"
+				buildStatus = "none"
 			}
 			runtimeStatus := r.Status.RuntimeStatus
 			if runtimeStatus == "" {
-				runtimeStatus = "unknown"
+				runtimeStatus = "none"
 			}
 			lastError := ""
 			if len(r.Status.BuildHistory) > 0 {
 				lastError = r.Status.BuildHistory[0].Error
 			}
-			// Truncate long errors
 			if len(lastError) > 60 {
 				lastError = lastError[:57] + "..."
 			}
