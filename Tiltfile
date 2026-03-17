@@ -75,6 +75,7 @@ local_resource(
     'ai-file-importer',
     serve_cmd='bash -c "source .envrc && python main.py"',
     serve_dir='/home/nick/dev/navexa/ai-file-importer',
+    serve_env={'APP_ENV': ASPNET_ENV},
     trigger_mode=TRIGGER_MODE_MANUAL,
     auto_init=False,
     labels=['python'],
@@ -100,7 +101,7 @@ local_resource(
 local_resource(
     'navexa-frontend',
     cmd=free_port(4200),
-    serve_cmd='npm start',
+    serve_cmd='npm run start-dock',
     serve_dir='/home/nick/dev/navexa/NavexaFrontEnd',
     readiness_probe=probe(
         http_get=http_get_action(port=4200),
