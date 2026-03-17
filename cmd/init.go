@@ -251,9 +251,18 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"devstack is an MCP server that controls this workspace's services via Tilt (a local process orchestrator).\n" +
 		workspaceLine +
 		defaultServiceLine +
-		"\n**First step**: always call `status` to see what's running and get exact service names before taking any action.\n\n" +
-		"**If Tilt is not running**: call `devstack start` from the shell before using any MCP tools.\n" +
 		stopHookLine + "\n" +
+		"### Spinning up the dev stack\n\n" +
+		"When asked to start or spin up services, follow this sequence:\n\n" +
+		"```\n" +
+		"1. devstack status                          # check if Tilt is running\n" +
+		"2. devstack start                           # start Tilt daemon only if not running\n" +
+		"3. devstack groups find " + defaultService + "  # find the group(s) this service belongs to\n" +
+		"4. devstack enable --group=<name>           # enable that group (resolves deps, starts in order)\n" +
+		"```\n\n" +
+		"Start the group associated with the current service — **not all services**. If multiple groups are returned by `groups find`, pick the smallest one that covers what the user needs, or ask.\n\n" +
+		"If no group exists for this service, use `devstack enable " + defaultService + "` to start it and its declared dependencies only.\n\n" +
+		"**Do not use the MCP `start` tool to spin up services** — it does not resolve dependencies. Always use `devstack enable` from the shell.\n\n" +
 		"### MCP Tools\n\n" +
 		tools + "\n" +
 		"### Shell CLI\n\n" +
@@ -269,6 +278,7 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"| `devstack down` | Stop the Tilt daemon — **this breaks all MCP tools until `devstack start` is run again** |\n" +
 		"| `devstack deps show` | Show declared service dependencies |\n" +
 		"| `devstack deps add <svc> <dep>` | Declare that `<svc>` depends on `<dep>` |\n" +
+		"| `devstack groups find <service>` | Show which groups contain a service — use this to find the right group to enable |\n" +
 		"| `devstack groups list` | List all declared groups and their members — **check this before creating a new group** |\n" +
 		"| `devstack groups add <group> <svc> [svc...]` | Add services to a group (creates it if it doesn't exist) |\n" +
 		"> Jaeger (http://localhost:16686) receives traces from all instrumented services. Use MCP `traces`/`trace_search`/`trace_detail` tools to query by service, trace ID, or business attributes.\n\n" +

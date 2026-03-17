@@ -36,13 +36,21 @@ var groupsRemoveCmd = &cobra.Command{
 	RunE:  runGroupsRemove,
 }
 
+var groupsFindCmd = &cobra.Command{
+	Use:   "find <service>",
+	Short: "Find which groups contain a service",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runGroupsFind,
+}
+
 func init() {
 	rootCmd.AddCommand(groupsCmd)
 	groupsCmd.AddCommand(groupsListCmd)
 	groupsCmd.AddCommand(groupsAddCmd)
 	groupsCmd.AddCommand(groupsRemoveCmd)
+	groupsCmd.AddCommand(groupsFindCmd)
 
-	for _, sub := range []*cobra.Command{groupsListCmd, groupsAddCmd, groupsRemoveCmd} {
+	for _, sub := range []*cobra.Command{groupsListCmd, groupsAddCmd, groupsRemoveCmd, groupsFindCmd} {
 		sub.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
 	}
 }
@@ -119,6 +127,43 @@ func runGroupsAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("✓ Group %q: %s\n", group, strings.Join(cfg.Groups[group], ", "))
+	return nil
+}
+
+func runGroupsFind(cmd *cobra.Command, args []string) error {
+	service := args[0]
+
+	wsFlag, _ := cmd.Flags().GetString("workspace")
+	ws, err := resolveWorkspace(wsFlag)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(ws.Path)
+	if err != nil {
+		return err
+	}
+
+	var found []string
+	for name, members := range cfg.Groups {
+		for _, m := range members {
+			if m == service {
+				found = append(found, name)
+				break
+			}
+		}
+	}
+
+	if len(found) == 0 {
+		fmt.Printf("No groups contain %q. Enable it directly: devstack enable %s\n", service, service)
+		return nil
+	}
+
+	sort.Strings(found)
+	fmt.Printf("Groups containing %q:\n", service)
+	for _, name := range found {
+		fmt.Printf("  %-20s  %s\n", name, strings.Join(cfg.Groups[name], ", "))
+	}
 	return nil
 }
 
