@@ -11,30 +11,30 @@ import (
 
 var otelCmd = &cobra.Command{
 	Use:   "otel",
-	Short: "Manage the Aspire Dashboard OTEL container",
+	Short: "Manage the Jaeger OTEL container",
 }
 
 var otelStartCmd = &cobra.Command{
 	Use:   "start",
-	Short: "Start the Aspire Dashboard container for a workspace",
+	Short: "Start the Jaeger container for a workspace",
 	RunE:  runOtelStart,
 }
 
 var otelStopCmd = &cobra.Command{
 	Use:   "stop",
-	Short: "Stop the Aspire Dashboard container for a workspace",
+	Short: "Stop the Jaeger container for a workspace",
 	RunE:  runOtelStop,
 }
 
 var otelStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show whether the Aspire Dashboard container is running",
+	Short: "Show whether the Jaeger container is running",
 	RunE:  runOtelStatus,
 }
 
 var otelOpenCmd = &cobra.Command{
 	Use:   "open",
-	Short: "Open the Aspire Dashboard in the browser",
+	Short: "Open the Jaeger in the browser",
 	RunE:  runOtelOpen,
 }
 
@@ -71,11 +71,11 @@ func runOtelStart(cmd *cobra.Command, args []string) error {
 	containerName := workspace.OtelContainerName(ws.Name)
 
 	if isOtelRunning(containerName) {
-		fmt.Printf("Aspire Dashboard already running for '%s' — %s\n", ws.Name, otelUIURL)
+		fmt.Printf("Jaeger already running for '%s' — %s\n", ws.Name, otelUIURL)
 		return nil
 	}
 
-	fmt.Printf("Starting Aspire Dashboard for '%s'...", ws.Name)
+	fmt.Printf("Starting Jaeger for '%s'...", ws.Name)
 	if err := startOtel(containerName); err != nil {
 		fmt.Println(" failed")
 		return err
@@ -93,11 +93,11 @@ func runOtelStop(cmd *cobra.Command, args []string) error {
 	containerName := workspace.OtelContainerName(ws.Name)
 
 	if !isOtelRunning(containerName) {
-		fmt.Printf("Aspire Dashboard is not running for '%s'\n", ws.Name)
+		fmt.Printf("Jaeger is not running for '%s'\n", ws.Name)
 		return nil
 	}
 
-	fmt.Printf("Stopping Aspire Dashboard for '%s'...", ws.Name)
+	fmt.Printf("Stopping Jaeger for '%s'...", ws.Name)
 	if err := stopOtel(containerName); err != nil {
 		fmt.Println(" failed")
 		return err
@@ -115,9 +115,9 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 	containerName := workspace.OtelContainerName(ws.Name)
 
 	if isOtelRunning(containerName) {
-		fmt.Printf("Aspire Dashboard running for '%s': %s\n", ws.Name, otelUIURL)
+		fmt.Printf("Jaeger running for '%s': %s\n", ws.Name, otelUIURL)
 	} else {
-		fmt.Printf("Aspire Dashboard not running for '%s'\n", ws.Name)
+		fmt.Printf("Jaeger not running for '%s'\n", ws.Name)
 		fmt.Printf("Run: devstack otel start --workspace=%s\n", ws.Name)
 	}
 	return nil
@@ -129,6 +129,6 @@ func runOtelOpen(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("Opening Aspire Dashboard for '%s': %s\n", ws.Name, otelUIURL)
+	fmt.Printf("Opening Jaeger for '%s': %s\n", ws.Name, otelUIURL)
 	return exec.Command("xdg-open", otelUIURL).Start()
 }

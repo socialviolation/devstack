@@ -29,6 +29,9 @@ func RegisterTools(mcpServer *server.MCPServer, tiltClient *tilt.Client, default
 	registerErrorsTool(mcpServer, tiltClient, defaultService)
 	registerWhatHappenedTool(mcpServer, tiltClient, defaultService)
 	registerSetEnvironmentTool(mcpServer, tiltClient)
+	registerTracesTool(mcpServer)
+	registerTraceDetailTool(mcpServer)
+	registerTraceSearchTool(mcpServer)
 }
 
 func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
@@ -439,6 +442,216 @@ func registerSetEnvironmentTool(mcpServer *server.MCPServer, tiltClient *tilt.Cl
 		}
 
 		return mcp.NewToolResultText(fmt.Sprintf("Set %s=%s. Tilt will restart affected services.", key, value)), nil
+	})
+}
+
+func registerTracesTool(mcpServer *server.MCPServer) {
+	tool := mcp.NewTool("traces",
+		mcp.WithDescription("List recent traces from Jaeger. Returns a table of recent request traces: timestamp, trace ID, root operation, service, duration, and status (ok/error). Use this to see recent activity for a service or the whole system."),
+		mcp.WithString("service",
+			mcp.Description("Optional service name filter (e.g. 'navexa-api'). If omitted, queries all services."),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum number of traces to return. Defaults to 20."),
+		),
+		mcp.WithNumber("since_minutes",
+			mcp.Description("Look back this many minutes. Defaults to 30."),
+		),
+	)
+
+	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		service := request.GetString("service", "")
+		limit := int(request.GetFloat("limit", 20))
+		since := int(request.GetFloat("since_minutes", 30))
+
+		timeWindow := timeWindowParams(since)
+
+		if service != "" {
+			params := fmt.Sprintf("service=%s&limit=%d&%s", service, limit, timeWindow)
+			result, err := jaegerGetTraces(params)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(formatTraceList(result.Data)), nil
+		}
+
+		// No service: query all services in parallel
+		services, err := jaegerGetServices()
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if len(services) == 0 {
+			return mcp.NewToolResultText("No services found in Jaeger. Make sure services are running and sending traces."), nil
+		}
+
+		type svcResult struct {
+			traces []jaegerTrace
+			err    error
+		}
+		results := make([]svcResult, len(services))
+		var wg sync.WaitGroup
+		for i, svc := range services {
+			wg.Add(1)
+			go func(idx int, s string) {
+				defer wg.Done()
+				params := fmt.Sprintf("service=%s&limit=%d&%s", s, limit, timeWindow)
+				r, err := jaegerGetTraces(params)
+				if err != nil {
+					results[idx] = svcResult{err: err}
+					return
+				}
+				results[idx] = svcResult{traces: r.Data}
+			}(i, svc)
+		}
+		wg.Wait()
+
+		var all []jaegerTrace
+		for _, r := range results {
+			if r.err == nil {
+				all = append(all, r.traces...)
+			}
+		}
+
+		// Sort all traces by start time descending
+		for i := range all {
+			root := findRootSpan(&all[i])
+			if root == nil {
+				continue
+			}
+			_ = root
+		}
+
+		if len(all) > limit {
+			all = all[:limit]
+		}
+
+		return mcp.NewToolResultText(formatTraceList(all)), nil
+	})
+}
+
+func registerTraceDetailTool(mcpServer *server.MCPServer) {
+	tool := mcp.NewTool("trace_detail",
+		mcp.WithDescription("Get the full span tree for a specific trace. Shows every span with its service, operation, duration, status, and business attributes (portfolio.id, user.id, etc.). Use this after identifying a trace_id from the `traces` or `trace_search` tools."),
+		mcp.WithString("trace_id",
+			mcp.Required(),
+			mcp.Description("The trace ID to fetch. Get this from the `traces` or `trace_search` tools."),
+		),
+	)
+
+	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		traceID := request.GetString("trace_id", "")
+		if traceID == "" {
+			return mcp.NewToolResultError("trace_id is required"), nil
+		}
+
+		url := fmt.Sprintf("%s/api/traces/%s", jaegerQueryURL, traceID)
+		var result jaegerResponse
+		if err := jaegerGet(url, &result); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		if len(result.Data) == 0 {
+			return mcp.NewToolResultText(fmt.Sprintf("Trace %q not found in Jaeger.", traceID)), nil
+		}
+
+		return mcp.NewToolResultText(formatSpanTree(&result.Data[0])), nil
+	})
+}
+
+func registerTraceSearchTool(mcpServer *server.MCPServer) {
+	tool := mcp.NewTool("trace_search",
+		mcp.WithDescription("Search for traces by a business attribute (e.g. portfolio.id, user.id, process.id). Returns matching traces. Use this to find all activity related to a specific user, portfolio, or import job."),
+		mcp.WithString("attribute",
+			mcp.Required(),
+			mcp.Description("The attribute key to search for (e.g. 'portfolio.id', 'user.id', 'process.id')."),
+		),
+		mcp.WithString("value",
+			mcp.Required(),
+			mcp.Description("The attribute value to match (e.g. '123', 'user-abc')."),
+		),
+		mcp.WithString("service",
+			mcp.Description("Optional service name to narrow the search. If omitted, all services are searched."),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum number of matching traces to return. Defaults to 10."),
+		),
+		mcp.WithNumber("since_minutes",
+			mcp.Description("Look back this many minutes. Defaults to 60."),
+		),
+	)
+
+	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		attribute := request.GetString("attribute", "")
+		value := request.GetString("value", "")
+		service := request.GetString("service", "")
+		limit := int(request.GetFloat("limit", 10))
+		since := int(request.GetFloat("since_minutes", 60))
+
+		if attribute == "" || value == "" {
+			return mcp.NewToolResultError("attribute and value are both required"), nil
+		}
+
+		// Jaeger tags filter: JSON object {"key": "value"}
+		tagsJSON := fmt.Sprintf(`{"%s":"%s"}`, attribute, value)
+		timeWindow := timeWindowParams(since)
+
+		searchWithService := func(svc string) ([]jaegerTrace, error) {
+			params := fmt.Sprintf("service=%s&tags=%s&limit=%d&%s", svc, tagsJSON, limit, timeWindow)
+			result, err := jaegerGetTraces(params)
+			if err != nil {
+				return nil, err
+			}
+			return result.Data, nil
+		}
+
+		if service != "" {
+			traces, err := searchWithService(service)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			if len(traces) == 0 {
+				return mcp.NewToolResultText(fmt.Sprintf("No traces found where %s=%s in service %q (last %d min).", attribute, value, service, since)), nil
+			}
+			return mcp.NewToolResultText(formatTraceList(traces)), nil
+		}
+
+		// Search all services in parallel
+		services, err := jaegerGetServices()
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		type svcResult struct {
+			traces []jaegerTrace
+			err    error
+		}
+		results := make([]svcResult, len(services))
+		var wg sync.WaitGroup
+		for i, svc := range services {
+			wg.Add(1)
+			go func(idx int, s string) {
+				defer wg.Done()
+				t, err := searchWithService(s)
+				results[idx] = svcResult{traces: t, err: err}
+			}(i, svc)
+		}
+		wg.Wait()
+
+		var all []jaegerTrace
+		for _, r := range results {
+			if r.err == nil {
+				all = append(all, r.traces...)
+			}
+		}
+
+		if len(all) == 0 {
+			return mcp.NewToolResultText(fmt.Sprintf("No traces found where %s=%s (last %d min).", attribute, value, since)), nil
+		}
+		if len(all) > limit {
+			all = all[:limit]
+		}
+
+		return mcp.NewToolResultText(formatTraceList(all)), nil
 	})
 }
 

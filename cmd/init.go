@@ -99,18 +99,18 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "✓ Workspace '%s' registered at %s\n", ws.Name, absPath)
 
-	// Start Aspire Dashboard OTEL container (non-fatal — a missing docker or network
+	// Start Jaeger OTEL container (non-fatal — a missing docker or network
 	// must not block workspace init).
 	containerName := workspace.OtelContainerName(ws.Name)
 	if isOtelRunning(containerName) {
-		fmt.Fprintf(os.Stderr, "Aspire Dashboard already running — %s\n", otelUIURL)
+		fmt.Fprintf(os.Stderr, "Jaeger already running — %s\n", otelUIURL)
 	} else {
-		fmt.Fprintf(os.Stderr, "Starting Aspire Dashboard...")
+		fmt.Fprintf(os.Stderr, "Starting Jaeger...")
 		if err := startOtel(containerName); err != nil {
 			fmt.Fprintf(os.Stderr, " failed: %v\n", err)
-			fmt.Fprintf(os.Stderr, "OTEL dashboard can be started manually:\n  docker run -d --name %s --restart unless-stopped -p 18888:18888 -p 18889:18889 -p 18890:18890 -e DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS=true %s\n", containerName, otelImage)
+			fmt.Fprintf(os.Stderr, "OTEL backend can be started manually:\n  docker run -d --name %s --restart unless-stopped -p 16686:16686 -p 4317:4317 -p 4318:4318 -e COLLECTOR_OTLP_ENABLED=true %s\n", containerName, otelImage)
 		} else {
-			fmt.Fprintf(os.Stderr, " started\n✓ Aspire Dashboard running — %s\n", otelUIURL)
+			fmt.Fprintf(os.Stderr, " started\n✓ Jaeger running — %s\n", otelUIURL)
 		}
 	}
 
@@ -269,8 +269,8 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"| `devstack open` | Open the Tilt UI in a browser |\n" +
 		"| `devstack deps show` | Show declared service dependencies |\n" +
 		"| `devstack deps add <svc> <dep>` | Declare that `<svc>` depends on `<dep>` |\n" +
-		"| `devstack otel open` | Open Aspire Dashboard (OTEL traces + logs UI) in browser |\n\n" +
-		"> The Aspire Dashboard (http://localhost:18888) receives traces and logs from all instrumented services. Query by service, trace ID, or business attributes (user ID, portfolio ID).\n\n" +
+		"| `devstack otel open` | Open Jaeger UI (OTEL traces) in browser |\n\n" +
+		"> Jaeger (http://localhost:16686) receives traces from all instrumented services (OTLP on :4318). Use MCP `traces`/`trace_search`/`trace_detail` tools or the Jaeger UI to query by service, trace ID, or business attributes.\n\n" +
 		"### Service Dependencies\n\n" +
 		"Dependencies are declared in `" + devstackJsonPath + "`. When you run `devstack enable <service>`, devstack reads this file and starts all deps first, in order.\n\n" +
 		"**How to add a dependency**\n\n" +
