@@ -78,7 +78,28 @@ func runEnable(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Starting: %s\n", strings.Join(toTrigger, ", "))
 
 	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
+	view, err := tiltClient.GetView()
+	if err != nil {
+		return fmt.Errorf("failed to get Tilt view: %w", err)
+	}
+
+	// Build a set of disabled resources for quick lookup
+	disabled := map[string]bool{}
+	for _, r := range view.UiResources {
+		if r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
+			disabled[r.Metadata.Name] = true
+		}
+	}
+
 	for _, svc := range toTrigger {
+		if disabled[svc] {
+			if out, err := tiltClient.RunCLI("enable", svc); err != nil {
+				if out != "" {
+					fmt.Print(out)
+				}
+				return fmt.Errorf("tilt enable %s failed: %w", svc, err)
+			}
+		}
 		out, err := tiltClient.RunCLI("trigger", svc)
 		if err != nil {
 			if out != "" {

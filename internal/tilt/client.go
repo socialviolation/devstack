@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -109,11 +110,13 @@ func (c *Client) GetView() (*TiltView, error) {
 }
 
 // RunCLI runs a tilt CLI command with a 30-second timeout.
-// Returns combined stdout+stderr output.
+// Automatically appends --port so the CLI targets the same Tilt instance
+// as the HTTP client. Returns combined stdout+stderr output.
 func (c *Client) RunCLI(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	args = append(args, "--port", strconv.Itoa(c.port))
 	cmd := exec.CommandContext(ctx, "tilt", args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
