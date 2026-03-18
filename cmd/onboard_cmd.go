@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,242 +16,253 @@ import (
 )
 
 var onboardCmd = &cobra.Command{
-	Use:   "onboard <service-name> <service-path>",
+	Use:   "onboard",
 	Short: "Onboard a new service into the workspace Tiltfile and devstack config",
-	Long: `Onboard a new service into the workspace Tiltfile (.mcp.json and AGENTS.md in the service directory).
+	Long: `Onboard a new service into the workspace Tiltfile and devstack config.
 
-Detects the service language automatically from files in <service-path>:
-  - *.csproj  → dotnet
-  - go.mod    → go
-  - requirements.txt → python
-  - package.json     → node
+Creates or updates:
+  - local_resource block in <workspace>/Tiltfile
+  - <service-path>/.mcp.json  (wires up the devstack MCP server)
+  - <service-path>/AGENTS.md  (via devstack init)
+  - <workspace>/.devstack.json ServicePaths entry
 
-Use --lang to override auto-detection.
-Use --port to specify the HTTP port the service listens on (used for readiness probe).
-Use --label to set the Tiltfile label (default: auto-detected language).
-Use --workspace to specify the workspace (default: auto-detect from cwd).`,
-	Args: cobra.ExactArgs(2),
+Auto-detects language from files in --path:
+  - *.csproj            → dotnet
+  - go.mod              → go
+  - requirements.txt    → python
+  - package.json        → node
+
+Use --language to override auto-detection.
+Use --port to specify the HTTP port (adds readiness probe + link).`,
 	RunE: runOnboard,
 }
 
 func init() {
 	rootCmd.AddCommand(onboardCmd)
 	onboardCmd.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
-	onboardCmd.Flags().String("lang", "", "Language override: dotnet, go, python, node")
-	onboardCmd.Flags().Int("port", 0, "HTTP port the service listens on (used for readiness probe; 0 = omit probe)")
-	onboardCmd.Flags().String("label", "", "Tiltfile label (default: auto-detected language)")
-	onboardCmd.Flags().String("serve-cmd", "", "Override the serve_cmd in the Tiltfile block")
+	onboardCmd.Flags().String("name", "", "Service name as it appears in Tilt (required)")
+	onboardCmd.Flags().String("path", "", "Absolute path to service repo (required)")
+	onboardCmd.Flags().Int("port", 0, "HTTP port the service listens on (0 = no readiness probe)")
+	onboardCmd.Flags().String("cmd", "", "Serve command e.g. \"dotnet run\" (required)")
+	onboardCmd.Flags().String("language", "", "One of: dotnet, python, node, go (default: auto-detect)")
+	onboardCmd.Flags().String("group", "", ".devstack.json group to add service to (optional)")
+
+	_ = onboardCmd.MarkFlagRequired("name")
+	_ = onboardCmd.MarkFlagRequired("path")
+	_ = onboardCmd.MarkFlagRequired("cmd")
 }
 
 func runOnboard(cmd *cobra.Command, args []string) error {
-	serviceName := args[0]
-	servicePath := args[1]
-
-	// Resolve service path to absolute
-	absServicePath, err := filepath.Abs(servicePath)
-	if err != nil {
-		return fmt.Errorf("failed to resolve service path: %w", err)
-	}
-
-	// Verify service path exists
-	if _, err := os.Stat(absServicePath); err != nil {
-		return fmt.Errorf("service path %q does not exist: %w", absServicePath, err)
-	}
-
 	wsFlag, _ := cmd.Flags().GetString("workspace")
-	langFlag, _ := cmd.Flags().GetString("lang")
+	name, _ := cmd.Flags().GetString("name")
+	path, _ := cmd.Flags().GetString("path")
 	port, _ := cmd.Flags().GetInt("port")
-	labelFlag, _ := cmd.Flags().GetString("label")
-	serveCmdFlag, _ := cmd.Flags().GetString("serve-cmd")
+	serveCmd, _ := cmd.Flags().GetString("cmd")
+	langFlag, _ := cmd.Flags().GetString("language")
+	group, _ := cmd.Flags().GetString("group")
 
-	// Resolve workspace
+	// Step 1: Resolve workspace
 	ws, err := resolveWorkspace(wsFlag)
 	if err != nil {
 		return err
 	}
 
-	// Auto-detect language if not provided
+	// Step 2: Validate required flags and path existence
+	if name == "" {
+		return fmt.Errorf("--name is required")
+	}
+	if path == "" {
+		return fmt.Errorf("--path is required")
+	}
+	if serveCmd == "" {
+		return fmt.Errorf("--cmd is required")
+	}
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("--path %q does not exist on disk: %w", path, err)
+	}
+
+	// Step 3: Auto-detect language if not provided
 	lang := langFlag
 	if lang == "" {
-		lang, err = detectLanguage(absServicePath)
-		if err != nil {
-			return fmt.Errorf("language auto-detection failed: %w", err)
-		}
+		lang = onboardDetectLanguage(path)
 		fmt.Fprintf(os.Stderr, "Auto-detected language: %s\n", lang)
 	}
 
-	// Determine label
-	label := labelFlag
-	if label == "" {
-		label = lang
+	// Step 4: Build serve_env map
+	serveEnv := map[string]string{
+		"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:18889",
+	}
+	switch lang {
+	case "dotnet":
+		serveEnv["ASPNETCORE_ENVIRONMENT"] = "Development"
+	case "python":
+		serveEnv["APP_ENV"] = "Development"
+	case "node":
+		serveEnv["NODE_ENV"] = "development"
 	}
 
-	// Build Tiltfile block
-	tiltBlock := buildTiltBlock(serviceName, absServicePath, lang, label, port, serveCmdFlag)
-
-	// Append to Tiltfile
+	// Step 5: Append local_resource block to Tiltfile
 	tiltfilePath := filepath.Join(ws.Path, "Tiltfile")
-	f, err := os.OpenFile(tiltfilePath, os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open Tiltfile at %s: %w", tiltfilePath, err)
+	tiltBlock := buildOnboardTiltBlock(name, serveCmd, path, lang, port, serveEnv)
+	if err := appendToTiltfile(tiltfilePath, tiltBlock); err != nil {
+		return err
 	}
-	_, writeErr := f.WriteString(tiltBlock)
-	f.Close()
-	if writeErr != nil {
-		return fmt.Errorf("failed to append to Tiltfile: %w", writeErr)
-	}
-	fmt.Fprintf(os.Stderr, "✓ Appended local_resource(%q) to %s\n", serviceName, tiltfilePath)
+	fmt.Fprintf(os.Stderr, "✓ Appended local_resource(%q) to %s\n", name, tiltfilePath)
 
-	// Register service path in .devstack.json
+	// Step 6: Create .mcp.json if it doesn't exist
+	mcpFile := filepath.Join(path, ".mcp.json")
+	if _, err := os.Stat(mcpFile); os.IsNotExist(err) {
+		if err := writeOnboardMCPJson(mcpFile, name, ws); err != nil {
+			return fmt.Errorf("failed to write .mcp.json: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "✓ Created .mcp.json in %s\n", path)
+	} else {
+		fmt.Fprintf(os.Stderr, ".mcp.json already exists in %s — skipping\n", path)
+	}
+
+	// Step 7: Run devstack init in the service directory (non-fatal)
+	initArgs := []string{"init", fmt.Sprintf("--workspace=%s", ws.Path), fmt.Sprintf("--default-service=%s", name)}
+	initCmd := exec.Command("devstack", initArgs...)
+	initCmd.Dir = path
+	out, initErr := initCmd.CombinedOutput()
+	if len(out) > 0 {
+		fmt.Print(string(out))
+	}
+	if initErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: devstack init failed: %v\n", initErr)
+	}
+
+	// Step 8: Update .devstack.json
 	cfg, err := config.Load(ws.Path)
 	if err != nil {
 		return fmt.Errorf("failed to load devstack config: %w", err)
 	}
-	cfg.ServicePaths[serviceName] = absServicePath
+	cfg.ServicePaths[name] = path
+	if group != "" {
+		cfg.Groups[group] = append(cfg.Groups[group], name)
+	}
 	if err := config.Save(ws.Path, cfg); err != nil {
 		return fmt.Errorf("failed to save devstack config: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "✓ Registered service path in .devstack.json\n")
 
-	// Write .mcp.json in the service directory
-	if err := writeMCPJson(absServicePath, ws); err != nil {
-		return fmt.Errorf("failed to write .mcp.json: %w", err)
+	// Step 9: Print summary
+	agentsMd := filepath.Join(path, "AGENTS.md")
+	fmt.Printf("\n✓ Service %q onboarded to workspace %q\n\n", name, ws.Name)
+	fmt.Printf("  Tiltfile:    %s\n", tiltfilePath)
+	fmt.Printf("  .mcp.json:   %s\n", mcpFile)
+	fmt.Printf("  AGENTS.md:   %s\n", agentsMd)
+	if group != "" {
+		fmt.Printf("  Group:       %s\n", group)
 	}
-	fmt.Fprintf(os.Stderr, "✓ Wrote .mcp.json to %s\n", absServicePath)
+	fmt.Printf("\nNext steps:\n")
+	fmt.Printf("  devstack deps add %s <dependency>   # declare dependencies if needed\n", name)
+	fmt.Printf("  devstack start %s                   # start it\n", name)
 
-	// Append devstack instructions to AGENTS.md in service directory
-	if err := writeAgentsMd(absServicePath, serviceName, ws); err != nil {
-		return fmt.Errorf("failed to write AGENTS.md: %w", err)
-	}
-	fmt.Fprintf(os.Stderr, "✓ Appended devstack instructions to AGENTS.md in %s\n", absServicePath)
-
-	fmt.Printf("✓ Onboarded service %q (lang: %s, workspace: %s)\n", serviceName, lang, ws.Name)
 	return nil
 }
 
-// detectLanguage returns the language identifier for the service at the given path.
-func detectLanguage(path string) (string, error) {
+// onboardDetectLanguage detects the language of the service at the given path.
+// Falls back to "unknown" instead of returning an error.
+func onboardDetectLanguage(path string) string {
 	checks := []struct {
 		glob string
 		lang string
 	}{
 		{"*.csproj", "dotnet"},
-		{"go.mod", "go"},
 		{"requirements.txt", "python"},
+		{"*.py", "python"},
 		{"package.json", "node"},
+		{"go.mod", "go"},
 	}
 
 	for _, c := range checks {
 		matches, err := filepath.Glob(filepath.Join(path, c.glob))
-		if err != nil {
-			return "", fmt.Errorf("glob %q failed: %w", c.glob, err)
-		}
-		if len(matches) > 0 {
-			return c.lang, nil
+		if err == nil && len(matches) > 0 {
+			return c.lang
 		}
 	}
 
-	return "", fmt.Errorf("could not detect language in %q — use --lang to specify (dotnet, go, python, node)", path)
+	return "unknown"
 }
 
-// buildTiltBlock builds the Tiltfile local_resource block for the service.
-func buildTiltBlock(name, path, lang, label string, port int, serveCmdOverride string) string {
+// buildOnboardTiltBlock builds the Tiltfile local_resource block.
+func buildOnboardTiltBlock(name, serveCmd, path, lang string, port int, serveEnv map[string]string) string {
 	var sb strings.Builder
 
-	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf("local_resource(\n"))
+	sb.WriteString(fmt.Sprintf("\n# %s\n", name))
+	sb.WriteString("local_resource(\n")
 	sb.WriteString(fmt.Sprintf("    %q,\n", name))
-
-	// Build serve_cmd
-	serveCmd := serveCmdOverride
-	if serveCmd == "" {
-		switch lang {
-		case "dotnet":
-			serveCmd = "DOTNET + \" run\""
-		case "go":
-			serveCmd = "\"go run ./...\""
-		case "python":
-			serveCmd = "\"bash -c \\\"source .envrc && python main.py\\\"\""
-		case "node":
-			serveCmd = "\"npm start\""
-		default:
-			serveCmd = fmt.Sprintf("%q", "bash -c \"./run.sh\"")
-		}
-	} else {
-		serveCmd = fmt.Sprintf("%q", serveCmd)
-	}
-
-	// For dotnet we use the DOTNET variable — don't quote it as a plain string
-	if lang == "dotnet" && serveCmdOverride == "" {
-		sb.WriteString(fmt.Sprintf("    serve_cmd=DOTNET + \" run\",\n"))
-	} else {
-		sb.WriteString(fmt.Sprintf("    serve_cmd=%s,\n", serveCmd))
-	}
-
+	sb.WriteString(fmt.Sprintf("    serve_cmd=%q,\n", serveCmd))
 	sb.WriteString(fmt.Sprintf("    serve_dir=%q,\n", path))
 
-	// serve_env
+	// serve_env — OTEL first, then language-specific
 	sb.WriteString("    serve_env={\n")
-	if lang == "dotnet" {
-		sb.WriteString("        \"ASPNETCORE_ENVIRONMENT\": ASPNET_ENV,\n")
+	sb.WriteString(fmt.Sprintf("        %q: %q,\n", "OTEL_EXPORTER_OTLP_ENDPOINT", serveEnv["OTEL_EXPORTER_OTLP_ENDPOINT"]))
+	for k, v := range serveEnv {
+		if k == "OTEL_EXPORTER_OTLP_ENDPOINT" {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("        %q: %q,\n", k, v))
 	}
-	sb.WriteString("        \"OTEL_EXPORTER_OTLP_ENDPOINT\": OTEL_ENDPOINT,\n")
 	sb.WriteString("    },\n")
-
-	// readiness probe (only if port > 0)
-	if port > 0 {
-		sb.WriteString(fmt.Sprintf("    readiness_probe=probe(\n"))
-		sb.WriteString(fmt.Sprintf("        http_get=http_get_action(port=%d),\n", port))
-		sb.WriteString("        period_secs=5,\n")
-		sb.WriteString("        failure_threshold=12,\n")
-		sb.WriteString("    ),\n")
-	}
 
 	sb.WriteString("    trigger_mode=TRIGGER_MODE_MANUAL,\n")
 	sb.WriteString("    auto_init=False,\n")
-	sb.WriteString(fmt.Sprintf("    labels=[%q],\n", label))
+	sb.WriteString(fmt.Sprintf("    labels=[%q],\n", lang))
+
+	if port > 0 {
+		sb.WriteString(fmt.Sprintf("    readiness_probe=probe(http_get_action(port=%d), period_secs=5, failure_threshold=10),\n", port))
+		sb.WriteString(fmt.Sprintf("    links=[link(%q, %q)],\n", fmt.Sprintf("http://localhost:%d", port), name))
+	}
+
 	sb.WriteString(")\n")
 
 	return sb.String()
 }
 
-// mcpServerEntry is the structure of a single entry in .mcp.json servers map.
-type mcpServerEntry struct {
+// appendToTiltfile appends a block to the Tiltfile.
+func appendToTiltfile(tiltfilePath, block string) error {
+	f, err := os.OpenFile(tiltfilePath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open Tiltfile at %s: %w", tiltfilePath, err)
+	}
+	_, writeErr := f.WriteString(block)
+	f.Close()
+	if writeErr != nil {
+		return fmt.Errorf("failed to append to Tiltfile: %w", writeErr)
+	}
+	return nil
+}
+
+// onboardMCPEntry is the structure of a single entry in .mcp.json servers map.
+type onboardMCPEntry struct {
 	Type    string            `json:"type"`
 	Command string            `json:"command"`
 	Args    []string          `json:"args"`
 	Env     map[string]string `json:"env"`
 }
 
-// mcpConfig is the top-level .mcp.json structure.
-type mcpConfig struct {
-	McpServers map[string]mcpServerEntry `json:"mcpServers"`
+// onboardMCPConfig is the top-level .mcp.json structure.
+type onboardMCPConfig struct {
+	McpServers map[string]onboardMCPEntry `json:"mcpServers"`
 }
 
-// writeMCPJson writes (or merges) a .mcp.json file in the service directory
-// that wires up the devstack MCP server for this workspace.
-func writeMCPJson(servicePath string, ws *workspace.Workspace) error {
-	mcpFile := filepath.Join(servicePath, ".mcp.json")
-
-	var cfg mcpConfig
-
-	// Load existing file if present
-	if data, err := os.ReadFile(mcpFile); err == nil {
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			return fmt.Errorf("failed to parse existing .mcp.json: %w", err)
-		}
-	}
-
-	if cfg.McpServers == nil {
-		cfg.McpServers = map[string]mcpServerEntry{}
-	}
-
-	// Add/overwrite the devstack entry
-	cfg.McpServers["devstack"] = mcpServerEntry{
-		Type:    "stdio",
-		Command: "devstack",
-		Args:    []string{"serve", "--tilt-port", strconv.Itoa(ws.TiltPort), "--workspace", ws.Path},
-		Env:     map[string]string{"DEVSTACK_WORKSPACE": ws.Path},
+// writeOnboardMCPJson creates a .mcp.json file in the service directory.
+func writeOnboardMCPJson(mcpFile, serviceName string, ws *workspace.Workspace) error {
+	cfg := onboardMCPConfig{
+		McpServers: map[string]onboardMCPEntry{
+			"navexa_dev": {
+				Type:    "stdio",
+				Command: "devstack",
+				Args:    []string{"serve", "--transport=stdio"},
+				Env: map[string]string{
+					"TILT_PORT":               strconv.Itoa(ws.TiltPort),
+					"DEVSTACK_WORKSPACE":      ws.Path,
+					"DEVSTACK_DEFAULT_SERVICE": serviceName,
+				},
+			},
+		},
 	}
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
@@ -260,34 +272,6 @@ func writeMCPJson(servicePath string, ws *workspace.Workspace) error {
 
 	if err := os.WriteFile(mcpFile, append(data, '\n'), 0644); err != nil {
 		return fmt.Errorf("failed to write .mcp.json: %w", err)
-	}
-
-	return nil
-}
-
-// writeAgentsMd appends devstack instructions to AGENTS.md in the service directory.
-func writeAgentsMd(servicePath, serviceName string, ws *workspace.Workspace) error {
-	agentsFile := filepath.Join(servicePath, "AGENTS.md")
-
-	// Check if already contains our section
-	existing, err := os.ReadFile(agentsFile)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to read AGENTS.md: %w", err)
-	}
-	if strings.Contains(string(existing), "## Dev Stack (devstack MCP)") {
-		fmt.Fprintf(os.Stderr, "AGENTS.md already contains devstack MCP instructions — skipping.\n")
-		return nil
-	}
-
-	f, err := os.OpenFile(agentsFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open AGENTS.md: %w", err)
-	}
-	defer f.Close()
-
-	instructions := buildInstructions(serviceName, ws.Path)
-	if _, err := f.WriteString(instructions); err != nil {
-		return fmt.Errorf("failed to write AGENTS.md: %w", err)
 	}
 
 	return nil

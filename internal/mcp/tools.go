@@ -21,10 +21,8 @@ var errorRegex = regexp.MustCompile(`(?i)(error|exception|panic|fatal|fail)`)
 // defaultService is used as a fallback when a tool's name argument is omitted.
 func RegisterTools(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
 	registerStatusTool(mcpServer, tiltClient)
-	registerStartTool(mcpServer, tiltClient, defaultService)
 	registerRestartTool(mcpServer, tiltClient, defaultService)
 	registerStopTool(mcpServer, tiltClient, defaultService)
-	registerStartAllTool(mcpServer, tiltClient)
 	registerStopAllTool(mcpServer, tiltClient)
 	registerLogsTool(mcpServer, tiltClient, defaultService)
 	registerErrorsTool(mcpServer, tiltClient, defaultService)
@@ -116,52 +114,6 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 	})
 }
 
-func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
-	tool := mcp.NewTool("start",
-		mcp.WithDescription("Start (trigger a build/run for) a specific service in the dev stack. If name is omitted, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
-		mcp.WithString("name",
-			mcp.Description("The service name to start. Can be the exact Tilt resource name or a configured alias. If omitted, uses the default service for this repo."),
-		),
-	)
-
-	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		name := request.GetString("name", "")
-		if name == "" {
-			name = defaultService
-		}
-		if name == "" {
-			return mcp.NewToolResultError("no service specified and no default service configured for this repo"), nil
-		}
-
-		view, err := tiltClient.GetView()
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		resolved, err := tilt.ResolveService(name, view)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		// If the resource is disabled, enable it first
-		for _, r := range view.UiResources {
-			if r.Metadata.Name == resolved && r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
-				if out, err := tiltClient.RunCLI("enable", resolved); err != nil {
-					return mcp.NewToolResultError(fmt.Sprintf("failed to enable %q: %v\n%s", resolved, err, out)), nil
-				}
-				break
-			}
-		}
-
-		out, err := tiltClient.RunCLI("trigger", resolved)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to start %q: %v\n%s", resolved, err, out)), nil
-		}
-
-		return mcp.NewToolResultText(fmt.Sprintf("Started service %q.\n%s", resolved, out)), nil
-	})
-}
-
 func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
 	tool := mcp.NewTool("restart",
 		mcp.WithDescription("Restart a specific service in the dev stack by triggering a rebuild. If name is omitted, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
@@ -241,88 +193,6 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 		}
 
 		return mcp.NewToolResultText(fmt.Sprintf("Stopped service %q.\n%s", resolved, out)), nil
-	})
-}
-
-func registerStartAllTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
-	tool := mcp.NewTool("start_all",
-		mcp.WithDescription("Start (trigger) all services in the dev stack, or a specific subset. Optionally provide a comma-separated list of service names to start only those services."),
-		mcp.WithString("services",
-			mcp.Description("Optional comma-separated list of service names to start. If empty, all services are started."),
-		),
-	)
-
-	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		view, err := tiltClient.GetView()
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		servicesArg := request.GetString("services", "")
-
-		var toStart []string
-		if servicesArg == "" {
-			// Start all services, skipping explicitly disabled resources
-			if len(view.UiResources) == 0 {
-				return mcp.NewToolResultText("Tilt is running but no services are loaded yet. It may still be starting up."), nil
-			}
-			for _, r := range view.UiResources {
-				if r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
-					continue
-				}
-				toStart = append(toStart, r.Metadata.Name)
-			}
-		} else {
-			// Resolve each specified service
-			for _, s := range strings.Split(servicesArg, ",") {
-				s = strings.TrimSpace(s)
-				if s == "" {
-					continue
-				}
-				resolved, err := tilt.ResolveService(s, view)
-				if err != nil {
-					return mcp.NewToolResultError(err.Error()), nil
-				}
-				toStart = append(toStart, resolved)
-			}
-		}
-
-		if len(toStart) == 0 {
-			return mcp.NewToolResultText("No services to start."), nil
-		}
-
-		var results strings.Builder
-		var hardFailures []string
-		var softWarnings []string
-		var started int
-		for _, svc := range toStart {
-			out, err := tiltClient.RunCLI("trigger", svc)
-			if err != nil {
-				combined := out + err.Error()
-				if strings.Contains(combined, "does not exist") || strings.Contains(combined, "currently disabled") {
-					softWarnings = append(softWarnings, fmt.Sprintf("%s: %v", svc, err))
-					fmt.Fprintf(&results, "SKIPPED %s (not triggerable): %v\n", svc, err)
-				} else {
-					hardFailures = append(hardFailures, fmt.Sprintf("%s: %v", svc, err))
-					fmt.Fprintf(&results, "FAILED %s: %v\n%s\n", svc, err, out)
-				}
-			} else {
-				started++
-				fmt.Fprintf(&results, "Started %s\n", svc)
-			}
-		}
-
-		if len(hardFailures) > 0 && started == 0 && len(softWarnings) == 0 {
-			return mcp.NewToolResultError(fmt.Sprintf("All services failed to start:\n%s", results.String())), nil
-		}
-		summary := fmt.Sprintf("Started %d service(s)", started)
-		if len(softWarnings) > 0 {
-			summary += fmt.Sprintf(", %d skipped (not triggerable)", len(softWarnings))
-		}
-		if len(hardFailures) > 0 {
-			summary += fmt.Sprintf(", %d failed", len(hardFailures))
-		}
-		return mcp.NewToolResultText(fmt.Sprintf("%s:\n%s", summary, results.String())), nil
 	})
 }
 
