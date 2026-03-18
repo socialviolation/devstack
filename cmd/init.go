@@ -164,17 +164,30 @@ func injectStopHook(defaultService string, workspacePath string) error {
 		hooksMap = make(map[string][]hookEntry)
 	}
 
-	// Check if our Stop hook already exists (idempotent)
+	// Remove any existing devstack stop hook (replace, not append)
+	filtered := hooksMap["Stop"][:0]
+	replaced := false
 	for _, entry := range hooksMap["Stop"] {
+		isDevstackStop := false
 		for _, h := range entry.Hooks {
-			if h.Command == hookCommand {
-				fmt.Fprintln(os.Stderr, "Stop hook already present in .claude/settings.local.json — skipping.")
-				return nil
+			if strings.HasPrefix(h.Command, "devstack stop --default-service=") {
+				isDevstackStop = true
+				break
 			}
 		}
+		if isDevstackStop {
+			replaced = true
+			continue // drop old entry
+		}
+		filtered = append(filtered, entry)
+	}
+	hooksMap["Stop"] = filtered
+
+	if replaced {
+		fmt.Fprintln(os.Stderr, "Replacing existing devstack Stop hook.")
 	}
 
-	// Append our Stop hook entry
+	// Append updated Stop hook entry
 	hooksMap["Stop"] = append(hooksMap["Stop"], hookEntry{
 		Matcher: "",
 		Hooks: []hookItem{
