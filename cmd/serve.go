@@ -55,24 +55,20 @@ func serveStdio() error {
 		server.WithToolCapabilities(true),
 	)
 
-	port := viper.GetInt("tilt.port")
-	// If port is still the default (10350), try to resolve from the workspace registry.
-	// This ensures that once a workspace is registered, the MCP server auto-uses the right port.
-	if port == 10350 {
-		wsName := viper.GetString("workspace")
-		if wsName != "" {
-			if ws, err := workspace.FindByName(wsName); err == nil {
-				port = ws.TiltPort
-			} else if ws, err := workspace.FindByPath(wsName); err == nil {
-				port = ws.TiltPort
-			}
-		}
-	}
+	wsName := viper.GetString("workspace")
+	host := viper.GetString("tilt.host")
 
-	tiltClient := tilt.NewClient(
-		viper.GetString("tilt.host"),
-		port,
-	)
+	tiltClient := tilt.NewDynamicClient(host, func() int {
+		// Try workspace name first, then path
+		if ws, err := workspace.FindByName(wsName); err == nil {
+			return ws.TiltPort
+		}
+		if ws, err := workspace.FindByPath(wsName); err == nil {
+			return ws.TiltPort
+		}
+		// Fall back to configured port
+		return viper.GetInt("tilt.port")
+	})
 
 	defaultService := viper.GetString("default_service")
 	nvxmcp.RegisterTools(mcpServer, tiltClient, defaultService)

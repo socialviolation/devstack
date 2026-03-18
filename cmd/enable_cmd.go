@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -26,13 +27,32 @@ func init() {
 	svcStartCmd.Flags().String("group", "", "Start a named group of services instead of a single service")
 }
 
+func detectServiceFromCwd(cfg *config.WorkspaceConfig) (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	var matches []string
+	for name, path := range cfg.ServicePaths {
+		if cwd == path || strings.HasPrefix(cwd, path+"/") {
+			matches = append(matches, name)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("must specify a service name or --group=<name>\nUsage: devstack start <service>\n       devstack start --group=<name>")
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("multiple services match the current directory (%s); please specify a service name explicitly", strings.Join(matches, ", "))
+	}
+}
+
 func runEnable(cmd *cobra.Command, args []string) error {
 	wsFlag, _ := cmd.Flags().GetString("workspace")
 	groupFlag, _ := cmd.Flags().GetString("group")
-
-	if groupFlag == "" && len(args) == 0 {
-		return fmt.Errorf("must specify a service name or --group=<name>\nUsage: devstack start <service>\n       devstack start --group=<name>")
-	}
 
 	ws, err := resolveWorkspace(wsFlag)
 	if err != nil {
@@ -67,7 +87,16 @@ func runEnable(cmd *cobra.Command, args []string) error {
 			}
 		}
 	} else {
-		service := args[0]
+		var service string
+		if len(args) > 0 {
+			service = args[0]
+		} else {
+			service, err = detectServiceFromCwd(cfg)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Auto-detected service: %s\n", service)
+		}
 		resolved, err := config.ResolveDeps(cfg, service)
 		if err != nil {
 			return err

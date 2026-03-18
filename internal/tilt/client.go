@@ -13,13 +13,30 @@ import (
 
 // Client wraps the Tilt HTTP API and CLI.
 type Client struct {
-	host string
-	port int
+	host         string
+	port         int
+	portResolver func() int // if set, called on each request instead of using port
 }
 
 // NewClient creates a new Tilt client targeting the given host and port.
 func NewClient(host string, port int) *Client {
 	return &Client{host: host, port: port}
+}
+
+// NewDynamicClient creates a Tilt client that resolves its port on each request
+// by calling portResolver. This allows the client to adapt when Tilt restarts
+// and the port changes in the workspace registry.
+func NewDynamicClient(host string, portResolver func() int) *Client {
+	return &Client{host: host, portResolver: portResolver}
+}
+
+// currentPort returns the port to use for the current request.
+// If a portResolver is set, it is called to get the latest port.
+func (c *Client) currentPort() int {
+	if c.portResolver != nil {
+		return c.portResolver()
+	}
+	return c.port
 }
 
 // TiltView represents the top-level response from /api/view.
@@ -83,7 +100,7 @@ func isRealService(name string) bool {
 // Returns a descriptive error if Tilt is not running.
 // Pseudo-resources (names starting with "(") are filtered from the result.
 func (c *Client) GetView() (*TiltView, error) {
-	url := fmt.Sprintf("http://%s:%d/api/view", c.host, c.port)
+	url := fmt.Sprintf("http://%s:%d/api/view", c.host, c.currentPort())
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	resp, err := httpClient.Get(url)
@@ -116,7 +133,7 @@ func (c *Client) RunCLI(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	args = append(args, "--port", strconv.Itoa(c.port))
+	args = append(args, "--port", strconv.Itoa(c.currentPort()))
 	cmd := exec.CommandContext(ctx, "tilt", args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
