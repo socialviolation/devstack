@@ -247,10 +247,10 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"| Tool | Args | What it does |\n" +
 		"|------|------|--------------|\n" +
 		"| `status` | — | List all services with STATUS (idle/starting/running/error) and PORT(S). **Always call this first** — do not guess service names or assume what's running. |\n" +
-		"| `start` | `name` (optional) | Tell Tilt to start/build a single service. Does not resolve dependencies — use `devstack start` (CLI) if deps are needed. |\n" +
-		"| `restart` | `name` (optional) | Rebuild and restart a service. Use after code changes. |\n" +
+		"| `start` | `name` (optional) | Tell Tilt to start/build a single service. Auto-enables disabled services. Does not resolve dependencies — use `devstack start` (CLI) if deps are needed. |\n" +
+		"| `restart` | `name` (optional) | Rebuild and restart a service. Auto-enables if disabled. Use after code changes. |\n" +
 		"| `stop` | `name` (optional) | Stop a single service without touching others. |\n" +
-		"| `start_all` | `services` (comma-separated, optional) | Start multiple services at once. Does not resolve dependencies — use `devstack start --group` for dep-aware startup. |\n" +
+		"| `start_all` | `services` (comma-separated, optional) | Start all non-disabled services, or a specific subset. Does not resolve dependencies — use `devstack start --group` for dep-aware startup. |\n" +
 		"| `stop_all` | — | Stop all services. Tilt daemon keeps running. |\n" +
 		"| `logs` | `name` (optional), `lines` (default 100) | Fetch recent log output from a service. |\n" +
 		"| `errors` | `name` (optional), `lines` (default 50) | Fetch error lines from a service (or all services if name omitted). Use for a quick scan before calling `what_happened`. |\n" +
@@ -282,7 +282,7 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"```\n" +
 		"1. devstack status                         # CLI: check if Tilt is running\n" +
 		"                                           #   if output says 'stopped' → go to step 2\n" +
-		"                                           #   if services show STATUS 'idle' → Tilt is running,\n" +
+		"                                           #   if services show STATUS 'idle' or 'disabled' → Tilt is running,\n" +
 		"                                           #   services just haven't been started yet → go to step 3\n" +
 		"2. devstack up                             # start Tilt daemon (only if stopped)\n" +
 		"3. devstack groups find " + defaultService + " # find the group(s) this service belongs to\n" +
@@ -299,7 +299,7 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"| Command | What it does |\n" +
 		"|---------|-------------|\n" +
 		"| `devstack status` | Show per-service status for the current workspace — build/runtime state and ports |\n" +
-		"| `devstack start <service>` | Start a service **and all its declared dependencies** (reads `.devstack.json`) |\n" +
+		"| `devstack start <service>` | Start a service **and all its declared dependencies** (reads `.devstack.json`). Auto-enables disabled services. |\n" +
 		"| `devstack start --group=<name>` | Start a named group of services with dep resolution |\n" +
 		"| `devstack stop <service>` | Stop one service; leaves other services running |\n" +
 		"| `devstack up` | Start the Tilt daemon for this workspace (required before MCP tools work) |\n" +
