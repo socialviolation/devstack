@@ -143,6 +143,16 @@ func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, def
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		// If the resource is disabled, enable it first
+		for _, r := range view.UiResources {
+			if r.Metadata.Name == resolved && r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
+				if out, err := tiltClient.RunCLI("enable", resolved); err != nil {
+					return mcp.NewToolResultError(fmt.Sprintf("failed to enable %q: %v\n%s", resolved, err, out)), nil
+				}
+				break
+			}
+		}
+
 		out, err := tiltClient.RunCLI("trigger", resolved)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to start %q: %v\n%s", resolved, err, out)), nil
@@ -177,6 +187,16 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 		resolved, err := tilt.ResolveService(name, view)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		// If the resource is disabled, enable it first
+		for _, r := range view.UiResources {
+			if r.Metadata.Name == resolved && r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
+				if out, err := tiltClient.RunCLI("enable", resolved); err != nil {
+					return mcp.NewToolResultError(fmt.Sprintf("failed to enable %q: %v\n%s", resolved, err, out)), nil
+				}
+				break
+			}
 		}
 
 		out, err := tiltClient.RunCLI("trigger", resolved)
