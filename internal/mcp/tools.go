@@ -81,7 +81,7 @@ func mcpExtractPorts(links []tilt.EndpointLink) string {
 
 func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 	tool := mcp.NewTool("status",
-		mcp.WithDescription("Show the current status of all services in the dev stack. Returns SERVICE, STATUS (idle/starting/running/building/error/disabled), PORT(S), and last error. 'idle' means the service exists but has not been started — use `devstack start <service>` or `devstack start --group=<name>` from the shell."),
+		mcp.WithDescription("Show the current status of all services in the dev stack. Returns SERVICE, STATUS (idle/starting/running/building/error/disabled), PORT(S), and last error. 'idle' means the service is known to Tilt but not currently running (not started yet, or was stopped). 'running' means the process is up. 'disabled' means it was explicitly stopped."),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -242,11 +242,14 @@ func registerStartAllTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) 
 
 		var toStart []string
 		if servicesArg == "" {
-			// Start all services
+			// Start all services, skipping explicitly disabled resources
 			if len(view.UiResources) == 0 {
 				return mcp.NewToolResultText("Tilt is running but no services are loaded yet. It may still be starting up."), nil
 			}
 			for _, r := range view.UiResources {
+				if r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
+					continue
+				}
 				toStart = append(toStart, r.Metadata.Name)
 			}
 		} else {
@@ -269,21 +272,37 @@ func registerStartAllTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) 
 		}
 
 		var results strings.Builder
-		var failures []string
+		var hardFailures []string
+		var softWarnings []string
+		var started int
 		for _, svc := range toStart {
 			out, err := tiltClient.RunCLI("trigger", svc)
 			if err != nil {
-				failures = append(failures, fmt.Sprintf("%s: %v", svc, err))
-				fmt.Fprintf(&results, "FAILED %s: %v\n%s\n", svc, err, out)
+				combined := out + err.Error()
+				if strings.Contains(combined, "does not exist") || strings.Contains(combined, "currently disabled") {
+					softWarnings = append(softWarnings, fmt.Sprintf("%s: %v", svc, err))
+					fmt.Fprintf(&results, "SKIPPED %s (not triggerable): %v\n", svc, err)
+				} else {
+					hardFailures = append(hardFailures, fmt.Sprintf("%s: %v", svc, err))
+					fmt.Fprintf(&results, "FAILED %s: %v\n%s\n", svc, err, out)
+				}
 			} else {
+				started++
 				fmt.Fprintf(&results, "Started %s\n", svc)
 			}
 		}
 
-		if len(failures) > 0 {
-			return mcp.NewToolResultError(fmt.Sprintf("Some services failed to start:\n%s", results.String())), nil
+		if len(hardFailures) > 0 && started == 0 && len(softWarnings) == 0 {
+			return mcp.NewToolResultError(fmt.Sprintf("All services failed to start:\n%s", results.String())), nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("Started %d service(s):\n%s", len(toStart), results.String())), nil
+		summary := fmt.Sprintf("Started %d service(s)", started)
+		if len(softWarnings) > 0 {
+			summary += fmt.Sprintf(", %d skipped (not triggerable)", len(softWarnings))
+		}
+		if len(hardFailures) > 0 {
+			summary += fmt.Sprintf(", %d failed", len(hardFailures))
+		}
+		return mcp.NewToolResultText(fmt.Sprintf("%s:\n%s", summary, results.String())), nil
 	})
 }
 

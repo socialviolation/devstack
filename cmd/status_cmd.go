@@ -270,8 +270,16 @@ func runStatusWorkspace(wsFlag string) error {
 			}
 		}
 		if err != nil {
-			fmt.Printf("Workspace '%s': Tilt is not running on port %d.\n", ws.Name, ws.TiltPort)
-			fmt.Printf("Start it with: devstack up --workspace=%s\n", ws.Name)
+			// Distinguish between "not running" and "starting but not yet ready".
+			// GetView can fail if Tilt is still initialising (e.g. returns non-JSON
+			// during startup), even though the HTTP port is already bound.
+			apiURL := fmt.Sprintf("http://localhost:%d/api/view", ws.TiltPort)
+			if isTiltReachable(apiURL) {
+				fmt.Printf("Workspace '%s': Tilt is starting on port %d (not yet ready).\n", ws.Name, ws.TiltPort)
+			} else {
+				fmt.Printf("Workspace '%s': Tilt is not running on port %d.\n", ws.Name, ws.TiltPort)
+				fmt.Printf("Start it with: devstack up --workspace=%s\n", ws.Name)
+			}
 			return nil
 		}
 	}
