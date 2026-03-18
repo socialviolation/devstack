@@ -66,15 +66,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ devstack MCP instructions written to %s\n", agentsFile)
 
-	// Inject Stop hook into .claude/settings.local.json
-	if defaultService == "" {
-		fmt.Fprintln(os.Stderr, "Could not determine default service — skipping Stop hook injection.")
-	} else {
-		if err := injectStopHook(defaultService, workspacePath); err != nil {
-			return fmt.Errorf("failed to inject Stop hook: %w", err)
-		}
-	}
-
 	// Auto-register workspace
 	if workspacePath == "" {
 		fmt.Fprintln(os.Stderr, "Could not determine workspace — skipping workspace registration.")
@@ -96,21 +87,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "✓ Workspace '%s' registered at %s\n", ws.Name, absPath)
-
-	// Start Jaeger OTEL container (non-fatal — a missing docker or network
-	// must not block workspace init).
-	containerName := workspace.OtelContainerName(ws.Name)
-	if isOtelRunning(containerName) {
-		fmt.Fprintf(os.Stderr, "Jaeger already running — %s\n", otelUIURL)
-	} else {
-		fmt.Fprintf(os.Stderr, "Starting Jaeger...")
-		if err := startOtel(containerName); err != nil {
-			fmt.Fprintf(os.Stderr, " failed: %v\n", err)
-			fmt.Fprintf(os.Stderr, "OTEL backend can be started manually:\n  docker run -d --name %s --restart unless-stopped -p 16686:16686 -p 4317:4317 -p 4318:4318 -e COLLECTOR_OTLP_ENABLED=true %s\n", containerName, otelImage)
-		} else {
-			fmt.Fprintf(os.Stderr, " started\n✓ Jaeger running — %s\n", otelUIURL)
-		}
-	}
 
 	return nil
 }
@@ -236,11 +212,6 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		contextLine += "\n"
 	}
 
-	stopHookLine := ""
-	if defaultService != "" {
-		stopHookLine = fmt.Sprintf("> Stop hook: `devstack stop %s` runs when this session ends.\n\n", defaultService)
-	}
-
 	devstackJsonPath := ".devstack.json"
 	if workspacePath != "" {
 		devstackJsonPath = workspacePath + "/.devstack.json"
@@ -253,7 +224,6 @@ func buildInstructions(defaultService string, workspacePath string) string {
 
 	return "\n## Dev Stack (devstack MCP)\n\n" +
 		contextLine +
-		stopHookLine +
 		"### Quick Reference\n\n" +
 		"```bash\n" +
 		"# Starting\n" +
