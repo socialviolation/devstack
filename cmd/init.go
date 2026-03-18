@@ -222,20 +222,23 @@ func injectStopHook(defaultService string, workspacePath string) error {
 }
 
 func buildInstructions(defaultService string, workspacePath string) string {
-	// --- context lines (only emitted when values are known) ---
-	workspaceLine := ""
+	contextLine := ""
 	if workspacePath != "" {
-		workspaceLine = fmt.Sprintf("Workspace: `%s`\n", workspacePath)
+		contextLine += fmt.Sprintf("Workspace: `%s`", workspacePath)
 	}
-
-	defaultServiceLine := ""
 	if defaultService != "" {
-		defaultServiceLine = fmt.Sprintf("Default service: `%s` — MCP tools that accept `name` use this when `name` is omitted.\n", defaultService)
+		if contextLine != "" {
+			contextLine += " · "
+		}
+		contextLine += fmt.Sprintf("Default service: `%s`", defaultService)
+	}
+	if contextLine != "" {
+		contextLine += "\n"
 	}
 
 	stopHookLine := ""
 	if defaultService != "" {
-		stopHookLine = fmt.Sprintf("\n> Note: a Stop hook is configured to call `devstack stop %s` when this Claude session ends.\n", defaultService)
+		stopHookLine = fmt.Sprintf("> Stop hook: `devstack stop %s` runs when this session ends.\n\n", defaultService)
 	}
 
 	devstackJsonPath := ".devstack.json"
@@ -243,91 +246,63 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		devstackJsonPath = workspacePath + "/.devstack.json"
 	}
 
-	tools := "" +
-		"| Tool | Args | What it does |\n" +
-		"|------|------|--------------|\n" +
-		"| `status` | — | List all services with STATUS (idle/starting/running/error) and PORT(S). **Always call this first** — do not guess service names or assume what's running. |\n" +
-		"| `start` | `name` (optional) | Tell Tilt to start/build a single service. Auto-enables disabled services. Does not resolve dependencies — use `devstack start` (CLI) if deps are needed. |\n" +
-		"| `restart` | `name` (optional) | Rebuild and restart a service. Auto-enables if disabled. Use after code changes. |\n" +
-		"| `stop` | `name` (optional) | Stop a single service without touching others. |\n" +
-		"| `start_all` | `services` (comma-separated, optional) | Start all non-disabled services, or a specific subset. Does not resolve dependencies — use `devstack start --group` for dep-aware startup. |\n" +
-		"| `stop_all` | — | Stop all services. Tilt daemon keeps running. |\n" +
-		"| `logs` | `name` (optional), `lines` (default 100) | Fetch recent log output from a service. |\n" +
-		"| `errors` | `name` (optional), `lines` (default 50) | Fetch error lines from a service (or all services if name omitted). Use for a quick scan before calling `what_happened`. |\n" +
-		"| `what_happened` | `name` (optional), `since_minutes` (default 15) | **Start here when something is broken.** Correlates Jaeger traces + Tilt logs in one view: shows error trace count, failing operations, business attributes (portfolio.id, user.id), error messages, and raw log error lines. Degrades gracefully if Jaeger is not running. |\n" +
-		"| `traces` | `service` (optional), `limit` (default 20), `since_minutes` (default 30) | List recent traces from Jaeger — timestamp, trace ID, operation, service, duration, ok/error. Use after `what_happened` to browse recent activity. |\n" +
-		"| `trace_detail` | `trace_id` (required) | Full span tree for a trace: every span with service, operation, duration, status, and business attributes. Use after finding a trace_id from `traces` or `trace_search`. |\n" +
-		"| `trace_search` | `attribute` (required), `value` (required), `service` (optional), `limit` (default 10), `since_minutes` (default 60) | Find traces by business attribute — e.g. `attribute=portfolio.id value=123`. Use when a user reports a broken import or request by ID. |\n" +
-		"| `set_environment` | `key`, `value` | Set a named Tilt argument, causing Tilt to reload affected services. Valid keys are declared in the Tiltfile via `config.parse` — grep the Tiltfile or ask the user what arg to set. Example: `key=ENV value=Staging` switches all .NET services to Staging. |\n"
-
-	tearDown := "### Tearing Down the Dev Stack\n\n" +
-		"When ending a session, stop only the services you started — do not tear down the whole stack unless asked.\n\n" +
-		"```\n" +
-		"devstack stop " + defaultService + "          # stop just this service\n" +
-		"devstack status                            # verify it stopped\n" +
-		"```\n\n" +
-		"If you started a group, stop each service individually — deps are not auto-stopped.\n\n" +
-		"Full stack teardown (only if explicitly asked):\n\n" +
-		"```\n" +
-		"devstack down                              # kills Tilt and all running services\n" +
-		"```\n\n"
+	startCmd := "devstack start <service>"
+	if defaultService != "" {
+		startCmd = "devstack start " + defaultService
+	}
 
 	return "\n## Dev Stack (devstack MCP)\n\n" +
-		"devstack is an MCP server that controls this workspace's services via Tilt (a local process orchestrator).\n" +
-		workspaceLine +
-		defaultServiceLine +
-		stopHookLine + "\n" +
-		"### Spinning up the dev stack\n\n" +
-		"The MCP `status` tool and `start`/`start_all` tools **require Tilt to already be running**. Always use the shell CLI to spin up.\n\n" +
-		"```\n" +
-		"1. devstack status                         # CLI: check if Tilt is running\n" +
-		"                                           #   if output says 'stopped' → go to step 2\n" +
-		"                                           #   if services show STATUS 'idle' or 'disabled' → Tilt is running,\n" +
-		"                                           #   services just haven't been started yet → go to step 3\n" +
-		"2. devstack up                             # start Tilt daemon (only if stopped)\n" +
-		"3. devstack services                       # discover groups and deps for all services\n" +
-		"   devstack groups find " + defaultService + "   # or: find groups for just this service\n" +
-		"4. devstack start --group=<name>           # start that group (resolves deps, starts in order)\n" +
-		"```\n\n" +
-		"Start the group associated with the current service — **not all services**. If multiple groups are returned by `groups find`, pick the smallest one that covers what the user needs, or ask.\n\n" +
-		"If no group exists for this service, use `devstack start " + defaultService + "` to start it and its declared dependencies only.\n\n" +
-		"**Do not use the MCP `start` or `start_all` tools to spin up services** — they do not resolve dependencies and fail if Tilt is not yet running. Always use `devstack start` from the shell.\n\n" +
-		"### MCP Tools\n\n" +
-		tools + "\n" +
-		"### Shell CLI\n\n" +
-		"Use the shell CLI for lifecycle management and dependency-aware service control.\n" +
-		"Prefer CLI over MCP tools when starting services that have dependencies.\n\n" +
-		"| Command | What it does |\n" +
-		"|---------|-------------|\n" +
-		"| `devstack status` | Show per-service status for the current workspace — build/runtime state and ports |\n" +
-		"| `devstack services` | Show all known services with runtime status, group membership, and declared deps — use this to discover what's available |\n" +
-		"| `devstack start <service>` | Start a service **and all its declared dependencies** (reads `.devstack.json`). Auto-enables disabled services. |\n" +
-		"| `devstack start --group=<name>` | Start a named group of services with dep resolution |\n" +
-		"| `devstack stop <service>` | Stop one service; leaves other services running |\n" +
-		"| `devstack up` | Start the Tilt daemon for this workspace (required before MCP tools work) |\n" +
-		"| `devstack down` | Stop the Tilt daemon — **this breaks all MCP tools until `devstack up` is run again** |\n" +
-		"| `devstack groups find <service>` | Show which groups contain a service — use this to find the right group to enable |\n" +
-		"| `devstack groups list` | List all declared groups and their members |\n" +
-		"| `devstack groups add <group> <svc> [svc...]` | Add services to a group (creates it if it doesn't exist) |\n" +
-		"| `devstack groups remove <group> <svc> [svc...]` | Remove services from a group |\n" +
-		"| `devstack deps show [service]` | Show declared deps for all services, or resolved start order for one service |\n" +
-		"| `devstack deps add <svc> <dep>` | Declare that `<svc>` depends on `<dep>` |\n" +
-		"| `devstack deps remove <svc> <dep>` | Remove a declared dependency |\n" +
+		contextLine +
+		stopHookLine +
+		"### Quick Reference\n\n" +
+		"```bash\n" +
+		"# Starting\n" +
+		"devstack status                  # is Tilt running?\n" +
+		"devstack up                      # start Tilt if stopped\n" +
+		"devstack services                # discover services, groups, deps\n" +
+		"devstack start --group=<name>    # start group with dep resolution\n" +
 		"\n" +
-		"> Jaeger (http://localhost:16686) receives traces from all instrumented services. Use MCP `traces`/`trace_search`/`trace_detail` tools to query by service, trace ID, or business attributes.\n\n" +
+		"# Something broken (Tilt must be running — use MCP tools)\n" +
+		"what_happened                    # always start here — traces + logs correlated\n" +
+		"errors / logs                    # drill into a specific service\n" +
+		"traces → trace_detail            # find and inspect a specific trace\n" +
+		"\n" +
+		"# Ending session\n" +
+		"devstack stop " + defaultService + "        # stop only what you started\n" +
+		"devstack status                  # verify\n" +
+		"```\n\n" +
+		"### Rules\n\n" +
+		"- **CLI for lifecycle**: `up`, `down`, `start`, `stop`, `services`, `groups`, `deps`\n" +
+		"- **MCP for observation**: `status`, `restart`, `stop`, `logs`, `errors`, `what_happened`, `traces`, `set_environment`\n" +
+		"- **Never use MCP to spin up** — no dep resolution, requires Tilt already running\n" +
+		"- **`what_happened` first** when something is broken — before `errors` or `logs`\n" +
+		"- **Stop only what you started** — don't tear down the whole stack unless asked\n\n" +
+		"### Commands\n\n" +
+		"| Task | Command | Interface |\n" +
+		"|------|---------|----------|\n" +
+		"| Check Tilt is running | `devstack status` | CLI |\n" +
+		"| Discover services, groups, deps | `devstack services` | CLI |\n" +
+		"| Start Tilt daemon | `devstack up` | CLI |\n" +
+		"| Start group with dep resolution | `devstack start --group=<name>` | CLI |\n" +
+		"| Start service + its deps | `" + startCmd + "` | CLI |\n" +
+		"| Stop one service | `devstack stop <service>` | CLI |\n" +
+		"| Kill Tilt entirely | `devstack down` | CLI — destructive, only if asked |\n" +
+		"| Live service state | `status` | MCP |\n" +
+		"| Rebuild after code change | `restart [name]` | MCP |\n" +
+		"| Stop a single service | `stop [name]` | MCP |\n" +
+		"| First stop when broken | `what_happened [name]` | MCP |\n" +
+		"| Scan for errors | `errors [name]` | MCP |\n" +
+		"| Raw log output | `logs [name]` | MCP |\n" +
+		"| Browse recent traces | `traces [service]` | MCP |\n" +
+		"| Full span tree for a trace | `trace_detail <trace_id>` | MCP |\n" +
+		"| Find trace by business attribute | `trace_search <attr> <value>` | MCP |\n" +
+		"| Change Tilt config | `set_environment <key> <value>` | MCP |\n" +
+		"\n" +
 		"### Service Dependencies\n\n" +
-		"Dependencies are declared in `" + devstackJsonPath + "`. When you run `devstack start <service>`, devstack reads this file and starts all deps first, in order.\n\n" +
-		"**How to add a dependency**\n\n" +
-		"Use the CLI — do not hand-edit the JSON:\n\n" +
-		"```\n" +
-		"devstack deps add <service> <dependency>\n" +
+		"Deps are declared in `" + devstackJsonPath + "`. `devstack start` reads them and starts deps first.\n\n" +
+		"```bash\n" +
+		"devstack deps add <svc> <dep>    # declare a dependency\n" +
+		"devstack deps show <svc>         # verify resolved start order\n" +
 		"```\n\n" +
-		"Example: `service-a` fails to connect because `service-b` is not running:\n\n" +
-		"```\n" +
-		"devstack deps add service-a service-b   # declare the dependency\n" +
-		"devstack deps show service-a            # verify: shows resolved start order\n" +
-		"devstack start service-a               # now starts service-b first, then service-a\n" +
-		"```\n\n" +
-		"Add a dep only when a service consistently fails to start because another service is not running. Do not add deps speculatively. **Confirm before adding** — `.devstack.json` is committed to the repo and shared.\n\n" +
-		tearDown
+		"Only add deps when a service consistently fails because another isn't running. **Confirm before adding** — shared config.\n"
 }
