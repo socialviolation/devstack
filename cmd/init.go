@@ -287,6 +287,7 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"| Start service + its deps | `" + startCmd + "` | CLI |\n" +
 		"| Stop one service | `devstack stop <service>` | CLI |\n" +
 		"| Kill Tilt entirely | `devstack down` | CLI — destructive, only if asked |\n" +
+		"| Add a new service to the workspace | `devstack onboard --name=<svc> --path=<repo> --cmd=<run>` | CLI |\n" +
 		"| Live service state | `status` | MCP |\n" +
 		"| Rebuild after code change | `restart [name]` | MCP |\n" +
 		"| Stop a single service | `stop [name]` | MCP |\n" +
@@ -304,5 +305,14 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"devstack deps add <svc> <dep>    # declare a dependency\n" +
 		"devstack deps show <svc>         # verify resolved start order\n" +
 		"```\n\n" +
-		"Only add deps when a service consistently fails because another isn't running. **Confirm before adding** — shared config.\n"
+		"Only add deps when a service consistently fails because another isn't running. **Confirm before adding** — shared config.\n\n" +
+		"### Adding New Services\n\n" +
+		"```bash\n" +
+		"devstack onboard --name=<svc> --path=<repo-path> --cmd=\"<run-command>\" --port=<port> --group=<group>\n" +
+		"```\n\n" +
+		"Appends a `local_resource()` to the Tiltfile, creates `.mcp.json`, runs `devstack init`, and registers the service in `.devstack.json`. Then declare deps if needed:\n\n" +
+		"```bash\n" +
+		"devstack deps add <svc> <dependency>\n" +
+		"devstack start <svc>\n" +
+		"```\n"
 }
