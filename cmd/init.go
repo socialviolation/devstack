@@ -233,7 +233,7 @@ func buildInstructions(defaultService string, workspacePath string) string {
 	tools := "" +
 		"| Tool | Args | What it does |\n" +
 		"|------|------|--------------|\n" +
-		"| `status` | — | List all services with build status, runtime status, and ports. **Always call this first** — do not guess service names. |\n" +
+		"| `status` | — | List all services with STATUS (idle/starting/running/error) and PORT(S). **Always call this first** — do not guess service names or assume what's running. |\n" +
 		"| `start` | `name` (optional) | Tell Tilt to start/build a single service. Does not resolve dependencies — use `devstack start` (CLI) if deps are needed. |\n" +
 		"| `restart` | `name` (optional) | Rebuild and restart a service. Use after code changes. |\n" +
 		"| `stop` | `name` (optional) | Stop a single service without touching others. |\n" +

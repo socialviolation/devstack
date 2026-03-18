@@ -35,9 +35,53 @@ func RegisterTools(mcpServer *server.MCPServer, tiltClient *tilt.Client, default
 	registerTraceSearchTool(mcpServer)
 }
 
+// mcpServiceStatus derives a human-readable status string from Tilt resource state.
+func mcpServiceStatus(r tilt.UIResource) string {
+	if r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
+		return "disabled"
+	}
+	switch r.Status.RuntimeStatus {
+	case "ok":
+		return "running"
+	case "pending":
+		return "starting"
+	case "error":
+		return "error"
+	}
+	if r.Status.UpdateStatus == "running" {
+		return "building"
+	}
+	if r.Status.UpdateStatus == "error" {
+		return "error"
+	}
+	return "idle"
+}
+
+// mcpExtractPorts returns compact ":PORT" strings from endpoint links.
+func mcpExtractPorts(links []tilt.EndpointLink) string {
+	if len(links) == 0 {
+		return "-"
+	}
+	parts := make([]string, 0, len(links))
+	for _, ep := range links {
+		// Extract just the port from the URL
+		u := ep.URL
+		if i := strings.LastIndex(u, ":"); i != -1 {
+			port := strings.TrimRight(u[i:], "/")
+			// Sanity check: port should be short and numeric after the colon
+			if len(port) <= 6 {
+				parts = append(parts, port)
+				continue
+			}
+		}
+		parts = append(parts, u)
+	}
+	return strings.Join(parts, " ")
+}
+
 func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 	tool := mcp.NewTool("status",
-		mcp.WithDescription("Show the current status of all services in the dev stack managed by Tilt. Returns a table of service name, build status, runtime status, and last error. For system-wide status across all workspaces, run `devstack status` from the terminal."),
+		mcp.WithDescription("Show the current status of all services in the dev stack. Returns SERVICE, STATUS (idle/starting/running/building/error/disabled), PORT(S), and last error. 'idle' means the service exists but has not been started — use `devstack start <service>` or `devstack start --group=<name>` from the shell."),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -51,28 +95,21 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 		}
 
 		var sb strings.Builder
-		sb.WriteString("Tilt is running.\n")
-		sb.WriteString("STATUS 'idle' = service not yet started (manual trigger mode). Use `devstack start <service>` or `devstack start --group=<name>` from the shell.\n\n")
-		fmt.Fprintf(&sb, "%-24s %-14s %-14s %s\n", "SERVICE", "BUILD", "RUNTIME", "ERROR")
+		sb.WriteString("Tilt is running.\n\n")
+		fmt.Fprintf(&sb, "%-24s %-10s %-14s %s\n", "SERVICE", "STATUS", "PORT(S)", "ERROR")
 		fmt.Fprintf(&sb, "%s\n", strings.Repeat("-", 80))
 
 		for _, r := range view.UiResources {
-			buildStatus := r.Status.UpdateStatus
-			if buildStatus == "" {
-				buildStatus = "none"
-			}
-			runtimeStatus := r.Status.RuntimeStatus
-			if runtimeStatus == "" {
-				runtimeStatus = "none"
-			}
+			status := mcpServiceStatus(r)
+			ports := mcpExtractPorts(r.Status.EndpointLinks)
 			lastError := ""
 			if len(r.Status.BuildHistory) > 0 {
 				lastError = r.Status.BuildHistory[0].Error
 			}
-			if len(lastError) > 60 {
-				lastError = lastError[:57] + "..."
+			if len(lastError) > 50 {
+				lastError = lastError[:47] + "..."
 			}
-			fmt.Fprintf(&sb, "%-24s %-14s %-14s %s\n", r.Metadata.Name, buildStatus, runtimeStatus, lastError)
+			fmt.Fprintf(&sb, "%-24s %-10s %-14s %s\n", r.Metadata.Name, status, ports, lastError)
 		}
 
 		return mcp.NewToolResultText(sb.String()), nil

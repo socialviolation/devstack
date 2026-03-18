@@ -132,7 +132,7 @@ devstack is an MCP server that controls this workspace's services via Tilt (a lo
 Workspace: `/home/nick/dev/navexa`
 Default service: `navexa-api` — MCP tools that accept `name` use this when `name` is omitted.
 
-> Note: a Stop hook is configured to call `devstack disable navexa-api` when this Claude session ends.
+> Note: a Stop hook is configured to call `devstack stop navexa-api` when this Claude session ends.
 
 ### Spinning up the dev stack
 
@@ -141,28 +141,28 @@ The MCP `status` tool and `start`/`start_all` tools **require Tilt to already be
 ```
 1. devstack status                         # CLI: check if Tilt is running
                                            #   if output says 'stopped' → go to step 2
-                                           #   if services show BUILD/RUNTIME 'none' → Tilt is running,
-                                           #   services just haven't been enabled yet → go to step 3
-2. devstack start                          # start Tilt daemon (only if stopped)
+                                           #   if services show STATUS 'idle' → Tilt is running,
+                                           #   services just haven't been started yet → go to step 3
+2. devstack up                             # start Tilt daemon (only if stopped)
 3. devstack groups find navexa-api # find the group(s) this service belongs to
-4. devstack enable --group=<name>          # enable that group (resolves deps, starts in order)
+4. devstack start --group=<name>           # start that group (resolves deps, starts in order)
 ```
 
 Start the group associated with the current service — **not all services**. If multiple groups are returned by `groups find`, pick the smallest one that covers what the user needs, or ask.
 
-If no group exists for this service, use `devstack enable navexa-api` to start it and its declared dependencies only.
+If no group exists for this service, use `devstack start navexa-api` to start it and its declared dependencies only.
 
-**Do not use the MCP `start` or `start_all` tools to spin up services** — they do not resolve dependencies and fail if Tilt is not yet running. Always use `devstack enable` from the shell.
+**Do not use the MCP `start` or `start_all` tools to spin up services** — they do not resolve dependencies and fail if Tilt is not yet running. Always use `devstack start` from the shell.
 
 ### MCP Tools
 
 | Tool | Args | What it does |
 |------|------|--------------|
-| `status` | — | List all services with build status, runtime status, and ports. **Always call this first** — do not guess service names. |
-| `start` | `name` (optional) | Tell Tilt to start/build a single service. Does not resolve dependencies — use `devstack enable` (CLI) if deps are needed. |
+| `status` | — | List all services with STATUS (idle/starting/running/error) and PORT(S). **Always call this first** — do not guess service names or assume what's running. |
+| `start` | `name` (optional) | Tell Tilt to start/build a single service. Does not resolve dependencies — use `devstack start` (CLI) if deps are needed. |
 | `restart` | `name` (optional) | Rebuild and restart a service. Use after code changes. |
 | `stop` | `name` (optional) | Stop a single service without touching others. |
-| `start_all` | `services` (comma-separated, optional) | Start multiple services at once. Does not resolve dependencies — use `devstack enable --group` for dep-aware startup. |
+| `start_all` | `services` (comma-separated, optional) | Start multiple services at once. Does not resolve dependencies — use `devstack start --group` for dep-aware startup. |
 | `stop_all` | — | Stop all services. Tilt daemon keeps running. |
 | `logs` | `name` (optional), `lines` (default 100) | Fetch recent log output from a service. |
 | `errors` | `name` (optional), `lines` (default 50) | Fetch error lines from a service (or all services if name omitted). Use for a quick scan before calling `what_happened`. |
@@ -180,11 +180,11 @@ Prefer CLI over MCP tools when starting services that have dependencies.
 | Command | What it does |
 |---------|-------------|
 | `devstack status` | Show per-service status for the current workspace — build/runtime state and ports |
-| `devstack enable <service>` | Start a service **and all its declared dependencies** (reads `.devstack.json`) |
-| `devstack enable --group=<name>` | Start a named group of services with dep resolution |
-| `devstack disable <service>` | Stop one service; leaves other services running |
-| `devstack start` | Start the Tilt daemon for this workspace (required before MCP tools work) |
-| `devstack down` | Stop the Tilt daemon — **this breaks all MCP tools until `devstack start` is run again** |
+| `devstack start <service>` | Start a service **and all its declared dependencies** (reads `.devstack.json`) |
+| `devstack start --group=<name>` | Start a named group of services with dep resolution |
+| `devstack stop <service>` | Stop one service; leaves other services running |
+| `devstack up` | Start the Tilt daemon for this workspace (required before MCP tools work) |
+| `devstack down` | Stop the Tilt daemon — **this breaks all MCP tools until `devstack up` is run again** |
 | `devstack groups find <service>` | Show which groups contain a service — use this to find the right group to enable |
 | `devstack groups list` | List all declared groups and their members |
 | `devstack groups add <group> <svc> [svc...]` | Add services to a group (creates it if it doesn't exist) |
@@ -197,7 +197,7 @@ Prefer CLI over MCP tools when starting services that have dependencies.
 
 ### Service Dependencies
 
-Dependencies are declared in `/home/nick/dev/navexa/.devstack.json`. When you run `devstack enable <service>`, devstack reads this file and starts all deps first, in order.
+Dependencies are declared in `/home/nick/dev/navexa/.devstack.json`. When you run `devstack start <service>`, devstack reads this file and starts all deps first, in order.
 
 **How to add a dependency**
 
@@ -212,7 +212,7 @@ Example: `service-a` fails to connect because `service-b` is not running:
 ```
 devstack deps add service-a service-b   # declare the dependency
 devstack deps show service-a            # verify: shows resolved start order
-devstack enable service-a              # now starts service-b first, then service-a
+devstack start service-a               # now starts service-b first, then service-a
 ```
 
 Add a dep only when a service consistently fails to start because another service is not running. Do not add deps speculatively. **Confirm before adding** — `.devstack.json` is committed to the repo and shared.
