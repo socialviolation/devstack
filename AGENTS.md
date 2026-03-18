@@ -216,3 +216,21 @@ devstack start service-a               # now starts service-b first, then servic
 ```
 
 Add a dep only when a service consistently fails to start because another service is not running. Do not add deps speculatively. **Confirm before adding** — `.devstack.json` is committed to the repo and shared.
+
+### Tearing Down the Dev Stack
+
+When ending a session, stop only the services you started — do not tear down the whole stack unless asked.
+
+```
+devstack stop navexa-api          # stop just this service
+devstack status                            # verify it stopped
+```
+
+If you started a group, stop each service individually — deps are not auto-stopped.
+
+Full stack teardown (only if explicitly asked):
+
+```
+devstack down                              # kills Tilt and all running services
+```
+

@@ -247,6 +247,18 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"| `trace_search` | `attribute` (required), `value` (required), `service` (optional), `limit` (default 10), `since_minutes` (default 60) | Find traces by business attribute — e.g. `attribute=portfolio.id value=123`. Use when a user reports a broken import or request by ID. |\n" +
 		"| `set_environment` | `key`, `value` | Set a named Tilt argument, causing Tilt to reload affected services. Valid keys are declared in the Tiltfile via `config.parse` — grep the Tiltfile or ask the user what arg to set. Example: `key=ENV value=Staging` switches all .NET services to Staging. |\n"
 
+	tearDown := "### Tearing Down the Dev Stack\n\n" +
+		"When ending a session, stop only the services you started — do not tear down the whole stack unless asked.\n\n" +
+		"```\n" +
+		"devstack stop " + defaultService + "          # stop just this service\n" +
+		"devstack status                            # verify it stopped\n" +
+		"```\n\n" +
+		"If you started a group, stop each service individually — deps are not auto-stopped.\n\n" +
+		"Full stack teardown (only if explicitly asked):\n\n" +
+		"```\n" +
+		"devstack down                              # kills Tilt and all running services\n" +
+		"```\n\n"
+
 	return "\n## Dev Stack (devstack MCP)\n\n" +
 		"devstack is an MCP server that controls this workspace's services via Tilt (a local process orchestrator).\n" +
 		workspaceLine +
@@ -301,5 +313,6 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"devstack deps show service-a            # verify: shows resolved start order\n" +
 		"devstack start service-a               # now starts service-b first, then service-a\n" +
 		"```\n\n" +
-		"Add a dep only when a service consistently fails to start because another service is not running. Do not add deps speculatively. **Confirm before adding** — `.devstack.json` is committed to the repo and shared.\n"
+		"Add a dep only when a service consistently fails to start because another service is not running. Do not add deps speculatively. **Confirm before adding** — `.devstack.json` is committed to the repo and shared.\n\n" +
+		tearDown
 }
