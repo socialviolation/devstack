@@ -285,7 +285,8 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"                                           #   if services show STATUS 'idle' or 'disabled' → Tilt is running,\n" +
 		"                                           #   services just haven't been started yet → go to step 3\n" +
 		"2. devstack up                             # start Tilt daemon (only if stopped)\n" +
-		"3. devstack groups find " + defaultService + " # find the group(s) this service belongs to\n" +
+		"3. devstack services                       # discover groups and deps for all services\n" +
+		"   devstack groups find " + defaultService + "   # or: find groups for just this service\n" +
 		"4. devstack start --group=<name>           # start that group (resolves deps, starts in order)\n" +
 		"```\n\n" +
 		"Start the group associated with the current service — **not all services**. If multiple groups are returned by `groups find`, pick the smallest one that covers what the user needs, or ask.\n\n" +
@@ -299,6 +300,7 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"| Command | What it does |\n" +
 		"|---------|-------------|\n" +
 		"| `devstack status` | Show per-service status for the current workspace — build/runtime state and ports |\n" +
+		"| `devstack services` | Show all known services with runtime status, group membership, and declared deps — use this to discover what's available |\n" +
 		"| `devstack start <service>` | Start a service **and all its declared dependencies** (reads `.devstack.json`). Auto-enables disabled services. |\n" +
 		"| `devstack start --group=<name>` | Start a named group of services with dep resolution |\n" +
 		"| `devstack stop <service>` | Stop one service; leaves other services running |\n" +
