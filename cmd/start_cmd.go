@@ -16,9 +16,8 @@ import (
 )
 
 var upCmd = &cobra.Command{
-	Use:     "up",
-	Aliases: []string{"start"},
-	Short:   "Start Tilt for a workspace as a background daemon",
+	Use:   "up",
+	Short: "Start Tilt for a workspace as a background daemon",
 	Long:    `Start Tilt (tilt up) as a detached background daemon for the given workspace. Logs are written to ~/.local/share/devstack/<name>/tilt.log and the PID is tracked in tilt.pid.`,
 	RunE:    runStart,
 }

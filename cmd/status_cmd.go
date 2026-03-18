@@ -271,7 +271,7 @@ func runStatusWorkspace(wsFlag string) error {
 		}
 		if err != nil {
 			fmt.Printf("Workspace '%s': Tilt is not running on port %d.\n", ws.Name, ws.TiltPort)
-			fmt.Printf("Start it with: devstack start --workspace=%s\n", ws.Name)
+			fmt.Printf("Start it with: devstack up --workspace=%s\n", ws.Name)
 			return nil
 		}
 	}
