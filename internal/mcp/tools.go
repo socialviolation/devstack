@@ -117,13 +117,13 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
 	tool := mcp.NewTool("restart",
 		mcp.WithDescription("Restart a specific service in the dev stack by triggering a rebuild. If name is omitted, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
-		mcp.WithString("name",
+		mcp.WithString("service",
 			mcp.Description("The service name to restart. Can be the exact Tilt resource name or a configured alias. If omitted, uses the default service for this repo."),
 		),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		name := request.GetString("name", "")
+		name := request.GetString("service", "")
 		if name == "" {
 			name = defaultService
 		}
@@ -163,13 +163,13 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
 	tool := mcp.NewTool("stop",
 		mcp.WithDescription("Stop (disable) a specific service in the dev stack. If name is omitted, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
-		mcp.WithString("name",
+		mcp.WithString("service",
 			mcp.Description("The service name to stop. Can be the exact Tilt resource name or a configured alias. If omitted, uses the default service for this repo."),
 		),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		name := request.GetString("name", "")
+		name := request.GetString("service", "")
 		if name == "" {
 			name = defaultService
 		}
@@ -229,7 +229,7 @@ func registerStopAllTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 func registerLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
 	tool := mcp.NewTool("logs",
 		mcp.WithDescription("Fetch recent log output for a specific service in the dev stack. If name is omitted, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
-		mcp.WithString("name",
+		mcp.WithString("service",
 			mcp.Description("The service name. Can be the exact Tilt resource name or a configured alias. If omitted, uses the default service for this repo."),
 		),
 		mcp.WithNumber("lines",
@@ -238,7 +238,7 @@ func registerLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		name := request.GetString("name", "")
+		name := request.GetString("service", "")
 		if name == "" {
 			name = defaultService
 		}
@@ -280,7 +280,7 @@ func filterErrorLines(raw string) []string {
 func registerErrorsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
 	tool := mcp.NewTool("errors",
 		mcp.WithDescription("Get error lines from service logs. If no service name is given and a default service is configured (DEVSTACK_DEFAULT_SERVICE), scans that service. Otherwise scans all services in parallel."),
-		mcp.WithString("name",
+		mcp.WithString("service",
 			mcp.Description("Optional service name. If empty and a default service is set for this repo, uses that. Otherwise all services are scanned."),
 		),
 		mcp.WithNumber("lines",
@@ -289,7 +289,7 @@ func registerErrorsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, de
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		name := request.GetString("name", "")
+		name := request.GetString("service", "")
 		if name == "" {
 			name = defaultService
 		}
@@ -724,7 +724,7 @@ func formatServiceAnalysis(a *serviceAnalysis, sinceMinutes int) string {
 func registerWhatHappenedTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
 	tool := mcp.NewTool("what_happened",
 		mcp.WithDescription("Diagnose recent errors across services by correlating both log output and distributed traces. For each service, shows: TRACES (error counts, failing operations, business attributes like portfolio.id/user.id, and error messages from Jaeger) and LOG ERRORS (exception/panic/error lines from stdout). Use this as the first diagnostic tool — it gives a complete picture without needing to call traces and logs separately."),
-		mcp.WithString("name",
+		mcp.WithString("service",
 			mcp.Description("Optional service name. If empty and a default service is set for this repo, uses that. Otherwise all services are scanned."),
 		),
 		mcp.WithNumber("since_minutes",
@@ -733,7 +733,7 @@ func registerWhatHappenedTool(mcpServer *server.MCPServer, tiltClient *tilt.Clie
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		name := request.GetString("name", "")
+		name := request.GetString("service", "")
 		if name == "" {
 			name = defaultService
 		}
