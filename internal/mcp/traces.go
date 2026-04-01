@@ -33,12 +33,14 @@ type signozCompositeQuery struct {
 type signozBuilderQuery struct {
 	DataSource         string                 `json:"dataSource"`
 	QueryName          string                 `json:"queryName"`
+	Expression         string                 `json:"expression"`
 	AggregateOperator  string                 `json:"aggregateOperator"`
 	AggregateAttribute map[string]interface{} `json:"aggregateAttribute"`
 	Filters            signozFilters          `json:"filters"`
 	OrderBy            []signozOrderBy        `json:"orderBy"`
 	Limit              int                    `json:"limit"`
 	PageSize           int                    `json:"pageSize"`
+	SelectColumns      []signozFilterKey      `json:"selectColumns"`
 }
 
 type signozFilters struct {
@@ -49,13 +51,14 @@ type signozFilters struct {
 type signozFilter struct {
 	Key   signozFilterKey `json:"key"`
 	Op    string          `json:"op"`
-	Value string          `json:"value"`
+	Value interface{}     `json:"value"`
 }
 
 type signozFilterKey struct {
 	Key      string `json:"key"`
 	Type     string `json:"type"`
 	DataType string `json:"dataType"`
+	IsColumn bool   `json:"isColumn"`
 }
 
 type signozOrderBy struct {
@@ -177,6 +180,34 @@ func signozPost(url string, body interface{}, dest interface{}, queryURL string)
 	return nil
 }
 
+// selectColumnsFor returns the required selectColumns for a given dataSource in list panel queries.
+func selectColumnsFor(dataSource string) []signozFilterKey {
+	col := func(key, dataType string) signozFilterKey {
+		return signozFilterKey{Key: key, Type: "tag", DataType: dataType, IsColumn: true}
+	}
+	switch dataSource {
+	case "logs":
+		return []signozFilterKey{
+			col("timestamp", "string"),
+			col("body", "string"),
+			col("severityText", "string"),
+			col("traceID", "string"),
+			col("spanID", "string"),
+		}
+	default: // "traces"
+		return []signozFilterKey{
+			col("serviceName", "string"),
+			col("name", "string"),
+			col("traceID", "string"),
+			col("spanID", "string"),
+			col("parentSpanID", "string"),
+			col("durationNano", "float64"),
+			col("statusCode", "string"),
+			col("timestamp", "string"),
+		}
+	}
+}
+
 // buildQueryRangeRequest builds a POST /api/v3/query_range request body.
 // dataSource is "traces" or "logs".
 func buildQueryRangeRequest(dataSource, service string, limit int, sinceMinutes int, extraFilters []signozFilter) signozQueryRangeRequest {
@@ -198,6 +229,7 @@ func buildQueryRangeRequest(dataSource, service string, limit int, sinceMinutes 
 				Key:      "serviceName",
 				Type:     "tag",
 				DataType: "string",
+				IsColumn: true,
 			},
 			Op:    "=",
 			Value: service,
@@ -216,14 +248,16 @@ func buildQueryRangeRequest(dataSource, service string, limit int, sinceMinutes 
 				"A": {
 					DataSource:         dataSource,
 					QueryName:          "A",
+					Expression:         "A",
 					AggregateOperator:  "noop",
 					AggregateAttribute: map[string]interface{}{},
 					Filters:            filters,
 					OrderBy: []signozOrderBy{
 						{ColumnName: "timestamp", Order: "desc"},
 					},
-					Limit:    limit,
-					PageSize: limit,
+					Limit:         limit,
+					PageSize:      limit,
+					SelectColumns: selectColumnsFor(dataSource),
 				},
 			},
 		},
@@ -399,7 +433,9 @@ func fetchTrace(queryURL, traceID string) (*traceRecord, error) {
 	return record, nil
 }
 
-// searchTraces searches for traces containing spans with a given attribute key=value.
+// searchTraces searches for root spans with a given attribute key=value.
+// Using isRoot=true means each result row is a distinct trace entry point, giving clean
+// per-trace deduplication across all services without client-side grouping.
 func searchTraces(queryURL, attribute, value, service string, limit int, sinceMinutes int) ([]traceRecord, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/query_range", queryURL)
 
@@ -409,9 +445,20 @@ func searchTraces(queryURL, attribute, value, service string, limit int, sinceMi
 				Key:      attribute,
 				Type:     "tag",
 				DataType: "string",
+				IsColumn: false,
 			},
 			Op:    "=",
 			Value: value,
+		},
+		{
+			Key: signozFilterKey{
+				Key:      "isRoot",
+				Type:     "tag",
+				DataType: "bool",
+				IsColumn: true,
+			},
+			Op:    "=",
+			Value: true,
 		},
 	}
 
@@ -423,12 +470,17 @@ func searchTraces(queryURL, attribute, value, service string, limit int, sinceMi
 	}
 
 	rows := extractListRows(resp)
-	spans := make([]traceSpan, 0, len(rows))
+	seen := make(map[string]bool)
+	records := make([]traceRecord, 0, len(rows))
 	for _, row := range rows {
-		spans = append(spans, rowToTraceSpan(row))
+		s := rowToTraceSpan(row)
+		if s.TraceID == "" || seen[s.TraceID] {
+			continue
+		}
+		seen[s.TraceID] = true
+		records = append(records, traceRecord{TraceID: s.TraceID, Spans: []traceSpan{s}})
 	}
-
-	return groupSpansByTrace(spans), nil
+	return records, nil
 }
 
 // fetchRootTraces fetches only root spans (entry points) for recent traces.
@@ -489,7 +541,7 @@ func fetchLogsForTrace(queryURL, traceID string) ([]logEntry, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/query_range", queryURL)
 
 	traceFilter := signozFilter{
-		Key:   signozFilterKey{Key: "traceID", Type: "tag", DataType: "string"},
+		Key:   signozFilterKey{Key: "traceID", Type: "tag", DataType: "string", IsColumn: true},
 		Op:    "=",
 		Value: traceID,
 	}

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -20,8 +21,10 @@ var errorRegex = regexp.MustCompile(`(?i)(error|exception|panic|fatal|fail)`)
 // defaultService is used as a fallback when a tool's name argument is omitted.
 // otelQueryURL is the SigNoz query API base URL (e.g. http://localhost:3301).
 // If empty, the investigate tool returns an error.
-func RegisterTools(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService, otelQueryURL string) {
-	registerStatusTool(mcpServer, tiltClient)
+// tiltfilePath is the path to the workspace Tiltfile; used to show code locations in status.
+func RegisterTools(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService, otelQueryURL, tiltfilePath string) {
+	serviceDirs := tilt.ParseTiltfileServeDirs(tiltfilePath)
+	registerStatusTool(mcpServer, tiltClient, serviceDirs)
 	registerRestartTool(mcpServer, tiltClient, defaultService)
 	registerStopTool(mcpServer, tiltClient)
 	registerConfigureTool(mcpServer, tiltClient)
@@ -73,9 +76,9 @@ func mcpExtractPorts(links []tilt.EndpointLink) string {
 	return strings.Join(parts, " ")
 }
 
-func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
+func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, serviceDirs map[string]string) {
 	tool := mcp.NewTool("status",
-		mcp.WithDescription("Show the current status of all services in the dev stack. Returns SERVICE, STATUS (idle/starting/running/building/error/disabled), PORT(S), and last error. 'idle' means the service is known to Tilt but not currently running (not started yet, or was stopped). 'running' means the process is up. 'disabled' means it was explicitly stopped."),
+		mcp.WithDescription("Show the current status of all services in the dev stack. Returns SERVICE, STATUS (idle/starting/running/building/error/disabled), PORT(S), PATH (source directory), and last error. 'idle' means the service is known to Tilt but not currently running (not started yet, or was stopped). 'running' means the process is up. 'disabled' means it was explicitly stopped."),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -90,8 +93,8 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 
 		var sb strings.Builder
 		sb.WriteString("Tilt is running.\n\n")
-		fmt.Fprintf(&sb, "%-24s %-10s %-14s %s\n", "SERVICE", "STATUS", "PORT(S)", "ERROR")
-		fmt.Fprintf(&sb, "%s\n", strings.Repeat("-", 80))
+		fmt.Fprintf(&sb, "%-24s %-10s %-14s %-40s %s\n", "SERVICE", "STATUS", "PORT(S)", "PATH", "ERROR")
+		fmt.Fprintf(&sb, "%s\n", strings.Repeat("-", 100))
 
 		for _, r := range view.UiResources {
 			status := mcpServiceStatus(r)
@@ -103,11 +106,24 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 			if len(lastError) > 50 {
 				lastError = lastError[:47] + "..."
 			}
-			fmt.Fprintf(&sb, "%-24s %-10s %-14s %s\n", r.Metadata.Name, status, ports, lastError)
+			path := shortenPath(serviceDirs[r.Metadata.Name])
+			fmt.Fprintf(&sb, "%-24s %-10s %-14s %-40s %s\n", r.Metadata.Name, status, ports, path, lastError)
 		}
 
 		return mcp.NewToolResultText(sb.String()), nil
 	})
+}
+
+// shortenPath replaces the home directory prefix with ~ for readability.
+func shortenPath(path string) string {
+	if path == "" {
+		return "-"
+	}
+	home := os.Getenv("HOME")
+	if home != "" && strings.HasPrefix(path, home) {
+		return "~" + path[len(home):]
+	}
+	return path
 }
 
 func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
@@ -342,7 +358,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			mcp.Description("Specific trace ID to look up. If given, all other filters are ignored."),
 		),
 		mcp.WithString("service",
-			mcp.Description("Filter by service name. If omitted, uses the repo default or queries all services."),
+			mcp.Description("Filter by service name. Only applied when browsing recent executions (mode 3 — no trace_id or attribute given). Attribute searches and trace lookups always span all services."),
 		),
 		mcp.WithString("attribute",
 			mcp.Description("Business attribute key to search by (e.g. 'portfolio.id', 'user.id', 'process.id'). Requires value."),
@@ -368,9 +384,6 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 
 		traceID := request.GetString("trace_id", "")
 		service := request.GetString("service", "")
-		if service == "" {
-			service = defaultService
-		}
 		attribute := request.GetString("attribute", "")
 		value := request.GetString("value", "")
 		sinceMinutes := int(request.GetFloat("since_minutes", 5))
@@ -407,7 +420,10 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			}
 			roots = matched
 		} else {
-			// Mode 3: recent executions
+			// Mode 3: recent executions — apply default service scope if no explicit service given
+			if service == "" {
+				service = defaultService
+			}
 			fetchLimit := limit * 5
 			if fetchLimit < 10 {
 				fetchLimit = 10
