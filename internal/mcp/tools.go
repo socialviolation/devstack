@@ -250,7 +250,7 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			mcp.Description("Number of lines before and after each grep match to include (like grep -C N). Only used when grep is set. Defaults to 0."),
 		),
 		mcp.WithBoolean("since_restart",
-			mcp.Description("If true, return only lines since the last deploy/restart of the service. Uses the Tilt deploy timestamp — no heuristics. Defaults to false."),
+			mcp.Description("If true, return only lines since the last deploy/restart of the service. Uses the Tilt deploy timestamp — no heuristics. Defaults to true."),
 		),
 		mcp.WithBoolean("errors_only",
 			mcp.Description("If true, return only lines matching error/exception/panic/fatal/fail. Defaults to false."),
@@ -266,7 +266,7 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		offset := int(request.GetFloat("offset", 0))
 		grepPattern := request.GetString("grep", "")
 		contextLines := int(request.GetFloat("context", 0))
-		sinceRestart := request.GetBool("since_restart", false)
+		sinceRestart := request.GetBool("since_restart", true)
 		errorsOnly := request.GetBool("errors_only", false)
 
 		// Compile grep regex if provided.

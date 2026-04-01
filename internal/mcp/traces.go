@@ -500,8 +500,8 @@ func fetchTrace(queryURL, traceID string) (*traceRecord, error) {
 }
 
 // searchTraces searches for root spans with a given attribute key=value.
-// Using isRoot=true means each result row is a distinct trace entry point, giving clean
-// per-trace deduplication across all services without client-side grouping.
+// Filters to parentSpanID="" to return only root spans, giving clean per-trace
+// deduplication across all services without client-side grouping.
 func searchTraces(queryURL, attribute, value, service string, limit int, sinceMinutes int) ([]traceRecord, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/query_range", queryURL)
 
@@ -518,13 +518,13 @@ func searchTraces(queryURL, attribute, value, service string, limit int, sinceMi
 		},
 		{
 			Key: signozFilterKey{
-				Key:      "isRoot",
+				Key:      "parentSpanID",
 				Type:     "tag",
-				DataType: "bool",
+				DataType: "string",
 				IsColumn: true,
 			},
 			Op:    "=",
-			Value: true,
+			Value: "",
 		},
 	}
 
