@@ -24,7 +24,7 @@ in the same workspace (used by the Claude Stop hook).`,
 }
 
 func init() {
-	tiltCmd.AddCommand(stopCmd)
+	rootCmd.AddCommand(stopCmd)
 	stopCmd.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
 	stopCmd.Flags().Bool("if-last-session", false, "Only stop if this is the last active Claude session in the workspace")
 }

@@ -22,7 +22,7 @@ Use --group to start all services in a named group.`,
 }
 
 func init() {
-	tiltCmd.AddCommand(svcStartCmd)
+	rootCmd.AddCommand(svcStartCmd)
 	svcStartCmd.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
 	svcStartCmd.Flags().String("group", "", "Start a named group of services instead of a single service")
 }

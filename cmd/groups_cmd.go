@@ -12,7 +12,8 @@ import (
 
 var groupsCmd = &cobra.Command{
 	Use:   "groups",
-	Short: "Manage service groups in .devstack.json",
+	Short: "Manage service groups — lists groups when run without a subcommand",
+	RunE:  runGroupsList,
 }
 
 var groupsListCmd = &cobra.Command{
@@ -50,9 +51,7 @@ func init() {
 	groupsCmd.AddCommand(groupsRemoveCmd)
 	groupsCmd.AddCommand(groupsFindCmd)
 
-	for _, sub := range []*cobra.Command{groupsListCmd, groupsAddCmd, groupsRemoveCmd, groupsFindCmd} {
-		sub.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
-	}
+	groupsCmd.PersistentFlags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
 }
 
 func runGroupsList(cmd *cobra.Command, args []string) error {

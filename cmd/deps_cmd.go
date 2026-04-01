@@ -12,7 +12,8 @@ import (
 
 var depsCmd = &cobra.Command{
 	Use:   "deps",
-	Short: "Manage service dependencies in .devstack.json",
+	Short: "Manage service dependencies — shows all deps when run without a subcommand",
+	RunE:  runDepsShow,
 }
 
 var depsAddCmd = &cobra.Command{
@@ -42,9 +43,7 @@ func init() {
 	depsCmd.AddCommand(depsRemoveCmd)
 	depsCmd.AddCommand(depsShowCmd)
 
-	for _, sub := range []*cobra.Command{depsAddCmd, depsRemoveCmd, depsShowCmd} {
-		sub.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
-	}
+	depsCmd.PersistentFlags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
 }
 
 func runDepsAdd(cmd *cobra.Command, args []string) error {

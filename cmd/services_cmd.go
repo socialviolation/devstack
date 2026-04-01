@@ -3,8 +3,6 @@ package cmd
 import (
 	"fmt"
 	"sort"
-	"strings"
-
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
@@ -13,15 +11,15 @@ import (
 	"devstack/internal/workspace"
 )
 
-var tiltStatusCmd = &cobra.Command{
+var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show services grouped by group with live status",
-	RunE:  runTiltStatus,
+	Short: "Show service status — grouped tree view in workspace, or all workspaces if run outside one",
+	RunE:  runStatus,
 }
 
 func init() {
-	tiltCmd.AddCommand(tiltStatusCmd)
-	tiltStatusCmd.Flags().String("workspace", "", "Workspace name or path (default: auto-detect)")
+	rootCmd.AddCommand(statusCmd)
+	statusCmd.Flags().String("workspace", "", "Workspace name or path (default: auto-detect)")
 }
 
 // groupPalette cycles through distinct colors for group headers.
@@ -33,13 +31,16 @@ var groupPalette = []*color.Color{
 	color.New(color.FgGreen, color.Bold),
 }
 
-func runTiltStatus(cmd *cobra.Command, args []string) error {
+func runStatus(cmd *cobra.Command, args []string) error {
 	wsFlag, _ := cmd.Flags().GetString("workspace")
 	ws, err := resolveWorkspace(wsFlag)
 	if err != nil {
-		return err
+		return runStatusAll()
 	}
+	return runWorkspaceStatus(ws)
+}
 
+func runWorkspaceStatus(ws *workspace.Workspace) error {
 	if actual := workspace.ResolvePort(ws.Name); actual != 0 && actual != ws.TiltPort {
 		ws.TiltPort = actual
 	}
@@ -88,7 +89,7 @@ func runTiltStatus(cmd *cobra.Command, args []string) error {
 	}
 	otelState := ""
 	if ws.OtelMode == "byo" {
-		otelState = fmt.Sprintf("  ·  otel byo")
+		otelState = "  ·  otel byo"
 	} else if isOtelRunning(ws.Name) {
 		uiPort := ws.OtelUIPort
 		if uiPort == 0 {
@@ -107,9 +108,9 @@ func runTiltStatus(cmd *cobra.Command, args []string) error {
 	if tiltErr != nil {
 		apiURL := fmt.Sprintf("http://localhost:%d/api/view", ws.TiltPort)
 		if isTiltReachable(apiURL) {
-			fmt.Println("  Tilt is starting — run 'devstack tilt status' again in a moment.")
+			fmt.Println("  Tilt is starting — run 'devstack status' again in a moment.")
 		} else {
-			fmt.Println("  Run: devstack tilt up")
+			fmt.Println("  Run: devstack up")
 		}
 		return nil
 	}
@@ -121,7 +122,16 @@ func runTiltStatus(cmd *cobra.Command, args []string) error {
 	}
 	sort.Strings(groupNames)
 
-	// Track which services are in at least one group
+	// Build service → group color map for cross-group dep highlighting
+	svcGroupColor := make(map[string]*color.Color)
+	for i, groupName := range groupNames {
+		gc := groupPalette[i%len(groupPalette)]
+		for _, member := range cfg.Groups[groupName] {
+			svcGroupColor[member] = gc
+		}
+	}
+
+	// Track which services belong to at least one group
 	inGroup := make(map[string]bool)
 	for _, members := range cfg.Groups {
 		for _, m := range members {
@@ -138,7 +148,6 @@ func runTiltStatus(cmd *cobra.Command, args []string) error {
 
 		gc := groupPalette[i%len(groupPalette)]
 
-		// Group header with running count
 		groupRunning := 0
 		for _, svc := range members {
 			if r, ok := resourceMap[svc]; ok && serviceStatus(r) == "running" {
@@ -164,7 +173,17 @@ func runTiltStatus(cmd *cobra.Command, args []string) error {
 			statusClr.Printf("%-10s", statusStr)
 			fmt.Printf("  %s", portsStr)
 			if len(deps) > 0 {
-				color.New(color.Faint).Printf("  ← %s", strings.Join(deps, ", "))
+				color.New(color.Faint).Print("  ← ")
+				for k, dep := range deps {
+					if k > 0 {
+						color.New(color.Faint).Print(", ")
+					}
+					if c, ok := svcGroupColor[dep]; ok {
+						c.Print(dep)
+					} else {
+						color.New(color.Faint).Print(dep)
+					}
+				}
 			}
 			fmt.Println()
 		}
@@ -198,7 +217,7 @@ func runTiltStatus(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 	}
 
-	color.New(color.Faint).Printf("  devstack tilt start <service>   ·   devstack tilt start --group=<group>\n")
+	color.New(color.Faint).Printf("  devstack start <service>   ·   devstack start --group=<group>\n")
 
 	return nil
 }
@@ -232,3 +251,4 @@ func svcPorts(svc string, resourceMap map[string]tilt.UIResource) string {
 	}
 	return ports
 }
+

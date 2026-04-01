@@ -10,23 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"devstack/internal/tilt"
 	"devstack/internal/workspace"
 )
-
-var statusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show all registered workspaces and their Tilt status",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return runStatusAll()
-	},
-}
-
-func init() {
-	rootCmd.AddCommand(statusCmd)
-}
 
 
 // runStatusAll shows a summary table of all registered workspaces.
