@@ -91,30 +91,14 @@ type signozListRow struct {
 
 // --- SigNoz trace detail API types ---
 
-// signozTraceResponse is the response from GET /api/v1/traces/{traceID}.
-type signozTraceResponse struct {
-	Status string            `json:"status"`
-	Data   []signozSpanEntry `json:"data"`
-}
-
-type signozSpanEntry struct {
-	TraceID       string                 `json:"traceID"`
-	SpanID        string                 `json:"spanID"`
-	ParentSpanID  string                 `json:"parentSpanID"`
-	Name          string                 `json:"name"`
-	ServiceName   string                 `json:"serviceName"`
-	DurationNano  int64                  `json:"durationNano"`
-	TimeUnixNano  int64                  `json:"timeUnixNano"`
-	StatusCode    string                 `json:"statusCode"`
-	StatusMessage string                 `json:"statusMessage"`
-	Tags          []signozTag            `json:"tags"`
-	Attributes    map[string]interface{} `json:"attributes"`
-}
-
-type signozTag struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-	Type  string `json:"type"`
+// signozTraceV1Item is one entry in the array returned by GET /api/v1/traces/{traceID}.
+// The API returns a columnar format: each item has a "columns" header and "events" rows.
+type signozTraceV1Item struct {
+	StartTimestampMillis int64           `json:"startTimestampMillis"`
+	EndTimestampMillis   int64           `json:"endTimestampMillis"`
+	Columns              []string        `json:"columns"`
+	Events               [][]interface{} `json:"events"`
+	IsSubTree            bool            `json:"isSubTree"`
 }
 
 // --- Internal unified trace representation ---
@@ -386,51 +370,133 @@ func fetchTraces(queryURL, service string, limit int, sinceMinutes int) ([]trace
 }
 
 // fetchTrace fetches a single trace by ID from the SigNoz query-service.
+// The /api/v1/traces/{id} endpoint returns a columnar array format:
+//
+//	[{"columns": ["__time","SpanId",...], "events": [[row1...], [row2...]...]}]
+//
+// Columns: __time(ms), SpanId, TraceId, ServiceName, Name, Kind, DurationNano(str),
+//
+//	TagsKeys([]str), TagsValues([]str), References([]str), Events, HasError,
+//	StatusMessage, StatusCodeString, SpanKind
 func fetchTrace(queryURL, traceID string) (*traceRecord, error) {
 	apiURL := fmt.Sprintf("%s/api/v1/traces/%s", queryURL, traceID)
 
-	var resp signozTraceResponse
-	if err := signozGet(apiURL, &resp, queryURL); err != nil {
+	var items []signozTraceV1Item
+	if err := signozGet(apiURL, &items, queryURL); err != nil {
 		return nil, err
 	}
 
-	if len(resp.Data) == 0 {
+	var allSpans []traceSpan
+	for _, item := range items {
+		// Build column index map.
+		colIdx := make(map[string]int, len(item.Columns))
+		for i, c := range item.Columns {
+			colIdx[c] = i
+		}
+
+		get := func(row []interface{}, col string) interface{} {
+			if i, ok := colIdx[col]; ok && i < len(row) {
+				return row[i]
+			}
+			return nil
+		}
+		getString := func(row []interface{}, col string) string {
+			if v := get(row, col); v != nil {
+				if s, ok := v.(string); ok {
+					return s
+				}
+			}
+			return ""
+		}
+		getStrings := func(row []interface{}, col string) []string {
+			if v := get(row, col); v != nil {
+				if arr, ok := v.([]interface{}); ok {
+					out := make([]string, 0, len(arr))
+					for _, x := range arr {
+						if s, ok := x.(string); ok {
+							out = append(out, s)
+						}
+					}
+					return out
+				}
+			}
+			return nil
+		}
+		getInt64Ms := func(row []interface{}, col string) int64 {
+			if v := get(row, col); v != nil {
+				switch n := v.(type) {
+				case float64:
+					return int64(n)
+				case int64:
+					return n
+				}
+			}
+			return 0
+		}
+
+		for _, row := range item.Events {
+			startMs := getInt64Ms(row, "__time")
+			startNs := startMs * 1_000_000
+
+			// DurationNano comes as a string in this API.
+			var durationNs int64
+			if ds := getString(row, "DurationNano"); ds != "" {
+				fmt.Sscanf(ds, "%d", &durationNs)
+			}
+
+			// Build attrs from parallel TagsKeys/TagsValues arrays.
+			keys := getStrings(row, "TagsKeys")
+			vals := getStrings(row, "TagsValues")
+			attrs := make(map[string]string, len(keys))
+			for i, k := range keys {
+				if i < len(vals) {
+					attrs[k] = vals[i]
+				}
+			}
+
+			// Extract parent span ID from References.
+			// Format: "{TraceId=X, SpanId=Y, RefType=CHILD_OF}"
+			var parentSpanID string
+			for _, ref := range getStrings(row, "References") {
+				// Look for "SpanId=<hex>" — non-empty value means it has a parent.
+				if idx := strings.Index(ref, "SpanId="); idx >= 0 {
+					rest := ref[idx+7:]
+					end := strings.IndexAny(rest, ", }")
+					if end < 0 {
+						end = len(rest)
+					}
+					candidate := strings.TrimSpace(rest[:end])
+					if candidate != "" {
+						parentSpanID = candidate
+						break
+					}
+				}
+			}
+
+			statusCode := strings.ToLower(getString(row, "StatusCodeString"))
+			if statusCode == "" || statusCode == "unset" {
+				statusCode = "unset"
+			}
+
+			allSpans = append(allSpans, traceSpan{
+				TraceID:      getString(row, "TraceId"),
+				SpanID:       getString(row, "SpanId"),
+				ParentSpanID: parentSpanID,
+				Service:      getString(row, "ServiceName"),
+				Operation:    getString(row, "Name"),
+				StartNs:      startNs,
+				DurationNs:   durationNs,
+				StatusCode:   statusCode,
+				StatusMsg:    getString(row, "StatusMessage"),
+				Attrs:        attrs,
+			})
+		}
+	}
+
+	if len(allSpans) == 0 {
 		return nil, nil
 	}
-
-	spans := make([]traceSpan, 0, len(resp.Data))
-	for _, entry := range resp.Data {
-		attrs := make(map[string]string)
-		for _, tag := range entry.Tags {
-			attrs[tag.Key] = tag.Value
-		}
-		for k, v := range entry.Attributes {
-			if s, ok := v.(string); ok {
-				attrs[k] = s
-			}
-		}
-
-		statusCode := strings.ToLower(entry.StatusCode)
-		if statusCode == "" {
-			statusCode = "unset"
-		}
-
-		spans = append(spans, traceSpan{
-			TraceID:      entry.TraceID,
-			SpanID:       entry.SpanID,
-			ParentSpanID: entry.ParentSpanID,
-			Service:      entry.ServiceName,
-			Operation:    entry.Name,
-			StartNs:      entry.TimeUnixNano,
-			DurationNs:   entry.DurationNano,
-			StatusCode:   statusCode,
-			StatusMsg:    entry.StatusMessage,
-			Attrs:        attrs,
-		})
-	}
-
-	record := &traceRecord{TraceID: traceID, Spans: spans}
-	return record, nil
+	return &traceRecord{TraceID: traceID, Spans: allSpans}, nil
 }
 
 // searchTraces searches for root spans with a given attribute key=value.
