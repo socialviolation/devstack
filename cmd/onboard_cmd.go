@@ -90,7 +90,7 @@ func runOnboard(cmd *cobra.Command, args []string) error {
 
 	// Step 4: Build serve_env map
 	serveEnv := map[string]string{
-		"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:18889",
+		"OTEL_EXPORTER_OTLP_ENDPOINT": workspace.OtelOTLPEndpoint(ws),
 	}
 	switch lang {
 	case "dotnet":

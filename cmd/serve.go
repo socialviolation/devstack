@@ -71,7 +71,10 @@ func serveStdio() error {
 	})
 
 	defaultService := viper.GetString("default_service")
-	nvxmcp.RegisterTools(mcpServer, tiltClient, defaultService)
+
+	// Resolve the otel query URL from workspace config (supports BYO mode).
+	otelQueryURL := workspace.OtelQueryEndpoint(resolveServeWorkspace(wsName))
+	nvxmcp.RegisterTools(mcpServer, tiltClient, defaultService, otelQueryURL)
 
 	log.Printf("Starting devstack MCP server with stdio transport")
 
@@ -81,4 +84,16 @@ func serveStdio() error {
 func serveHTTP() error {
 	log.Printf("HTTP transport not yet implemented")
 	return fmt.Errorf("HTTP transport not yet implemented")
+}
+
+// resolveServeWorkspace returns the Workspace for a given name/path string,
+// falling back to a zero-value workspace if not found (e.g. before registration).
+func resolveServeWorkspace(nameOrPath string) *workspace.Workspace {
+	if ws, err := workspace.FindByName(nameOrPath); err == nil {
+		return ws
+	}
+	if ws, err := workspace.FindByPath(nameOrPath); err == nil {
+		return ws
+	}
+	return &workspace.Workspace{}
 }

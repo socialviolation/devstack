@@ -10,9 +10,12 @@ import (
 
 // Workspace represents a registered development workspace.
 type Workspace struct {
-	Name     string `json:"name"`
-	Path     string `json:"path"`      // absolute path to workspace root (e.g. /home/nick/dev/navexa)
-	TiltPort int    `json:"tilt_port"` // port Tilt API listens on for this workspace
+	Name         string `json:"name"`
+	Path         string `json:"path"`       // absolute path to workspace root (e.g. /home/nick/dev/navexa)
+	TiltPort     int    `json:"tilt_port"`  // port Tilt API listens on for this workspace
+	OtelMode     string `json:"otel_mode"`  // "managed" (default) or "byo"
+	OtelEndpoint string `json:"otel_endpoint,omitempty"` // BYO: OTLP push endpoint for services
+	OtelQueryURL string `json:"otel_query_url,omitempty"` // BYO: query API URL (optional, for MCP tools)
 }
 
 // RegistryPath returns the path to the workspace registry JSON file.
@@ -198,6 +201,66 @@ func DetectFromCwd() (*Workspace, error) {
 // backend associated with the given workspace name.
 func OtelContainerName(name string) string {
 	return fmt.Sprintf("devstack-otel-%s", name)
+}
+
+// OtelOTLPEndpoint returns the OTLP HTTP endpoint for a workspace.
+// In managed mode, returns the local Aspire Dashboard OTLP HTTP port.
+// In byo mode, returns OtelEndpoint.
+func OtelOTLPEndpoint(ws *Workspace) string {
+	if ws.OtelMode == "byo" && ws.OtelEndpoint != "" {
+		return ws.OtelEndpoint
+	}
+	return "http://localhost:" + otelOTLPHTTPPort
+}
+
+// OtelQueryEndpoint returns the query API URL for a workspace.
+// In managed mode, returns the local Aspire Dashboard query URL.
+// In byo mode, returns OtelQueryURL (may be empty).
+func OtelQueryEndpoint(ws *Workspace) string {
+	if ws.OtelMode == "byo" {
+		return ws.OtelQueryURL
+	}
+	return otelManagedQueryURL
+}
+
+// otelManagedQueryURL is the query API URL for the managed Aspire Dashboard.
+const otelManagedQueryURL = "http://localhost:18888"
+
+// otelOTLPHTTPPort is the OTLP HTTP port for the managed Aspire Dashboard.
+const otelOTLPHTTPPort = "4318"
+
+// UpdateOtelBYO sets a workspace to BYO mode with the given endpoints.
+func UpdateOtelBYO(name, otlpEndpoint, queryURL string) error {
+	workspaces, err := Load()
+	if err != nil {
+		return err
+	}
+	for i, ws := range workspaces {
+		if strings.ToLower(ws.Name) == strings.ToLower(name) {
+			workspaces[i].OtelMode = "byo"
+			workspaces[i].OtelEndpoint = otlpEndpoint
+			workspaces[i].OtelQueryURL = queryURL
+			return Save(workspaces)
+		}
+	}
+	return fmt.Errorf("workspace %q not found", name)
+}
+
+// UpdateOtelManaged sets a workspace back to managed mode.
+func UpdateOtelManaged(name string) error {
+	workspaces, err := Load()
+	if err != nil {
+		return err
+	}
+	for i, ws := range workspaces {
+		if strings.ToLower(ws.Name) == strings.ToLower(name) {
+			workspaces[i].OtelMode = "managed"
+			workspaces[i].OtelEndpoint = ""
+			workspaces[i].OtelQueryURL = ""
+			return Save(workspaces)
+		}
+	}
+	return fmt.Errorf("workspace %q not found", name)
 }
 
 // UpdatePort updates the TiltPort for a named workspace in the registry.

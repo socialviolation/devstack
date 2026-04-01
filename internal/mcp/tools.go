@@ -19,18 +19,21 @@ var errorRegex = regexp.MustCompile(`(?i)(error|exception|panic|fatal|fail)`)
 
 // RegisterTools registers all devstack service control tools with the given MCP server.
 // defaultService is used as a fallback when a tool's name argument is omitted.
-func RegisterTools(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
+// otelQueryURL is the base URL for the observability query API (e.g. http://localhost:18888
+// for the managed Aspire Dashboard, or a BYO query URL). If empty, trace tools degrade
+// gracefully with a helpful message.
+func RegisterTools(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService, otelQueryURL string) {
 	registerStatusTool(mcpServer, tiltClient)
 	registerRestartTool(mcpServer, tiltClient, defaultService)
 	registerStopTool(mcpServer, tiltClient, defaultService)
 	registerStopAllTool(mcpServer, tiltClient)
 	registerLogsTool(mcpServer, tiltClient, defaultService)
 	registerErrorsTool(mcpServer, tiltClient, defaultService)
-	registerWhatHappenedTool(mcpServer, tiltClient, defaultService)
+	registerWhatHappenedTool(mcpServer, tiltClient, defaultService, otelQueryURL)
 	registerSetEnvironmentTool(mcpServer, tiltClient)
-	registerTracesTool(mcpServer)
-	registerTraceDetailTool(mcpServer)
-	registerTraceSearchTool(mcpServer)
+	registerTracesTool(mcpServer, otelQueryURL)
+	registerTraceDetailTool(mcpServer, otelQueryURL)
+	registerTraceSearchTool(mcpServer, otelQueryURL)
 }
 
 // mcpServiceStatus derives a human-readable status string from Tilt resource state.
@@ -393,91 +396,35 @@ func registerSetEnvironmentTool(mcpServer *server.MCPServer, tiltClient *tilt.Cl
 	})
 }
 
-func registerTracesTool(mcpServer *server.MCPServer) {
+func registerTracesTool(mcpServer *server.MCPServer, otelQueryURL string) {
 	tool := mcp.NewTool("traces",
-		mcp.WithDescription("List recent traces from Jaeger. Returns a table of recent request traces: timestamp, trace ID, root operation, service, duration, and status (ok/error). Use this to see recent activity for a service or the whole system."),
+		mcp.WithDescription("List recent traces from the observability backend (Aspire Dashboard). Returns a table of recent request traces: timestamp, trace ID, root operation, service, duration, and status (ok/error). Use this to see recent activity for a service or the whole system."),
 		mcp.WithString("service",
 			mcp.Description("Optional service name filter (e.g. 'navexa-api'). If omitted, queries all services."),
 		),
 		mcp.WithNumber("limit",
 			mcp.Description("Maximum number of traces to return. Defaults to 20."),
 		),
-		mcp.WithNumber("since_minutes",
-			mcp.Description("Look back this many minutes. Defaults to 30."),
-		),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		service := request.GetString("service", "")
-		limit := int(request.GetFloat("limit", 20))
-		since := int(request.GetFloat("since_minutes", 30))
-
-		timeWindow := timeWindowParams(since)
-
-		if service != "" {
-			params := fmt.Sprintf("service=%s&limit=%d&%s", service, limit, timeWindow)
-			result, err := jaegerGetTraces(params)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			return mcp.NewToolResultText(formatTraceList(result.Data)), nil
+		if otelQueryURL == "" {
+			return mcp.NewToolResultError("No observability query endpoint configured. Set one with: devstack otel set-endpoint <otlp-url> --query-url=<query-url>"), nil
 		}
 
-		// No service: query all services in parallel
-		services, err := jaegerGetServices()
+		service := request.GetString("service", "")
+		limit := int(request.GetFloat("limit", 20))
+
+		traces, err := fetchTraces(otelQueryURL, service, limit)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		if len(services) == 0 {
-			return mcp.NewToolResultText("No services found in Jaeger. Make sure services are running and sending traces."), nil
-		}
 
-		type svcResult struct {
-			traces []jaegerTrace
-			err    error
-		}
-		results := make([]svcResult, len(services))
-		var wg sync.WaitGroup
-		for i, svc := range services {
-			wg.Add(1)
-			go func(idx int, s string) {
-				defer wg.Done()
-				params := fmt.Sprintf("service=%s&limit=%d&%s", s, limit, timeWindow)
-				r, err := jaegerGetTraces(params)
-				if err != nil {
-					results[idx] = svcResult{err: err}
-					return
-				}
-				results[idx] = svcResult{traces: r.Data}
-			}(i, svc)
-		}
-		wg.Wait()
-
-		var all []jaegerTrace
-		for _, r := range results {
-			if r.err == nil {
-				all = append(all, r.traces...)
-			}
-		}
-
-		// Sort all traces by start time descending
-		for i := range all {
-			root := findRootSpan(&all[i])
-			if root == nil {
-				continue
-			}
-			_ = root
-		}
-
-		if len(all) > limit {
-			all = all[:limit]
-		}
-
-		return mcp.NewToolResultText(formatTraceList(all)), nil
+		return mcp.NewToolResultText(formatTraceList(traces)), nil
 	})
 }
 
-func registerTraceDetailTool(mcpServer *server.MCPServer) {
+func registerTraceDetailTool(mcpServer *server.MCPServer, otelQueryURL string) {
 	tool := mcp.NewTool("trace_detail",
 		mcp.WithDescription("Get the full span tree for a specific trace. Shows every span with its service, operation, duration, status, and business attributes (portfolio.id, user.id, etc.). Use this after identifying a trace_id from the `traces` or `trace_search` tools."),
 		mcp.WithString("trace_id",
@@ -487,28 +434,31 @@ func registerTraceDetailTool(mcpServer *server.MCPServer) {
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if otelQueryURL == "" {
+			return mcp.NewToolResultError("No observability query endpoint configured. Set one with: devstack otel set-endpoint <otlp-url> --query-url=<query-url>"), nil
+		}
+
 		traceID := request.GetString("trace_id", "")
 		if traceID == "" {
 			return mcp.NewToolResultError("trace_id is required"), nil
 		}
 
-		url := fmt.Sprintf("%s/api/traces/%s", jaegerQueryURL, traceID)
-		var result jaegerResponse
-		if err := jaegerGet(url, &result); err != nil {
+		record, err := fetchTrace(otelQueryURL, traceID)
+		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		if len(result.Data) == 0 {
-			return mcp.NewToolResultText(fmt.Sprintf("Trace %q not found in Jaeger.", traceID)), nil
+		if record == nil {
+			return mcp.NewToolResultText(fmt.Sprintf("Trace %q not found.", traceID)), nil
 		}
 
-		return mcp.NewToolResultText(formatSpanTree(&result.Data[0])), nil
+		return mcp.NewToolResultText(formatSpanTree(record)), nil
 	})
 }
 
-func registerTraceSearchTool(mcpServer *server.MCPServer) {
+func registerTraceSearchTool(mcpServer *server.MCPServer, otelQueryURL string) {
 	tool := mcp.NewTool("trace_search",
-		mcp.WithDescription("Search for traces by a business attribute (e.g. portfolio.id, user.id, process.id). Returns matching traces. Use this to find all activity related to a specific user, portfolio, or import job."),
+		mcp.WithDescription("Search for traces by a business attribute (e.g. portfolio.id, user.id, process.id). Returns matching traces. Use this to find all activity related to a specific user, portfolio, or import job. Fetches recent traces and filters client-side by attribute."),
 		mcp.WithString("attribute",
 			mcp.Required(),
 			mcp.Description("The attribute key to search for (e.g. 'portfolio.id', 'user.id', 'process.id')."),
@@ -523,95 +473,68 @@ func registerTraceSearchTool(mcpServer *server.MCPServer) {
 		mcp.WithNumber("limit",
 			mcp.Description("Maximum number of matching traces to return. Defaults to 10."),
 		),
-		mcp.WithNumber("since_minutes",
-			mcp.Description("Look back this many minutes. Defaults to 60."),
+		mcp.WithNumber("fetch_limit",
+			mcp.Description("Number of recent traces to fetch before filtering. Defaults to 200."),
 		),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if otelQueryURL == "" {
+			return mcp.NewToolResultError("No observability query endpoint configured. Set one with: devstack otel set-endpoint <otlp-url> --query-url=<query-url>"), nil
+		}
+
 		attribute := request.GetString("attribute", "")
 		value := request.GetString("value", "")
 		service := request.GetString("service", "")
 		limit := int(request.GetFloat("limit", 10))
-		since := int(request.GetFloat("since_minutes", 60))
+		fetchLimit := int(request.GetFloat("fetch_limit", 200))
 
 		if attribute == "" || value == "" {
 			return mcp.NewToolResultError("attribute and value are both required"), nil
 		}
 
-		// Jaeger tags filter: JSON object {"key": "value"}
-		tagsJSON := fmt.Sprintf(`{"%s":"%s"}`, attribute, value)
-		timeWindow := timeWindowParams(since)
-
-		searchWithService := func(svc string) ([]jaegerTrace, error) {
-			params := fmt.Sprintf("service=%s&tags=%s&limit=%d&%s", svc, tagsJSON, limit, timeWindow)
-			result, err := jaegerGetTraces(params)
-			if err != nil {
-				return nil, err
-			}
-			return result.Data, nil
-		}
-
-		if service != "" {
-			traces, err := searchWithService(service)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			if len(traces) == 0 {
-				return mcp.NewToolResultText(fmt.Sprintf("No traces found where %s=%s in service %q (last %d min).", attribute, value, service, since)), nil
-			}
-			return mcp.NewToolResultText(formatTraceList(traces)), nil
-		}
-
-		// Search all services in parallel
-		services, err := jaegerGetServices()
+		// Fetch traces (optionally filtered by service), then filter client-side by attribute.
+		traces, err := fetchTraces(otelQueryURL, service, fetchLimit)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		type svcResult struct {
-			traces []jaegerTrace
-			err    error
-		}
-		results := make([]svcResult, len(services))
-		var wg sync.WaitGroup
-		for i, svc := range services {
-			wg.Add(1)
-			go func(idx int, s string) {
-				defer wg.Done()
-				t, err := searchWithService(s)
-				results[idx] = svcResult{traces: t, err: err}
-			}(i, svc)
-		}
-		wg.Wait()
-
-		var all []jaegerTrace
-		for _, r := range results {
-			if r.err == nil {
-				all = append(all, r.traces...)
+		// Filter: keep traces where any span has the matching attribute.
+		var matched []traceRecord
+		for _, t := range traces {
+			for _, sp := range t.Spans {
+				if aspireAttrValue(sp.Attrs, attribute) == value {
+					matched = append(matched, t)
+					break
+				}
 			}
 		}
 
-		if len(all) == 0 {
-			return mcp.NewToolResultText(fmt.Sprintf("No traces found where %s=%s (last %d min).", attribute, value, since)), nil
+		if len(matched) == 0 {
+			return mcp.NewToolResultText(fmt.Sprintf("No traces found where %s=%s%s.", attribute, value, func() string {
+				if service != "" {
+					return fmt.Sprintf(" in service %q", service)
+				}
+				return ""
+			}())), nil
 		}
-		if len(all) > limit {
-			all = all[:limit]
+		if len(matched) > limit {
+			matched = matched[:limit]
 		}
 
-		return mcp.NewToolResultText(formatTraceList(all)), nil
+		return mcp.NewToolResultText(formatTraceList(matched)), nil
 	})
 }
 
 type serviceAnalysis struct {
-	name        string
-	logErrors   []string
-	logErr      error
-	traces      []jaegerTrace
-	traceErr    error
+	name      string
+	logErrors []string
+	logErr    error
+	traces    []traceRecord
+	traceErr  error
 }
 
-func analyseService(svcName string, tiltClient *tilt.Client, sinceMinutes int) serviceAnalysis {
+func analyseService(svcName string, tiltClient *tilt.Client, otelQueryURL string) serviceAnalysis {
 	a := serviceAnalysis{name: svcName}
 
 	var wg sync.WaitGroup
@@ -628,16 +551,19 @@ func analyseService(svcName string, tiltClient *tilt.Client, sinceMinutes int) s
 		a.logErrors = filterErrorLines(raw)
 	}()
 
-	// Fetch traces from Jaeger
+	// Fetch traces from observability backend
 	go func() {
 		defer wg.Done()
-		params := fmt.Sprintf("service=%s&limit=50&%s", svcName, timeWindowParams(sinceMinutes))
-		result, err := jaegerGetTraces(params)
+		if otelQueryURL == "" {
+			a.traceErr = fmt.Errorf("no observability query endpoint configured")
+			return
+		}
+		records, err := fetchTraces(otelQueryURL, svcName, 50)
 		if err != nil {
 			a.traceErr = err
 			return
 		}
-		a.traces = result.Data
+		a.traces = records
 	}()
 
 	wg.Wait()
@@ -652,9 +578,9 @@ func formatServiceAnalysis(a *serviceAnalysis, sinceMinutes int) string {
 	if a.traceErr != nil {
 		fmt.Fprintf(&sb, "TRACES — unavailable (%v)\n\n", a.traceErr)
 	} else if len(a.traces) == 0 {
-		sb.WriteString("TRACES — no data (service may not be instrumented or Jaeger is empty)\n\n")
+		sb.WriteString("TRACES — no data (service may not be instrumented or observability backend is empty)\n\n")
 	} else {
-		var errTraces []jaegerTrace
+		var errTraces []traceRecord
 		okCount := 0
 		for _, t := range a.traces {
 			hasErr := false
@@ -674,17 +600,17 @@ func formatServiceAnalysis(a *serviceAnalysis, sinceMinutes int) string {
 		fmt.Fprintf(&sb, "TRACES — %d errors, %d ok\n", len(errTraces), okCount)
 
 		for _, t := range errTraces {
-			root := findRootSpan(&t)
+			root := rootSpan(&t)
 			if root == nil {
 				continue
 			}
-			ts := time.UnixMicro(root.StartTime).Local().Format("15:04:05")
+			ts := time.Unix(0, root.StartNs).Local().Format("15:04:05")
 			traceShort := t.TraceID
 			if len(traceShort) > 16 {
 				traceShort = traceShort[:16] + ".."
 			}
-			durationMs := float64(root.Duration) / 1000.0
-			fmt.Fprintf(&sb, "  [ERROR] %s  %s  %s  %.1fms\n", ts, traceShort, root.OperationName, durationMs)
+			durationMs := float64(root.DurationNs) / 1e6
+			fmt.Fprintf(&sb, "  [ERROR] %s  %s  %s  %.1fms\n", ts, traceShort, root.Operation, durationMs)
 
 			// Print business attributes and error details from the failing span(s)
 			for i := range t.Spans {
@@ -692,13 +618,16 @@ func formatServiceAnalysis(a *serviceAnalysis, sinceMinutes int) string {
 				if !spanHasError(sp) {
 					continue
 				}
-				for _, tag := range sp.Tags {
-					switch tag.Key {
+				for _, attr := range sp.Attrs {
+					switch attr.Key {
 					case "portfolio.id", "user.id", "process.id", "file.type", "provider.id":
-						fmt.Fprintf(&sb, "          %s: %v\n", tag.Key, tag.Value)
+						fmt.Fprintf(&sb, "          %s: %s\n", attr.Key, aspireKVString(attr.Value))
 					case "exception.message", "error.message", "otel.status_description":
-						fmt.Fprintf(&sb, "          error: %v\n", tag.Value)
+						fmt.Fprintf(&sb, "          error: %s\n", aspireKVString(attr.Value))
 					}
+				}
+				if sp.StatusMsg != "" {
+					fmt.Fprintf(&sb, "          status: %s\n", sp.StatusMsg)
 				}
 			}
 		}
@@ -721,9 +650,9 @@ func formatServiceAnalysis(a *serviceAnalysis, sinceMinutes int) string {
 	return sb.String()
 }
 
-func registerWhatHappenedTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
+func registerWhatHappenedTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService, otelQueryURL string) {
 	tool := mcp.NewTool("what_happened",
-		mcp.WithDescription("Diagnose recent errors across services by correlating both log output and distributed traces. For each service, shows: TRACES (error counts, failing operations, business attributes like portfolio.id/user.id, and error messages from Jaeger) and LOG ERRORS (exception/panic/error lines from stdout). Use this as the first diagnostic tool — it gives a complete picture without needing to call traces and logs separately."),
+		mcp.WithDescription("Diagnose recent errors across services by correlating both log output and distributed traces. For each service, shows: TRACES (error counts, failing operations, business attributes like portfolio.id/user.id, and error messages from the observability backend) and LOG ERRORS (exception/panic/error lines from stdout). Use this as the first diagnostic tool — it gives a complete picture without needing to call traces and logs separately."),
 		mcp.WithString("service",
 			mcp.Description("Optional service name. If empty and a default service is set for this repo, uses that. Otherwise all services are scanned."),
 		),
@@ -763,7 +692,7 @@ func registerWhatHappenedTool(mcpServer *server.MCPServer, tiltClient *tilt.Clie
 			wg.Add(1)
 			go func(idx int, svcName string) {
 				defer wg.Done()
-				analyses[idx] = analyseService(svcName, tiltClient, sinceMinutes)
+				analyses[idx] = analyseService(svcName, tiltClient, otelQueryURL)
 			}(i, svc)
 		}
 		wg.Wait()
