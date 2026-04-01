@@ -212,77 +212,35 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		contextLine += "\n"
 	}
 
-	devstackJsonPath := ".devstack.json"
-	if workspacePath != "" {
-		devstackJsonPath = workspacePath + "/.devstack.json"
-	}
-
 	startCmd := "devstack start <service>"
 	if defaultService != "" {
 		startCmd = "devstack start " + defaultService
 	}
 
 	return "\n## Dev Stack (devstack MCP)\n\n" +
+		"> **LOCAL DEV ONLY** — devstack manages local services running under Tilt.\n" +
+		"> Do not use it to investigate staging or production issues.\n\n" +
 		contextLine +
-		"### Quick Reference\n\n" +
+		"### Starting the stack (CLI)\n\n" +
+		"MCP tools require Tilt already running. Always use the shell CLI to spin up.\n\n" +
 		"```bash\n" +
-		"# Starting\n" +
-		"devstack status                  # is Tilt running?\n" +
-		"devstack up                      # start Tilt if stopped\n" +
-		"devstack services                # discover services, groups, deps\n" +
-		"devstack start --group=<name>    # start group with dep resolution\n" +
-		"\n" +
-		"# Something broken (Tilt must be running — use MCP tools)\n" +
-		"what_happened                    # always start here — traces + logs correlated\n" +
-		"errors / logs                    # drill into a specific service\n" +
-		"traces → trace_detail            # find and inspect a specific trace\n" +
-		"\n" +
-		"# Ending session\n" +
-		"devstack stop " + defaultService + "        # stop only what you started\n" +
-		"devstack status                  # verify\n" +
+		"devstack status                    # check if Tilt is running\n" +
+		"devstack up                        # start Tilt if stopped\n" +
+		"devstack services                  # list services, groups, and declared deps\n" +
+		"devstack start --group=<group>     # start a named group (resolves deps)\n" +
+		startCmd + "                       # start this service + its deps\n" +
 		"```\n\n" +
+		"### While the stack is running (MCP tools)\n\n" +
+		"| Need | Tool |\n" +
+		"|------|------|\n" +
+		"| Live service states + ports | `status` |\n" +
+		"| Something is broken — start here | `investigate` — traces + correlated logs in one call |\n" +
+		"| Raw stdout/stderr | `process_logs` (set `errors_only=true` to filter noise) |\n" +
+		"| Rebuild after a code change | `restart [name]` |\n" +
+		"| Stop service(s) | `stop [name]` — omit name to stop all |\n" +
+		"| Change a Tilt config value | `configure key=<k> value=<v>` |\n\n" +
 		"### Rules\n\n" +
-		"- **CLI for lifecycle**: `up`, `down`, `start`, `stop`, `services`, `groups`, `deps`\n" +
-		"- **MCP for observation**: `status`, `restart`, `stop`, `logs`, `errors`, `what_happened`, `traces`, `set_environment`\n" +
-		"- **Never use MCP to spin up** — no dep resolution, requires Tilt already running\n" +
-		"- **`what_happened` first** when something is broken — before `errors` or `logs`\n" +
-		"- **Stop only what you started** — don't tear down the whole stack unless asked\n\n" +
-		"### Commands\n\n" +
-		"| Task | Command | Interface |\n" +
-		"|------|---------|----------|\n" +
-		"| Check Tilt is running | `devstack status` | CLI |\n" +
-		"| Discover services, groups, deps | `devstack services` | CLI |\n" +
-		"| Start Tilt daemon | `devstack up` | CLI |\n" +
-		"| Start group with dep resolution | `devstack start --group=<name>` | CLI |\n" +
-		"| Start service + its deps | `" + startCmd + "` | CLI |\n" +
-		"| Stop one service | `devstack stop <service>` | CLI |\n" +
-		"| Kill Tilt entirely | `devstack down` | CLI — destructive, only if asked |\n" +
-		"| Add a new service to the workspace | `devstack onboard --name=<svc> --path=<repo> --cmd=<run>` | CLI |\n" +
-		"| Live service state | `status` | MCP |\n" +
-		"| Rebuild after code change | `restart [name]` | MCP |\n" +
-		"| Stop a single service | `stop [name]` | MCP |\n" +
-		"| First stop when broken | `what_happened [name]` | MCP |\n" +
-		"| Scan for errors | `errors [name]` | MCP |\n" +
-		"| Raw log output | `logs [name]` | MCP |\n" +
-		"| Browse recent traces | `traces [service]` | MCP |\n" +
-		"| Full span tree for a trace | `trace_detail <trace_id>` | MCP |\n" +
-		"| Find trace by business attribute | `trace_search <attr> <value>` | MCP |\n" +
-		"| Change Tilt config | `set_environment <key> <value>` | MCP |\n" +
-		"\n" +
-		"### Service Dependencies\n\n" +
-		"Deps are declared in `" + devstackJsonPath + "`. `devstack start` reads them and starts deps first.\n\n" +
-		"```bash\n" +
-		"devstack deps add <svc> <dep>    # declare a dependency\n" +
-		"devstack deps show <svc>         # verify resolved start order\n" +
-		"```\n\n" +
-		"Only add deps when a service consistently fails because another isn't running. **Confirm before adding** — shared config.\n\n" +
-		"### Adding New Services\n\n" +
-		"```bash\n" +
-		"devstack onboard --name=<svc> --path=<repo-path> --cmd=\"<run-command>\" --port=<port> --group=<group>\n" +
-		"```\n\n" +
-		"Appends a `local_resource()` to the Tiltfile, creates `.mcp.json`, runs `devstack init`, and registers the service in `.devstack.json`. Then declare deps if needed:\n\n" +
-		"```bash\n" +
-		"devstack deps add <svc> <dependency>\n" +
-		"devstack start <svc>\n" +
-		"```\n"
+		"- **`investigate` first** when something is broken — it correlates traces and logs in one call\n" +
+		"- **Stop only what you started** — don't tear down the whole stack unless asked\n" +
+		"- **Never use devstack for prod/staging** — it only sees local Tilt-managed processes\n"
 }
