@@ -74,15 +74,13 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("✓ Dev daemon stopped for '%s'\n", ws.Name)
 
-	// 5. Stop managed observability stack (if in managed mode)
-	if ws.OtelMode != "byo" {
-		if isOtelRunning(ws.Name) {
-			fmt.Printf("Stopping SigNoz...")
-			if err := stopOtel(ws.Name); err != nil {
-				fmt.Fprintf(os.Stderr, " failed: %v\n", err)
-			} else {
-				fmt.Println(" ✓")
-			}
+	// 5. Stop observability stack
+	if isOtelRunning(ws.Name) {
+		fmt.Printf("Stopping SigNoz...")
+		if err := stopOtel(ws.Name); err != nil {
+			fmt.Fprintf(os.Stderr, " failed: %v\n", err)
+		} else {
+			fmt.Println(" ✓")
 		}
 	}
 

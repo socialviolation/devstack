@@ -125,19 +125,15 @@ func runStart(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Started but not yet reachable — logs: %s\n", logFile)
 	}
 
-	// 10. Start observability backend if in managed mode
-	if ws.OtelMode == "byo" {
-		fmt.Printf("OTEL: BYO mode — endpoint: %s\n", ws.OtelEndpoint)
+	// 10. Start observability backend
+	if isOtelRunning(ws.Name) {
+		fmt.Printf("SigNoz already running\n")
 	} else {
-		if isOtelRunning(ws.Name) {
-			fmt.Printf("SigNoz already running\n")
+		fmt.Printf("Starting SigNoz...")
+		if err := startOtel(ws); err != nil {
+			fmt.Fprintf(os.Stderr, " failed: %v\n", err)
 		} else {
-			fmt.Printf("Starting SigNoz...")
-			if err := startOtel(ws); err != nil {
-				fmt.Fprintf(os.Stderr, " failed: %v\n", err)
-			} else {
-				fmt.Printf(" ✓ %s\n", workspace.OtelQueryEndpoint(ws))
-			}
+			fmt.Printf(" ✓ %s\n", workspace.OtelQueryEndpoint(ws))
 		}
 	}
 

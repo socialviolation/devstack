@@ -18,9 +18,8 @@ var errorRegex = regexp.MustCompile(`(?i)(error|exception|panic|fatal|fail)`)
 
 // RegisterTools registers all devstack service control tools with the given MCP server.
 // defaultService is used as a fallback when a tool's name argument is omitted.
-// otelQueryURL is the base URL for the observability query API (e.g. http://localhost:8080
-// for the managed SigNoz query-service, or a BYO query URL). If empty, trace tools degrade
-// gracefully with a helpful message.
+// otelQueryURL is the SigNoz query API base URL (e.g. http://localhost:3301).
+// If empty, the investigate tool returns an error.
 func RegisterTools(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService, otelQueryURL string) {
 	registerStatusTool(mcpServer, tiltClient)
 	registerRestartTool(mcpServer, tiltClient, defaultService)
@@ -364,7 +363,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if otelQueryURL == "" {
-			return mcp.NewToolResultError("No observability query endpoint configured. Set one with: devstack otel set-endpoint <otlp-url> --query-url=<query-url>"), nil
+			return mcp.NewToolResultError("SigNoz is not running. Start it with: devstack otel start"), nil
 		}
 
 		traceID := request.GetString("trace_id", "")

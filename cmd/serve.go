@@ -83,7 +83,6 @@ func serveStdio() error {
 
 	defaultService := viper.GetString("default_service")
 
-	// Resolve the otel query URL from workspace config (supports BYO mode).
 	otelQueryURL := workspace.OtelQueryEndpoint(resolveServeWorkspace(wsName))
 	nvxmcp.RegisterTools(mcpServer, tiltClient, defaultService, otelQueryURL)
 

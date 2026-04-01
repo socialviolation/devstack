@@ -10,15 +10,12 @@ import (
 
 // Workspace represents a registered development workspace.
 type Workspace struct {
-	Name         string `json:"name"`
-	Path         string `json:"path"`       // absolute path to workspace root (e.g. /home/nick/dev/navexa)
-	TiltPort     int    `json:"tilt_port"`  // port Tilt API listens on for this workspace
-	OtelMode     string `json:"otel_mode"`  // "managed" (default) or "byo"
-	OtelEndpoint string `json:"otel_endpoint,omitempty"` // BYO: OTLP push endpoint for services
-	OtelQueryURL string `json:"otel_query_url,omitempty"` // BYO: query API URL (optional, for MCP tools)
+	Name     string `json:"name"`
+	Path     string `json:"path"`      // absolute path to workspace root (e.g. /home/nick/dev/navexa)
+	TiltPort int    `json:"tilt_port"` // port Tilt API listens on for this workspace
 
-	// Managed SigNoz port overrides. Zero means use the default.
-	OtelUIPort       int `json:"otel_ui_port,omitempty"`       // SigNoz UI + query API (default 8080)
+	// SigNoz port overrides. Zero means use the default.
+	OtelUIPort       int `json:"otel_ui_port,omitempty"`        // SigNoz UI + query API (default 3301)
 	OtelOTLPGRPCPort int `json:"otel_otlp_grpc_port,omitempty"` // OTLP gRPC (default 4317)
 	OtelOTLPHTTPPort int `json:"otel_otlp_http_port,omitempty"` // OTLP HTTP (default 4318)
 }
@@ -231,43 +228,16 @@ func (ws *Workspace) HTTPPort() int {
 }
 
 // OtelOTLPEndpoint returns the OTLP HTTP endpoint services should push to.
-// In managed mode uses the workspace's configured HTTP port.
-// In byo mode returns OtelEndpoint.
 func OtelOTLPEndpoint(ws *Workspace) string {
-	if ws.OtelMode == "byo" && ws.OtelEndpoint != "" {
-		return ws.OtelEndpoint
-	}
 	return fmt.Sprintf("http://localhost:%d", ws.HTTPPort())
 }
 
-// OtelQueryEndpoint returns the query API base URL for MCP trace tools.
-// In managed mode uses the workspace's configured UI/query port.
-// In byo mode returns OtelQueryURL (may be empty).
+// OtelQueryEndpoint returns the SigNoz query API base URL used by MCP tools.
 func OtelQueryEndpoint(ws *Workspace) string {
-	if ws.OtelMode == "byo" {
-		return ws.OtelQueryURL
-	}
 	return fmt.Sprintf("http://localhost:%d", ws.UIPort())
 }
 
-// UpdateOtelBYO sets a workspace to BYO mode with the given endpoints.
-func UpdateOtelBYO(name, otlpEndpoint, queryURL string) error {
-	workspaces, err := Load()
-	if err != nil {
-		return err
-	}
-	for i, ws := range workspaces {
-		if strings.ToLower(ws.Name) == strings.ToLower(name) {
-			workspaces[i].OtelMode = "byo"
-			workspaces[i].OtelEndpoint = otlpEndpoint
-			workspaces[i].OtelQueryURL = queryURL
-			return Save(workspaces)
-		}
-	}
-	return fmt.Errorf("workspace %q not found", name)
-}
-
-// UpdateOtelPorts sets port overrides for a managed workspace.
+// UpdateOtelPorts sets port overrides for a workspace.
 // Pass 0 for any port to leave it unchanged.
 func UpdateOtelPorts(name string, uiPort, grpcPort, httpPort int) error {
 	workspaces, err := Load()
@@ -285,23 +255,6 @@ func UpdateOtelPorts(name string, uiPort, grpcPort, httpPort int) error {
 			if httpPort > 0 {
 				workspaces[i].OtelOTLPHTTPPort = httpPort
 			}
-			return Save(workspaces)
-		}
-	}
-	return fmt.Errorf("workspace %q not found", name)
-}
-
-// UpdateOtelManaged sets a workspace back to managed mode.
-func UpdateOtelManaged(name string) error {
-	workspaces, err := Load()
-	if err != nil {
-		return err
-	}
-	for i, ws := range workspaces {
-		if strings.ToLower(ws.Name) == strings.ToLower(name) {
-			workspaces[i].OtelMode = "managed"
-			workspaces[i].OtelEndpoint = ""
-			workspaces[i].OtelQueryURL = ""
 			return Save(workspaces)
 		}
 	}
