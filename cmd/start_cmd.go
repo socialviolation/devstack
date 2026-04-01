@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -53,11 +52,9 @@ func runStart(cmd *cobra.Command, args []string) error {
 		if parseErr == nil {
 			if isProcessAlive(pid) {
 				// Sync registry port with the actual port Tilt is running on
-				if actual := tiltPortFromPID(pid); actual != 0 && actual != ws.TiltPort {
+				if actual := workspace.ResolvePort(ws.Name); actual != 0 && actual != ws.TiltPort {
 					ws.TiltPort = actual
-					if err := workspace.UpdatePort(ws.Name, actual); err == nil {
-						fmt.Printf("Updated workspace port to %d (was stale)\n", actual)
-					}
+					fmt.Printf("Updated workspace port to %d (was stale)\n", actual)
 				}
 				fmt.Printf("Tilt is already running (pid %d, port %d)\n", pid, ws.TiltPort)
 				return nil
@@ -177,26 +174,3 @@ func isProcessAlive(pid int) bool {
 	return err == nil
 }
 
-// tiltPortFromPID reads /proc/<pid>/cmdline and extracts the --port value.
-// Returns 0 if not found.
-func tiltPortFromPID(pid int) int {
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-	if err != nil {
-		return 0
-	}
-	// cmdline is null-byte separated
-	args := strings.Split(string(data), "\x00")
-	for i, arg := range args {
-		if arg == "--port" && i+1 < len(args) {
-			if p, err := strconv.Atoi(args[i+1]); err == nil {
-				return p
-			}
-		}
-		if strings.HasPrefix(arg, "--port=") {
-			if p, err := strconv.Atoi(strings.TrimPrefix(arg, "--port=")); err == nil {
-				return p
-			}
-		}
-	}
-	return 0
-}

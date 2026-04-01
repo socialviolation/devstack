@@ -59,14 +59,9 @@ func serveStdio() error {
 	host := viper.GetString("tilt.host")
 
 	tiltClient := tilt.NewDynamicClient(host, func() int {
-		// Try workspace name first, then path
-		if ws, err := workspace.FindByName(wsName); err == nil {
-			return ws.TiltPort
+		if port := workspace.ResolvePort(wsName); port != 0 {
+			return port
 		}
-		if ws, err := workspace.FindByPath(wsName); err == nil {
-			return ws.TiltPort
-		}
-		// Fall back to configured port
 		return viper.GetInt("tilt.port")
 	})
 
