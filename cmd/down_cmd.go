@@ -72,12 +72,11 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("✓ Tilt stopped for '%s'\n", ws.Name)
 
-	// 5. Stop managed observability container (if in managed mode)
+	// 5. Stop managed observability stack (if in managed mode)
 	if ws.OtelMode != "byo" {
-		containerName := workspace.OtelContainerName(ws.Name)
-		if isOtelRunning(containerName) {
-			fmt.Printf("Stopping Aspire Dashboard...")
-			if err := stopOtel(containerName); err != nil {
+		if isOtelRunning(ws.Name) {
+			fmt.Printf("Stopping SigNoz...")
+			if err := stopOtel(ws.Name); err != nil {
 				fmt.Fprintf(os.Stderr, " failed: %v\n", err)
 			} else {
 				fmt.Println(" ✓")

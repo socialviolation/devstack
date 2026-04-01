@@ -11,30 +11,30 @@ import (
 
 var otelCmd = &cobra.Command{
 	Use:   "otel",
-	Short: "Manage the observability backend (Aspire Dashboard or BYO endpoint)",
+	Short: "Manage the observability backend (SigNoz or BYO endpoint)",
 }
 
 var otelStartCmd = &cobra.Command{
 	Use:   "start",
-	Short: "Start the managed Aspire Dashboard container for a workspace",
+	Short: "Start the managed SigNoz container stack for a workspace",
 	RunE:  runOtelStart,
 }
 
 var otelStopCmd = &cobra.Command{
 	Use:   "stop",
-	Short: "Stop the managed Aspire Dashboard container for a workspace",
+	Short: "Stop the managed SigNoz container stack for a workspace",
 	RunE:  runOtelStop,
 }
 
 var otelStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show whether the Aspire Dashboard container is running",
+	Short: "Show whether the SigNoz stack is running",
 	RunE:  runOtelStatus,
 }
 
 var otelOpenCmd = &cobra.Command{
 	Use:   "open",
-	Short: "Open the Aspire Dashboard in the browser",
+	Short: "Open the SigNoz UI in the browser",
 	RunE:  runOtelOpen,
 }
 
@@ -44,21 +44,21 @@ var otelSetEndpointCmd = &cobra.Command{
 	Long: `Switch the workspace to BYO (bring-your-own) mode.
 
 devstack will configure services to push OTLP telemetry to <otlp-url>
-instead of starting a managed Aspire Dashboard container.
+instead of starting a managed SigNoz container stack.
 
 Optionally provide --query-url to enable trace queries in MCP tools.
 
 Examples:
   devstack otel set-endpoint http://my-collector:4318
-  devstack otel set-endpoint http://my-collector:4318 --query-url=http://my-ui:3000`,
+  devstack otel set-endpoint http://my-collector:4318 --query-url=http://my-signoz:8080`,
 	Args: cobra.ExactArgs(1),
 	RunE: runOtelSetEndpoint,
 }
 
 var otelManagedCmd = &cobra.Command{
 	Use:   "managed",
-	Short: "Switch back to managed mode (Aspire Dashboard container)",
-	Long:  `Switch the workspace back to managed mode. devstack will start and manage an Aspire Dashboard container for observability.`,
+	Short: "Switch back to managed mode (SigNoz container stack)",
+	Long:  `Switch the workspace back to managed mode. devstack will start and manage a SigNoz container stack for observability.`,
 	RunE:  runOtelManaged,
 }
 
@@ -75,7 +75,7 @@ func init() {
 		sub.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
 	}
 
-	otelSetEndpointCmd.Flags().String("query-url", "", "Optional query API URL for MCP trace tools (e.g. http://my-signoz:3301 or http://my-grafana:3000)")
+	otelSetEndpointCmd.Flags().String("query-url", "", "Optional query API URL for MCP trace tools (e.g. http://my-signoz:8080)")
 }
 
 func resolveOtelWorkspace(cmd *cobra.Command) (*workspace.Workspace, error) {
@@ -103,19 +103,17 @@ func runOtelStart(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	containerName := workspace.OtelContainerName(ws.Name)
-
-	if isOtelRunning(containerName) {
-		fmt.Printf("Aspire Dashboard already running for '%s' — %s\n", ws.Name, otelUIURL)
+	if isOtelRunning(ws.Name) {
+		fmt.Printf("SigNoz already running for '%s' — %s\n", ws.Name, otelUIURL)
 		return nil
 	}
 
-	fmt.Printf("Starting Aspire Dashboard for '%s'...", ws.Name)
-	if err := startOtel(containerName); err != nil {
+	fmt.Printf("Starting SigNoz for '%s'...", ws.Name)
+	if err := startOtel(ws.Name); err != nil {
 		fmt.Println(" failed")
 		return err
 	}
-	fmt.Printf(" started\n✓ %s\n", otelUIURL)
+	fmt.Printf(" started\n✓ UI: %s\n  Query API: %s\n", otelUIURL, otelQueryURL)
 	return nil
 }
 
@@ -130,15 +128,13 @@ func runOtelStop(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	containerName := workspace.OtelContainerName(ws.Name)
-
-	if !isOtelRunning(containerName) {
-		fmt.Printf("Aspire Dashboard is not running for '%s'\n", ws.Name)
+	if !isOtelRunning(ws.Name) {
+		fmt.Printf("SigNoz is not running for '%s'\n", ws.Name)
 		return nil
 	}
 
-	fmt.Printf("Stopping Aspire Dashboard for '%s'...", ws.Name)
-	if err := stopOtel(containerName); err != nil {
+	fmt.Printf("Stopping SigNoz for '%s'...", ws.Name)
+	if err := stopOtel(ws.Name); err != nil {
 		fmt.Println(" failed")
 		return err
 	}
@@ -163,14 +159,14 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	containerName := workspace.OtelContainerName(ws.Name)
-
-	if isOtelRunning(containerName) {
-		fmt.Printf("Aspire Dashboard running for '%s': %s\n", ws.Name, otelUIURL)
+	if isOtelRunning(ws.Name) {
+		fmt.Printf("SigNoz running for '%s':\n", ws.Name)
+		fmt.Printf("  UI:        %s\n", otelUIURL)
+		fmt.Printf("  Query API: %s\n", otelQueryURL)
 		fmt.Printf("  OTLP HTTP: http://localhost:%s\n", otelOTLPHTTPPort)
-		fmt.Printf("  OTLP gRPC: http://localhost:%s\n", otelOTLPGRPCPort)
+		fmt.Printf("  OTLP gRPC: localhost:%s\n", otelOTLPGRPCPort)
 	} else {
-		fmt.Printf("Aspire Dashboard not running for '%s'\n", ws.Name)
+		fmt.Printf("SigNoz not running for '%s'\n", ws.Name)
 		fmt.Printf("Run: devstack otel start --workspace=%s\n", ws.Name)
 	}
 	return nil
@@ -187,7 +183,7 @@ func runOtelOpen(cmd *cobra.Command, args []string) error {
 		return exec.Command("xdg-open", ws.OtelQueryURL).Start()
 	}
 
-	fmt.Printf("Opening Aspire Dashboard for '%s': %s\n", ws.Name, otelUIURL)
+	fmt.Printf("Opening SigNoz for '%s': %s\n", ws.Name, otelUIURL)
 	return exec.Command("xdg-open", otelUIURL).Start()
 }
 
@@ -204,10 +200,9 @@ func runOtelSetEndpoint(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to update workspace config: %w", err)
 	}
 
-	containerName := workspace.OtelContainerName(ws.Name)
-	if isOtelRunning(containerName) {
-		fmt.Printf("Stopping managed Aspire Dashboard container...")
-		if stopErr := stopOtel(containerName); stopErr != nil {
+	if isOtelRunning(ws.Name) {
+		fmt.Printf("Stopping managed SigNoz stack...")
+		if stopErr := stopOtel(ws.Name); stopErr != nil {
 			fmt.Printf(" failed (non-fatal): %v\n", stopErr)
 		} else {
 			fmt.Println(" stopped")
@@ -242,9 +237,9 @@ func runOtelManaged(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to update workspace config: %w", err)
 	}
 
-	fmt.Printf("Workspace '%s' switched to managed mode (Aspire Dashboard)\n", ws.Name)
-	fmt.Printf("Start the container: devstack otel start --workspace=%s\n", ws.Name)
-	fmt.Printf("Dashboard UI:        %s\n", otelUIURL)
+	fmt.Printf("Workspace '%s' switched to managed mode (SigNoz)\n", ws.Name)
+	fmt.Printf("Start the stack: devstack otel start --workspace=%s\n", ws.Name)
+	fmt.Printf("UI:              %s\n", otelUIURL)
 
 	return nil
 }

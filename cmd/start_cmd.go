@@ -124,12 +124,11 @@ func runStart(cmd *cobra.Command, args []string) error {
 	if ws.OtelMode == "byo" {
 		fmt.Printf("OTEL: BYO mode — endpoint: %s\n", ws.OtelEndpoint)
 	} else {
-		containerName := workspace.OtelContainerName(ws.Name)
-		if isOtelRunning(containerName) {
-			fmt.Printf("Aspire Dashboard already running\n")
+		if isOtelRunning(ws.Name) {
+			fmt.Printf("SigNoz already running\n")
 		} else {
-			fmt.Printf("Starting Aspire Dashboard...")
-			if err := startOtel(containerName); err != nil {
+			fmt.Printf("Starting SigNoz...")
+			if err := startOtel(ws.Name); err != nil {
 				fmt.Fprintf(os.Stderr, " failed: %v\n", err)
 			} else {
 				fmt.Printf(" ✓ %s\n", otelUIURL)

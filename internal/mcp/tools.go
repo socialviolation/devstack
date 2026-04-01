@@ -19,8 +19,8 @@ var errorRegex = regexp.MustCompile(`(?i)(error|exception|panic|fatal|fail)`)
 
 // RegisterTools registers all devstack service control tools with the given MCP server.
 // defaultService is used as a fallback when a tool's name argument is omitted.
-// otelQueryURL is the base URL for the observability query API (e.g. http://localhost:18888
-// for the managed Aspire Dashboard, or a BYO query URL). If empty, trace tools degrade
+// otelQueryURL is the base URL for the observability query API (e.g. http://localhost:8080
+// for the managed SigNoz query-service, or a BYO query URL). If empty, trace tools degrade
 // gracefully with a helpful message.
 func RegisterTools(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService, otelQueryURL string) {
 	registerStatusTool(mcpServer, tiltClient)
@@ -398,12 +398,15 @@ func registerSetEnvironmentTool(mcpServer *server.MCPServer, tiltClient *tilt.Cl
 
 func registerTracesTool(mcpServer *server.MCPServer, otelQueryURL string) {
 	tool := mcp.NewTool("traces",
-		mcp.WithDescription("List recent traces from the observability backend (Aspire Dashboard). Returns a table of recent request traces: timestamp, trace ID, root operation, service, duration, and status (ok/error). Use this to see recent activity for a service or the whole system."),
+		mcp.WithDescription("List recent traces from the observability backend (SigNoz). Returns a table of recent request traces: timestamp, trace ID, root operation, service, duration, and status (ok/error). Use this to see recent activity for a service or the whole system."),
 		mcp.WithString("service",
 			mcp.Description("Optional service name filter (e.g. 'navexa-api'). If omitted, queries all services."),
 		),
 		mcp.WithNumber("limit",
 			mcp.Description("Maximum number of traces to return. Defaults to 20."),
+		),
+		mcp.WithNumber("since_minutes",
+			mcp.Description("Look-back window in minutes. Defaults to 60."),
 		),
 	)
 
@@ -414,8 +417,9 @@ func registerTracesTool(mcpServer *server.MCPServer, otelQueryURL string) {
 
 		service := request.GetString("service", "")
 		limit := int(request.GetFloat("limit", 20))
+		sinceMinutes := int(request.GetFloat("since_minutes", 60))
 
-		traces, err := fetchTraces(otelQueryURL, service, limit)
+		traces, err := fetchTraces(otelQueryURL, service, limit, sinceMinutes)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -458,7 +462,7 @@ func registerTraceDetailTool(mcpServer *server.MCPServer, otelQueryURL string) {
 
 func registerTraceSearchTool(mcpServer *server.MCPServer, otelQueryURL string) {
 	tool := mcp.NewTool("trace_search",
-		mcp.WithDescription("Search for traces by a business attribute (e.g. portfolio.id, user.id, process.id). Returns matching traces. Use this to find all activity related to a specific user, portfolio, or import job. Fetches recent traces and filters client-side by attribute."),
+		mcp.WithDescription("Search for traces by a business attribute (e.g. portfolio.id, user.id, process.id). Returns matching traces. Use this to find all activity related to a specific user, portfolio, or import job. Filters server-side via SigNoz query API."),
 		mcp.WithString("attribute",
 			mcp.Required(),
 			mcp.Description("The attribute key to search for (e.g. 'portfolio.id', 'user.id', 'process.id')."),
@@ -473,8 +477,8 @@ func registerTraceSearchTool(mcpServer *server.MCPServer, otelQueryURL string) {
 		mcp.WithNumber("limit",
 			mcp.Description("Maximum number of matching traces to return. Defaults to 10."),
 		),
-		mcp.WithNumber("fetch_limit",
-			mcp.Description("Number of recent traces to fetch before filtering. Defaults to 200."),
+		mcp.WithNumber("since_minutes",
+			mcp.Description("Look-back window in minutes. Defaults to 60."),
 		),
 	)
 
@@ -487,39 +491,23 @@ func registerTraceSearchTool(mcpServer *server.MCPServer, otelQueryURL string) {
 		value := request.GetString("value", "")
 		service := request.GetString("service", "")
 		limit := int(request.GetFloat("limit", 10))
-		fetchLimit := int(request.GetFloat("fetch_limit", 200))
+		sinceMinutes := int(request.GetFloat("since_minutes", 60))
 
 		if attribute == "" || value == "" {
 			return mcp.NewToolResultError("attribute and value are both required"), nil
 		}
 
-		// Fetch traces (optionally filtered by service), then filter client-side by attribute.
-		traces, err := fetchTraces(otelQueryURL, service, fetchLimit)
+		matched, err := searchTraces(otelQueryURL, attribute, value, service, limit, sinceMinutes)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		// Filter: keep traces where any span has the matching attribute.
-		var matched []traceRecord
-		for _, t := range traces {
-			for _, sp := range t.Spans {
-				if aspireAttrValue(sp.Attrs, attribute) == value {
-					matched = append(matched, t)
-					break
-				}
-			}
-		}
-
 		if len(matched) == 0 {
-			return mcp.NewToolResultText(fmt.Sprintf("No traces found where %s=%s%s.", attribute, value, func() string {
-				if service != "" {
-					return fmt.Sprintf(" in service %q", service)
-				}
-				return ""
-			}())), nil
-		}
-		if len(matched) > limit {
-			matched = matched[:limit]
+			svcMsg := ""
+			if service != "" {
+				svcMsg = fmt.Sprintf(" in service %q", service)
+			}
+			return mcp.NewToolResultText(fmt.Sprintf("No traces found where %s=%s%s.", attribute, value, svcMsg)), nil
 		}
 
 		return mcp.NewToolResultText(formatTraceList(matched)), nil
@@ -558,7 +546,7 @@ func analyseService(svcName string, tiltClient *tilt.Client, otelQueryURL string
 			a.traceErr = fmt.Errorf("no observability query endpoint configured")
 			return
 		}
-		records, err := fetchTraces(otelQueryURL, svcName, 50)
+		records, err := fetchTraces(otelQueryURL, svcName, 50, 15)
 		if err != nil {
 			a.traceErr = err
 			return
@@ -618,12 +606,12 @@ func formatServiceAnalysis(a *serviceAnalysis, sinceMinutes int) string {
 				if !spanHasError(sp) {
 					continue
 				}
-				for _, attr := range sp.Attrs {
-					switch attr.Key {
+				for k, v := range sp.Attrs {
+					switch k {
 					case "portfolio.id", "user.id", "process.id", "file.type", "provider.id":
-						fmt.Fprintf(&sb, "          %s: %s\n", attr.Key, aspireKVString(attr.Value))
+						fmt.Fprintf(&sb, "          %s: %s\n", k, v)
 					case "exception.message", "error.message", "otel.status_description":
-						fmt.Fprintf(&sb, "          error: %s\n", aspireKVString(attr.Value))
+						fmt.Fprintf(&sb, "          error: %s\n", v)
 					}
 				}
 				if sp.StatusMsg != "" {

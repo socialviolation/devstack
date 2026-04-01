@@ -197,14 +197,8 @@ func DetectFromCwd() (*Workspace, error) {
 	return nil, fmt.Errorf("not inside a registered devstack workspace. Run: devstack register")
 }
 
-// OtelContainerName returns the Docker container name for the Aspire Dashboard OTEL
-// backend associated with the given workspace name.
-func OtelContainerName(name string) string {
-	return fmt.Sprintf("devstack-otel-%s", name)
-}
-
 // OtelOTLPEndpoint returns the OTLP HTTP endpoint for a workspace.
-// In managed mode, returns the local Aspire Dashboard OTLP HTTP port.
+// In managed mode, returns the local SigNoz otel-collector OTLP HTTP port.
 // In byo mode, returns OtelEndpoint.
 func OtelOTLPEndpoint(ws *Workspace) string {
 	if ws.OtelMode == "byo" && ws.OtelEndpoint != "" {
@@ -214,7 +208,7 @@ func OtelOTLPEndpoint(ws *Workspace) string {
 }
 
 // OtelQueryEndpoint returns the query API URL for a workspace.
-// In managed mode, returns the local Aspire Dashboard query URL.
+// In managed mode, returns the local SigNoz query-service URL.
 // In byo mode, returns OtelQueryURL (may be empty).
 func OtelQueryEndpoint(ws *Workspace) string {
 	if ws.OtelMode == "byo" {
@@ -223,10 +217,10 @@ func OtelQueryEndpoint(ws *Workspace) string {
 	return otelManagedQueryURL
 }
 
-// otelManagedQueryURL is the query API URL for the managed Aspire Dashboard.
-const otelManagedQueryURL = "http://localhost:18888"
+// otelManagedQueryURL is the query API URL for the managed SigNoz query-service.
+const otelManagedQueryURL = "http://localhost:8080"
 
-// otelOTLPHTTPPort is the OTLP HTTP port for the managed Aspire Dashboard.
+// otelOTLPHTTPPort is the OTLP HTTP port for the managed SigNoz otel-collector.
 const otelOTLPHTTPPort = "4318"
 
 // UpdateOtelBYO sets a workspace to BYO mode with the given endpoints.

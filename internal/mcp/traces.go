@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,108 +10,111 @@ import (
 	"time"
 )
 
-// aspireDashboardURL is the default query URL for the managed Aspire Dashboard.
-// The /api/telemetry/* endpoints require Dashboard__Api__Enabled=true and
-// Dashboard__Api__AuthMode=Unsecured (set when the container is started by devstack).
-const aspireDashboardURL = "http://localhost:18888"
+// signozQueryURL is the default query URL for the managed SigNoz query-service.
+const signozQueryURL = "http://localhost:8080"
 
-// --- Aspire Dashboard API response types ---
-// The /api/telemetry/traces endpoint returns OTLP JSON format.
-// See: https://opentelemetry.io/docs/specs/otlp/#json-encoding
+// --- SigNoz query_range API types ---
 
-type aspireTelemetryResponse struct {
-	Data          []aspireResourceSpans `json:"data"`
-	TotalCount    int                   `json:"totalCount"`
-	ReturnedCount int                   `json:"returnedCount"`
+// signozQueryRangeRequest is the body for POST /api/v3/query_range.
+type signozQueryRangeRequest struct {
+	Start          int64                  `json:"start"`
+	End            int64                  `json:"end"`
+	Step           int                    `json:"step"`
+	Variables      map[string]interface{} `json:"variables"`
+	CompositeQuery signozCompositeQuery   `json:"compositeQuery"`
 }
 
-// aspireResourceSpans is the OTLP JSON resourceSpans object.
-type aspireResourceSpans struct {
-	Resource   aspireResource     `json:"resource"`
-	ScopeSpans []aspireScopeSpans `json:"scopeSpans"`
+type signozCompositeQuery struct {
+	QueryType      string                        `json:"queryType"`
+	PanelType      string                        `json:"panelType"`
+	BuilderQueries map[string]signozBuilderQuery `json:"builderQueries"`
 }
 
-type aspireResource struct {
-	Attributes []aspireKeyValue `json:"attributes"`
+type signozBuilderQuery struct {
+	DataSource         string                 `json:"dataSource"`
+	QueryName          string                 `json:"queryName"`
+	AggregateOperator  string                 `json:"aggregateOperator"`
+	AggregateAttribute map[string]interface{} `json:"aggregateAttribute"`
+	Filters            signozFilters          `json:"filters"`
+	OrderBy            []signozOrderBy        `json:"orderBy"`
+	Limit              int                    `json:"limit"`
+	PageSize           int                    `json:"pageSize"`
 }
 
-type aspireScopeSpans struct {
-	Scope aspireScope  `json:"scope"`
-	Spans []aspireSpan `json:"spans"`
+type signozFilters struct {
+	Op    string         `json:"op"`
+	Items []signozFilter `json:"items"`
 }
 
-type aspireScope struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
+type signozFilter struct {
+	Key   signozFilterKey `json:"key"`
+	Op    string          `json:"op"`
+	Value string          `json:"value"`
 }
 
-type aspireSpan struct {
-	TraceID           string           `json:"traceId"`
-	SpanID            string           `json:"spanId"`
-	ParentSpanID      string           `json:"parentSpanId"`
-	Name              string           `json:"name"`
-	Kind              int              `json:"kind"`
-	StartTimeUnixNano string           `json:"startTimeUnixNano"` // string-encoded nanoseconds
-	EndTimeUnixNano   string           `json:"endTimeUnixNano"`   // string-encoded nanoseconds
-	Attributes        []aspireKeyValue `json:"attributes"`
-	Status            aspireStatus     `json:"status"`
+type signozFilterKey struct {
+	Key      string `json:"key"`
+	Type     string `json:"type"`
+	DataType string `json:"dataType"`
 }
 
-type aspireStatus struct {
-	Code    int    `json:"code"`    // 0=unset, 1=ok, 2=error
-	Message string `json:"message"`
+type signozOrderBy struct {
+	ColumnName string `json:"columnName"`
+	Order      string `json:"order"`
 }
 
-type aspireKeyValue struct {
-	Key   string      `json:"key"`
-	Value aspireValue `json:"value"`
+// signozQueryRangeResponse is the response from POST /api/v3/query_range.
+type signozQueryRangeResponse struct {
+	Status string               `json:"status"`
+	Data   signozQueryRangeData `json:"data"`
 }
 
-type aspireValue struct {
-	StringValue string  `json:"stringValue,omitempty"`
-	IntValue    string  `json:"intValue,omitempty"` // JSON int64 is string-encoded in OTLP
-	BoolValue   bool    `json:"boolValue,omitempty"`
-	DoubleValue float64 `json:"doubleValue,omitempty"`
+type signozQueryRangeData struct {
+	ResultType string              `json:"resultType"`
+	Result     []signozQueryResult `json:"result"`
 }
 
-// aspireResourcesResponse is returned by /api/telemetry/resources.
-type aspireResourcesResponse struct {
-	Data []aspireResourceEntry `json:"data"`
+type signozQueryResult struct {
+	QueryName string          `json:"queryName"`
+	Series    interface{}     `json:"series"` // unused for list panel
+	List      []signozListRow `json:"list"`
 }
 
-type aspireResourceEntry struct {
-	Name string `json:"name"`
+// signozListRow is a single row in a list panel result.
+type signozListRow struct {
+	Timestamp string                 `json:"timestamp"`
+	Data      map[string]interface{} `json:"data"`
 }
 
-// aspireKVString returns the string representation of an aspireValue.
-func aspireKVString(v aspireValue) string {
-	if v.StringValue != "" {
-		return v.StringValue
-	}
-	if v.IntValue != "" {
-		return v.IntValue
-	}
-	if v.BoolValue {
-		return "true"
-	}
-	if v.DoubleValue != 0 {
-		return fmt.Sprintf("%g", v.DoubleValue)
-	}
-	return ""
+// --- SigNoz trace detail API types ---
+
+// signozTraceResponse is the response from GET /api/v1/traces/{traceID}.
+type signozTraceResponse struct {
+	Status string            `json:"status"`
+	Data   []signozSpanEntry `json:"data"`
 }
 
-// aspireAttrValue returns the value for a given attribute key, or "".
-func aspireAttrValue(attrs []aspireKeyValue, key string) string {
-	for _, a := range attrs {
-		if a.Key == key {
-			return aspireKVString(a.Value)
-		}
-	}
-	return ""
+type signozSpanEntry struct {
+	TraceID       string                 `json:"traceID"`
+	SpanID        string                 `json:"spanID"`
+	ParentSpanID  string                 `json:"parentSpanID"`
+	Name          string                 `json:"name"`
+	ServiceName   string                 `json:"serviceName"`
+	DurationNano  int64                  `json:"durationNano"`
+	TimeUnixNano  int64                  `json:"timeUnixNano"`
+	StatusCode    string                 `json:"statusCode"`
+	StatusMessage string                 `json:"statusMessage"`
+	Tags          []signozTag            `json:"tags"`
+	Attributes    map[string]interface{} `json:"attributes"`
+}
+
+type signozTag struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+	Type  string `json:"type"`
 }
 
 // --- Internal unified trace representation ---
-// We normalise Aspire Dashboard OTLP JSON into this representation for display.
 
 type traceSpan struct {
 	TraceID      string
@@ -118,11 +122,11 @@ type traceSpan struct {
 	ParentSpanID string
 	Service      string
 	Operation    string
-	StartNs      int64 // Unix nanoseconds
+	StartNs      int64  // Unix nanoseconds
 	DurationNs   int64
-	StatusCode   int // 0=unset, 1=ok, 2=error
+	StatusCode   string // "ok", "error", "unset"
 	StatusMsg    string
-	Attrs        []aspireKeyValue
+	Attrs        map[string]string
 }
 
 type traceRecord struct {
@@ -132,7 +136,7 @@ type traceRecord struct {
 
 // --- HTTP helpers ---
 
-func aspireGet(url string, dest interface{}, queryURL string) error {
+func signozGet(url string, dest interface{}, queryURL string) error {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -150,96 +154,167 @@ func aspireGet(url string, dest interface{}, queryURL string) error {
 	return nil
 }
 
-// fetchTraces fetches traces from the Aspire Dashboard API.
-// queryURL: the base URL (e.g. http://localhost:18888).
-// service: optional resource name filter.
-// limit: max traces to return.
-func fetchTraces(queryURL, service string, limit int) ([]traceRecord, error) {
-	apiURL := fmt.Sprintf("%s/api/telemetry/traces?limit=%d", queryURL, limit)
+func signozPost(url string, body interface{}, dest interface{}, queryURL string) error {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(url, "application/json", bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("observability backend is not reachable at %s — start it with: devstack otel start", queryURL)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("observability backend returned HTTP %d from %s", resp.StatusCode, url)
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
+		return fmt.Errorf("failed to decode observability response from %s: %w", url, err)
+	}
+	return nil
+}
+
+// buildQueryRangeRequest builds a POST /api/v3/query_range request body for listing traces.
+func buildQueryRangeRequest(service string, limit int, sinceMinutes int, extraFilters []signozFilter) signozQueryRangeRequest {
+	now := time.Now()
+	endMs := now.UnixMilli()
+	startMs := now.Add(-time.Duration(sinceMinutes) * time.Minute).UnixMilli()
+
+	filters := signozFilters{
+		Op:    "AND",
+		Items: extraFilters,
+	}
+	if filters.Items == nil {
+		filters.Items = []signozFilter{}
+	}
+
 	if service != "" {
-		apiURL += "&resourceNames=" + service
+		filters.Items = append(filters.Items, signozFilter{
+			Key: signozFilterKey{
+				Key:      "serviceName",
+				Type:     "tag",
+				DataType: "string",
+			},
+			Op:    "=",
+			Value: service,
+		})
 	}
 
-	var resp aspireTelemetryResponse
-	if err := aspireGet(apiURL, &resp, queryURL); err != nil {
-		return nil, err
+	return signozQueryRangeRequest{
+		Start:     startMs,
+		End:       endMs,
+		Step:      60,
+		Variables: map[string]interface{}{},
+		CompositeQuery: signozCompositeQuery{
+			QueryType: "builder",
+			PanelType: "list",
+			BuilderQueries: map[string]signozBuilderQuery{
+				"A": {
+					DataSource:         "traces",
+					QueryName:          "A",
+					AggregateOperator:  "noop",
+					AggregateAttribute: map[string]interface{}{},
+					Filters:            filters,
+					OrderBy: []signozOrderBy{
+						{ColumnName: "timestamp", Order: "desc"},
+					},
+					Limit:    limit,
+					PageSize: limit,
+				},
+			},
+		},
 	}
-
-	return normaliseTraces(resp.Data), nil
 }
 
-// fetchTrace fetches a single trace by ID from the Aspire Dashboard API.
-func fetchTrace(queryURL, traceID string) (*traceRecord, error) {
-	apiURL := fmt.Sprintf("%s/api/telemetry/traces/%s", queryURL, traceID)
-
-	var resp aspireTelemetryResponse
-	if err := aspireGet(apiURL, &resp, queryURL); err != nil {
-		return nil, err
+// extractListRows returns the list rows from query A in the response.
+func extractListRows(resp signozQueryRangeResponse) []signozListRow {
+	for _, result := range resp.Data.Result {
+		if result.QueryName == "A" {
+			return result.List
+		}
 	}
-
-	records := normaliseTraces(resp.Data)
-	if len(records) == 0 {
-		return nil, nil
-	}
-	return &records[0], nil
+	return nil
 }
 
-// fetchResources returns the list of resource names (services) from the Aspire Dashboard.
-func fetchResources(queryURL string) ([]string, error) {
-	apiURL := fmt.Sprintf("%s/api/telemetry/resources", queryURL)
+// rowToTraceSpan converts a signozListRow to a traceSpan.
+func rowToTraceSpan(row signozListRow) traceSpan {
+	d := row.Data
 
-	var resp aspireResourcesResponse
-	if err := aspireGet(apiURL, &resp, queryURL); err != nil {
-		return nil, err
-	}
-
-	names := make([]string, 0, len(resp.Data))
-	for _, r := range resp.Data {
-		names = append(names, r.Name)
-	}
-	return names, nil
-}
-
-// normaliseTraces converts OTLP JSON resourceSpans into traceRecords grouped by traceID.
-func normaliseTraces(resourceSpans []aspireResourceSpans) []traceRecord {
-	// traceID -> spans
-	traceMap := make(map[string][]traceSpan)
-
-	for _, rs := range resourceSpans {
-		svc := aspireAttrValue(rs.Resource.Attributes, "service.name")
-
-		for _, ss := range rs.ScopeSpans {
-			for _, s := range ss.Spans {
-				startNs := parseNano(s.StartTimeUnixNano)
-				endNs := parseNano(s.EndTimeUnixNano)
-				durationNs := endNs - startNs
-				if durationNs < 0 {
-					durationNs = 0
-				}
-
-				span := traceSpan{
-					TraceID:      s.TraceID,
-					SpanID:       s.SpanID,
-					ParentSpanID: s.ParentSpanID,
-					Service:      svc,
-					Operation:    s.Name,
-					StartNs:      startNs,
-					DurationNs:   durationNs,
-					StatusCode:   s.Status.Code,
-					StatusMsg:    s.Status.Message,
-					Attrs:        s.Attributes,
-				}
-				traceMap[s.TraceID] = append(traceMap[s.TraceID], span)
+	getString := func(key string) string {
+		if v, ok := d[key]; ok {
+			if s, ok := v.(string); ok {
+				return s
 			}
+		}
+		return ""
+	}
+	getInt64 := func(key string) int64 {
+		if v, ok := d[key]; ok {
+			switch n := v.(type) {
+			case float64:
+				return int64(n)
+			case int64:
+				return n
+			}
+		}
+		return 0
+	}
+
+	// SigNoz stores timestamps in nanoseconds in the data map.
+	startNs := getInt64("timestamp")
+	if startNs == 0 {
+		// Fall back to row.Timestamp RFC3339 string.
+		if t, err := time.Parse(time.RFC3339Nano, row.Timestamp); err == nil {
+			startNs = t.UnixNano()
 		}
 	}
 
-	records := make([]traceRecord, 0, len(traceMap))
-	for tid, spans := range traceMap {
-		records = append(records, traceRecord{TraceID: tid, Spans: spans})
+	durationNs := getInt64("durationNano")
+
+	attrs := make(map[string]string)
+	for k, v := range d {
+		if s, ok := v.(string); ok {
+			attrs[k] = s
+		}
 	}
 
-	// Sort by root span start time descending (newest first)
+	statusCode := getString("statusCode")
+	if statusCode == "" {
+		statusCode = "unset"
+	}
+
+	return traceSpan{
+		TraceID:      getString("traceID"),
+		SpanID:       getString("spanID"),
+		ParentSpanID: getString("parentSpanID"),
+		Service:      getString("serviceName"),
+		Operation:    getString("name"),
+		StartNs:      startNs,
+		DurationNs:   durationNs,
+		StatusCode:   statusCode,
+		StatusMsg:    getString("statusMessage"),
+		Attrs:        attrs,
+	}
+}
+
+// groupSpansByTrace groups a flat list of spans into traceRecords sorted by newest first.
+func groupSpansByTrace(spans []traceSpan) []traceRecord {
+	traceMap := make(map[string][]traceSpan)
+	for _, s := range spans {
+		if s.TraceID == "" {
+			continue
+		}
+		traceMap[s.TraceID] = append(traceMap[s.TraceID], s)
+	}
+
+	records := make([]traceRecord, 0, len(traceMap))
+	for tid, ss := range traceMap {
+		records = append(records, traceRecord{TraceID: tid, Spans: ss})
+	}
+
 	sort.Slice(records, func(i, j int) bool {
 		ri := rootSpan(&records[i])
 		rj := rootSpan(&records[j])
@@ -252,15 +327,110 @@ func normaliseTraces(resourceSpans []aspireResourceSpans) []traceRecord {
 	return records
 }
 
-// parseNano parses a nanosecond string (OTLP JSON encodes int64 as string).
-func parseNano(s string) int64 {
-	if s == "" {
-		return 0
+// fetchTraces fetches recent traces from the SigNoz query-service.
+// queryURL: base URL (e.g. http://localhost:8080).
+// service: optional service name filter.
+// limit: max traces to return.
+// sinceMinutes: look-back window.
+func fetchTraces(queryURL, service string, limit int, sinceMinutes int) ([]traceRecord, error) {
+	apiURL := fmt.Sprintf("%s/api/v3/query_range", queryURL)
+	req := buildQueryRangeRequest(service, limit, sinceMinutes, nil)
+
+	var resp signozQueryRangeResponse
+	if err := signozPost(apiURL, req, &resp, queryURL); err != nil {
+		return nil, err
 	}
-	var n int64
-	fmt.Sscanf(s, "%d", &n)
-	return n
+
+	rows := extractListRows(resp)
+	spans := make([]traceSpan, 0, len(rows))
+	for _, row := range rows {
+		spans = append(spans, rowToTraceSpan(row))
+	}
+
+	return groupSpansByTrace(spans), nil
 }
+
+// fetchTrace fetches a single trace by ID from the SigNoz query-service.
+func fetchTrace(queryURL, traceID string) (*traceRecord, error) {
+	apiURL := fmt.Sprintf("%s/api/v1/traces/%s", queryURL, traceID)
+
+	var resp signozTraceResponse
+	if err := signozGet(apiURL, &resp, queryURL); err != nil {
+		return nil, err
+	}
+
+	if len(resp.Data) == 0 {
+		return nil, nil
+	}
+
+	spans := make([]traceSpan, 0, len(resp.Data))
+	for _, entry := range resp.Data {
+		attrs := make(map[string]string)
+		for _, tag := range entry.Tags {
+			attrs[tag.Key] = tag.Value
+		}
+		for k, v := range entry.Attributes {
+			if s, ok := v.(string); ok {
+				attrs[k] = s
+			}
+		}
+
+		statusCode := strings.ToLower(entry.StatusCode)
+		if statusCode == "" {
+			statusCode = "unset"
+		}
+
+		spans = append(spans, traceSpan{
+			TraceID:      entry.TraceID,
+			SpanID:       entry.SpanID,
+			ParentSpanID: entry.ParentSpanID,
+			Service:      entry.ServiceName,
+			Operation:    entry.Name,
+			StartNs:      entry.TimeUnixNano,
+			DurationNs:   entry.DurationNano,
+			StatusCode:   statusCode,
+			StatusMsg:    entry.StatusMessage,
+			Attrs:        attrs,
+		})
+	}
+
+	record := &traceRecord{TraceID: traceID, Spans: spans}
+	return record, nil
+}
+
+// searchTraces searches for traces containing spans with a given attribute key=value.
+func searchTraces(queryURL, attribute, value, service string, limit int, sinceMinutes int) ([]traceRecord, error) {
+	apiURL := fmt.Sprintf("%s/api/v3/query_range", queryURL)
+
+	extraFilters := []signozFilter{
+		{
+			Key: signozFilterKey{
+				Key:      attribute,
+				Type:     "tag",
+				DataType: "string",
+			},
+			Op:    "=",
+			Value: value,
+		},
+	}
+
+	req := buildQueryRangeRequest(service, limit, sinceMinutes, extraFilters)
+
+	var resp signozQueryRangeResponse
+	if err := signozPost(apiURL, req, &resp, queryURL); err != nil {
+		return nil, err
+	}
+
+	rows := extractListRows(resp)
+	spans := make([]traceSpan, 0, len(rows))
+	for _, row := range rows {
+		spans = append(spans, rowToTraceSpan(row))
+	}
+
+	return groupSpansByTrace(spans), nil
+}
+
+// --- Helpers ---
 
 // rootSpan finds the root span (no parent in this trace) in a traceRecord.
 func rootSpan(r *traceRecord) *traceSpan {
@@ -280,9 +450,9 @@ func rootSpan(r *traceRecord) *traceSpan {
 	return nil
 }
 
-// spanHasError returns true if a span has OTLP status code 2 (ERROR).
+// spanHasError returns true if a span has an error status code.
 func spanHasError(s *traceSpan) bool {
-	return s.StatusCode == 2
+	return strings.ToLower(s.StatusCode) == "error" || s.StatusCode == "2"
 }
 
 // --- Formatters ---
@@ -333,7 +503,7 @@ func formatSpanTree(r *traceRecord) string {
 		return sb.String()
 	}
 
-	// Build parent map: spanID -> parentSpanID
+	// Build parent map: spanID -> parentSpanID.
 	parentMap := make(map[string]string)
 	for _, sp := range r.Spans {
 		if sp.ParentSpanID != "" {
@@ -341,14 +511,13 @@ func formatSpanTree(r *traceRecord) string {
 		}
 	}
 
-	// Sort spans by start time ascending
+	// Sort spans by start time ascending.
 	spans := make([]traceSpan, len(r.Spans))
 	copy(spans, r.Spans)
 	sort.Slice(spans, func(i, j int) bool {
 		return spans[i].StartNs < spans[j].StartNs
 	})
 
-	// Business attribute keys to display
 	businessKeys := map[string]bool{
 		"portfolio.id": true,
 		"user.id":      true,
@@ -367,7 +536,7 @@ func formatSpanTree(r *traceRecord) string {
 	for _, sp := range spans {
 		durationMs := float64(sp.DurationNs) / 1e6
 
-		// Compute depth
+		// Compute depth.
 		depth := 0
 		cur := sp.SpanID
 		for {
@@ -390,20 +559,20 @@ func formatSpanTree(r *traceRecord) string {
 
 		fmt.Fprintf(&sb, "%s[%s] %s  %.1fms  [%s]\n", indent, sp.Service, sp.Operation, durationMs, status)
 
-		for _, attr := range sp.Attrs {
-			if businessKeys[attr.Key] {
-				fmt.Fprintf(&sb, "%s  %s: %s\n", indent, attr.Key, aspireKVString(attr.Value))
+		for k, v := range sp.Attrs {
+			if businessKeys[k] {
+				fmt.Fprintf(&sb, "%s  %s: %s\n", indent, k, v)
 			}
 		}
-		for _, attr := range sp.Attrs {
-			if httpKeys[attr.Key] {
-				fmt.Fprintf(&sb, "%s  %s: %s\n", indent, attr.Key, aspireKVString(attr.Value))
+		for k, v := range sp.Attrs {
+			if httpKeys[k] {
+				fmt.Fprintf(&sb, "%s  %s: %s\n", indent, k, v)
 			}
 		}
 		if status == "ERROR" {
-			for _, attr := range sp.Attrs {
-				if attr.Key == "error.message" || attr.Key == "exception.message" || attr.Key == "exception.type" {
-					fmt.Fprintf(&sb, "%s  %s: %s\n", indent, attr.Key, aspireKVString(attr.Value))
+			for k, v := range sp.Attrs {
+				if k == "error.message" || k == "exception.message" || k == "exception.type" {
+					fmt.Fprintf(&sb, "%s  %s: %s\n", indent, k, v)
 				}
 			}
 			if sp.StatusMsg != "" {
