@@ -108,7 +108,7 @@ type hookItem struct {
 func injectStopHook(defaultService string, workspacePath string) error {
 	claudeDir := filepath.Join(".", ".claude")
 	settingsFile := filepath.Join(claudeDir, "settings.local.json")
-	hookCommand := fmt.Sprintf("devstack stop --default-service=%s --if-last-session --workspace=%s", defaultService, workspacePath)
+	hookCommand := fmt.Sprintf("devstack tilt stop --default-service=%s --if-last-session --workspace=%s", defaultService, workspacePath)
 
 	// Load existing settings (or start fresh)
 	var rawData map[string]json.RawMessage
@@ -287,11 +287,11 @@ func buildInstructions(defaultService string, workspacePath string) string {
 		"### Starting the stack (CLI)\n\n" +
 		"MCP tools require Tilt already running. Always use the shell CLI to spin up.\n\n" +
 		"```bash\n" +
-		"devstack status                    # check if Tilt is running\n" +
-		"devstack up                        # start Tilt if stopped\n" +
-		"devstack services                  # list services, groups, and declared deps\n" +
-		"devstack start --group=<group>     # start a named group (resolves deps)\n" +
-		startCmd + "                       # start this service + its deps\n" +
+		"devstack status                         # check all workspaces\n" +
+		"devstack tilt up                        # start Tilt if stopped\n" +
+		"devstack tilt status                    # list services, groups, and status\n" +
+		"devstack tilt start --group=<group>     # start a named group (resolves deps)\n" +
+		startCmd + "                            # start this service + its deps\n" +
 		"```\n\n" +
 		"### While the stack is running (MCP tools)\n\n" +
 		"| Need | Tool |\n" +

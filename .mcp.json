@@ -8,7 +8,6 @@
         "--transport=stdio"
       ],
       "env": {
-        "TILT_PORT": "10350",
         "DEVSTACK_WORKSPACE": "/home/nick/dev/navexa"
       }
     }

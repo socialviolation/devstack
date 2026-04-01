@@ -1,0 +1,15 @@
+[tasks.build]
+description = "Build devstack binary"
+run = "go build ./..."
+
+[tasks.install]
+description = "Install devstack binary to PATH"
+run = "go install ."
+
+[tasks.lint]
+description = "Run go vet"
+run = "go vet ./..."
+
+[tasks.update-mcp]
+description = "Re-run devstack init in all navexa repos to refresh AGENTS.md and hooks"
+run = "find /home/nick/dev/navexa -maxdepth 2 -name '.mcp.json' -execdir sh -c 'DEVSTACK_WORKSPACE=/home/nick/dev/navexa devstack init --workspace=/home/nick/dev/navexa' \\;"

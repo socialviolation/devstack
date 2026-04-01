@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "devstack": {
+      "type": "stdio",
+      "command": "devstack",
+      "args": [
+        "serve",
+        "--transport=stdio"
+      ],
+      "env": {
+        "DEVSTACK_WORKSPACE": "/home/nick/dev/navexa"
+      }
+    }
+  }
+}

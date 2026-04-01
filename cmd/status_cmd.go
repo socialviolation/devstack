@@ -12,49 +12,20 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"devstack/internal/config"
 	"devstack/internal/tilt"
 	"devstack/internal/workspace"
 )
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show status of registered workspaces or services within a workspace",
-	Long: `Show system-wide status across all registered workspaces, or per-service
-detail for a specific workspace.
-
-Without --workspace: prints a summary table of all registered workspaces.
-With --workspace: prints a per-service detail table for that workspace.`,
-	RunE: runStatus,
+	Short: "Show all registered workspaces and their Tilt status",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runStatusAll()
+	},
 }
 
 func init() {
 	rootCmd.AddCommand(statusCmd)
-	statusCmd.Flags().String("workspace", "", "Workspace name or path — show per-service detail for this workspace")
-	statusCmd.Flags().Bool("system", false, "Show system-wide status across all registered workspaces")
-}
-
-func runStatus(cmd *cobra.Command, args []string) error {
-	wsFlag, _ := cmd.Flags().GetString("workspace")
-	systemFlag, _ := cmd.Flags().GetBool("system")
-
-	// If --system requested, always show system-wide view
-	if systemFlag {
-		return runStatusAll()
-	}
-
-	// If --workspace provided, use it directly
-	if wsFlag != "" {
-		return runStatusWorkspace(wsFlag)
-	}
-
-	// Auto-detect workspace from cwd
-	if ws, err := workspace.DetectFromCwd(); err == nil {
-		return runStatusWorkspace(ws.Name)
-	}
-
-	// No workspace detected — fall back to system-wide view
-	return runStatusAll()
 }
 
 
@@ -236,72 +207,3 @@ func shortDir(path string) string {
 	return path
 }
 
-// runStatusWorkspace shows per-service detail for a specific workspace.
-func runStatusWorkspace(wsFlag string) error {
-	ws, err := resolveWorkspace(wsFlag)
-	if err != nil {
-		return err
-	}
-
-	if actual := workspace.ResolvePort(ws.Name); actual != 0 && actual != ws.TiltPort {
-		fmt.Fprintf(os.Stderr, "Port drift detected: updated registry %d → %d\n", ws.TiltPort, actual)
-		ws.TiltPort = actual
-	}
-	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
-	view, err := tiltClient.GetView()
-	if err != nil {
-		if err != nil {
-			// Distinguish between "not running" and "starting but not yet ready".
-			// GetView can fail if Tilt is still initialising (e.g. returns non-JSON
-			// during startup), even though the HTTP port is already bound.
-			apiURL := fmt.Sprintf("http://localhost:%d/api/view", ws.TiltPort)
-			if isTiltReachable(apiURL) {
-				fmt.Printf("Workspace '%s': Tilt is starting on port %d (not yet ready).\n", ws.Name, ws.TiltPort)
-			} else {
-				fmt.Printf("Workspace '%s': Tilt is not running on port %d.\n", ws.Name, ws.TiltPort)
-				fmt.Printf("Start it with: devstack up --workspace=%s\n", ws.Name)
-			}
-			return nil
-		}
-	}
-
-	if len(view.UiResources) == 0 {
-		fmt.Printf("Workspace '%s': Tilt is running but no services are loaded yet.\n", ws.Name)
-		return nil
-	}
-
-	// Load workspace config for service paths
-	cfg, _ := config.Load(ws.Path)
-
-	otelStatus := "stopped"
-	if ws.OtelMode == "byo" {
-		otelStatus = fmt.Sprintf("byo (%s)", ws.OtelEndpoint)
-	} else if isOtelRunning(ws.Name) {
-		otelStatus = fmt.Sprintf("running (%s)", workspace.OtelQueryEndpoint(ws))
-	}
-
-	fmt.Printf("Workspace: %s  %s\n", ws.Name, ws.Path)
-	fmt.Printf("  Tilt:    running (:%d)\n", ws.TiltPort)
-	fmt.Printf("  OTEL:    %s\n\n", otelStatus)
-	fmt.Printf("%-24s %-10s %-14s %-30s %s\n", "SERVICE", "STATUS", "PORT(S)", "DIR", "UPTIME")
-	fmt.Println(strings.Repeat("─", 96))
-
-	for _, r := range view.UiResources {
-		status := serviceStatus(r)
-		ports := extractPorts(r.Status.EndpointLinks)
-
-		dir := "-"
-		if cfg != nil {
-			if p, ok := cfg.ServicePaths[r.Metadata.Name]; ok {
-				dir = shortDir(p)
-			}
-		}
-
-		uptime := formatUptime(r.Status.LastDeployTime)
-
-		fmt.Printf("%-24s %-10s %-14s %-30s %s\n",
-			r.Metadata.Name, status, ports, dir, uptime)
-	}
-
-	return nil
-}

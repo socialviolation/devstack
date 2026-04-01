@@ -11,10 +11,11 @@ import (
 )
 
 var registerCmd = &cobra.Command{
-	Use:   "register",
-	Short: "Register a workspace in the global registry",
-	Long:  `Adds or updates a workspace entry in ~/.config/devstack/workspaces.json.`,
-	RunE:  runRegister,
+	Use:    "register",
+	Short:  "Register a workspace in the global registry",
+	Long:   `Adds or updates a workspace entry in ~/.config/devstack/workspaces.json.`,
+	Hidden: true,
+	RunE:   runRegister,
 }
 
 func init() {

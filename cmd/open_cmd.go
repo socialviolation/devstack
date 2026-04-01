@@ -16,7 +16,7 @@ var openCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(openCmd)
+	tiltCmd.AddCommand(openCmd)
 	openCmd.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from cwd)")
 }
 
