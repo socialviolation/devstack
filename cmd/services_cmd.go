@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 	"sort"
+	"strings"
+
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
@@ -94,28 +96,37 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 		}
 	}
 
-	// Header
-	tiltState := fmt.Sprintf("daemon :%d", ws.TiltPort)
+	// Header — line 1: workspace identity + service health
+	healthColor := color.New(color.FgGreen)
 	if tiltErr != nil {
-		tiltState = color.New(color.FgRed).Sprint("daemon stopped")
+		healthColor = color.New(color.FgRed)
+	} else if running < len(allServices) {
+		healthColor = color.New(color.FgYellow)
 	}
-	otelState := ""
-	if ws.OtelMode == "byo" {
-		otelState = "  ·  otel byo"
-	} else if isOtelRunning(ws.Name) {
-		uiPort := ws.OtelUIPort
-		if uiPort == 0 {
-			uiPort = 8080
-		}
-		otelState = fmt.Sprintf("  ·  otel :%d", uiPort)
-	}
-	fmt.Printf("%s  ·  %s%s  ·  %d of %d running\n\n",
+	fmt.Printf("%s  ·  %s\n",
 		color.New(color.Bold).Sprint(ws.Name),
-		tiltState,
-		otelState,
-		running,
-		len(allServices),
+		healthColor.Sprintf("%d of %d running", running, len(allServices)),
 	)
+
+	// Header — line 2: infrastructure ports (faint, secondary)
+	var infraParts []string
+	if tiltErr != nil {
+		infraParts = append(infraParts, color.New(color.FgRed).Sprint("daemon stopped"))
+	} else {
+		infraParts = append(infraParts, fmt.Sprintf("daemon :%d", ws.TiltPort))
+	}
+	if ws.OtelMode == "byo" {
+		if ws.OtelEndpoint != "" {
+			infraParts = append(infraParts, fmt.Sprintf("otel byo  push:%s", ws.OtelEndpoint))
+		} else {
+			infraParts = append(infraParts, "otel byo")
+		}
+	} else if isOtelRunning(ws.Name) {
+		infraParts = append(infraParts,
+			fmt.Sprintf("otel ui:%d otlp:%d grpc:%d", ws.UIPort(), ws.HTTPPort(), ws.GRPCPort()),
+		)
+	}
+	color.New(color.Faint).Printf("  %s\n\n", strings.Join(infraParts, "  ·  "))
 
 	if tiltErr != nil {
 		apiURL := fmt.Sprintf("http://localhost:%d/api/view", ws.TiltPort)
