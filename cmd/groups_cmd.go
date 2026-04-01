@@ -100,40 +100,16 @@ func runGroupsList(cmd *cobra.Command, args []string) error {
 		if len(members) == 0 {
 			continue
 		}
-		sorted := make([]string, len(members))
-		copy(sorted, members)
-		sort.Strings(sorted)
-
 		gc := groupPalette[i%len(groupPalette)]
 		gc.Printf("● %s", groupName)
 		color.New(color.Faint).Printf("  [%d]\n", len(members))
 
-		for j, svc := range sorted {
-			isLast := j == len(sorted)-1
-			branch := "  ├── "
-			if isLast {
-				branch = "  └── "
-			}
-
-			fmt.Print(branch)
-			fmt.Printf("%-24s", svc)
-
-			deps := cfg.Deps[svc]
-			if len(deps) > 0 {
-				color.New(color.Faint).Print("  ← ")
-				for k, dep := range deps {
-					if k > 0 {
-						color.New(color.Faint).Print(", ")
-					}
-					if c, ok := svcGroupColor[dep]; ok {
-						c.Print(dep)
-					} else {
-						color.New(color.Faint).Print(dep)
-					}
-				}
-			}
-			fmt.Println()
+		memberSet := make(map[string]bool, len(members))
+		for _, m := range members {
+			memberSet[m] = true
 		}
+		roots := buildGroupTree(members, cfg.Deps)
+		renderGroupNodes(roots, "  ", cfg.Deps, memberSet, svcGroupColor)
 		fmt.Println()
 	}
 
@@ -173,6 +149,47 @@ func runGroupsList(cmd *cobra.Command, args []string) error {
 
 	color.New(color.Faint).Printf("  devstack status for live service state\n")
 	return nil
+}
+
+func renderGroupNodes(nodes []*treeNode, indent string, deps map[string][]string, memberSet map[string]bool, svcGroupColor map[string]*color.Color) {
+	for i, node := range nodes {
+		isLast := i == len(nodes)-1
+		branch := "├── "
+		childIndent := "│   "
+		if isLast {
+			branch = "└── "
+			childIndent = "    "
+		}
+
+		svc := node.name
+		fmt.Print(indent + branch)
+		fmt.Printf("%-24s", svc)
+
+		var crossDeps []string
+		for _, dep := range deps[svc] {
+			if !memberSet[dep] {
+				crossDeps = append(crossDeps, dep)
+			}
+		}
+		if len(crossDeps) > 0 {
+			color.New(color.Faint).Print("  ← ")
+			for k, dep := range crossDeps {
+				if k > 0 {
+					color.New(color.Faint).Print(", ")
+				}
+				if c, ok := svcGroupColor[dep]; ok {
+					c.Print(dep)
+				} else {
+					color.New(color.Faint).Print(dep)
+				}
+			}
+		}
+		fmt.Println()
+
+		if len(node.children) > 0 {
+			renderGroupNodes(node.children, indent+childIndent, deps, memberSet, svcGroupColor)
+		}
+	}
 }
 
 func runGroupsAdd(cmd *cobra.Command, args []string) error {

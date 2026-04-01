@@ -169,36 +169,12 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 		gc.Printf("● %s", groupName)
 		color.New(color.Faint).Printf("  [%d/%d]\n", groupRunning, len(members))
 
-		for j, svc := range members {
-			isLast := j == len(members)-1
-			branch := "  ├── "
-			if isLast {
-				branch = "  └── "
-			}
-
-			statusStr, statusClr := svcStatusColor(svc, resourceMap)
-			portsStr := svcPorts(svc, resourceMap)
-			deps := cfg.Deps[svc]
-
-			fmt.Print(branch)
-			fmt.Printf("%-22s  ", svc)
-			statusClr.Printf("%-10s", statusStr)
-			fmt.Printf("  %s", portsStr)
-			if len(deps) > 0 {
-				color.New(color.Faint).Print("  ← ")
-				for k, dep := range deps {
-					if k > 0 {
-						color.New(color.Faint).Print(", ")
-					}
-					if c, ok := svcGroupColor[dep]; ok {
-						c.Print(dep)
-					} else {
-						color.New(color.Faint).Print(dep)
-					}
-				}
-			}
-			fmt.Println()
+		memberSet := make(map[string]bool, len(members))
+		for _, m := range members {
+			memberSet[m] = true
 		}
+		roots := buildGroupTree(members, cfg.Deps)
+		renderStatusNodes(roots, "  ", resourceMap, cfg.Deps, memberSet, svcGroupColor)
 		fmt.Println()
 	}
 

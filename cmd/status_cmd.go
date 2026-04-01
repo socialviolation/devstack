@@ -5,14 +5,122 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/fatih/color"
+
 	"devstack/internal/tilt"
 	"devstack/internal/workspace"
 )
+
+// treeNode represents a service within an intra-group dependency tree.
+type treeNode struct {
+	name     string
+	children []*treeNode
+}
+
+// buildGroupTree builds a dependency forest for the given group members.
+// Only intra-group edges (deps whose target is also in members) become
+// parent-child relationships. Cross-group deps are left to the caller.
+func buildGroupTree(members []string, deps map[string][]string) []*treeNode {
+	memberSet := make(map[string]bool, len(members))
+	for _, m := range members {
+		memberSet[m] = true
+	}
+
+	nodes := make(map[string]*treeNode, len(members))
+	for _, m := range members {
+		nodes[m] = &treeNode{name: m}
+	}
+
+	isChild := make(map[string]bool)
+	for _, svc := range members {
+		for _, dep := range deps[svc] {
+			if memberSet[dep] && dep != svc {
+				nodes[dep].children = append(nodes[dep].children, nodes[svc])
+				isChild[svc] = true
+			}
+		}
+	}
+
+	var roots []*treeNode
+	for _, m := range members {
+		if !isChild[m] {
+			roots = append(roots, nodes[m])
+		}
+	}
+	// Guard against a degenerate cycle leaving no roots.
+	if len(roots) == 0 {
+		for _, m := range members {
+			roots = append(roots, nodes[m])
+		}
+	}
+
+	sort.Slice(roots, func(i, j int) bool { return roots[i].name < roots[j].name })
+	var sortChildren func(*treeNode)
+	sortChildren = func(n *treeNode) {
+		sort.Slice(n.children, func(i, j int) bool { return n.children[i].name < n.children[j].name })
+		for _, c := range n.children {
+			sortChildren(c)
+		}
+	}
+	for _, r := range roots {
+		sortChildren(r)
+	}
+	return roots
+}
+
+// renderStatusNodes renders a slice of treeNodes as a status tree at the given indent level.
+// memberSet is the set of all services in the current group; cross-group deps show as arrows.
+func renderStatusNodes(nodes []*treeNode, indent string, resourceMap map[string]tilt.UIResource, deps map[string][]string, memberSet map[string]bool, svcGroupColor map[string]*color.Color) {
+	for i, node := range nodes {
+		isLast := i == len(nodes)-1
+		branch := "├── "
+		childIndent := "│   "
+		if isLast {
+			branch = "└── "
+			childIndent = "    "
+		}
+
+		svc := node.name
+		statusStr, statusClr := svcStatusColor(svc, resourceMap)
+		portsStr := svcPorts(svc, resourceMap)
+
+		fmt.Print(indent + branch)
+		fmt.Printf("%-22s  ", svc)
+		statusClr.Printf("%-10s", statusStr)
+		fmt.Printf("  %s", portsStr)
+
+		var crossDeps []string
+		for _, dep := range deps[svc] {
+			if !memberSet[dep] {
+				crossDeps = append(crossDeps, dep)
+			}
+		}
+		if len(crossDeps) > 0 {
+			color.New(color.Faint).Print("  ← ")
+			for k, dep := range crossDeps {
+				if k > 0 {
+					color.New(color.Faint).Print(", ")
+				}
+				if c, ok := svcGroupColor[dep]; ok {
+					c.Print(dep)
+				} else {
+					color.New(color.Faint).Print(dep)
+				}
+			}
+		}
+		fmt.Println()
+
+		if len(node.children) > 0 {
+			renderStatusNodes(node.children, indent+childIndent, resourceMap, deps, memberSet, svcGroupColor)
+		}
+	}
+}
 
 
 // runStatusAll shows a summary table of all registered workspaces.
