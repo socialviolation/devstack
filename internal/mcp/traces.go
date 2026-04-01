@@ -177,8 +177,9 @@ func signozPost(url string, body interface{}, dest interface{}, queryURL string)
 	return nil
 }
 
-// buildQueryRangeRequest builds a POST /api/v3/query_range request body for listing traces.
-func buildQueryRangeRequest(service string, limit int, sinceMinutes int, extraFilters []signozFilter) signozQueryRangeRequest {
+// buildQueryRangeRequest builds a POST /api/v3/query_range request body.
+// dataSource is "traces" or "logs".
+func buildQueryRangeRequest(dataSource, service string, limit int, sinceMinutes int, extraFilters []signozFilter) signozQueryRangeRequest {
 	now := time.Now()
 	endMs := now.UnixMilli()
 	startMs := now.Add(-time.Duration(sinceMinutes) * time.Minute).UnixMilli()
@@ -213,7 +214,7 @@ func buildQueryRangeRequest(service string, limit int, sinceMinutes int, extraFi
 			PanelType: "list",
 			BuilderQueries: map[string]signozBuilderQuery{
 				"A": {
-					DataSource:         "traces",
+					DataSource:         dataSource,
 					QueryName:          "A",
 					AggregateOperator:  "noop",
 					AggregateAttribute: map[string]interface{}{},
@@ -334,7 +335,7 @@ func groupSpansByTrace(spans []traceSpan) []traceRecord {
 // sinceMinutes: look-back window.
 func fetchTraces(queryURL, service string, limit int, sinceMinutes int) ([]traceRecord, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/query_range", queryURL)
-	req := buildQueryRangeRequest(service, limit, sinceMinutes, nil)
+	req := buildQueryRangeRequest("traces", service, limit, sinceMinutes, nil)
 
 	var resp signozQueryRangeResponse
 	if err := signozPost(apiURL, req, &resp, queryURL); err != nil {
@@ -414,7 +415,7 @@ func searchTraces(queryURL, attribute, value, service string, limit int, sinceMi
 		},
 	}
 
-	req := buildQueryRangeRequest(service, limit, sinceMinutes, extraFilters)
+	req := buildQueryRangeRequest("traces", service, limit, sinceMinutes, extraFilters)
 
 	var resp signozQueryRangeResponse
 	if err := signozPost(apiURL, req, &resp, queryURL); err != nil {
@@ -428,6 +429,129 @@ func searchTraces(queryURL, attribute, value, service string, limit int, sinceMi
 	}
 
 	return groupSpansByTrace(spans), nil
+}
+
+// fetchRootTraces fetches only root spans (entry points) for recent traces.
+// It over-fetches by 10x then filters client-side to root spans, giving limit distinct executions.
+func fetchRootTraces(queryURL, service string, limit int, sinceMinutes int) ([]traceRecord, error) {
+	fetchLimit := limit * 10
+	if fetchLimit > 500 {
+		fetchLimit = 500
+	}
+	if fetchLimit < limit {
+		fetchLimit = limit
+	}
+
+	apiURL := fmt.Sprintf("%s/api/v3/query_range", queryURL)
+	req := buildQueryRangeRequest("traces", service, fetchLimit, sinceMinutes, nil)
+
+	var resp signozQueryRangeResponse
+	if err := signozPost(apiURL, req, &resp, queryURL); err != nil {
+		return nil, err
+	}
+
+	rows := extractListRows(resp)
+
+	// Keep only root spans (no parent), deduplicate by traceID, preserve DESC timestamp order.
+	seen := make(map[string]bool)
+	records := make([]traceRecord, 0, limit)
+	for _, row := range rows {
+		s := rowToTraceSpan(row)
+		if s.ParentSpanID != "" {
+			continue
+		}
+		if seen[s.TraceID] {
+			continue
+		}
+		seen[s.TraceID] = true
+		records = append(records, traceRecord{TraceID: s.TraceID, Spans: []traceSpan{s}})
+		if len(records) >= limit {
+			break
+		}
+	}
+	return records, nil
+}
+
+// --- Log types and queries ---
+
+type logEntry struct {
+	Timestamp int64  // Unix nanoseconds
+	Body      string
+	Service   string
+	Severity  string
+	TraceID   string
+	SpanID    string
+}
+
+// fetchLogsForTrace queries SigNoz for log records associated with a traceID.
+// Returns empty slice (not error) if the backend has no logs for the trace.
+func fetchLogsForTrace(queryURL, traceID string) ([]logEntry, error) {
+	apiURL := fmt.Sprintf("%s/api/v3/query_range", queryURL)
+
+	traceFilter := signozFilter{
+		Key:   signozFilterKey{Key: "traceID", Type: "tag", DataType: "string"},
+		Op:    "=",
+		Value: traceID,
+	}
+	// Use a 2-hour window — bounded by traceID filter so volume is small regardless.
+	req := buildQueryRangeRequest("logs", "", 200, 120, []signozFilter{traceFilter})
+
+	var resp signozQueryRangeResponse
+	if err := signozPost(apiURL, req, &resp, queryURL); err != nil {
+		// Log backend might not be populated; treat as empty rather than error.
+		return nil, nil //nolint
+	}
+
+	rows := extractListRows(resp)
+	entries := make([]logEntry, 0, len(rows))
+	for _, row := range rows {
+		d := row.Data
+		getString := func(key string) string {
+			if v, ok := d[key]; ok {
+				if s, ok := v.(string); ok {
+					return s
+				}
+			}
+			return ""
+		}
+		getInt64 := func(key string) int64 {
+			if v, ok := d[key]; ok {
+				switch n := v.(type) {
+				case float64:
+					return int64(n)
+				case int64:
+					return n
+				}
+			}
+			return 0
+		}
+
+		tsNs := getInt64("timestamp")
+		if tsNs == 0 {
+			if t, err := time.Parse(time.RFC3339Nano, row.Timestamp); err == nil {
+				tsNs = t.UnixNano()
+			}
+		}
+
+		svc := getString("serviceName")
+		if svc == "" {
+			svc = getString("resources.service.name")
+		}
+
+		entries = append(entries, logEntry{
+			Timestamp: tsNs,
+			Body:      getString("body"),
+			Service:   svc,
+			Severity:  getString("severityText"),
+			TraceID:   getString("traceID"),
+			SpanID:    getString("spanID"),
+		})
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Timestamp < entries[j].Timestamp
+	})
+	return entries, nil
 }
 
 // --- Helpers ---
@@ -580,5 +704,73 @@ func formatSpanTree(r *traceRecord) string {
 			}
 		}
 	}
+	return sb.String()
+}
+
+// formatExecutionView formats a unified execution view: span tree + correlated logs.
+func formatExecutionView(record *traceRecord, logs []logEntry) string {
+	var sb strings.Builder
+
+	root := rootSpan(record)
+
+	// Header
+	fmt.Fprintf(&sb, "Trace: %s\n", record.TraceID)
+	if root != nil {
+		ts := time.Unix(0, root.StartNs).Local().Format("2006-01-02 15:04:05.000")
+		durationMs := float64(root.DurationNs) / 1e6
+		status := "ok"
+		if spanHasError(root) {
+			status = "ERROR"
+		}
+		fmt.Fprintf(&sb, "Started:  %s\n", ts)
+		fmt.Fprintf(&sb, "Duration: %.1fms\n", durationMs)
+		fmt.Fprintf(&sb, "Status:   %s\n", status)
+
+		// Unique services involved
+		seen := make(map[string]bool)
+		var services []string
+		for _, sp := range record.Spans {
+			if sp.Service != "" && !seen[sp.Service] {
+				seen[sp.Service] = true
+				services = append(services, sp.Service)
+			}
+		}
+		if len(services) > 1 {
+			sort.Strings(services)
+			fmt.Fprintf(&sb, "Services: %s\n", strings.Join(services, ", "))
+		}
+	}
+
+	// Span tree
+	sb.WriteString("\nSPAN TREE:\n")
+	sb.WriteString(formatSpanTree(record))
+
+	// Correlated logs (from OTEL log exporter)
+	if len(logs) > 0 {
+		sb.WriteString("\nCORRELATED LOGS:\n")
+		currentSvc := ""
+		for _, log := range logs {
+			if log.Service != currentSvc {
+				fmt.Fprintf(&sb, "--- %s ---\n", log.Service)
+				currentSvc = log.Service
+			}
+			ts := ""
+			if log.Timestamp > 0 {
+				ts = time.Unix(0, log.Timestamp).Local().Format("15:04:05.000") + " "
+			}
+			sev := log.Severity
+			if sev == "" {
+				sev = "INFO"
+			}
+			body := log.Body
+			if len(body) > 300 {
+				body = body[:297] + "..."
+			}
+			fmt.Fprintf(&sb, "  %s%s %s\n", ts, sev, body)
+		}
+	} else {
+		sb.WriteString("\nCORRELATED LOGS: none (services may not export logs via OTEL)\n")
+	}
+
 	return sb.String()
 }

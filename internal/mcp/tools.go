@@ -398,7 +398,7 @@ func registerSetEnvironmentTool(mcpServer *server.MCPServer, tiltClient *tilt.Cl
 
 func registerTracesTool(mcpServer *server.MCPServer, otelQueryURL string) {
 	tool := mcp.NewTool("traces",
-		mcp.WithDescription("List recent traces from the observability backend (SigNoz). Returns a table of recent request traces: timestamp, trace ID, root operation, service, duration, and status (ok/error). Use this to see recent activity for a service or the whole system."),
+		mcp.WithDescription("List recent traces from the observability backend (SigNoz). Returns one row per distinct execution (root spans only — entry points, not internal child spans): timestamp, trace ID, operation, service, duration, status (ok/error). Use this to see what requests or jobs ran recently. Follow up with trace_detail <trace_id> to see the full execution view including span tree and correlated logs."),
 		mcp.WithString("service",
 			mcp.Description("Optional service name filter (e.g. 'navexa-api'). If omitted, queries all services."),
 		),
@@ -419,7 +419,7 @@ func registerTracesTool(mcpServer *server.MCPServer, otelQueryURL string) {
 		limit := int(request.GetFloat("limit", 20))
 		sinceMinutes := int(request.GetFloat("since_minutes", 60))
 
-		traces, err := fetchTraces(otelQueryURL, service, limit, sinceMinutes)
+		traces, err := fetchRootTraces(otelQueryURL, service, limit, sinceMinutes)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -430,7 +430,7 @@ func registerTracesTool(mcpServer *server.MCPServer, otelQueryURL string) {
 
 func registerTraceDetailTool(mcpServer *server.MCPServer, otelQueryURL string) {
 	tool := mcp.NewTool("trace_detail",
-		mcp.WithDescription("Get the full span tree for a specific trace. Shows every span with its service, operation, duration, status, and business attributes (portfolio.id, user.id, etc.). Use this after identifying a trace_id from the `traces` or `trace_search` tools."),
+		mcp.WithDescription("Get the full execution view for a specific trace: complete span tree across all services (with durations, statuses, business attributes) plus any correlated log records exported via OTEL. This is the single-pane view of one execution across the whole system. Use after identifying a trace_id from `traces` or `trace_search`."),
 		mcp.WithString("trace_id",
 			mcp.Required(),
 			mcp.Description("The trace ID to fetch. Get this from the `traces` or `trace_search` tools."),
@@ -456,7 +456,10 @@ func registerTraceDetailTool(mcpServer *server.MCPServer, otelQueryURL string) {
 			return mcp.NewToolResultText(fmt.Sprintf("Trace %q not found.", traceID)), nil
 		}
 
-		return mcp.NewToolResultText(formatSpanTree(record)), nil
+		// Best-effort: fetch correlated logs by traceID; empty is fine if services don't export logs via OTEL.
+		logs, _ := fetchLogsForTrace(otelQueryURL, traceID)
+
+		return mcp.NewToolResultText(formatExecutionView(record, logs)), nil
 	})
 }
 
@@ -539,14 +542,14 @@ func analyseService(svcName string, tiltClient *tilt.Client, otelQueryURL string
 		a.logErrors = filterErrorLines(raw)
 	}()
 
-	// Fetch traces from observability backend
+	// Fetch root traces (entry points only) from observability backend
 	go func() {
 		defer wg.Done()
 		if otelQueryURL == "" {
 			a.traceErr = fmt.Errorf("no observability query endpoint configured")
 			return
 		}
-		records, err := fetchTraces(otelQueryURL, svcName, 50, 15)
+		records, err := fetchRootTraces(otelQueryURL, svcName, 50, 15)
 		if err != nil {
 			a.traceErr = err
 			return
