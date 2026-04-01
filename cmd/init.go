@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -88,111 +87,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// claudeSettings represents the structure of .claude/settings.local.json
-type claudeSettings struct {
-	Hooks map[string][]hookEntry `json:"hooks,omitempty"`
-	// Preserve unknown fields
-	Extra map[string]json.RawMessage `json:"-"`
-}
-
-type hookEntry struct {
-	Matcher string     `json:"matcher"`
-	Hooks   []hookItem `json:"hooks"`
-}
-
-type hookItem struct {
-	Type    string `json:"type"`
-	Command string `json:"command"`
-}
-
-func injectStopHook(defaultService string, workspacePath string) error {
-	claudeDir := filepath.Join(".", ".claude")
-	settingsFile := filepath.Join(claudeDir, "settings.local.json")
-	hookCommand := fmt.Sprintf("devstack tilt stop --default-service=%s --if-last-session --workspace=%s", defaultService, workspacePath)
-
-	// Load existing settings (or start fresh)
-	var rawData map[string]json.RawMessage
-	existingBytes, err := os.ReadFile(settingsFile)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to read settings.local.json: %w", err)
-	}
-
-	if len(existingBytes) > 0 {
-		if err := json.Unmarshal(existingBytes, &rawData); err != nil {
-			return fmt.Errorf("failed to parse settings.local.json: %w", err)
-		}
-	}
-	if rawData == nil {
-		rawData = make(map[string]json.RawMessage)
-	}
-
-	// Parse existing hooks map
-	var hooksMap map[string][]hookEntry
-	if hooksRaw, ok := rawData["hooks"]; ok {
-		if err := json.Unmarshal(hooksRaw, &hooksMap); err != nil {
-			return fmt.Errorf("failed to parse hooks in settings.local.json: %w", err)
-		}
-	}
-	if hooksMap == nil {
-		hooksMap = make(map[string][]hookEntry)
-	}
-
-	// Remove any existing devstack stop hook (replace, not append)
-	filtered := hooksMap["Stop"][:0]
-	replaced := false
-	for _, entry := range hooksMap["Stop"] {
-		isDevstackStop := false
-		for _, h := range entry.Hooks {
-			if strings.HasPrefix(h.Command, "devstack stop --default-service=") {
-				isDevstackStop = true
-				break
-			}
-		}
-		if isDevstackStop {
-			replaced = true
-			continue // drop old entry
-		}
-		filtered = append(filtered, entry)
-	}
-	hooksMap["Stop"] = filtered
-
-	if replaced {
-		fmt.Fprintln(os.Stderr, "Replacing existing devstack Stop hook.")
-	}
-
-	// Append updated Stop hook entry
-	hooksMap["Stop"] = append(hooksMap["Stop"], hookEntry{
-		Matcher: "",
-		Hooks: []hookItem{
-			{Type: "command", Command: hookCommand},
-		},
-	})
-
-	// Marshal hooks back and merge into rawData
-	hooksBytes, err := json.Marshal(hooksMap)
-	if err != nil {
-		return fmt.Errorf("failed to marshal hooks: %w", err)
-	}
-	rawData["hooks"] = json.RawMessage(hooksBytes)
-
-	// Write back to file with indentation
-	output, err := json.MarshalIndent(rawData, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal settings: %w", err)
-	}
-
-	// Create .claude/ directory if needed
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
-		return fmt.Errorf("failed to create .claude/ directory: %w", err)
-	}
-
-	if err := os.WriteFile(settingsFile, append(output, '\n'), 0644); err != nil {
-		return fmt.Errorf("failed to write settings.local.json: %w", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "✓ Stop hook injected into .claude/settings.local.json (service: %s)\n", defaultService)
-	return nil
-}
 
 func runInitAll() error {
 	ws, err := workspace.DetectFromCwd()
