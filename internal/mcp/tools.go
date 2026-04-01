@@ -26,13 +26,9 @@ func RegisterTools(mcpServer *server.MCPServer, tiltClient *tilt.Client, default
 	registerRestartTool(mcpServer, tiltClient, defaultService)
 	registerStopTool(mcpServer, tiltClient, defaultService)
 	registerStopAllTool(mcpServer, tiltClient)
-	registerLogsTool(mcpServer, tiltClient, defaultService)
-	registerErrorsTool(mcpServer, tiltClient, defaultService)
-	registerWhatHappenedTool(mcpServer, tiltClient, defaultService, otelQueryURL)
 	registerSetEnvironmentTool(mcpServer, tiltClient)
-	registerTracesTool(mcpServer, otelQueryURL)
-	registerTraceDetailTool(mcpServer, otelQueryURL)
-	registerTraceSearchTool(mcpServer, otelQueryURL)
+	registerProcessLogsTool(mcpServer, tiltClient, defaultService)
+	registerInvestigateTool(mcpServer, tiltClient, defaultService, otelQueryURL)
 }
 
 // mcpServiceStatus derives a human-readable status string from Tilt resource state.
@@ -228,46 +224,6 @@ func registerStopAllTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 	})
 }
 
-func registerLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
-	tool := mcp.NewTool("logs",
-		mcp.WithDescription("Fetch recent log output for a specific service in the dev stack. If name is omitted, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
-		mcp.WithString("service",
-			mcp.Description("The service name. Can be the exact Tilt resource name or a configured alias. If omitted, uses the default service for this repo."),
-		),
-		mcp.WithNumber("lines",
-			mcp.Description("Number of log lines to return. Defaults to 100."),
-		),
-	)
-
-	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		name := request.GetString("service", "")
-		if name == "" {
-			name = defaultService
-		}
-		if name == "" {
-			return mcp.NewToolResultError("no service specified and no default service configured for this repo"), nil
-		}
-		lines := int(request.GetFloat("lines", 100))
-
-		view, err := tiltClient.GetView()
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		resolved, err := tilt.ResolveService(name, view)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		out, err := tiltClient.RunCLI("logs", fmt.Sprintf("--tail=%d", lines), resolved)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to get logs for %q: %v\n%s", resolved, err, out)), nil
-		}
-
-		return mcp.NewToolResultText(out), nil
-	})
-}
-
 // filterErrorLines returns only lines matching the error regex.
 func filterErrorLines(raw string) []string {
 	var matched []string
@@ -279,14 +235,17 @@ func filterErrorLines(raw string) []string {
 	return matched
 }
 
-func registerErrorsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
-	tool := mcp.NewTool("errors",
-		mcp.WithDescription("Get error lines from service logs. If no service name is given and a default service is configured (DEVSTACK_DEFAULT_SERVICE), scans that service. Otherwise scans all services in parallel."),
+func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
+	tool := mcp.NewTool("process_logs",
+		mcp.WithDescription("Fetch raw stdout/stderr from a service process via Tilt. Use this for services not instrumented with OTEL, or when you need unstructured process output. If no service is given, uses the default or fetches all services in parallel."),
 		mcp.WithString("service",
-			mcp.Description("Optional service name. If empty and a default service is set for this repo, uses that. Otherwise all services are scanned."),
+			mcp.Description("Service name or alias. If omitted, uses the default service for this repo or fetches all."),
 		),
 		mcp.WithNumber("lines",
-			mcp.Description("Number of log lines to fetch per service before filtering. Defaults to 50."),
+			mcp.Description("Number of lines to fetch per service. Defaults to 100."),
+		),
+		mcp.WithBoolean("errors_only",
+			mcp.Description("If true, return only lines matching error/exception/panic/fatal/fail. Defaults to false."),
 		),
 	)
 
@@ -295,15 +254,26 @@ func registerErrorsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, de
 		if name == "" {
 			name = defaultService
 		}
-		lines := int(request.GetFloat("lines", 50))
+		lines := int(request.GetFloat("lines", 100))
+		errorsOnly := request.GetBool("errors_only", false)
 
 		view, err := tiltClient.GetView()
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		emit := func(raw string) string {
+			if errorsOnly {
+				filtered := filterErrorLines(raw)
+				if len(filtered) == 0 {
+					return ""
+				}
+				return strings.Join(filtered, "\n")
+			}
+			return raw
+		}
+
 		if name != "" {
-			// Single service
 			resolved, err := tilt.ResolveService(name, view)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -312,25 +282,23 @@ func registerErrorsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, de
 			if err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("failed to get logs for %q: %v\n%s", resolved, err, raw)), nil
 			}
-			filtered := filterErrorLines(raw)
-			if len(filtered) == 0 {
-				return mcp.NewToolResultText(fmt.Sprintf("No errors found in %s.", resolved)), nil
+			out := emit(raw)
+			if out == "" {
+				return mcp.NewToolResultText(fmt.Sprintf("No matching output in %s.", resolved)), nil
 			}
-			return mcp.NewToolResultText(strings.Join(filtered, "\n")), nil
+			return mcp.NewToolResultText(out), nil
 		}
 
 		// All services in parallel
 		type result struct {
-			name  string
-			lines []string
-			err   error
+			name string
+			out  string
+			err  error
 		}
-
 		services := make([]string, 0, len(view.UiResources))
 		for _, r := range view.UiResources {
 			services = append(services, r.Metadata.Name)
 		}
-
 		results := make([]result, len(services))
 		var wg sync.WaitGroup
 		for i, svc := range services {
@@ -338,11 +306,7 @@ func registerErrorsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, de
 			go func(idx int, svcName string) {
 				defer wg.Done()
 				raw, err := tiltClient.RunCLI("logs", fmt.Sprintf("--tail=%d", lines), svcName)
-				results[idx] = result{
-					name:  svcName,
-					lines: filterErrorLines(raw),
-					err:   err,
-				}
+				results[idx] = result{name: svcName, out: emit(raw), err: err}
 			}(i, svc)
 		}
 		wg.Wait()
@@ -351,17 +315,14 @@ func registerErrorsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, de
 		for _, r := range results {
 			fmt.Fprintf(&sb, "=== %s ===\n", r.name)
 			if r.err != nil {
-				fmt.Fprintf(&sb, "ERROR fetching logs: %v\n\n", r.err)
-				continue
-			}
-			if len(r.lines) == 0 {
-				sb.WriteString("No errors found.\n\n")
+				fmt.Fprintf(&sb, "error fetching logs: %v\n\n", r.err)
+			} else if r.out == "" {
+				sb.WriteString("(no output)\n\n")
 			} else {
-				sb.WriteString(strings.Join(r.lines, "\n"))
+				sb.WriteString(r.out)
 				sb.WriteString("\n\n")
 			}
 		}
-
 		return mcp.NewToolResultText(sb.String()), nil
 	})
 }
@@ -395,44 +356,29 @@ func registerSetEnvironmentTool(mcpServer *server.MCPServer, tiltClient *tilt.Cl
 	})
 }
 
-func registerTracesTool(mcpServer *server.MCPServer, otelQueryURL string) {
-	tool := mcp.NewTool("traces",
-		mcp.WithDescription("List recent traces from the observability backend (SigNoz). Returns one row per distinct execution (root spans only — entry points, not internal child spans): timestamp, trace ID, operation, service, duration, status (ok/error). Use this to see what requests or jobs ran recently. Follow up with trace_detail <trace_id> to see the full execution view including span tree and correlated logs."),
-		mcp.WithString("service",
-			mcp.Description("Optional service name filter (e.g. 'navexa-api'). If omitted, queries all services."),
+func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService, otelQueryURL string) {
+	tool := mcp.NewTool("investigate",
+		mcp.WithDescription("Investigate executions in the observability backend. Three modes: (1) trace_id given → full execution view for that specific trace; (2) attribute+value given → find executions matching that business attribute (e.g. portfolio.id=123) and expand each; (3) neither → find the most recent executions and expand each. Each result shows the full cross-service span tree, durations, errors, business attributes, and correlated logs. Falls back to process stdout when OTEL logs are unavailable. Use this as the primary diagnostic tool."),
+		mcp.WithString("trace_id",
+			mcp.Description("Specific trace ID to look up. If given, all other filters are ignored."),
 		),
-		mcp.WithNumber("limit",
-			mcp.Description("Maximum number of traces to return. Defaults to 20."),
+		mcp.WithString("service",
+			mcp.Description("Filter by service name. If omitted, uses the repo default or queries all services."),
+		),
+		mcp.WithString("attribute",
+			mcp.Description("Business attribute key to search by (e.g. 'portfolio.id', 'user.id', 'process.id'). Requires value."),
+		),
+		mcp.WithString("value",
+			mcp.Description("Value to match for the given attribute (e.g. '123')."),
 		),
 		mcp.WithNumber("since_minutes",
-			mcp.Description("Look-back window in minutes. Defaults to 60."),
+			mcp.Description("Look-back window in minutes. Defaults to 5."),
 		),
-	)
-
-	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if otelQueryURL == "" {
-			return mcp.NewToolResultError("No observability query endpoint configured. Set one with: devstack otel set-endpoint <otlp-url> --query-url=<query-url>"), nil
-		}
-
-		service := request.GetString("service", "")
-		limit := int(request.GetFloat("limit", 20))
-		sinceMinutes := int(request.GetFloat("since_minutes", 60))
-
-		traces, err := fetchRootTraces(otelQueryURL, service, limit, sinceMinutes)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		return mcp.NewToolResultText(formatTraceList(traces)), nil
-	})
-}
-
-func registerTraceDetailTool(mcpServer *server.MCPServer, otelQueryURL string) {
-	tool := mcp.NewTool("trace_detail",
-		mcp.WithDescription("Get the full execution view for a specific trace: complete span tree across all services (with durations, statuses, business attributes) plus any correlated log records exported via OTEL. This is the single-pane view of one execution across the whole system. Use after identifying a trace_id from `traces` or `trace_search`."),
-		mcp.WithString("trace_id",
-			mcp.Required(),
-			mcp.Description("The trace ID to fetch. Get this from the `traces` or `trace_search` tools."),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum number of executions to expand. Defaults to 3."),
+		),
+		mcp.WithBoolean("errors_only",
+			mcp.Description("If true, only return executions where the root span has error status. Defaults to false."),
 		),
 	)
 
@@ -442,77 +388,93 @@ func registerTraceDetailTool(mcpServer *server.MCPServer, otelQueryURL string) {
 		}
 
 		traceID := request.GetString("trace_id", "")
-		if traceID == "" {
-			return mcp.NewToolResultError("trace_id is required"), nil
+		service := request.GetString("service", "")
+		if service == "" {
+			service = defaultService
 		}
-
-		record, err := fetchTrace(otelQueryURL, traceID)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		if record == nil {
-			return mcp.NewToolResultText(fmt.Sprintf("Trace %q not found.", traceID)), nil
-		}
-
-		// Best-effort: fetch correlated logs by traceID; empty is fine if services don't export logs via OTEL.
-		logs, _ := fetchLogsForTrace(otelQueryURL, traceID)
-
-		return mcp.NewToolResultText(formatExecutionView(record, logs)), nil
-	})
-}
-
-func registerTraceSearchTool(mcpServer *server.MCPServer, otelQueryURL string) {
-	tool := mcp.NewTool("trace_search",
-		mcp.WithDescription("Search for traces by a business attribute (e.g. portfolio.id, user.id, process.id). Returns matching traces. Use this to find all activity related to a specific user, portfolio, or import job. Filters server-side via SigNoz query API."),
-		mcp.WithString("attribute",
-			mcp.Required(),
-			mcp.Description("The attribute key to search for (e.g. 'portfolio.id', 'user.id', 'process.id')."),
-		),
-		mcp.WithString("value",
-			mcp.Required(),
-			mcp.Description("The attribute value to match (e.g. '123', 'user-abc')."),
-		),
-		mcp.WithString("service",
-			mcp.Description("Optional service name to narrow the search. If omitted, all services are searched."),
-		),
-		mcp.WithNumber("limit",
-			mcp.Description("Maximum number of matching traces to return. Defaults to 10."),
-		),
-		mcp.WithNumber("since_minutes",
-			mcp.Description("Look-back window in minutes. Defaults to 60."),
-		),
-	)
-
-	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if otelQueryURL == "" {
-			return mcp.NewToolResultError("No observability query endpoint configured. Set one with: devstack otel set-endpoint <otlp-url> --query-url=<query-url>"), nil
-		}
-
 		attribute := request.GetString("attribute", "")
 		value := request.GetString("value", "")
-		service := request.GetString("service", "")
-		limit := int(request.GetFloat("limit", 10))
-		sinceMinutes := int(request.GetFloat("since_minutes", 60))
+		sinceMinutes := int(request.GetFloat("since_minutes", 5))
+		limit := int(request.GetFloat("limit", 3))
+		errorsOnly := request.GetBool("errors_only", false)
 
-		if attribute == "" || value == "" {
-			return mcp.NewToolResultError("attribute and value are both required"), nil
-		}
-
-		matched, err := searchTraces(otelQueryURL, attribute, value, service, limit, sinceMinutes)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		if len(matched) == 0 {
-			svcMsg := ""
-			if service != "" {
-				svcMsg = fmt.Sprintf(" in service %q", service)
+		// Mode 1: specific trace ID
+		if traceID != "" {
+			record, err := fetchTrace(otelQueryURL, traceID)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return mcp.NewToolResultText(fmt.Sprintf("No traces found where %s=%s%s.", attribute, value, svcMsg)), nil
+			if record == nil {
+				return mcp.NewToolResultText(fmt.Sprintf("Trace %q not found.", traceID)), nil
+			}
+			logs, _ := fetchLogsForTrace(otelQueryURL, traceID)
+			d := executionDetail{record: record, otelLogs: logs}
+			if len(logs) == 0 {
+				d.tiltLogs = fetchTiltProcessLogs(tiltClient, uniqueServices(record), 80)
+			}
+			return mcp.NewToolResultText(formatExecutionDetailView(&d)), nil
 		}
 
-		return mcp.NewToolResultText(formatTraceList(matched)), nil
+		// Mode 2: attribute search
+		var roots []traceRecord
+		if attribute != "" && value != "" {
+			fetchLimit := limit * 5
+			if fetchLimit < 10 {
+				fetchLimit = 10
+			}
+			matched, err := searchTraces(otelQueryURL, attribute, value, service, fetchLimit, sinceMinutes)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			roots = matched
+		} else {
+			// Mode 3: recent executions
+			fetchLimit := limit * 5
+			if fetchLimit < 10 {
+				fetchLimit = 10
+			}
+			var err error
+			roots, err = fetchRootTraces(otelQueryURL, service, fetchLimit, sinceMinutes)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+		}
+
+		if errorsOnly {
+			filtered := roots[:0]
+			for _, r := range roots {
+				if rs := rootSpan(&r); rs != nil && spanHasError(rs) {
+					filtered = append(filtered, r)
+				}
+			}
+			roots = filtered
+		}
+
+		if len(roots) == 0 {
+			msg := fmt.Sprintf("No executions found in the last %d minute(s).", sinceMinutes)
+			if attribute != "" {
+				msg = fmt.Sprintf("No executions found where %s=%s in the last %d minute(s).", attribute, value, sinceMinutes)
+			} else if service != "" {
+				msg = fmt.Sprintf("No executions found for %q in the last %d minute(s).", service, sinceMinutes)
+			}
+			return mcp.NewToolResultText(msg), nil
+		}
+
+		if len(roots) > limit {
+			roots = roots[:limit]
+		}
+
+		details := fetchExecutionDetails(roots, otelQueryURL, tiltClient)
+
+		sep := "\n" + strings.Repeat("─", 60) + "\n\n"
+		var sb strings.Builder
+		for i := range details {
+			if i > 0 {
+				sb.WriteString(sep)
+			}
+			sb.WriteString(formatExecutionDetailView(&details[i]))
+		}
+		return mcp.NewToolResultText(sb.String()), nil
 	})
 }
 
@@ -619,80 +581,3 @@ func formatExecutionDetailView(d *executionDetail) string {
 	return sb.String()
 }
 
-func registerWhatHappenedTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService, otelQueryURL string) {
-	tool := mcp.NewTool("what_happened",
-		mcp.WithDescription("Find the most recent executions and show a complete correlated investigation view for each: full span tree across all services, durations, errors, business attributes (portfolio.id, user.id, etc.), and correlated logs. Call this after triggering a request — it finds what just ran and gives you everything needed to map the execution to source code and explain what went wrong. Defaults to the 3 most recent executions in the past 5 minutes."),
-		mcp.WithString("service",
-			mcp.Description("Optional service name filter. If omitted and a default service is configured, uses that."),
-		),
-		mcp.WithNumber("limit",
-			mcp.Description("Number of recent executions to show. Defaults to 3."),
-		),
-		mcp.WithNumber("since_minutes",
-			mcp.Description("Look-back window in minutes. Defaults to 5."),
-		),
-		mcp.WithBoolean("errors_only",
-			mcp.Description("If true, only show executions where the root span has an error status. Defaults to false."),
-		),
-	)
-
-	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if otelQueryURL == "" {
-			return mcp.NewToolResultError("No observability query endpoint configured. Set one with: devstack otel set-endpoint <otlp-url> --query-url=<query-url>"), nil
-		}
-
-		service := request.GetString("service", "")
-		if service == "" {
-			service = defaultService
-		}
-		limit := int(request.GetFloat("limit", 3))
-		sinceMinutes := int(request.GetFloat("since_minutes", 5))
-		errorsOnly := request.GetBool("errors_only", false)
-
-		// Fetch more root spans than needed so we have room to filter.
-		fetchLimit := limit * 5
-		if fetchLimit < 10 {
-			fetchLimit = 10
-		}
-		roots, err := fetchRootTraces(otelQueryURL, service, fetchLimit, sinceMinutes)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		if errorsOnly {
-			filtered := roots[:0]
-			for _, r := range roots {
-				root := rootSpan(&r)
-				if root != nil && spanHasError(root) {
-					filtered = append(filtered, r)
-				}
-			}
-			roots = filtered
-		}
-
-		if len(roots) == 0 {
-			msg := fmt.Sprintf("No traces found in the last %d minute(s).", sinceMinutes)
-			if service != "" {
-				msg = fmt.Sprintf("No traces found for %q in the last %d minute(s).", service, sinceMinutes)
-			}
-			return mcp.NewToolResultText(msg), nil
-		}
-
-		if len(roots) > limit {
-			roots = roots[:limit]
-		}
-
-		details := fetchExecutionDetails(roots, otelQueryURL, tiltClient)
-
-		sep := "\n" + strings.Repeat("─", 60) + "\n\n"
-		var sb strings.Builder
-		for i := range details {
-			if i > 0 {
-				sb.WriteString(sep)
-			}
-			sb.WriteString(formatExecutionDetailView(&details[i]))
-		}
-
-		return mcp.NewToolResultText(sb.String()), nil
-	})
-}
