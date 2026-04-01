@@ -5,26 +5,35 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"devstack/internal/config"
 	"devstack/internal/workspace"
 )
+
+var initAll bool
 
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Append dev stack MCP instructions to AGENTS.md",
-	Long:  `Appends LLM instructions for the devstack MCP tools to AGENTS.md in the current directory.`,
+	Long:  `Appends LLM instructions for the devstack MCP tools to AGENTS.md in the current directory. Use --all to update every service in the workspace.`,
 	RunE:  runInit,
 }
 
 func init() {
 	rootCmd.AddCommand(initCmd)
+	initCmd.Flags().BoolVar(&initAll, "all", false, "Update AGENTS.md for every service registered in the workspace")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
+	if initAll {
+		return runInitAll()
+	}
+
 	defaultService := viper.GetString("default_service")
 	workspacePath := viper.GetString("workspace")
 
@@ -44,27 +53,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	agentsFile := filepath.Join(".", "AGENTS.md")
-
-	// Read existing content (if any), strip any previous devstack section, then re-append.
-	existing, err := os.ReadFile(agentsFile)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to read AGENTS.md: %w", err)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
 	}
 
-	const sectionHeader = "## Dev Stack (devstack MCP)"
-	stripped := string(existing)
-	if idx := strings.Index(stripped, "\n"+sectionHeader); idx != -1 {
-		stripped = stripped[:idx]
-	} else if strings.HasPrefix(stripped, sectionHeader) {
-		stripped = ""
+	if err := writeAgentsMD(defaultService, cwd, workspacePath); err != nil {
+		return err
 	}
-
-	instructions := buildInstructions(defaultService, workspacePath)
-	if err := os.WriteFile(agentsFile, []byte(stripped+instructions), 0644); err != nil {
-		return fmt.Errorf("failed to write AGENTS.md: %w", err)
-	}
-	fmt.Fprintf(os.Stderr, "✓ devstack MCP instructions written to %s\n", agentsFile)
+	fmt.Fprintf(os.Stderr, "✓ devstack MCP instructions written to AGENTS.md\n")
 
 	// Auto-register workspace
 	if workspacePath == "" {
@@ -194,6 +191,72 @@ func injectStopHook(defaultService string, workspacePath string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "✓ Stop hook injected into .claude/settings.local.json (service: %s)\n", defaultService)
+	return nil
+}
+
+func runInitAll() error {
+	ws, err := workspace.DetectFromCwd()
+	if err != nil {
+		return fmt.Errorf("could not detect workspace from current directory: %w\nRun from within a registered workspace, or use 'devstack init' in a specific service directory.", err)
+	}
+
+	cfg, err := config.Load(ws.Path)
+	if err != nil {
+		return fmt.Errorf("failed to load workspace config: %w", err)
+	}
+
+	if len(cfg.ServicePaths) == 0 {
+		fmt.Fprintln(os.Stderr, "No services registered in this workspace. Use 'devstack onboard' to add services.")
+		return nil
+	}
+
+	// Sort for deterministic output
+	services := make([]string, 0, len(cfg.ServicePaths))
+	for name := range cfg.ServicePaths {
+		services = append(services, name)
+	}
+	sort.Strings(services)
+
+	fmt.Fprintf(os.Stderr, "Updating AGENTS.md for %d services in workspace '%s'\n", len(services), ws.Name)
+
+	var errs []string
+	for _, name := range services {
+		svcPath := cfg.ServicePaths[name]
+		if err := writeAgentsMD(name, svcPath, ws.Path); err != nil {
+			errs = append(errs, fmt.Sprintf("  %s: %v", name, err))
+			fmt.Fprintf(os.Stderr, "✗ %s (%s): %v\n", name, svcPath, err)
+		} else {
+			fmt.Fprintf(os.Stderr, "✓ %s (%s)\n", name, svcPath)
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("%d service(s) failed:\n%s", len(errs), strings.Join(errs, "\n"))
+	}
+	return nil
+}
+
+// writeAgentsMD strips and rewrites the devstack section of AGENTS.md for a service.
+func writeAgentsMD(serviceName, servicePath, workspacePath string) error {
+	agentsFile := filepath.Join(servicePath, "AGENTS.md")
+
+	existing, err := os.ReadFile(agentsFile)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read AGENTS.md: %w", err)
+	}
+
+	const sectionHeader = "## Dev Stack (devstack MCP)"
+	stripped := string(existing)
+	if idx := strings.Index(stripped, "\n"+sectionHeader); idx != -1 {
+		stripped = stripped[:idx]
+	} else if strings.HasPrefix(stripped, sectionHeader) {
+		stripped = ""
+	}
+
+	instructions := buildInstructions(serviceName, workspacePath)
+	if err := os.WriteFile(agentsFile, []byte(stripped+instructions), 0644); err != nil {
+		return fmt.Errorf("failed to write AGENTS.md: %w", err)
+	}
 	return nil
 }
 
