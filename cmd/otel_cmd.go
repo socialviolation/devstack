@@ -11,42 +11,78 @@ import (
 
 var otelCmd = &cobra.Command{
 	Use:   "otel",
-	Short: "Manage the observability backend (SigNoz or BYO endpoint)",
+	Short: "Manage the local observability stack (traces and logs)",
+	Long: `devstack runs a local SigNoz observability stack per workspace. Every service
+onboarded with 'devstack onboard' is pre-configured to ship OpenTelemetry traces
+and logs to this stack via OTEL_EXPORTER_OTLP_ENDPOINT.
+
+This gives AI agents real-time visibility into what is happening across services
+during local development. The MCP 'investigate' tool queries this stack to
+correlate traces and logs when something goes wrong.
+
+The stack starts automatically when you run 'devstack workspace up'. Use these
+subcommands to manage it independently or switch to a custom endpoint.
+
+MODES
+  managed (default)
+    devstack runs a SigNoz container stack locally. Traces and logs are stored
+    on this machine and queryable via the SigNoz UI and MCP tools.
+
+  byo (bring your own)
+    Point devstack at an existing OTLP endpoint (e.g. a shared staging collector).
+    devstack will not start any containers; services will push telemetry there.
+
+SUBCOMMANDS
+  devstack otel status          show which mode is active and whether it is running
+  devstack otel start           start the managed SigNoz stack
+  devstack otel stop            stop the managed SigNoz stack
+  devstack otel open            open the SigNoz UI in the browser
+  devstack otel set-endpoint    switch to BYO mode with a custom OTLP endpoint
+  devstack otel managed         switch back to managed SigNoz mode`,
 }
 
 var otelStartCmd = &cobra.Command{
 	Use:   "start",
-	Short: "Start the managed SigNoz container stack for a workspace",
-	RunE:  runOtelStart,
+	Short: "Start the managed SigNoz observability stack",
+	Long: `Start the local SigNoz container stack for the current workspace.
+
+SigNoz provides a trace and log UI, and exposes a query API that the devstack
+MCP tools use to surface correlated observability data to AI agents.
+
+This is called automatically by 'devstack workspace up'.`,
+	RunE: runOtelStart,
 }
 
 var otelStopCmd = &cobra.Command{
 	Use:   "stop",
-	Short: "Stop the managed SigNoz container stack for a workspace",
+	Short: "Stop the managed SigNoz observability stack",
 	RunE:  runOtelStop,
 }
 
 var otelStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show whether the SigNoz stack is running",
+	Short: "Show the observability stack mode and running state",
 	RunE:  runOtelStatus,
 }
 
 var otelOpenCmd = &cobra.Command{
 	Use:   "open",
-	Short: "Open the SigNoz UI in the browser",
-	RunE:  runOtelOpen,
+	Short: "Open the SigNoz trace UI in the browser",
+	Long: `Open the SigNoz UI for the current workspace. This is where you can browse
+distributed traces, logs, and service maps for all locally running services.`,
+	RunE: runOtelOpen,
 }
 
 var otelSetEndpointCmd = &cobra.Command{
 	Use:   "set-endpoint <otlp-url>",
-	Short: "Switch to BYO mode with a user-provided OTLP endpoint",
+	Short: "Switch to BYO mode — push traces to a custom OTLP endpoint",
 	Long: `Switch the workspace to BYO (bring-your-own) mode.
 
-devstack will configure services to push OTLP telemetry to <otlp-url>
-instead of starting a managed SigNoz container stack.
+devstack will configure services to push OTLP telemetry to your endpoint
+instead of running a local SigNoz container stack.
 
-Optionally provide --query-url to enable trace queries in MCP tools.
+Provide --query-url if your endpoint also exposes a SigNoz-compatible query API,
+which enables the devstack MCP trace tools for AI agents.
 
 Examples:
   devstack otel set-endpoint http://my-collector:4318
@@ -57,8 +93,8 @@ Examples:
 
 var otelManagedCmd = &cobra.Command{
 	Use:   "managed",
-	Short: "Switch back to managed mode (SigNoz container stack)",
-	Long:  `Switch the workspace back to managed mode. devstack will start and manage a SigNoz container stack for observability.`,
+	Short: "Switch back to managed mode (local SigNoz container stack)",
+	Long:  `Switch the workspace back to managed mode. devstack will start and manage a local SigNoz container stack. Run 'devstack otel start' after switching.`,
 	RunE:  runOtelManaged,
 }
 

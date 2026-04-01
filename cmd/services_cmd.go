@@ -13,13 +13,25 @@ import (
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show service status — grouped tree view in workspace, or all workspaces if run outside one",
+	Short: "Show live service status for the current workspace",
+	Long: `Show a live grouped tree view of every service in the current workspace —
+their running state, exposed ports, and declared dependencies.
+
+If run from outside any registered workspace, shows a summary table of all
+workspaces and their daemon status instead.
+
+Service states:
+  running   — process is up and healthy
+  starting  — process is starting or building
+  error     — process exited with an error (check logs)
+  idle      — service is registered but not currently enabled
+  disabled  — service has been explicitly stopped
+  unknown   — daemon is not reachable (run: devstack workspace up)`,
 	RunE:  runStatus,
 }
 
 func init() {
 	rootCmd.AddCommand(statusCmd)
-	statusCmd.Flags().String("workspace", "", "Workspace name or path (default: auto-detect)")
 }
 
 // groupPalette cycles through distinct colors for group headers.
@@ -32,7 +44,7 @@ var groupPalette = []*color.Color{
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
-	wsFlag, _ := cmd.Flags().GetString("workspace")
+	wsFlag, _ := cmd.Flags().GetString("workspace") // inherited persistent flag
 	ws, err := resolveWorkspace(wsFlag)
 	if err != nil {
 		return runStatusAll()
@@ -83,9 +95,9 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 	}
 
 	// Header
-	tiltState := fmt.Sprintf("Tilt :%d", ws.TiltPort)
+	tiltState := fmt.Sprintf("daemon :%d", ws.TiltPort)
 	if tiltErr != nil {
-		tiltState = color.New(color.FgRed).Sprint("Tilt not running")
+		tiltState = color.New(color.FgRed).Sprint("daemon stopped")
 	}
 	otelState := ""
 	if ws.OtelMode == "byo" {
@@ -108,7 +120,7 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 	if tiltErr != nil {
 		apiURL := fmt.Sprintf("http://localhost:%d/api/view", ws.TiltPort)
 		if isTiltReachable(apiURL) {
-			fmt.Println("  Tilt is starting — run 'devstack status' again in a moment.")
+			fmt.Println("  Dev daemon is starting — run 'devstack status' again in a moment.")
 		} else {
 			fmt.Println("  Run: devstack up")
 		}

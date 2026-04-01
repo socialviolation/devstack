@@ -11,17 +11,18 @@ import (
 
 var openCmd = &cobra.Command{
 	Use:   "open",
-	Short: "Open the Tilt UI in the browser",
+	Short: "Open the dev daemon dashboard in the browser",
+	Long: `Open the dev daemon UI for the current workspace in the browser.
+The dashboard shows all running services, their build logs, and status.`,
 	RunE:  runOpen,
 }
 
 func init() {
-	rootCmd.AddCommand(openCmd)
-	openCmd.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from cwd)")
+	workspaceCmd.AddCommand(openCmd)
 }
 
 func runOpen(cmd *cobra.Command, args []string) error {
-	wsFlag, _ := cmd.Flags().GetString("workspace")
+	wsFlag, _ := cmd.Flags().GetString("workspace") // inherited persistent flag
 
 	var ws *workspace.Workspace
 	var err error
@@ -36,6 +37,6 @@ func runOpen(cmd *cobra.Command, args []string) error {
 	}
 
 	url := fmt.Sprintf("http://localhost:%d", ws.TiltPort)
-	fmt.Printf("Opening Tilt UI for '%s': %s\n", ws.Name, url)
+	fmt.Printf("Opening dashboard for '%s': %s\n", ws.Name, url)
 	return exec.Command("xdg-open", url).Start()
 }

@@ -12,18 +12,20 @@ import (
 
 var downCmd = &cobra.Command{
 	Use:   "down",
-	Short: "Stop Tilt for a workspace",
-	Long:  `Kill the Tilt daemon for the given workspace and remove the PID file.`,
+	Short: "Stop the dev daemon for the current workspace",
+	Long: `Stop the dev daemon and all locally running services for the current workspace.
+
+Also stops the managed SigNoz observability stack if it is running.
+The PID file is removed. Run 'devstack workspace up' to start again.`,
 	RunE:  runDown,
 }
 
 func init() {
-	rootCmd.AddCommand(downCmd)
-	downCmd.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
+	workspaceCmd.AddCommand(downCmd)
 }
 
 func runDown(cmd *cobra.Command, args []string) error {
-	wsFlag, _ := cmd.Flags().GetString("workspace")
+	wsFlag, _ := cmd.Flags().GetString("workspace") // inherited persistent flag
 
 	// 1. Resolve workspace
 	ws, err := resolveWorkspace(wsFlag)
@@ -36,14 +38,14 @@ func runDown(cmd *cobra.Command, args []string) error {
 	// 2. Read PID from PID file
 	pidData, pidErr := os.ReadFile(pidFile)
 	if pidErr != nil {
-		// No PID file — check if Tilt is reachable anyway
+		// No PID file — check if daemon is reachable anyway
 		apiURL := fmt.Sprintf("http://localhost:%d/api/view", ws.TiltPort)
 		if !isTiltReachable(apiURL) {
-			fmt.Printf("Tilt is not running for '%s'\n", ws.Name)
+			fmt.Printf("Dev daemon is not running for '%s'\n", ws.Name)
 			return nil
 		}
-		fmt.Fprintf(os.Stderr, "Warning: no PID file found but Tilt API is reachable — Tilt may have been started outside devstack\n")
-		fmt.Printf("✓ Tilt stopped for '%s'\n", ws.Name)
+		fmt.Fprintf(os.Stderr, "Warning: no PID file found but daemon is reachable — it may have been started outside devstack\n")
+		fmt.Printf("✓ Dev daemon stopped for '%s'\n", ws.Name)
 		return nil
 	}
 
@@ -70,7 +72,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Warning: failed to remove PID file: %v\n", err)
 	}
 
-	fmt.Printf("✓ Tilt stopped for '%s'\n", ws.Name)
+	fmt.Printf("✓ Dev daemon stopped for '%s'\n", ws.Name)
 
 	// 5. Stop managed observability stack (if in managed mode)
 	if ws.OtelMode != "byo" {

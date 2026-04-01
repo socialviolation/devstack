@@ -16,18 +16,26 @@ import (
 
 var upCmd = &cobra.Command{
 	Use:   "up",
-	Short: "Start Tilt for a workspace as a background daemon",
-	Long:    `Start Tilt (tilt up) as a detached background daemon for the given workspace. Logs are written to ~/.local/share/devstack/<name>/tilt.log and the PID is tracked in tilt.pid.`,
-	RunE:    runStart,
+	Short: "Start the dev daemon for the current workspace",
+	Long: `Start the dev daemon as a detached background process for the current workspace.
+
+The dev daemon is responsible for running all local services, watching source
+files for changes, and hot-reloading services when code is modified. It must
+be running before you can start, stop, or restart individual services.
+
+The SigNoz observability stack is also started automatically so services can
+begin shipping traces and logs immediately.
+
+Logs are written to ~/.local/share/devstack/<workspace-name>/tilt.log.`,
+	RunE:  runStart,
 }
 
 func init() {
-	rootCmd.AddCommand(upCmd)
-	upCmd.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
+	workspaceCmd.AddCommand(upCmd)
 }
 
 func runStart(cmd *cobra.Command, args []string) error {
-	wsFlag, _ := cmd.Flags().GetString("workspace")
+	wsFlag, _ := cmd.Flags().GetString("workspace") // inherited persistent flag
 
 	// 1. Resolve workspace
 	ws, err := resolveWorkspace(wsFlag)
@@ -39,10 +47,10 @@ func runStart(cmd *cobra.Command, args []string) error {
 	logFile := workspace.LogFile(ws.Name)
 	dataDir := workspace.DataDir(ws.Name)
 
-	// 2. Check if Tilt already running via API
+	// 2. Check if daemon already running via API
 	apiURL := fmt.Sprintf("http://localhost:%d/api/view", ws.TiltPort)
 	if isTiltReachable(apiURL) {
-		fmt.Printf("Tilt already running for '%s'\n", ws.Name)
+		fmt.Printf("Dev daemon already running for '%s'\n", ws.Name)
 		return nil
 	}
 
@@ -51,12 +59,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 		pid, parseErr := strconv.Atoi(string(pidData))
 		if parseErr == nil {
 			if isProcessAlive(pid) {
-				// Sync registry port with the actual port Tilt is running on
+				// Sync registry port with the actual running port
 				if actual := workspace.ResolvePort(ws.Name); actual != 0 && actual != ws.TiltPort {
 					ws.TiltPort = actual
 					fmt.Printf("Updated workspace port to %d (was stale)\n", actual)
 				}
-				fmt.Printf("Tilt is already running (pid %d, port %d)\n", pid, ws.TiltPort)
+				fmt.Printf("Dev daemon already running (pid %d, port %d)\n", pid, ws.TiltPort)
 				return nil
 			}
 			// Stale PID file — remove it
@@ -84,7 +92,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	tiltCmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	if err := tiltCmd.Start(); err != nil {
-		return fmt.Errorf("failed to start tilt: %w", err)
+		return fmt.Errorf("failed to start dev daemon: %w", err)
 	}
 
 	pid := tiltCmd.Process.Pid
@@ -96,8 +104,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to write PID file: %w", err)
 	}
 
-	// 8. Poll until Tilt is reachable (up to 45s, every 2s)
-	fmt.Printf("Starting Tilt for '%s'", ws.Name)
+	// 8. Poll until daemon is reachable (up to 45s, every 2s)
+	fmt.Printf("Starting dev daemon for '%s'", ws.Name)
 	deadline := time.Now().Add(45 * time.Second)
 	reached := false
 	for time.Now().Before(deadline) {
@@ -112,9 +120,9 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	// 9. Print result
 	if reached {
-		fmt.Printf("✓ Tilt started (pid %d, port %d, logs: %s)\n", pid, ws.TiltPort, logFile)
+		fmt.Printf("✓ Started (pid %d, port %d, logs: %s)\n", pid, ws.TiltPort, logFile)
 	} else {
-		fmt.Printf("Tilt started but not yet reachable — logs: %s\n", logFile)
+		fmt.Printf("Started but not yet reachable — logs: %s\n", logFile)
 	}
 
 	// 10. Start observability backend if in managed mode

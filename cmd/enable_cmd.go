@@ -13,17 +13,25 @@ import (
 
 var svcStartCmd = &cobra.Command{
 	Use:   "start [service]",
-	Short: "Start a service (and its dependencies) in the workspace",
-	Long: `Start a service by resolving its dependencies and triggering them all via Tilt.
+	Short: "Start a service and all its dependencies",
+	Long: `Start a service by name, automatically resolving and starting its dependencies first.
 
-Deps are started first (in dependency order), then the requested service.
-Use --group to start all services in a named group.`,
+devstack reads the dependency graph from .devstack.json and computes the correct
+startup order. Dependencies are enabled and triggered before the requested service,
+so you never have to think about ordering.
+
+If no service name is given, devstack will auto-detect it from the current directory
+by matching against registered service paths in .devstack.json.
+
+Use --group to start every service in a named group at once (also resolves deps).
+
+Requires the dev daemon to be running first:
+  devstack workspace up`,
 	RunE: runEnable,
 }
 
 func init() {
 	rootCmd.AddCommand(svcStartCmd)
-	svcStartCmd.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
 	svcStartCmd.Flags().String("group", "", "Start a named group of services instead of a single service")
 }
 
@@ -51,7 +59,7 @@ func detectServiceFromCwd(cfg *config.WorkspaceConfig) (string, error) {
 }
 
 func runEnable(cmd *cobra.Command, args []string) error {
-	wsFlag, _ := cmd.Flags().GetString("workspace")
+	wsFlag, _ := cmd.Flags().GetString("workspace") // inherited persistent flag
 	groupFlag, _ := cmd.Flags().GetString("group")
 
 	ws, err := resolveWorkspace(wsFlag)
@@ -109,7 +117,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
 	view, err := tiltClient.GetView()
 	if err != nil {
-		return fmt.Errorf("failed to get Tilt view: %w", err)
+		return fmt.Errorf("dev daemon is not running — start it first with: devstack workspace up\n(%w)", err)
 	}
 
 	// Build a set of disabled resources for quick lookup
@@ -126,7 +134,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 				if out != "" {
 					fmt.Print(out)
 				}
-				return fmt.Errorf("tilt enable %s failed: %w", svc, err)
+				return fmt.Errorf("enable %s failed: %w", svc, err)
 			}
 		}
 		out, err := tiltClient.RunCLI("trigger", svc)
@@ -134,7 +142,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 			if out != "" {
 				fmt.Print(out)
 			}
-			return fmt.Errorf("tilt trigger %s failed: %w", svc, err)
+			return fmt.Errorf("trigger %s failed: %w", svc, err)
 		}
 		if out != "" {
 			fmt.Print(out)

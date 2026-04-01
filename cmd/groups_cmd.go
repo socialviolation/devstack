@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
 	"devstack/internal/config"
@@ -12,12 +13,30 @@ import (
 
 var groupsCmd = &cobra.Command{
 	Use:   "groups",
-	Short: "Manage service groups (add, remove, find)",
+	Short: "Show and manage service groups",
+	Long: `Groups are named collections of services used to organise the workspace and
+start related services together. For example, a 'backend' group might contain
+your API, worker, and scheduler services.
+
+Running 'devstack groups' (or 'devstack groups list') shows a rich tree of all
+groups, their members, and the dependencies each member declares — colour-coded
+by group so cross-group dependencies are immediately visible.
+
+Groups are declared in <workspace>/.devstack.json and are used by:
+  devstack start --group=<name>    start all services in a group (respects deps)
+  devstack status                  groups are the top-level sections in the tree
+
+SUBCOMMANDS
+  devstack groups                  show group tree with deps
+  devstack groups add <g> <svc>    add a service to a group
+  devstack groups remove <g> <svc> remove a service from a group`,
+	// Default action: show the rich group tree
+	RunE: runGroupsList,
 }
 
 var groupsListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all declared groups and their members",
+	Short: "Show all groups with members and dependencies",
 	Args:  cobra.NoArgs,
 	RunE:  runGroupsList,
 }
@@ -36,21 +55,11 @@ var groupsRemoveCmd = &cobra.Command{
 	RunE:  runGroupsRemove,
 }
 
-var groupsFindCmd = &cobra.Command{
-	Use:   "find <service>",
-	Short: "Find which groups contain a service",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runGroupsFind,
-}
-
 func init() {
 	rootCmd.AddCommand(groupsCmd)
 	groupsCmd.AddCommand(groupsListCmd)
 	groupsCmd.AddCommand(groupsAddCmd)
 	groupsCmd.AddCommand(groupsRemoveCmd)
-	groupsCmd.AddCommand(groupsFindCmd)
-
-	groupsCmd.PersistentFlags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
 }
 
 func runGroupsList(cmd *cobra.Command, args []string) error {
@@ -66,19 +75,103 @@ func runGroupsList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(cfg.Groups) == 0 {
-		fmt.Println("No groups declared. Use: devstack groups add <group> <service> [service...]")
+		fmt.Println("No groups declared.")
+		fmt.Println("Use: devstack groups add <group> <service> [service...]")
 		return nil
 	}
 
-	names := make([]string, 0, len(cfg.Groups))
+	groupNames := make([]string, 0, len(cfg.Groups))
 	for name := range cfg.Groups {
-		names = append(names, name)
+		groupNames = append(groupNames, name)
 	}
-	sort.Strings(names)
+	sort.Strings(groupNames)
 
-	for _, name := range names {
-		fmt.Printf("%-20s  %s\n", name, strings.Join(cfg.Groups[name], ", "))
+	// Build service → group color map for dep highlighting
+	svcGroupColor := make(map[string]*color.Color)
+	for i, groupName := range groupNames {
+		gc := groupPalette[i%len(groupPalette)]
+		for _, member := range cfg.Groups[groupName] {
+			svcGroupColor[member] = gc
+		}
 	}
+
+	for i, groupName := range groupNames {
+		members := cfg.Groups[groupName]
+		if len(members) == 0 {
+			continue
+		}
+		sorted := make([]string, len(members))
+		copy(sorted, members)
+		sort.Strings(sorted)
+
+		gc := groupPalette[i%len(groupPalette)]
+		gc.Printf("● %s", groupName)
+		color.New(color.Faint).Printf("  [%d]\n", len(members))
+
+		for j, svc := range sorted {
+			isLast := j == len(sorted)-1
+			branch := "  ├── "
+			if isLast {
+				branch = "  └── "
+			}
+
+			fmt.Print(branch)
+			fmt.Printf("%-24s", svc)
+
+			deps := cfg.Deps[svc]
+			if len(deps) > 0 {
+				color.New(color.Faint).Print("  ← ")
+				for k, dep := range deps {
+					if k > 0 {
+						color.New(color.Faint).Print(", ")
+					}
+					if c, ok := svcGroupColor[dep]; ok {
+						c.Print(dep)
+					} else {
+						color.New(color.Faint).Print(dep)
+					}
+				}
+			}
+			fmt.Println()
+		}
+		fmt.Println()
+	}
+
+	// Ungrouped services that have deps declared
+	inGroup := make(map[string]bool)
+	for _, members := range cfg.Groups {
+		for _, m := range members {
+			inGroup[m] = true
+		}
+	}
+	var ungrouped []string
+	for svc := range cfg.Deps {
+		if !inGroup[svc] && len(cfg.Deps[svc]) > 0 {
+			ungrouped = append(ungrouped, svc)
+		}
+	}
+	if len(ungrouped) > 0 {
+		sort.Strings(ungrouped)
+		color.New(color.Faint, color.Bold).Printf("● ungrouped\n")
+		for j, svc := range ungrouped {
+			isLast := j == len(ungrouped)-1
+			branch := "  ├── "
+			if isLast {
+				branch = "  └── "
+			}
+			fmt.Print(branch)
+			fmt.Printf("%-24s", svc)
+			deps := cfg.Deps[svc]
+			if len(deps) > 0 {
+				color.New(color.Faint).Print("  ← ")
+				color.New(color.Faint).Print(strings.Join(deps, ", "))
+			}
+			fmt.Println()
+		}
+		fmt.Println()
+	}
+
+	color.New(color.Faint).Printf("  devstack status for live service state\n")
 	return nil
 }
 
@@ -128,43 +221,6 @@ func runGroupsAdd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runGroupsFind(cmd *cobra.Command, args []string) error {
-	service := args[0]
-
-	wsFlag, _ := cmd.Flags().GetString("workspace")
-	ws, err := resolveWorkspace(wsFlag)
-	if err != nil {
-		return err
-	}
-
-	cfg, err := config.Load(ws.Path)
-	if err != nil {
-		return err
-	}
-
-	var found []string
-	for name, members := range cfg.Groups {
-		for _, m := range members {
-			if m == service {
-				found = append(found, name)
-				break
-			}
-		}
-	}
-
-	if len(found) == 0 {
-		fmt.Printf("No groups contain %q. Enable it directly: devstack enable %s\n", service, service)
-		return nil
-	}
-
-	sort.Strings(found)
-	fmt.Printf("Groups containing %q:\n", service)
-	for _, name := range found {
-		fmt.Printf("  %-20s  %s\n", name, strings.Join(cfg.Groups[name], ", "))
-	}
-	return nil
-}
-
 func runGroupsRemove(cmd *cobra.Command, args []string) error {
 	group := args[0]
 	toRemove := make(map[string]bool)
@@ -200,7 +256,7 @@ func runGroupsRemove(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(remaining) == 0 {
-		fmt.Printf("✓ Group %q is now empty (remove it by editing .devstack.json if no longer needed)\n", group)
+		fmt.Printf("✓ Group %q is now empty\n", group)
 	} else {
 		fmt.Printf("✓ Group %q: %s\n", group, strings.Join(remaining, ", "))
 	}

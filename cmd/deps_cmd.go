@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"sort"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -12,37 +10,54 @@ import (
 
 var depsCmd = &cobra.Command{
 	Use:   "deps",
-	Short: "Manage service dependencies (add, remove, show)",
+	Short: "Declare startup dependencies between services",
+	Long: `Dependencies tell devstack which services must be running before a given service
+can start. When you run 'devstack start api', devstack resolves the full dependency
+graph and starts everything in the correct order automatically.
+
+Dependencies are stored in <workspace>/.devstack.json and visualised inline in
+the output of 'devstack groups' and 'devstack status'.
+
+Example: if 'api' depends on 'postgres' and 'redis':
+  devstack deps add api postgres
+  devstack deps add api redis
+  devstack start api          ← starts postgres, redis, then api
+
+SUBCOMMANDS
+  devstack deps add <svc> <dep>    declare that svc requires dep to be running first
+  devstack deps remove <svc> <dep> remove a declared dependency
+  devstack deps order <svc>        show the full resolved startup sequence for a service`,
 }
 
 var depsAddCmd = &cobra.Command{
 	Use:   "add <service> <dep>",
-	Short: "Add a dependency: service depends on dep",
+	Short: "Declare that <service> depends on <dep> (dep starts first)",
 	Args:  cobra.ExactArgs(2),
 	RunE:  runDepsAdd,
 }
 
 var depsRemoveCmd = &cobra.Command{
 	Use:   "remove <service> <dep>",
-	Short: "Remove a dependency from a service",
+	Short: "Remove a declared dependency",
 	Args:  cobra.ExactArgs(2),
 	RunE:  runDepsRemove,
 }
 
-var depsShowCmd = &cobra.Command{
-	Use:   "show [service]",
-	Short: "Show dependencies (all services or resolved order for a specific service)",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runDepsShow,
+var depsOrderCmd = &cobra.Command{
+	Use:   "order <service>",
+	Short: "Show the full resolved startup sequence for a service",
+	Long: `Resolves the complete dependency graph for a service and prints the startup
+order — the sequence devstack will use when you run 'devstack start <service>'.
+Useful for verifying that dependencies are declared correctly.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runDepsOrder,
 }
 
 func init() {
 	rootCmd.AddCommand(depsCmd)
 	depsCmd.AddCommand(depsAddCmd)
 	depsCmd.AddCommand(depsRemoveCmd)
-	depsCmd.AddCommand(depsShowCmd)
-
-	depsCmd.PersistentFlags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
+	depsCmd.AddCommand(depsOrderCmd)
 }
 
 func runDepsAdd(cmd *cobra.Command, args []string) error {
@@ -128,7 +143,9 @@ func runDepsRemove(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runDepsShow(cmd *cobra.Command, args []string) error {
+func runDepsOrder(cmd *cobra.Command, args []string) error {
+	service := args[0]
+
 	wsFlag, _ := cmd.Flags().GetString("workspace")
 	ws, err := resolveWorkspace(wsFlag)
 	if err != nil {
@@ -140,40 +157,14 @@ func runDepsShow(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if len(args) == 1 {
-		// Resolve deps for a specific service
-		service := args[0]
-		resolved, err := config.ResolveDeps(cfg, service)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("Resolved start order for %s:\n", service)
-		for i, svc := range resolved {
-			fmt.Printf("  %d. %s\n", i+1, svc)
-		}
-		return nil
+	resolved, err := config.ResolveDeps(cfg, service)
+	if err != nil {
+		return err
 	}
 
-	// No arg: print full dep graph for all services
-	if len(cfg.Deps) == 0 {
-		fmt.Println("No dependencies declared.")
-		return nil
+	fmt.Printf("Start order for %s:\n", service)
+	for i, svc := range resolved {
+		fmt.Printf("  %d. %s\n", i+1, svc)
 	}
-
-	// Sort service names for deterministic output
-	services := make([]string, 0, len(cfg.Deps))
-	for svc := range cfg.Deps {
-		services = append(services, svc)
-	}
-	sort.Strings(services)
-
-	for _, svc := range services {
-		deps := cfg.Deps[svc]
-		if len(deps) == 0 {
-			continue
-		}
-		fmt.Printf("%-30s →  %s\n", svc, strings.Join(deps, ", "))
-	}
-
 	return nil
 }

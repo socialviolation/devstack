@@ -12,9 +12,37 @@ var cfgFile string
 
 var rootCmd = &cobra.Command{
 	Use:   "devstack",
-	Short: "Tilt MCP server",
-	Long: `An MCP (Model Context Protocol) server that bridges Tilt's dev stack
-interface to Claude Code, enabling AI assistants to manage the dev stack.`,
+	Short: "Run and observe local development services across one or more workspaces",
+	Long: `devstack is a local development service manager built for teams working across
+multiple services and repositories. It is the backbone of an AI-assisted local
+development workflow.
+
+WHAT IT DOES
+  devstack manages groups of locally running services (APIs, workers, importers,
+  etc.) organised into workspaces — one workspace per product or organisation.
+  It handles dependency-ordered startup, live status, and service restarts.
+
+  It also spins up a local OpenTelemetry observability stack (SigNoz) per
+  workspace, so every service ships traces and logs that AI agents can query
+  in real time. When something breaks during feature development, an AI agent
+  can call the MCP tools to pull correlated traces and logs and pinpoint the
+  root cause without leaving the editor.
+
+WORKSPACE AUTO-DETECTION
+  Run any command from inside a workspace directory or any service subdirectory.
+  devstack will detect which workspace you are in automatically — no flags needed.
+
+TYPICAL WORKFLOW
+  devstack workspace add              register this directory as a workspace
+  devstack workspace up               start the dev daemon
+  devstack init --name=api ...        register a service and wire up observability
+  devstack start <service>            start a service and all its dependencies
+  devstack status                     live grouped view of every service
+  devstack otel open                  open the SigNoz trace UI in the browser
+
+AI AGENT WORKFLOW
+  devstack serve                      expose MCP tools to the AI agent
+  devstack init --all                 write AGENTS.md instructions into every service`,
 }
 
 func Execute() {
@@ -27,21 +55,26 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(initConfig)
 
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./config.json)")
+	// Hide the built-in help subcommand (--help flag still works)
+	rootCmd.SetHelpCommand(&cobra.Command{Hidden: true})
 
-	// Tilt configuration
-	rootCmd.PersistentFlags().Int("tilt-port", 10350, "Tilt API port")
-	rootCmd.PersistentFlags().String("tilt-host", "localhost", "Tilt API host")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./config.json)")
+	_ = rootCmd.PersistentFlags().MarkHidden("config")
+
+	// Dashboard (internal dev daemon) connection
+	rootCmd.PersistentFlags().Int("dashboard-port", 10350, "Dashboard port")
+	rootCmd.PersistentFlags().String("dashboard-host", "localhost", "Dashboard host")
+	_ = rootCmd.PersistentFlags().MarkHidden("dashboard-host")
 
 	// Default service context
 	rootCmd.PersistentFlags().String("default-service", "", "Default service name when none is specified (env: DEVSTACK_DEFAULT_SERVICE)")
 
 	// Workspace root directory
-	rootCmd.PersistentFlags().String("workspace", "", "Root directory containing all projects managed by this devstack (env: DEVSTACK_WORKSPACE)")
+	rootCmd.PersistentFlags().String("workspace", "", "Workspace name or path (env: DEVSTACK_WORKSPACE)")
 
-	// Bind flags to viper
-	viper.BindPFlag("tilt.port", rootCmd.PersistentFlags().Lookup("tilt-port"))
-	viper.BindPFlag("tilt.host", rootCmd.PersistentFlags().Lookup("tilt-host"))
+	// Bind flags to viper (keep internal keys stable)
+	viper.BindPFlag("tilt.port", rootCmd.PersistentFlags().Lookup("dashboard-port"))
+	viper.BindPFlag("tilt.host", rootCmd.PersistentFlags().Lookup("dashboard-host"))
 	viper.BindPFlag("default_service", rootCmd.PersistentFlags().Lookup("default-service"))
 	viper.BindPFlag("workspace", rootCmd.PersistentFlags().Lookup("workspace"))
 }
