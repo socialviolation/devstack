@@ -202,7 +202,7 @@ func DetectFromCwd() (*Workspace, error) {
 	return nil, fmt.Errorf("not inside a registered devstack workspace. Run: devstack register")
 }
 
-const defaultOtelUIPort = 8080
+const defaultOtelUIPort = 3301
 const defaultOtelOTLPGRPCPort = 4317
 const defaultOtelOTLPHTTPPort = 4318
 
