@@ -296,7 +296,7 @@ func runStatusWorkspace(wsFlag string) error {
 	if ws.OtelMode == "byo" {
 		otelStatus = fmt.Sprintf("byo (%s)", ws.OtelEndpoint)
 	} else if isOtelRunning(ws.Name) {
-		otelStatus = "running (:" + otelUIPort + ")"
+		otelStatus = fmt.Sprintf("running (%s)", workspace.OtelQueryEndpoint(ws))
 	}
 
 	fmt.Printf("Workspace: %s  %s\n", ws.Name, ws.Path)

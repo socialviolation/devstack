@@ -16,6 +16,11 @@ type Workspace struct {
 	OtelMode     string `json:"otel_mode"`  // "managed" (default) or "byo"
 	OtelEndpoint string `json:"otel_endpoint,omitempty"` // BYO: OTLP push endpoint for services
 	OtelQueryURL string `json:"otel_query_url,omitempty"` // BYO: query API URL (optional, for MCP tools)
+
+	// Managed SigNoz port overrides. Zero means use the default.
+	OtelUIPort       int `json:"otel_ui_port,omitempty"`       // SigNoz UI + query API (default 8080)
+	OtelOTLPGRPCPort int `json:"otel_otlp_grpc_port,omitempty"` // OTLP gRPC (default 4317)
+	OtelOTLPHTTPPort int `json:"otel_otlp_http_port,omitempty"` // OTLP HTTP (default 4318)
 }
 
 // RegistryPath returns the path to the workspace registry JSON file.
@@ -197,31 +202,53 @@ func DetectFromCwd() (*Workspace, error) {
 	return nil, fmt.Errorf("not inside a registered devstack workspace. Run: devstack register")
 }
 
-// OtelOTLPEndpoint returns the OTLP HTTP endpoint for a workspace.
-// In managed mode, returns the local SigNoz otel-collector OTLP HTTP port.
-// In byo mode, returns OtelEndpoint.
+const defaultOtelUIPort = 8080
+const defaultOtelOTLPGRPCPort = 4317
+const defaultOtelOTLPHTTPPort = 4318
+
+// UIPort returns the effective SigNoz UI/query port for a managed workspace.
+func (ws *Workspace) UIPort() int {
+	if ws.OtelUIPort > 0 {
+		return ws.OtelUIPort
+	}
+	return defaultOtelUIPort
+}
+
+// GRPCPort returns the effective OTLP gRPC port for a managed workspace.
+func (ws *Workspace) GRPCPort() int {
+	if ws.OtelOTLPGRPCPort > 0 {
+		return ws.OtelOTLPGRPCPort
+	}
+	return defaultOtelOTLPGRPCPort
+}
+
+// HTTPPort returns the effective OTLP HTTP port for a managed workspace.
+func (ws *Workspace) HTTPPort() int {
+	if ws.OtelOTLPHTTPPort > 0 {
+		return ws.OtelOTLPHTTPPort
+	}
+	return defaultOtelOTLPHTTPPort
+}
+
+// OtelOTLPEndpoint returns the OTLP HTTP endpoint services should push to.
+// In managed mode uses the workspace's configured HTTP port.
+// In byo mode returns OtelEndpoint.
 func OtelOTLPEndpoint(ws *Workspace) string {
 	if ws.OtelMode == "byo" && ws.OtelEndpoint != "" {
 		return ws.OtelEndpoint
 	}
-	return "http://localhost:" + otelOTLPHTTPPort
+	return fmt.Sprintf("http://localhost:%d", ws.HTTPPort())
 }
 
-// OtelQueryEndpoint returns the query API URL for a workspace.
-// In managed mode, returns the local SigNoz query-service URL.
-// In byo mode, returns OtelQueryURL (may be empty).
+// OtelQueryEndpoint returns the query API base URL for MCP trace tools.
+// In managed mode uses the workspace's configured UI/query port.
+// In byo mode returns OtelQueryURL (may be empty).
 func OtelQueryEndpoint(ws *Workspace) string {
 	if ws.OtelMode == "byo" {
 		return ws.OtelQueryURL
 	}
-	return otelManagedQueryURL
+	return fmt.Sprintf("http://localhost:%d", ws.UIPort())
 }
-
-// otelManagedQueryURL is the query API URL for the managed SigNoz query-service.
-const otelManagedQueryURL = "http://localhost:8080"
-
-// otelOTLPHTTPPort is the OTLP HTTP port for the managed SigNoz otel-collector.
-const otelOTLPHTTPPort = "4318"
 
 // UpdateOtelBYO sets a workspace to BYO mode with the given endpoints.
 func UpdateOtelBYO(name, otlpEndpoint, queryURL string) error {
@@ -234,6 +261,30 @@ func UpdateOtelBYO(name, otlpEndpoint, queryURL string) error {
 			workspaces[i].OtelMode = "byo"
 			workspaces[i].OtelEndpoint = otlpEndpoint
 			workspaces[i].OtelQueryURL = queryURL
+			return Save(workspaces)
+		}
+	}
+	return fmt.Errorf("workspace %q not found", name)
+}
+
+// UpdateOtelPorts sets port overrides for a managed workspace.
+// Pass 0 for any port to leave it unchanged.
+func UpdateOtelPorts(name string, uiPort, grpcPort, httpPort int) error {
+	workspaces, err := Load()
+	if err != nil {
+		return err
+	}
+	for i, ws := range workspaces {
+		if strings.ToLower(ws.Name) == strings.ToLower(name) {
+			if uiPort > 0 {
+				workspaces[i].OtelUIPort = uiPort
+			}
+			if grpcPort > 0 {
+				workspaces[i].OtelOTLPGRPCPort = grpcPort
+			}
+			if httpPort > 0 {
+				workspaces[i].OtelOTLPHTTPPort = httpPort
+			}
 			return Save(workspaces)
 		}
 	}

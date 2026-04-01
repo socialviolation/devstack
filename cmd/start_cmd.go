@@ -128,10 +128,10 @@ func runStart(cmd *cobra.Command, args []string) error {
 			fmt.Printf("SigNoz already running\n")
 		} else {
 			fmt.Printf("Starting SigNoz...")
-			if err := startOtel(ws.Name); err != nil {
+			if err := startOtel(ws); err != nil {
 				fmt.Fprintf(os.Stderr, " failed: %v\n", err)
 			} else {
-				fmt.Printf(" ✓ %s\n", otelUIURL)
+				fmt.Printf(" ✓ %s\n", workspace.OtelQueryEndpoint(ws))
 			}
 		}
 	}
