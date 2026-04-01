@@ -6,7 +6,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -517,125 +516,104 @@ func registerTraceSearchTool(mcpServer *server.MCPServer, otelQueryURL string) {
 	})
 }
 
-type serviceAnalysis struct {
-	name      string
-	logErrors []string
-	logErr    error
-	traces    []traceRecord
-	traceErr  error
+// executionDetail holds a fully fetched execution: span tree + correlated logs.
+type executionDetail struct {
+	record   *traceRecord
+	otelLogs []logEntry
+	// tiltLogs maps service name → recent process log output (fallback when OTEL logs are empty).
+	tiltLogs map[string]string
 }
 
-func analyseService(svcName string, tiltClient *tilt.Client, otelQueryURL string) serviceAnalysis {
-	a := serviceAnalysis{name: svcName}
+// fetchExecutionDetails fetches the span tree and logs for a set of root trace summaries in parallel.
+// For each trace it fetches: full span tree (fetchTrace) + OTEL logs (fetchLogsForTrace).
+// If OTEL logs come back empty, it also fetches recent Tilt process logs from the services involved.
+func fetchExecutionDetails(roots []traceRecord, otelQueryURL string, tiltClient *tilt.Client) []executionDetail {
+	details := make([]executionDetail, len(roots))
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	for i, r := range roots {
+		wg.Add(1)
+		go func(idx int, traceID string) {
+			defer wg.Done()
+			d := executionDetail{}
 
-	// Fetch log errors from Tilt
-	go func() {
-		defer wg.Done()
-		raw, err := tiltClient.RunCLI("logs", "--tail=500", svcName)
-		if err != nil {
-			a.logErr = err
-			return
-		}
-		a.logErrors = filterErrorLines(raw)
-	}()
+			// Full span tree
+			if full, err := fetchTrace(otelQueryURL, traceID); err == nil && full != nil {
+				d.record = full
+			} else {
+				// Fall back to the root-only summary we already have
+				cp := roots[idx]
+				d.record = &cp
+			}
 
-	// Fetch root traces (entry points only) from observability backend
-	go func() {
-		defer wg.Done()
-		if otelQueryURL == "" {
-			a.traceErr = fmt.Errorf("no observability query endpoint configured")
-			return
-		}
-		records, err := fetchRootTraces(otelQueryURL, svcName, 50, 15)
-		if err != nil {
-			a.traceErr = err
-			return
-		}
-		a.traces = records
-	}()
+			// OTEL correlated logs
+			d.otelLogs, _ = fetchLogsForTrace(otelQueryURL, traceID)
 
+			// If no OTEL logs, fetch recent Tilt process logs for each involved service
+			if len(d.otelLogs) == 0 && tiltClient != nil {
+				services := uniqueServices(d.record)
+				if len(services) > 0 {
+					d.tiltLogs = fetchTiltProcessLogs(tiltClient, services, 80)
+				}
+			}
+
+			details[idx] = d
+		}(i, r.TraceID)
+	}
 	wg.Wait()
-	return a
+	return details
 }
 
-func formatServiceAnalysis(a *serviceAnalysis, sinceMinutes int) string {
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "=== %s (last %d min) ===\n\n", a.name, sinceMinutes)
-
-	// --- Traces section ---
-	if a.traceErr != nil {
-		fmt.Fprintf(&sb, "TRACES — unavailable (%v)\n\n", a.traceErr)
-	} else if len(a.traces) == 0 {
-		sb.WriteString("TRACES — no data (service may not be instrumented or observability backend is empty)\n\n")
-	} else {
-		var errTraces []traceRecord
-		okCount := 0
-		for _, t := range a.traces {
-			hasErr := false
-			for i := range t.Spans {
-				if spanHasError(&t.Spans[i]) {
-					hasErr = true
-					break
-				}
-			}
-			if hasErr {
-				errTraces = append(errTraces, t)
-			} else {
-				okCount++
-			}
+// uniqueServices returns the unique service names from a traceRecord's spans.
+func uniqueServices(r *traceRecord) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, sp := range r.Spans {
+		if sp.Service != "" && !seen[sp.Service] {
+			seen[sp.Service] = true
+			out = append(out, sp.Service)
 		}
+	}
+	return out
+}
 
-		fmt.Fprintf(&sb, "TRACES — %d errors, %d ok\n", len(errTraces), okCount)
+// fetchTiltProcessLogs fetches recent stdout logs from Tilt for each service.
+func fetchTiltProcessLogs(tiltClient *tilt.Client, services []string, tailLines int) map[string]string {
+	type result struct {
+		name string
+		out  string
+	}
+	ch := make(chan result, len(services))
+	for _, svc := range services {
+		go func(s string) {
+			out, _ := tiltClient.RunCLI("logs", fmt.Sprintf("--tail=%d", tailLines), s)
+			ch <- result{name: s, out: out}
+		}(svc)
+	}
+	m := make(map[string]string, len(services))
+	for range services {
+		r := <-ch
+		m[r.name] = r.out
+	}
+	return m
+}
 
-		for _, t := range errTraces {
-			root := rootSpan(&t)
-			if root == nil {
+// formatExecutionDetailView formats a single executionDetail as a self-contained investigation block.
+func formatExecutionDetailView(d *executionDetail) string {
+	var sb strings.Builder
+
+	// Span tree + OTEL header/logs
+	sb.WriteString(formatExecutionView(d.record, d.otelLogs))
+
+	// Tilt process log fallback (when OTEL logs were empty)
+	if len(d.otelLogs) == 0 && len(d.tiltLogs) > 0 {
+		sb.WriteString("\nPROCESS LOGS (recent stdout — not trace-correlated):\n")
+		for svc, raw := range d.tiltLogs {
+			if strings.TrimSpace(raw) == "" {
 				continue
 			}
-			ts := time.Unix(0, root.StartNs).Local().Format("15:04:05")
-			traceShort := t.TraceID
-			if len(traceShort) > 16 {
-				traceShort = traceShort[:16] + ".."
-			}
-			durationMs := float64(root.DurationNs) / 1e6
-			fmt.Fprintf(&sb, "  [ERROR] %s  %s  %s  %.1fms\n", ts, traceShort, root.Operation, durationMs)
-
-			// Print business attributes and error details from the failing span(s)
-			for i := range t.Spans {
-				sp := &t.Spans[i]
-				if !spanHasError(sp) {
-					continue
-				}
-				for k, v := range sp.Attrs {
-					switch k {
-					case "portfolio.id", "user.id", "process.id", "file.type", "provider.id":
-						fmt.Fprintf(&sb, "          %s: %s\n", k, v)
-					case "exception.message", "error.message", "otel.status_description":
-						fmt.Fprintf(&sb, "          error: %s\n", v)
-					}
-				}
-				if sp.StatusMsg != "" {
-					fmt.Fprintf(&sb, "          status: %s\n", sp.StatusMsg)
-				}
-			}
+			fmt.Fprintf(&sb, "--- %s ---\n%s\n", svc, strings.TrimRight(raw, "\n"))
 		}
-		sb.WriteString("\n")
-	}
-
-	// --- Log errors section ---
-	if a.logErr != nil {
-		fmt.Fprintf(&sb, "LOG ERRORS — unavailable (%v)\n\n", a.logErr)
-	} else if len(a.logErrors) == 0 {
-		sb.WriteString("LOG ERRORS — none\n\n")
-	} else {
-		fmt.Fprintf(&sb, "LOG ERRORS — %d lines\n", len(a.logErrors))
-		for _, line := range a.logErrors {
-			fmt.Fprintf(&sb, "  %s\n", line)
-		}
-		sb.WriteString("\n")
 	}
 
 	return sb.String()
@@ -643,54 +621,76 @@ func formatServiceAnalysis(a *serviceAnalysis, sinceMinutes int) string {
 
 func registerWhatHappenedTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService, otelQueryURL string) {
 	tool := mcp.NewTool("what_happened",
-		mcp.WithDescription("Diagnose recent errors across services by correlating both log output and distributed traces. For each service, shows: TRACES (error counts, failing operations, business attributes like portfolio.id/user.id, and error messages from the observability backend) and LOG ERRORS (exception/panic/error lines from stdout). Use this as the first diagnostic tool — it gives a complete picture without needing to call traces and logs separately."),
+		mcp.WithDescription("Find the most recent executions and show a complete correlated investigation view for each: full span tree across all services, durations, errors, business attributes (portfolio.id, user.id, etc.), and correlated logs. Call this after triggering a request — it finds what just ran and gives you everything needed to map the execution to source code and explain what went wrong. Defaults to the 3 most recent executions in the past 5 minutes."),
 		mcp.WithString("service",
-			mcp.Description("Optional service name. If empty and a default service is set for this repo, uses that. Otherwise all services are scanned."),
+			mcp.Description("Optional service name filter. If omitted and a default service is configured, uses that."),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Number of recent executions to show. Defaults to 3."),
 		),
 		mcp.WithNumber("since_minutes",
-			mcp.Description("Time window to look back. Defaults to 15."),
+			mcp.Description("Look-back window in minutes. Defaults to 5."),
+		),
+		mcp.WithBoolean("errors_only",
+			mcp.Description("If true, only show executions where the root span has an error status. Defaults to false."),
 		),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		name := request.GetString("service", "")
-		if name == "" {
-			name = defaultService
+		if otelQueryURL == "" {
+			return mcp.NewToolResultError("No observability query endpoint configured. Set one with: devstack otel set-endpoint <otlp-url> --query-url=<query-url>"), nil
 		}
-		sinceMinutes := int(request.GetFloat("since_minutes", 15))
 
-		view, err := tiltClient.GetView()
+		service := request.GetString("service", "")
+		if service == "" {
+			service = defaultService
+		}
+		limit := int(request.GetFloat("limit", 3))
+		sinceMinutes := int(request.GetFloat("since_minutes", 5))
+		errorsOnly := request.GetBool("errors_only", false)
+
+		// Fetch more root spans than needed so we have room to filter.
+		fetchLimit := limit * 5
+		if fetchLimit < 10 {
+			fetchLimit = 10
+		}
+		roots, err := fetchRootTraces(otelQueryURL, service, fetchLimit, sinceMinutes)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		var services []string
-		if name != "" {
-			resolved, err := tilt.ResolveService(name, view)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+		if errorsOnly {
+			filtered := roots[:0]
+			for _, r := range roots {
+				root := rootSpan(&r)
+				if root != nil && spanHasError(root) {
+					filtered = append(filtered, r)
+				}
 			}
-			services = []string{resolved}
-		} else {
-			for _, r := range view.UiResources {
-				services = append(services, r.Metadata.Name)
-			}
+			roots = filtered
 		}
 
-		analyses := make([]serviceAnalysis, len(services))
-		var wg sync.WaitGroup
-		for i, svc := range services {
-			wg.Add(1)
-			go func(idx int, svcName string) {
-				defer wg.Done()
-				analyses[idx] = analyseService(svcName, tiltClient, otelQueryURL)
-			}(i, svc)
+		if len(roots) == 0 {
+			msg := fmt.Sprintf("No traces found in the last %d minute(s).", sinceMinutes)
+			if service != "" {
+				msg = fmt.Sprintf("No traces found for %q in the last %d minute(s).", service, sinceMinutes)
+			}
+			return mcp.NewToolResultText(msg), nil
 		}
-		wg.Wait()
 
+		if len(roots) > limit {
+			roots = roots[:limit]
+		}
+
+		details := fetchExecutionDetails(roots, otelQueryURL, tiltClient)
+
+		sep := "\n" + strings.Repeat("─", 60) + "\n\n"
 		var sb strings.Builder
-		for i := range analyses {
-			sb.WriteString(formatServiceAnalysis(&analyses[i], sinceMinutes))
+		for i := range details {
+			if i > 0 {
+				sb.WriteString(sep)
+			}
+			sb.WriteString(formatExecutionDetailView(&details[i]))
 		}
 
 		return mcp.NewToolResultText(sb.String()), nil
