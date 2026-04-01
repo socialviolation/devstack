@@ -12,8 +12,7 @@ import (
 
 var depsCmd = &cobra.Command{
 	Use:   "deps",
-	Short: "Manage service dependencies — shows all deps when run without a subcommand",
-	RunE:  runDepsShow,
+	Short: "Manage service dependencies (add, remove, show)",
 }
 
 var depsAddCmd = &cobra.Command{

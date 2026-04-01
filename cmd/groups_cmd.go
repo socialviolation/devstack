@@ -12,8 +12,7 @@ import (
 
 var groupsCmd = &cobra.Command{
 	Use:   "groups",
-	Short: "Manage service groups — lists groups when run without a subcommand",
-	RunE:  runGroupsList,
+	Short: "Manage service groups (add, remove, find)",
 }
 
 var groupsListCmd = &cobra.Command{
