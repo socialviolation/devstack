@@ -13,7 +13,7 @@ var otelCmd = &cobra.Command{
 	Use:   "otel",
 	Short: "Manage the local observability stack (traces and logs)",
 	Long: `devstack runs a local SigNoz observability stack per workspace. Every service
-onboarded with 'devstack onboard' is pre-configured to ship OpenTelemetry traces
+registered with 'devstack init' is pre-configured to ship OpenTelemetry traces
 and logs to this stack via OTEL_EXPORTER_OTLP_ENDPOINT.
 
 This gives AI agents real-time visibility into what is happening across services
@@ -277,7 +277,7 @@ func runOtelSetEndpoint(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Query URL:     (not set — trace MCP tools will be unavailable)\n")
 		fmt.Printf("  Set with: devstack otel set-endpoint %s --query-url=<url> --workspace=%s\n", otlpEndpoint, ws.Name)
 	}
-	fmt.Printf("\nServices onboarded from now on will use OTEL_EXPORTER_OTLP_ENDPOINT=%s\n", otlpEndpoint)
+	fmt.Printf("\nServices registered from now on will use OTEL_EXPORTER_OTLP_ENDPOINT=%s\n", otlpEndpoint)
 
 	return nil
 }

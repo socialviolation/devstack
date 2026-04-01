@@ -21,19 +21,16 @@ var serveCmd = &cobra.Command{
 	Long: `Start the devstack MCP (Model Context Protocol) server, which exposes
 devstack capabilities as tools that AI agents can call directly.
 
-This is configured automatically in each service's .mcp.json by 'devstack onboard'
-or 'devstack init'. You do not normally need to run this manually.
+This is configured automatically in each service's .mcp.json by 'devstack init'.
+You do not normally need to run this manually.
 
 TOOLS EXPOSED TO AI AGENTS
   status          live state of all services (running, error, ports)
   restart         trigger a rebuild and restart of a service
-  stop            disable a running service
+  stop            disable one or all services
   process_logs    fetch stdout/stderr from a service (filter to errors only)
-  investigate     correlated traces + logs in one call — use this first when
-                  something is broken during feature development
-  traces          query recent distributed traces from SigNoz
-  errors          surface recent error-level spans across all services
-  configure       set a runtime config value for a service
+  investigate     correlated traces + logs in one call — primary diagnostic tool
+  configure       set a Tilt runtime argument (restarts affected services)
 
 TRANSPORT
   stdio (default)   used by Claude Code and most AI tooling

@@ -13,7 +13,7 @@ import (
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show live service status for the current workspace",
+	Short: "Show live service status (or all workspaces if run outside a workspace)",
 	Long: `Show a live grouped tree view of every service in the current workspace —
 their running state, exposed ports, and declared dependencies.
 

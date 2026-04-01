@@ -33,16 +33,9 @@ SUBCOMMANDS
   devstack workspace up         start the dev daemon for the current workspace
   devstack workspace down       stop the dev daemon
   devstack workspace add        register a directory as a workspace
-  devstack workspace remove     remove a workspace from the registry`,
+  devstack workspace remove     unregister a workspace`,
 	// Default action: list
 	RunE: runWorkspaceList,
-}
-
-var workspaceListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "Show all registered workspaces and their service counts",
-	Args:  cobra.NoArgs,
-	RunE:  runWorkspaceList,
 }
 
 var workspaceAddCmd = &cobra.Command{
@@ -67,7 +60,6 @@ var workspaceRemoveCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(workspaceCmd)
-	workspaceCmd.AddCommand(workspaceListCmd)
 	workspaceCmd.AddCommand(workspaceAddCmd)
 	workspaceCmd.AddCommand(workspaceRemoveCmd)
 
