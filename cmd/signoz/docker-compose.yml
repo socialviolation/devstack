@@ -76,6 +76,13 @@ services:
       - ALLOW_ANONYMOUS_LOGIN=yes
       - ZOO_AUTOPURGE_INTERVAL=1
 
+  jdbc-bridge:
+    !!merge <<: *common
+    build: ./jdbc-bridge
+    container_name: ${COMPOSE_PROJECT_NAME}-jdbc-bridge
+    volumes:
+      - ./jdbc-bridge/datasources:/app/datasources
+
   clickhouse:
     !!merge <<: *clickhouse-defaults
     container_name: ${COMPOSE_PROJECT_NAME}-clickhouse
@@ -85,6 +92,7 @@ services:
       - ./clickhouse/custom-function.xml:/etc/clickhouse-server/custom-function.xml
       - ./clickhouse/user_scripts:/var/lib/clickhouse/user_scripts/
       - ./clickhouse/cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
+      - ./clickhouse/jdbc-bridge.xml:/etc/clickhouse-server/config.d/jdbc-bridge.xml
       - signoz-clickhouse:/var/lib/clickhouse/
 
   signoz:

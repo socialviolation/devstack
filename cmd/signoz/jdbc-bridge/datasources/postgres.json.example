@@ -1,0 +1,9 @@
+{
+  "postgres": {
+    "driverUrls": ["drivers/postgresql-42.7.3.jar"],
+    "driverClassName": "org.postgresql.Driver",
+    "jdbcUrl": "jdbc:postgresql://host:5432/mydb",
+    "username": "user",
+    "password": "password"
+  }
+}
