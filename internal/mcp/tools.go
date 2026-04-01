@@ -24,9 +24,8 @@ var errorRegex = regexp.MustCompile(`(?i)(error|exception|panic|fatal|fail)`)
 func RegisterTools(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService, otelQueryURL string) {
 	registerStatusTool(mcpServer, tiltClient)
 	registerRestartTool(mcpServer, tiltClient, defaultService)
-	registerStopTool(mcpServer, tiltClient, defaultService)
-	registerStopAllTool(mcpServer, tiltClient)
-	registerSetEnvironmentTool(mcpServer, tiltClient)
+	registerStopTool(mcpServer, tiltClient)
+	registerConfigureTool(mcpServer, tiltClient)
 	registerProcessLogsTool(mcpServer, tiltClient, defaultService)
 	registerInvestigateTool(mcpServer, tiltClient, defaultService, otelQueryURL)
 }
@@ -158,69 +157,50 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 	})
 }
 
-func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
+func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 	tool := mcp.NewTool("stop",
-		mcp.WithDescription("Stop (disable) a specific service in the dev stack. If name is omitted, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
+		mcp.WithDescription("Stop (disable) one or all services. If service is given, stops that service. If omitted, stops all services."),
 		mcp.WithString("service",
-			mcp.Description("The service name to stop. Can be the exact Tilt resource name or a configured alias. If omitted, uses the default service for this repo."),
+			mcp.Description("Service name or alias to stop. If omitted, all services are stopped."),
 		),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		name := request.GetString("service", "")
-		if name == "" {
-			name = defaultService
-		}
-		if name == "" {
-			return mcp.NewToolResultError("no service specified and no default service configured for this repo"), nil
-		}
 
 		view, err := tiltClient.GetView()
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		resolved, err := tilt.ResolveService(name, view)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+		if name != "" {
+			resolved, err := tilt.ResolveService(name, view)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			out, err := tiltClient.RunCLI("disable", resolved)
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("failed to stop %q: %v\n%s", resolved, err, out)), nil
+			}
+			return mcp.NewToolResultText(fmt.Sprintf("Stopped %q.", resolved)), nil
 		}
 
-		out, err := tiltClient.RunCLI("disable", resolved)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to stop %q: %v\n%s", resolved, err, out)), nil
-		}
-
-		return mcp.NewToolResultText(fmt.Sprintf("Stopped service %q.\n%s", resolved, out)), nil
-	})
-}
-
-func registerStopAllTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
-	tool := mcp.NewTool("stop_all",
-		mcp.WithDescription("Stop (disable) all services in the dev stack."),
-	)
-
-	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		view, err := tiltClient.GetView()
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		var results strings.Builder
+		// Stop all
+		var sb strings.Builder
 		var failures []string
 		for _, r := range view.UiResources {
 			out, err := tiltClient.RunCLI("disable", r.Metadata.Name)
 			if err != nil {
-				failures = append(failures, fmt.Sprintf("%s: %v", r.Metadata.Name, err))
-				fmt.Fprintf(&results, "FAILED %s: %v\n%s\n", r.Metadata.Name, err, out)
+				failures = append(failures, r.Metadata.Name)
+				fmt.Fprintf(&sb, "FAILED %s: %v\n%s\n", r.Metadata.Name, err, out)
 			} else {
-				fmt.Fprintf(&results, "Stopped %s\n", r.Metadata.Name)
+				fmt.Fprintf(&sb, "Stopped %s\n", r.Metadata.Name)
 			}
 		}
-
 		if len(failures) > 0 {
-			return mcp.NewToolResultError(fmt.Sprintf("Some services failed to stop:\n%s", results.String())), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Some services failed to stop:\n%s", sb.String())), nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("Stopped %d service(s):\n%s", len(view.UiResources), results.String())), nil
+		return mcp.NewToolResultText(fmt.Sprintf("Stopped %d service(s).\n%s", len(view.UiResources), sb.String())), nil
 	})
 }
 
@@ -327,16 +307,16 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 	})
 }
 
-func registerSetEnvironmentTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
-	tool := mcp.NewTool("set_environment",
-		mcp.WithDescription("Pass an arbitrary key=value argument to Tilt via `tilt args -- key=value`. Use this to change runtime configuration (e.g. environment, feature flags) for services managed by Tilt. Tilt will restart affected services automatically."),
+func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
+	tool := mcp.NewTool("configure",
+		mcp.WithDescription("Set a Tilt runtime argument (key=value) that controls how services are configured. Passed via `tilt args -- key=value`. Use this to change feature flags, modes, or other Tilt-managed config. Affected services will restart automatically."),
 		mcp.WithString("key",
 			mcp.Required(),
-			mcp.Description("The argument key to set (e.g. 'env', 'debug', 'profile')."),
+			mcp.Description("The argument key (e.g. 'env', 'debug', 'profile')."),
 		),
 		mcp.WithString("value",
 			mcp.Required(),
-			mcp.Description("The value to assign to the key (e.g. 'production', 'true', 'staging')."),
+			mcp.Description("The value to set (e.g. 'production', 'true', 'staging')."),
 		),
 	)
 
@@ -358,7 +338,7 @@ func registerSetEnvironmentTool(mcpServer *server.MCPServer, tiltClient *tilt.Cl
 
 func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService, otelQueryURL string) {
 	tool := mcp.NewTool("investigate",
-		mcp.WithDescription("Investigate executions in the observability backend. Three modes: (1) trace_id given → full execution view for that specific trace; (2) attribute+value given → find executions matching that business attribute (e.g. portfolio.id=123) and expand each; (3) neither → find the most recent executions and expand each. Each result shows the full cross-service span tree, durations, errors, business attributes, and correlated logs. Falls back to process stdout when OTEL logs are unavailable. Use this as the primary diagnostic tool."),
+		mcp.WithDescription("Investigate executions in the observability backend. Three modes: (1) trace_id given → full execution view for that specific trace; (2) attribute+value given → find executions matching that business attribute (e.g. portfolio.id=123) and expand each; (3) neither → find the most recent executions and expand each. Each result shows the full cross-service span tree, durations, errors, business attributes, and correlated logs. Falls back to process stdout when OTEL logs are unavailable. Use errors_only=true to filter to failed executions only. Use this as the primary diagnostic tool."),
 		mcp.WithString("trace_id",
 			mcp.Description("Specific trace ID to look up. If given, all other filters are ignored."),
 		),
