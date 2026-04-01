@@ -100,6 +100,13 @@ services:
       - SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_DSN=tcp://clickhouse:9000
       - SIGNOZ_SQLSTORE_SQLITE_PATH=/var/lib/signoz/signoz.db
       - SIGNOZ_TOKENIZER_JWT_SECRET=secret
+      - SIGNOZ_USER_ROOT_ENABLED=true
+      - SIGNOZ_USER_ROOT_EMAIL=admin@devstack.local
+      - SIGNOZ_USER_ROOT_PASSWORD=Devstack1234!
+      - SIGNOZ_USER_ROOT_ORG_NAME=devstack
+      - SIGNOZ_IDENTN_IMPERSONATION_ENABLED=true
+      - SIGNOZ_IDENTN_TOKENIZER_ENABLED=false
+      - SIGNOZ_IDENTN_APIKEY_ENABLED=false
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "localhost:8080/api/v1/health"]
       interval: 30s
