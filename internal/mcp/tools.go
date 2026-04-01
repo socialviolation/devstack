@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -232,12 +233,24 @@ func filterErrorLines(raw string) []string {
 
 func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string) {
 	tool := mcp.NewTool("process_logs",
-		mcp.WithDescription("Fetch raw stdout/stderr from a service process via Tilt. Use this for services not instrumented with OTEL, or when you need unstructured process output. If no service is given, uses the default or fetches all services in parallel."),
+		mcp.WithDescription("Fetch raw stdout/stderr from a service process via Tilt. Use this for services not instrumented with OTEL, or when you need unstructured process output. If no service is given, uses the default or fetches all services in parallel. Supports grep filtering, paging via offset, and since_restart to isolate post-startup output."),
 		mcp.WithString("service",
 			mcp.Description("Service name or alias. If omitted, uses the default service for this repo or fetches all."),
 		),
 		mcp.WithNumber("lines",
-			mcp.Description("Number of lines to fetch per service. Defaults to 100."),
+			mcp.Description("Number of lines to return. Defaults to 100."),
+		),
+		mcp.WithNumber("offset",
+			mcp.Description("Skip this many lines from the most recent end before returning `lines`. Use for paging backward: offset=0 gives the last 100 lines, offset=100 gives the 100 lines before that. Defaults to 0."),
+		),
+		mcp.WithString("grep",
+			mcp.Description("Regex pattern to filter lines. Only lines matching this pattern are returned. Use context to include surrounding lines."),
+		),
+		mcp.WithNumber("context",
+			mcp.Description("Number of lines before and after each grep match to include (like grep -C N). Only used when grep is set. Defaults to 0."),
+		),
+		mcp.WithBoolean("since_restart",
+			mcp.Description("If true, return only lines since the last deploy/restart of the service. Uses the Tilt deploy timestamp — no heuristics. Defaults to false."),
 		),
 		mcp.WithBoolean("errors_only",
 			mcp.Description("If true, return only lines matching error/exception/panic/fatal/fail. Defaults to false."),
@@ -250,22 +263,87 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			name = defaultService
 		}
 		lines := int(request.GetFloat("lines", 100))
+		offset := int(request.GetFloat("offset", 0))
+		grepPattern := request.GetString("grep", "")
+		contextLines := int(request.GetFloat("context", 0))
+		sinceRestart := request.GetBool("since_restart", false)
 		errorsOnly := request.GetBool("errors_only", false)
+
+		// Compile grep regex if provided.
+		var grepRe *regexp.Regexp
+		if grepPattern != "" {
+			var err error
+			grepRe, err = regexp.Compile(grepPattern)
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("invalid grep pattern %q: %v", grepPattern, err)), nil
+			}
+		}
 
 		view, err := tiltClient.GetView()
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		emit := func(raw string) string {
-			if errorsOnly {
-				filtered := filterErrorLines(raw)
-				if len(filtered) == 0 {
-					return ""
-				}
-				return strings.Join(filtered, "\n")
+		processOutput := func(raw string) string {
+			allLines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
+
+				// offset + lines paging: fetch window is [len-offset-lines .. len-offset].
+			total := len(allLines)
+			end := total - offset
+			if end <= 0 {
+				return fmt.Sprintf("(offset %d exceeds available %d lines)", offset, total)
 			}
-			return raw
+			start := end - lines
+			if start < 0 {
+				start = 0
+			}
+			allLines = allLines[start:end]
+
+			// errors_only filter.
+			if errorsOnly {
+				var matched []string
+				for _, l := range allLines {
+					if errorRegex.MatchString(l) {
+						matched = append(matched, l)
+					}
+				}
+				allLines = matched
+			}
+
+			// grep filter with optional context.
+			if grepRe != nil {
+				allLines = applyGrep(allLines, grepRe, contextLines)
+			}
+
+			if len(allLines) == 0 {
+				return ""
+			}
+			return strings.Join(allLines, "\n")
+		}
+
+		// Build the tilt logs args for a single service.
+		// When since_restart is set, use --since=<duration> derived from LastDeployTime.
+		// Otherwise use --tail to fetch enough lines for offset+lines paging.
+		buildLogArgs := func(svcName string) []string {
+			args := []string{"logs"}
+			if sinceRestart {
+				since := lastDeploySince(view, svcName)
+				if since != "" {
+					args = append(args, "--since="+since)
+				}
+			}
+			if !sinceRestart {
+				fetchLines := (lines + offset) * 3
+				if fetchLines < 300 {
+					fetchLines = 300
+				}
+				if fetchLines > 5000 {
+					fetchLines = 5000
+				}
+				args = append(args, fmt.Sprintf("--tail=%d", fetchLines))
+			}
+			args = append(args, svcName)
+			return args
 		}
 
 		if name != "" {
@@ -273,18 +351,18 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			raw, err := tiltClient.RunCLI("logs", fmt.Sprintf("--tail=%d", lines), resolved)
+			raw, err := tiltClient.RunCLI(buildLogArgs(resolved)...)
 			if err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("failed to get logs for %q: %v\n%s", resolved, err, raw)), nil
 			}
-			out := emit(raw)
+			out := processOutput(raw)
 			if out == "" {
 				return mcp.NewToolResultText(fmt.Sprintf("No matching output in %s.", resolved)), nil
 			}
 			return mcp.NewToolResultText(out), nil
 		}
 
-		// All services in parallel
+		// All services in parallel.
 		type result struct {
 			name string
 			out  string
@@ -300,8 +378,8 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			wg.Add(1)
 			go func(idx int, svcName string) {
 				defer wg.Done()
-				raw, err := tiltClient.RunCLI("logs", fmt.Sprintf("--tail=%d", lines), svcName)
-				results[idx] = result{name: svcName, out: emit(raw), err: err}
+				raw, err := tiltClient.RunCLI(buildLogArgs(svcName)...)
+				results[idx] = result{name: svcName, out: processOutput(raw), err: err}
 			}(i, svc)
 		}
 		wg.Wait()
@@ -320,6 +398,78 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		}
 		return mcp.NewToolResultText(sb.String()), nil
 	})
+}
+
+// lastDeploySince returns a --since duration string (e.g. "127s") for the given service,
+// derived from its LastDeployTime in the Tilt view. Returns "" if unavailable.
+func lastDeploySince(view *tilt.TiltView, svcName string) string {
+	for _, r := range view.UiResources {
+		if r.Metadata.Name != svcName {
+			continue
+		}
+		if r.Status.LastDeployTime == nil {
+			return ""
+		}
+		t, err := time.Parse(time.RFC3339Nano, *r.Status.LastDeployTime)
+		if err != nil {
+			return ""
+		}
+		elapsed := time.Since(t)
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		// Add 2s buffer so we don't miss the first lines right at deploy time.
+		elapsed += 2 * time.Second
+		return fmt.Sprintf("%ds", int(elapsed.Seconds()))
+	}
+	return ""
+}
+
+// applyGrep filters lines to those matching re, including contextLines lines before/after each match.
+func applyGrep(lines []string, re *regexp.Regexp, contextLines int) []string {
+	if len(lines) == 0 {
+		return nil
+	}
+
+	// Mark which lines match.
+	matched := make([]bool, len(lines))
+	for i, l := range lines {
+		matched[i] = re.MatchString(l)
+	}
+
+	// Expand to include context.
+	include := make([]bool, len(lines))
+	for i, m := range matched {
+		if !m {
+			continue
+		}
+		start := i - contextLines
+		if start < 0 {
+			start = 0
+		}
+		end := i + contextLines
+		if end >= len(lines) {
+			end = len(lines) - 1
+		}
+		for j := start; j <= end; j++ {
+			include[j] = true
+		}
+	}
+
+	var out []string
+	prevIncluded := true
+	for i, l := range lines {
+		if include[i] {
+			if !prevIncluded && len(out) > 0 {
+				out = append(out, "---")
+			}
+			out = append(out, l)
+			prevIncluded = true
+		} else {
+			prevIncluded = false
+		}
+	}
+	return out
 }
 
 func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
