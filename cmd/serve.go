@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -83,8 +84,10 @@ func serveStdio() error {
 
 	defaultService := viper.GetString("default_service")
 
-	otelQueryURL := workspace.OtelQueryEndpoint(resolveServeWorkspace(wsName))
-	nvxmcp.RegisterTools(mcpServer, tiltClient, defaultService, otelQueryURL)
+	ws := resolveServeWorkspace(wsName)
+	otelQueryURL := workspace.OtelQueryEndpoint(ws)
+	tiltfilePath := filepath.Join(ws.Path, "Tiltfile")
+	nvxmcp.RegisterTools(mcpServer, tiltClient, defaultService, otelQueryURL, tiltfilePath)
 
 	log.Printf("Starting devstack MCP server with stdio transport")
 

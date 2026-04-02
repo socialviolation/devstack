@@ -525,6 +525,9 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		mcp.WithBoolean("errors_only",
 			mcp.Description("If true, only return executions where the root span has error status. Defaults to false."),
 		),
+		mcp.WithBoolean("verbose",
+			mcp.Description("If true, show all span attributes and full correlated logs. Default false returns compact view."),
+		),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -539,6 +542,9 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		sinceMinutes := int(request.GetFloat("since_minutes", 5))
 		limit := int(request.GetFloat("limit", 3))
 		errorsOnly := request.GetBool("errors_only", false)
+		verbose := request.GetBool("verbose", false)
+
+		opts := formatOptions{Verbose: verbose}
 
 		// Mode 1: specific trace ID
 		if traceID != "" {
@@ -552,9 +558,13 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			logs, _ := fetchLogsForTrace(otelQueryURL, traceID)
 			d := executionDetail{record: record, otelLogs: logs}
 			if len(logs) == 0 {
-				d.tiltLogs = fetchTiltProcessLogs(tiltClient, uniqueServices(record), 80)
+				tailLines := 20
+				if verbose {
+					tailLines = 80
+				}
+				d.tiltLogs = fetchTiltProcessLogs(tiltClient, record, tailLines, verbose)
 			}
-			return mcp.NewToolResultText(formatExecutionDetailView(&d)), nil
+			return mcp.NewToolResultText(formatExecutionDetailView(&d, opts)), nil
 		}
 
 		// Mode 2: attribute search
@@ -609,7 +619,11 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			roots = roots[:limit]
 		}
 
-		details := fetchExecutionDetails(roots, otelQueryURL, tiltClient)
+		tailLines := 20
+		if verbose {
+			tailLines = 80
+		}
+		details := fetchExecutionDetails(roots, otelQueryURL, tiltClient, tailLines, verbose)
 
 		sep := "\n" + strings.Repeat("─", 60) + "\n\n"
 		var sb strings.Builder
@@ -617,7 +631,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			if i > 0 {
 				sb.WriteString(sep)
 			}
-			sb.WriteString(formatExecutionDetailView(&details[i]))
+			sb.WriteString(formatExecutionDetailView(&details[i], opts))
 		}
 		return mcp.NewToolResultText(sb.String()), nil
 	})
@@ -634,7 +648,7 @@ type executionDetail struct {
 // fetchExecutionDetails fetches the span tree and logs for a set of root trace summaries in parallel.
 // For each trace it fetches: full span tree (fetchTrace) + OTEL logs (fetchLogsForTrace).
 // If OTEL logs come back empty, it also fetches recent Tilt process logs from the services involved.
-func fetchExecutionDetails(roots []traceRecord, otelQueryURL string, tiltClient *tilt.Client) []executionDetail {
+func fetchExecutionDetails(roots []traceRecord, otelQueryURL string, tiltClient *tilt.Client, tailLines int, verbose bool) []executionDetail {
 	details := make([]executionDetail, len(roots))
 
 	var wg sync.WaitGroup
@@ -658,10 +672,7 @@ func fetchExecutionDetails(roots []traceRecord, otelQueryURL string, tiltClient 
 
 			// If no OTEL logs, fetch recent Tilt process logs for each involved service
 			if len(d.otelLogs) == 0 && tiltClient != nil {
-				services := uniqueServices(d.record)
-				if len(services) > 0 {
-					d.tiltLogs = fetchTiltProcessLogs(tiltClient, services, 80)
-				}
+				d.tiltLogs = fetchTiltProcessLogs(tiltClient, d.record, tailLines, verbose)
 			}
 
 			details[idx] = d
@@ -684,8 +695,31 @@ func uniqueServices(r *traceRecord) []string {
 	return out
 }
 
-// fetchTiltProcessLogs fetches recent stdout logs from Tilt for each service.
-func fetchTiltProcessLogs(tiltClient *tilt.Client, services []string, tailLines int) map[string]string {
+// fetchTiltProcessLogs fetches recent stdout logs from Tilt for services in the trace.
+// In compact mode (verbose=false), only fetches logs for services that have at least one error span.
+// If no services have error spans in compact mode, returns nil.
+func fetchTiltProcessLogs(tiltClient *tilt.Client, record *traceRecord, tailLines int, verbose bool) map[string]string {
+	if tiltClient == nil || record == nil {
+		return nil
+	}
+
+	var services []string
+	if verbose {
+		services = uniqueServices(record)
+	} else {
+		// Only fetch for services with at least one error span.
+		seen := make(map[string]bool)
+		for _, sp := range record.Spans {
+			if spanHasError(&sp) && sp.Service != "" && !seen[sp.Service] {
+				seen[sp.Service] = true
+				services = append(services, sp.Service)
+			}
+		}
+		if len(services) == 0 {
+			return nil
+		}
+	}
+
 	type result struct {
 		name string
 		out  string
@@ -706,11 +740,11 @@ func fetchTiltProcessLogs(tiltClient *tilt.Client, services []string, tailLines 
 }
 
 // formatExecutionDetailView formats a single executionDetail as a self-contained investigation block.
-func formatExecutionDetailView(d *executionDetail) string {
+func formatExecutionDetailView(d *executionDetail, opts formatOptions) string {
 	var sb strings.Builder
 
 	// Span tree + OTEL header/logs
-	sb.WriteString(formatExecutionView(d.record, d.otelLogs))
+	sb.WriteString(formatExecutionView(d.record, d.otelLogs, opts))
 
 	// Tilt process log fallback (when OTEL logs were empty)
 	if len(d.otelLogs) == 0 && len(d.tiltLogs) > 0 {
