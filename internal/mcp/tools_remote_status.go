@@ -36,9 +36,7 @@ func registerRemoteStatusTool(mcpServer *server.MCPServer, backend observability
 			return mcp.NewToolResultError(fmt.Sprintf("failed to list services: %v", err)), nil
 		}
 		if len(services) == 0 {
-			return mcp.NewToolResultText(fmt.Sprintf(
-				"Environment: %s (remote)\nNo services with trace activity in the last 5 minutes.", envName,
-			)), nil
+			return mcp.NewToolResultText(fmt.Sprintf("%s | no trace activity in last 5m", envName)), nil
 		}
 
 		// Fetch stats per service concurrently
@@ -101,13 +99,10 @@ func registerRemoteStatusTool(mcpServer *server.MCPServer, backend observability
 
 		// Format output
 		var sb strings.Builder
-		fmt.Fprintf(&sb, "Environment: %s (remote)\n", envName)
-		fmt.Fprintf(&sb, "Observability: signoz @ %s\n", envURL)
-		fmt.Fprintf(&sb, "Window: last 5 minutes\n\n")
+		fmt.Fprintf(&sb, "%s | signoz | last 5m\n\n", envName)
 
-		w := tabwriter.NewWriter(&sb, 0, 0, 3, ' ', 0)
-		fmt.Fprintln(w, "SERVICE\tREQUESTS\tERRORS\tERROR%\tP99\tLAST SEEN")
-		fmt.Fprintln(w, "-------\t--------\t------\t------\t---\t---------")
+		w := tabwriter.NewWriter(&sb, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "SERVICE\tREQ\tERR\tERR%\tP99\tSEEN")
 		sort.Strings(services)
 		for _, svc := range services {
 			s := svcStats[svc]

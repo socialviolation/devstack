@@ -27,45 +27,31 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, activeEnvName string,
 	mcpServer.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var sb strings.Builder
 
-		// Header — make environment immediately obvious
-		fmt.Fprintf(&sb, "=== Active Environment: %s ===\n\n", strings.ToUpper(activeEnvName))
-		fmt.Fprintf(&sb, "  Type:    %s\n", activeEnv.Type)
-		fmt.Fprintf(&sb, "  Backend: %s\n", activeEnv.Observability.Backend)
-		fmt.Fprintf(&sb, "  URL:     %s\n\n", activeEnv.Observability.URL)
+		backend := activeEnv.Observability.Backend
+		if backend == "" {
+			backend = "signoz"
+		}
+		fmt.Fprintf(&sb, "env: %s (%s) %s@%s\n", activeEnvName, activeEnv.Type, backend, activeEnv.Observability.URL)
 
-		// Capabilities
 		if activeEnv.Type == workspace.EnvironmentTypeLocal {
-			fmt.Fprintf(&sb, "Available tools (LOCAL — full control):\n")
-			fmt.Fprintf(&sb, "  status          — show all service states (running/error/building/disabled)\n")
-			fmt.Fprintf(&sb, "  restart         — restart a service\n")
-			fmt.Fprintf(&sb, "  stop            — stop a service\n")
-			fmt.Fprintf(&sb, "  configure       — set Tilt runtime arguments\n")
-			fmt.Fprintf(&sb, "  process_logs    — fetch stdout/stderr from a service\n")
-			fmt.Fprintf(&sb, "  investigate     — explore distributed traces\n")
-			fmt.Fprintf(&sb, "  environment     — (this tool)\n")
+			fmt.Fprintf(&sb, "tools: status, restart, stop, configure, process_logs, investigate\n")
 		} else {
-			fmt.Fprintf(&sb, "Available tools (REMOTE — read-only, no service control):\n")
-			fmt.Fprintf(&sb, "  status          — show service health from recent trace activity\n")
-			fmt.Fprintf(&sb, "  investigate     — explore distributed traces\n")
-			fmt.Fprintf(&sb, "  environment     — (this tool)\n")
-			fmt.Fprintf(&sb, "\nNOT available in remote environments:\n")
-			fmt.Fprintf(&sb, "  restart, stop, configure, process_logs\n")
-			fmt.Fprintf(&sb, "  (These require Tilt, which only runs locally)\n")
+			fmt.Fprintf(&sb, "tools: status, investigate\n")
+			fmt.Fprintf(&sb, "unavailable: restart, stop, configure, process_logs (require Tilt; local only)\n")
 		}
 
-		// All environments
-		fmt.Fprintf(&sb, "\nAll environments for workspace %q:\n", workspaceName)
 		names := sortedEnvKeys(allEnvs)
+		envList := make([]string, 0, len(names))
 		for _, name := range names {
 			env := allEnvs[name]
-			marker := ""
+			entry := fmt.Sprintf("%s(%s)", name, env.Type)
 			if name == activeEnvName {
-				marker = "  <- active"
+				entry += "*"
 			}
-			fmt.Fprintf(&sb, "  %-12s %-8s %s%s\n", name, env.Type, env.Observability.URL, marker)
+			envList = append(envList, entry)
 		}
-
-		fmt.Fprintf(&sb, "\nTo switch environment: set DEVSTACK_ENVIRONMENT=<name> in your .mcp.json env block\n")
+		fmt.Fprintf(&sb, "envs: %s\n", strings.Join(envList, ", "))
+		fmt.Fprintf(&sb, "switch: DEVSTACK_ENVIRONMENT=<name>\n")
 
 		return mcp.NewToolResultText(sb.String()), nil
 	})
