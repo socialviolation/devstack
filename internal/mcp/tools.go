@@ -2,9 +2,11 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -12,25 +14,46 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"devstack/internal/observability"
+	_ "devstack/internal/observability/signoz" // register signoz backend
 	"devstack/internal/tilt"
+	"devstack/internal/workspace"
 )
 
 // errorRegex matches common error-indicating log keywords.
 var errorRegex = regexp.MustCompile(`(?i)(error|exception|panic|fatal|fail)`)
 
-// RegisterTools registers all devstack service control tools with the given MCP server.
-// defaultService is used as a fallback when a tool's name argument is omitted.
-// otelQueryURL is the SigNoz query API base URL (e.g. http://localhost:3301).
-// If empty, the investigate tool returns an error.
-// tiltfilePath is the path to the workspace Tiltfile; used to show code locations in status.
-func RegisterTools(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService, otelQueryURL, tiltfilePath string) {
-	serviceDirs := tilt.ParseTiltfileServeDirs(tiltfilePath)
-	registerStatusTool(mcpServer, tiltClient, serviceDirs)
-	registerRestartTool(mcpServer, tiltClient, defaultService)
-	registerStopTool(mcpServer, tiltClient)
-	registerConfigureTool(mcpServer, tiltClient)
-	registerProcessLogsTool(mcpServer, tiltClient, defaultService)
-	registerInvestigateTool(mcpServer, tiltClient, defaultService, otelQueryURL)
+// RegisterTools registers devstack MCP tools. Tool set depends on the active environment type:
+// - Local environments get all 6 tools (status, restart, stop, configure, process_logs, investigate)
+// - Remote environments get investigate + environment + remote status only
+func RegisterTools(
+	mcpServer *server.MCPServer,
+	tiltClient *tilt.Client,
+	defaultService string,
+	backend observability.Backend,
+	tiltfilePath string,
+	activeEnvName string,
+	activeEnv workspace.Environment,
+	allEnvs map[string]workspace.Environment,
+	workspaceName string,
+	workspacePath string,
+) {
+	// Always register these tools (all environment types)
+	registerInvestigateTool(mcpServer, tiltClient, defaultService, backend, activeEnvName, activeEnv, workspacePath)
+	registerEnvironmentTool(mcpServer, activeEnvName, activeEnv, allEnvs, workspaceName)
+
+	if activeEnv.Type == workspace.EnvironmentTypeLocal {
+		// Local-only tools: full service control
+		serviceDirs := tilt.ParseTiltfileServeDirs(tiltfilePath)
+		registerStatusTool(mcpServer, tiltClient, serviceDirs)
+		registerRestartTool(mcpServer, tiltClient, defaultService)
+		registerStopTool(mcpServer, tiltClient)
+		registerConfigureTool(mcpServer, tiltClient)
+		registerProcessLogsTool(mcpServer, tiltClient, defaultService)
+	} else {
+		// Remote-only tools
+		registerRemoteStatusTool(mcpServer, backend, activeEnvName, activeEnv.Observability.URL)
+	}
 }
 
 // mcpServiceStatus derives a human-readable status string from Tilt resource state.
@@ -79,7 +102,7 @@ func mcpExtractPorts(links []tilt.EndpointLink) string {
 
 func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, serviceDirs map[string]string) {
 	tool := mcp.NewTool("status",
-		mcp.WithDescription("Show the current status of all services in the dev stack. Returns SERVICE, STATUS (idle/starting/running/building/error/disabled), PORT(S), PATH (source directory), and last error. 'idle' means the service is known to Tilt but not currently running (not started yet, or was stopped). 'running' means the process is up. 'disabled' means it was explicitly stopped."),
+		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack (via Tilt). Returns SERVICE, STATUS (idle/starting/running/building/error/disabled), PORT(S), PATH (source directory), and last error. 'idle' means the service is known to Tilt but not currently running (not started yet, or was stopped). 'running' means the process is up. 'disabled' means it was explicitly stopped."),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -501,9 +524,28 @@ func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client)
 	})
 }
 
-func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService, otelQueryURL string) {
+func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, backend observability.Backend, activeEnvName string, activeEnv workspace.Environment, workspacePath string) {
+	var desc string
+	if activeEnv.Type == workspace.EnvironmentTypeLocal {
+		desc = fmt.Sprintf(
+			"Investigate distributed traces in the LOCAL dev environment (SigNoz @ %s). "+
+				"Look up a trace by ID, search by business attribute (e.g. portfolio.id=123, user.id=456), "+
+				"or show recent executions for a service. Returns an ASCII span tree showing service calls, "+
+				"durations, and errors. Combine with process_logs and status for full debugging context.",
+			activeEnv.Observability.URL,
+		)
+	} else {
+		desc = fmt.Sprintf(
+			"Investigate distributed traces in the **%s** environment (SigNoz @ %s). "+
+				"READ-ONLY — service control tools (restart/stop/configure) are not available here. "+
+				"Look up a trace by ID, search by business attribute, or show recent executions. "+
+				"Returns an ASCII span tree showing service calls, durations, and errors.",
+			activeEnvName, activeEnv.Observability.URL,
+		)
+	}
+
 	tool := mcp.NewTool("investigate",
-		mcp.WithDescription("Investigate executions in the observability backend. Three modes: (1) trace_id given → full execution view for that specific trace; (2) attribute+value given → find executions matching that business attribute (e.g. portfolio.id=123) and expand each; (3) neither → find the most recent executions and expand each. Each result shows the full cross-service span tree, durations, errors, business attributes, and correlated logs. Falls back to process stdout when OTEL logs are unavailable. Use errors_only=true to filter to failed executions only. Use this as the primary diagnostic tool."),
+		mcp.WithDescription(desc),
 		mcp.WithString("trace_id",
 			mcp.Description("Specific trace ID to look up. If given, all other filters are ignored."),
 		),
@@ -531,8 +573,8 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		if otelQueryURL == "" {
-			return mcp.NewToolResultError("SigNoz is not running. Start it with: devstack otel start"), nil
+		if backend == nil {
+			return mcp.NewToolResultError("Observability backend is not configured. Check your environment settings."), nil
 		}
 
 		traceID := request.GetString("trace_id", "")
@@ -545,53 +587,67 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		verbose := request.GetBool("verbose", false)
 
 		opts := formatOptions{Verbose: verbose}
+		since := time.Duration(sinceMinutes) * time.Minute
 
 		// Mode 1: specific trace ID
 		if traceID != "" {
-			record, err := fetchTrace(otelQueryURL, traceID)
+			traces, err := backend.QueryTraces(ctx, observability.TraceQuery{TraceID: traceID})
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			if record == nil {
+			if len(traces) == 0 || len(traces[0]) == 0 {
 				return mcp.NewToolResultText(fmt.Sprintf("Trace %q not found.", traceID)), nil
 			}
-			logs, _ := fetchLogsForTrace(otelQueryURL, traceID)
-			d := executionDetail{record: record, otelLogs: logs}
-			if len(logs) == 0 {
+			record := spansToRecord(traces[0])
+			otelLogs := backendLogsToInternal(queryLogsFromBackend(ctx, backend, traceID, ""))
+			d := executionDetail{record: record, otelLogs: otelLogs}
+			if len(otelLogs) == 0 {
 				tailLines := 20
 				if verbose {
 					tailLines = 80
 				}
 				d.tiltLogs = fetchTiltProcessLogs(tiltClient, record, tailLines, verbose)
 			}
-			return mcp.NewToolResultText(formatExecutionDetailView(&d, opts)), nil
+			out := formatExecutionDetailView(&d, opts)
+			out += buildServiceMapSection(ctx, backend, workspacePath, traces[0])
+			return mcp.NewToolResultText(out), nil
 		}
 
 		// Mode 2: attribute search
-		var roots []traceRecord
+		var traceGroups [][]observability.Span
 		if attribute != "" && value != "" {
-			fetchLimit := limit * 5
-			if fetchLimit < 10 {
-				fetchLimit = 10
-			}
-			matched, err := searchTraces(otelQueryURL, attribute, value, service, fetchLimit, sinceMinutes)
+			matched, err := backend.QueryTraces(ctx, observability.TraceQuery{
+				Attribute: attribute,
+				Value:     value,
+				Service:   service,
+				Since:     since,
+				Limit:     limit * 5,
+			})
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			roots = matched
+			traceGroups = matched
 		} else {
-			// Mode 3: recent executions — apply default service scope if no explicit service given
+			// Mode 3: recent executions
 			if service == "" {
 				service = defaultService
 			}
-			fetchLimit := limit * 5
-			if fetchLimit < 10 {
-				fetchLimit = 10
-			}
-			var err error
-			roots, err = fetchRootTraces(otelQueryURL, service, fetchLimit, sinceMinutes)
+			recent, err := backend.QueryTraces(ctx, observability.TraceQuery{
+				Service: service,
+				Since:   since,
+				Limit:   limit * 5,
+			})
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
+			}
+			traceGroups = recent
+		}
+
+		// Convert to internal records
+		roots := make([]traceRecord, 0, len(traceGroups))
+		for _, spans := range traceGroups {
+			if len(spans) > 0 {
+				roots = append(roots, *spansToRecord(spans))
 			}
 		}
 
@@ -623,7 +679,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		if verbose {
 			tailLines = 80
 		}
-		details := fetchExecutionDetails(roots, otelQueryURL, tiltClient, tailLines, verbose)
+		details := fetchExecutionDetailsViaBackend(ctx, roots, backend, tiltClient, tailLines, verbose)
 
 		sep := "\n" + strings.Repeat("─", 60) + "\n\n"
 		var sb strings.Builder
@@ -633,8 +689,251 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			}
 			sb.WriteString(formatExecutionDetailView(&details[i], opts))
 		}
+
+		// Async: persist service map edges from all observed spans
+		var allObsSpans []observability.Span
+		for _, tg := range traceGroups {
+			allObsSpans = append(allObsSpans, tg...)
+		}
+		if len(allObsSpans) > 0 {
+			go persistServiceMapEdges(allObsSpans, workspacePath)
+		}
+
 		return mcp.NewToolResultText(sb.String()), nil
 	})
+}
+
+// spansToRecord converts a slice of observability.Span to the internal traceRecord type.
+func spansToRecord(spans []observability.Span) *traceRecord {
+	if len(spans) == 0 {
+		return nil
+	}
+	ts := make([]traceSpan, 0, len(spans))
+	for _, s := range spans {
+		ts = append(ts, traceSpan{
+			TraceID:      s.TraceID,
+			SpanID:       s.SpanID,
+			ParentSpanID: s.ParentSpanID,
+			Service:      s.Service,
+			Operation:    s.Operation,
+			StartNs:      s.StartTime.UnixNano(),
+			DurationNs:   s.DurationNano,
+			StatusCode:   s.Status,
+			Attrs:        s.Attributes,
+		})
+	}
+	traceID := spans[0].TraceID
+	return &traceRecord{TraceID: traceID, Spans: ts}
+}
+
+// queryLogsFromBackend queries logs for a trace from the backend.
+func queryLogsFromBackend(ctx context.Context, backend observability.Backend, traceID, service string) []observability.LogEntry {
+	logs, _ := backend.QueryLogs(ctx, observability.LogQuery{
+		TraceID: traceID,
+		Service: service,
+	})
+	return logs
+}
+
+// backendLogsToInternal converts observability.LogEntry to internal logEntry.
+func backendLogsToInternal(entries []observability.LogEntry) []logEntry {
+	result := make([]logEntry, 0, len(entries))
+	for _, e := range entries {
+		result = append(result, logEntry{
+			Timestamp: e.Timestamp.UnixNano(),
+			Body:      e.Body,
+			Service:   e.Service,
+			Severity:  e.Severity,
+			TraceID:   e.TraceID,
+			SpanID:    e.SpanID,
+		})
+	}
+	return result
+}
+
+// fetchExecutionDetailsViaBackend fetches full span trees and logs via the backend interface.
+func fetchExecutionDetailsViaBackend(ctx context.Context, roots []traceRecord, backend observability.Backend, tiltClient *tilt.Client, tailLines int, verbose bool) []executionDetail {
+	details := make([]executionDetail, len(roots))
+	var wg sync.WaitGroup
+	for i, r := range roots {
+		wg.Add(1)
+		go func(idx int, traceID string) {
+			defer wg.Done()
+			d := executionDetail{}
+
+			// Fetch full span tree
+			traces, err := backend.QueryTraces(ctx, observability.TraceQuery{TraceID: traceID})
+			if err == nil && len(traces) > 0 && len(traces[0]) > 0 {
+				d.record = spansToRecord(traces[0])
+			} else {
+				cp := roots[idx]
+				d.record = &cp
+			}
+
+			// OTEL correlated logs
+			obsLogs := queryLogsFromBackend(ctx, backend, traceID, "")
+			d.otelLogs = backendLogsToInternal(obsLogs)
+
+			// If no OTEL logs, fetch Tilt process logs for each involved service
+			if len(d.otelLogs) == 0 && tiltClient != nil {
+				d.tiltLogs = fetchTiltProcessLogs(tiltClient, d.record, tailLines, verbose)
+			}
+
+			details[idx] = d
+		}(i, r.TraceID)
+	}
+	wg.Wait()
+	return details
+}
+
+// buildServiceMapSection returns a service map summary string (after async edge persistence).
+// This is a no-op placeholder; actual persistence happens async via persistServiceMapEdges.
+func buildServiceMapSection(ctx context.Context, backend observability.Backend, workspacePath string, spans []observability.Span) string {
+	return ""
+}
+
+// persistServiceMapEdges extracts service edges from spans and merges into .devstack.json.
+// Called async from the investigate tool handler.
+func persistServiceMapEdges(spans []observability.Span, workspacePath string) {
+	if workspacePath == "" || len(spans) == 0 {
+		return
+	}
+	newEdges := extractEdgesFromSpans(spans)
+	if len(newEdges) == 0 {
+		return
+	}
+	cfg, err := loadWorkspaceConfig(workspacePath)
+	if err != nil {
+		return
+	}
+	existing := cfg.ServiceMapEdges
+	merged := mergeServiceEdges(existing, newEdges)
+	cfg.ServiceMapEdges = merged
+	cfg.ServiceMapUpdatedAt = time.Now()
+	saveWorkspaceConfig(workspacePath, cfg)
+}
+
+// serviceMapEdge is a simple directed edge between two services.
+type serviceMapEdge struct {
+	From string
+	To   string
+}
+
+// extractEdgesFromSpans derives service call edges from a set of spans.
+func extractEdgesFromSpans(spans []observability.Span) []serviceMapEdge {
+	spanService := map[string]string{}
+	for _, s := range spans {
+		spanService[s.SpanID] = s.Service
+	}
+	seen := map[string]bool{}
+	var edges []serviceMapEdge
+	for _, s := range spans {
+		if s.ParentSpanID == "" {
+			continue
+		}
+		parentService, ok := spanService[s.ParentSpanID]
+		if !ok || parentService == s.Service {
+			continue
+		}
+		key := parentService + "→" + s.Service
+		if !seen[key] {
+			seen[key] = true
+			edges = append(edges, serviceMapEdge{From: parentService, To: s.Service})
+		}
+	}
+	return edges
+}
+
+// mergeServiceEdges deduplicates edges.
+func mergeServiceEdges(existing, newEdges []serviceMapEdge) []serviceMapEdge {
+	seen := map[string]bool{}
+	result := make([]serviceMapEdge, 0, len(existing)+len(newEdges))
+	for _, e := range existing {
+		key := e.From + "→" + e.To
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, e)
+		}
+	}
+	for _, e := range newEdges {
+		key := e.From + "→" + e.To
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
+// mutableWorkspaceConfig is a minimal struct for reading/writing the service map portion of .devstack.json.
+type mutableWorkspaceConfig struct {
+	raw             map[string]interface{}
+	ServiceMapEdges []serviceMapEdge
+	ServiceMapUpdatedAt time.Time
+}
+
+func loadWorkspaceConfig(workspacePath string) (*mutableWorkspaceConfig, error) {
+	// This is a lightweight bridge; we use the config package for actual loading
+	// to avoid an import cycle risk. We only care about service_map here.
+	// We keep it simple and just re-read the JSON directly.
+	import_path := workspacePath + "/.devstack.json"
+	data, err := os.ReadFile(import_path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &mutableWorkspaceConfig{raw: map[string]interface{}{}}, nil
+		}
+		return nil, err
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	cfg := &mutableWorkspaceConfig{raw: raw}
+	// Parse existing service_map
+	if sm, ok := raw["service_map"].(map[string]interface{}); ok {
+		if edges, ok := sm["edges"].([]interface{}); ok {
+			for _, e := range edges {
+				if em, ok := e.(map[string]interface{}); ok {
+					from, _ := em["from"].(string)
+					to, _ := em["to"].(string)
+					if from != "" && to != "" {
+						cfg.ServiceMapEdges = append(cfg.ServiceMapEdges, serviceMapEdge{From: from, To: to})
+					}
+				}
+			}
+		}
+	}
+	return cfg, nil
+}
+
+func saveWorkspaceConfig(workspacePath string, cfg *mutableWorkspaceConfig) {
+	raw := cfg.raw
+	if raw == nil {
+		raw = map[string]interface{}{}
+	}
+	edges := make([]map[string]string, 0, len(cfg.ServiceMapEdges))
+	for _, e := range cfg.ServiceMapEdges {
+		edges = append(edges, map[string]string{"from": e.From, "to": e.To})
+	}
+	raw["service_map"] = map[string]interface{}{
+		"edges":      edges,
+		"updated_at": cfg.ServiceMapUpdatedAt.UTC().Format(time.RFC3339),
+	}
+	data, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return
+	}
+	os.WriteFile(workspacePath+"/.devstack.json", data, 0644)
+}
+
+// sortedEnvKeys returns sorted map keys for deterministic output.
+func sortedEnvKeys(m map[string]workspace.Environment) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // executionDetail holds a fully fetched execution: span tree + correlated logs.

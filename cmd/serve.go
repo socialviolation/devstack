@@ -12,6 +12,8 @@ import (
 	"github.com/spf13/viper"
 
 	nvxmcp "devstack/internal/mcp"
+	"devstack/internal/observability"
+	_ "devstack/internal/observability/signoz" // register signoz backend
 	"devstack/internal/tilt"
 	"devstack/internal/workspace"
 )
@@ -26,17 +28,18 @@ This is configured automatically in each service's .mcp.json by 'devstack init'.
 You do not normally need to run this manually.
 
 TOOLS EXPOSED TO AI AGENTS
+  environment     active environment + capability orientation (start here)
   status          live state of all services (running, error, ports)
-  restart         trigger a rebuild and restart of a service
-  stop            disable one or all services
-  process_logs    fetch stdout/stderr from a service (filter to errors only)
+  restart         trigger a rebuild and restart of a service  [local only]
+  stop            disable one or all services                 [local only]
+  process_logs    fetch stdout/stderr from a service          [local only]
   investigate     correlated traces + logs in one call — primary diagnostic tool
-  configure       set a Tilt runtime argument (restarts affected services)
+  configure       set a Tilt runtime argument                 [local only]
 
 TRANSPORT
   stdio (default)   used by Claude Code and most AI tooling
   http              for custom integrations`,
-	RunE:  runServe,
+	RunE: runServe,
 }
 
 func init() {
@@ -75,21 +78,57 @@ func serveStdio() error {
 	wsName := viper.GetString("workspace")
 	host := viper.GetString("tilt.host")
 
-	tiltClient := tilt.NewDynamicClient(host, func() int {
-		if port := workspace.ResolvePort(wsName); port != 0 {
-			return port
-		}
-		return viper.GetInt("tilt.port")
-	})
-
 	defaultService := viper.GetString("default_service")
-
 	ws := resolveServeWorkspace(wsName)
-	otelQueryURL := workspace.OtelQueryEndpoint(ws)
-	tiltfilePath := filepath.Join(ws.Path, "Tiltfile")
-	nvxmcp.RegisterTools(mcpServer, tiltClient, defaultService, otelQueryURL, tiltfilePath)
 
-	log.Printf("Starting devstack MCP server with stdio transport")
+	// Resolve active environment
+	envName := viper.GetString("environment")
+	if envName == "" {
+		envName = "local"
+	}
+	activeEnv, ok := ws.ResolveEnvironment(envName)
+	if !ok {
+		log.Fatalf("environment %q not found in workspace %q. Run: devstack env list", envName, ws.Name)
+	}
+	allEnvs := ws.AllEnvironments()
+
+	// Create observability backend
+	backend, err := observability.NewBackend(
+		activeEnv.Observability.Backend,
+		activeEnv.Observability.URL,
+		activeEnv.Observability.APIKey,
+	)
+	if err != nil {
+		log.Fatalf("failed to create observability backend: %v", err)
+	}
+
+	// Only create Tilt client for local environments
+	var tiltClient *tilt.Client
+	if activeEnv.Type == workspace.EnvironmentTypeLocal {
+		tiltClient = tilt.NewDynamicClient(host, func() int {
+			if port := workspace.ResolvePort(wsName); port != 0 {
+				return port
+			}
+			return viper.GetInt("tilt.port")
+		})
+	}
+
+	tiltfilePath := filepath.Join(ws.Path, "Tiltfile")
+
+	nvxmcp.RegisterTools(
+		mcpServer,
+		tiltClient,
+		defaultService,
+		backend,
+		tiltfilePath,
+		envName,
+		activeEnv,
+		allEnvs,
+		ws.Name,
+		ws.Path,
+	)
+
+	log.Printf("Starting devstack MCP server with stdio transport (env: %s, type: %s)", envName, activeEnv.Type)
 
 	return server.ServeStdio(mcpServer)
 }

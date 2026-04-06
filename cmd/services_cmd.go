@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -60,6 +61,7 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 	}
 
 	cfg, _ := config.Load(ws.Path)
+	serviceDirs := tilt.ParseTiltfileServeDirs(filepath.Join(ws.Path, "Tiltfile"))
 
 	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
 	view, tiltErr := tiltClient.GetView()
@@ -179,7 +181,7 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 			memberSet[m] = true
 		}
 		roots := buildGroupTree(members, cfg.Deps)
-		renderStatusNodes(roots, "  ", resourceMap, cfg.Deps, memberSet, svcGroupColor)
+		renderStatusNodes(roots, "  ", resourceMap, cfg.Deps, memberSet, svcGroupColor, serviceDirs)
 		fmt.Println()
 	}
 
@@ -201,11 +203,16 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 				branch = "  └── "
 			}
 			statusStr, statusClr := svcStatusColor(svc, resourceMap)
-			portsStr := svcPorts(svc, resourceMap)
+			portsRaw := svcPortsRaw(svc, resourceMap)
 			fmt.Print(branch)
 			fmt.Printf("%-22s  ", svc)
 			statusClr.Printf("%-10s", statusStr)
-			fmt.Printf("  %s\n", portsStr)
+			fmt.Print("  ")
+			printPorts(portsRaw, 14)
+			fmt.Println()
+			if dir := serviceDirs[svc]; dir != "" {
+				color.New(color.Faint).Printf("      %s\n", shortDir(dir))
+			}
 		}
 		fmt.Println()
 	}
@@ -233,15 +240,26 @@ func svcStatusColor(svc string, resourceMap map[string]tilt.UIResource) (string,
 	}
 }
 
-func svcPorts(svc string, resourceMap map[string]tilt.UIResource) string {
+// svcPortsRaw returns the plain (uncolored) port string for a service.
+func svcPortsRaw(svc string, resourceMap map[string]tilt.UIResource) string {
 	r, ok := resourceMap[svc]
 	if !ok {
-		return color.New(color.Faint).Sprint("<event-driven>")
+		return "<event-driven>"
 	}
 	ports := extractPorts(r.Status.EndpointLinks)
 	if ports == "-" || ports == "" {
-		return color.New(color.Faint).Sprint("<event-driven>")
+		return "<event-driven>"
 	}
 	return ports
+}
+
+// printPorts prints the port string with consistent visible-width padding.
+func printPorts(raw string, width int) {
+	padded := fmt.Sprintf("%-*s", width, raw)
+	if raw == "<event-driven>" {
+		color.New(color.Faint).Print(padded)
+	} else {
+		fmt.Print(padded)
+	}
 }
 

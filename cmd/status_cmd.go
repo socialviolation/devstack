@@ -76,7 +76,8 @@ func buildGroupTree(members []string, deps map[string][]string) []*treeNode {
 
 // renderStatusNodes renders a slice of treeNodes as a status tree at the given indent level.
 // memberSet is the set of all services in the current group; cross-group deps show as arrows.
-func renderStatusNodes(nodes []*treeNode, indent string, resourceMap map[string]tilt.UIResource, deps map[string][]string, memberSet map[string]bool, svcGroupColor map[string]*color.Color) {
+// serviceDirs maps service name → source directory (may be empty map).
+func renderStatusNodes(nodes []*treeNode, indent string, resourceMap map[string]tilt.UIResource, deps map[string][]string, memberSet map[string]bool, svcGroupColor map[string]*color.Color, serviceDirs map[string]string) {
 	for i, node := range nodes {
 		isLast := i == len(nodes)-1
 		branch := "├── "
@@ -88,12 +89,13 @@ func renderStatusNodes(nodes []*treeNode, indent string, resourceMap map[string]
 
 		svc := node.name
 		statusStr, statusClr := svcStatusColor(svc, resourceMap)
-		portsStr := svcPorts(svc, resourceMap)
+		portsRaw := svcPortsRaw(svc, resourceMap)
 
 		fmt.Print(indent + branch)
 		fmt.Printf("%-22s  ", svc)
 		statusClr.Printf("%-10s", statusStr)
-		fmt.Printf("  %s", portsStr)
+		fmt.Print("  ")
+		printPorts(portsRaw, 14)
 
 		var crossDeps []string
 		for _, dep := range deps[svc] {
@@ -116,8 +118,13 @@ func renderStatusNodes(nodes []*treeNode, indent string, resourceMap map[string]
 		}
 		fmt.Println()
 
+		// Path on its own line, indented to align under the service name (past the branch chars)
+		if dir := serviceDirs[svc]; dir != "" {
+			color.New(color.Faint).Printf("%s    %s\n", indent, shortDir(dir))
+		}
+
 		if len(node.children) > 0 {
-			renderStatusNodes(node.children, indent+childIndent, resourceMap, deps, memberSet, svcGroupColor)
+			renderStatusNodes(node.children, indent+childIndent, resourceMap, deps, memberSet, svcGroupColor, serviceDirs)
 		}
 	}
 }

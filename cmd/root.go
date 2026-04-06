@@ -72,11 +72,15 @@ func init() {
 	// Workspace root directory
 	rootCmd.PersistentFlags().String("workspace", "", "Workspace name or path (env: DEVSTACK_WORKSPACE)")
 
+	// Active environment (local, staging, prod, etc)
+	rootCmd.PersistentFlags().String("env", "local", "Active environment name (env: DEVSTACK_ENVIRONMENT)")
+
 	// Bind flags to viper (keep internal keys stable)
 	viper.BindPFlag("tilt.port", rootCmd.PersistentFlags().Lookup("dashboard-port"))
 	viper.BindPFlag("tilt.host", rootCmd.PersistentFlags().Lookup("dashboard-host"))
 	viper.BindPFlag("default_service", rootCmd.PersistentFlags().Lookup("default-service"))
 	viper.BindPFlag("workspace", rootCmd.PersistentFlags().Lookup("workspace"))
+	viper.BindPFlag("environment", rootCmd.PersistentFlags().Lookup("env"))
 }
 
 func initConfig() {
@@ -94,6 +98,7 @@ func initConfig() {
 	viper.BindEnv("tilt.host", "TILT_HOST")
 	viper.BindEnv("default_service", "DEVSTACK_DEFAULT_SERVICE")
 	viper.BindEnv("workspace", "DEVSTACK_WORKSPACE")
+	viper.BindEnv("environment", "DEVSTACK_ENVIRONMENT")
 
 	viper.AutomaticEnv()
 

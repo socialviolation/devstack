@@ -8,6 +8,33 @@ import (
 	"strings"
 )
 
+// EnvironmentType describes whether an environment is locally Tilt-managed or remote-only.
+type EnvironmentType string
+
+const (
+	// EnvironmentTypeLocal is a locally managed environment with Tilt + embedded SigNoz.
+	// All MCP tools are available including restart, stop, and configure.
+	EnvironmentTypeLocal EnvironmentType = "local"
+
+	// EnvironmentTypeRemote is a remote-only environment (staging, prod, etc).
+	// Only observability tools are available — no service control.
+	EnvironmentTypeRemote EnvironmentType = "remote"
+)
+
+// ObservabilityConfig holds the connection config for an observability backend.
+type ObservabilityConfig struct {
+	Backend string `json:"backend"`           // "signoz" (default and only supported value)
+	URL     string `json:"url"`               // Base URL, e.g. "http://localhost:3301"
+	APIKey  string `json:"api_key,omitempty"` // Optional API key for remote instances
+}
+
+// Environment represents a named deployment target with associated observability config.
+// Local environments also have Tilt for service control. Remote environments are read-only.
+type Environment struct {
+	Type          EnvironmentType     `json:"type"`
+	Observability ObservabilityConfig `json:"observability"`
+}
+
 // Workspace represents a registered development workspace.
 type Workspace struct {
 	Name     string `json:"name"`
@@ -18,6 +45,10 @@ type Workspace struct {
 	OtelUIPort       int `json:"otel_ui_port,omitempty"`        // SigNoz UI + query API (default 3301)
 	OtelOTLPGRPCPort int `json:"otel_otlp_grpc_port,omitempty"` // OTLP gRPC (default 4317)
 	OtelOTLPHTTPPort int `json:"otel_otlp_http_port,omitempty"` // OTLP HTTP (default 4318)
+
+	// Environments is an optional map of named environments (local, staging, prod, etc).
+	// When absent, the MCP server synthesizes a "local" environment from the legacy flat fields above.
+	Environments map[string]Environment `json:"environments,omitempty"`
 }
 
 // RegistryPath returns the path to the workspace registry JSON file.
@@ -274,6 +305,79 @@ func UpdatePort(name string, port int) error {
 		}
 	}
 	return fmt.Errorf("workspace %q not found", name)
+}
+
+// ResolveEnvironment returns the named environment config.
+// If Environments is nil or the name is not found, synthesizes a "local" environment
+// from the workspace's legacy flat OTEL fields (backward compatible).
+func (ws *Workspace) ResolveEnvironment(name string) (Environment, bool) {
+	if ws.Environments != nil {
+		if env, ok := ws.Environments[name]; ok {
+			return env, true
+		}
+	}
+	// Synthesize local from legacy fields
+	if name == "local" || name == "" {
+		return Environment{
+			Type: EnvironmentTypeLocal,
+			Observability: ObservabilityConfig{
+				Backend: "signoz",
+				URL:     fmt.Sprintf("http://localhost:%d", ws.UIPort()),
+			},
+		}, true
+	}
+	return Environment{}, false
+}
+
+// AllEnvironments returns all configured environments, always including a synthetic "local"
+// entry derived from legacy fields if no explicit local environment is configured.
+func (ws *Workspace) AllEnvironments() map[string]Environment {
+	result := map[string]Environment{}
+	// Start with synthetic local
+	localEnv, _ := ws.ResolveEnvironment("local")
+	result["local"] = localEnv
+	// Overlay explicit environments
+	for name, env := range ws.Environments {
+		result[name] = env
+	}
+	return result
+}
+
+// AddEnvironment adds or replaces a named environment in the workspace.
+func AddEnvironment(workspaceName, envName string, env Environment) error {
+	workspaces, err := Load()
+	if err != nil {
+		return err
+	}
+	for i, ws := range workspaces {
+		if strings.ToLower(ws.Name) == strings.ToLower(workspaceName) {
+			if workspaces[i].Environments == nil {
+				workspaces[i].Environments = map[string]Environment{}
+			}
+			workspaces[i].Environments[envName] = env
+			return Save(workspaces)
+		}
+	}
+	return fmt.Errorf("workspace %q not found", workspaceName)
+}
+
+// RemoveEnvironment removes a named environment from the workspace.
+// Returns an error if trying to remove "local" (it's synthesized and cannot be removed).
+func RemoveEnvironment(workspaceName, envName string) error {
+	if envName == "local" {
+		return fmt.Errorf("cannot remove built-in %q environment", envName)
+	}
+	workspaces, err := Load()
+	if err != nil {
+		return err
+	}
+	for i, ws := range workspaces {
+		if strings.ToLower(ws.Name) == strings.ToLower(workspaceName) {
+			delete(workspaces[i].Environments, envName)
+			return Save(workspaces)
+		}
+	}
+	return fmt.Errorf("workspace %q not found", workspaceName)
 }
 
 // NextPort returns the next available Tilt port (max existing port + 1, minimum 10350).
