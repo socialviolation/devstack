@@ -363,6 +363,21 @@ func (c *Client) QueryTraces(ctx context.Context, req observability.TraceQuery) 
 		return [][]observability.Span{spans}, nil
 	}
 
+	if req.SpanID != "" {
+		traceID, err := c.traceIDForSpan(req.SpanID)
+		if err != nil {
+			return nil, err
+		}
+		if traceID == "" {
+			return nil, nil
+		}
+		spans, err := c.fetchTraceByID(traceID)
+		if err != nil {
+			return nil, err
+		}
+		return [][]observability.Span{spans}, nil
+	}
+
 	since := req.Since
 	if since == 0 {
 		since = 5 * time.Minute
@@ -668,6 +683,30 @@ func (c *Client) ListServices(ctx context.Context, since time.Duration) ([]strin
 	}
 	sort.Strings(services)
 	return services, nil
+}
+
+// traceIDForSpan searches for a span by its SpanId and returns the containing traceID.
+func (c *Client) traceIDForSpan(spanID string) (string, error) {
+	apiURL := fmt.Sprintf("%s/api/v3/query_range", c.baseURL)
+	extraFilters := []filter{
+		{
+			Key:   filterKey{Key: "spanId", Type: "tag", DataType: "string", IsColumn: true},
+			Op:    "=",
+			Value: spanID,
+		},
+	}
+	req := buildQueryRangeRequest("traces", "", 1, 24*time.Hour, extraFilters)
+
+	var resp queryRangeResponse
+	if err := c.post(apiURL, req, &resp); err != nil {
+		return "", err
+	}
+	rows := extractListRows(resp)
+	if len(rows) == 0 {
+		return "", nil
+	}
+	sp := rowToInternalSpan(rows[0])
+	return sp.TraceID, nil
 }
 
 // fetchAllSpans fetches a flat list of spans (not grouped by trace) for service enumeration.

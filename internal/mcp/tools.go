@@ -549,6 +549,9 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		mcp.WithString("trace_id",
 			mcp.Description("Specific trace ID to look up. If given, all other filters are ignored."),
 		),
+		mcp.WithString("span_id",
+			mcp.Description("Specific span ID to look up. Finds the trace containing this span. Ignored if trace_id is given."),
+		),
 		mcp.WithString("service",
 			mcp.Description("Filter by service name. Only applied when browsing recent executions (mode 3 — no trace_id or attribute given). Attribute searches and trace lookups always span all services."),
 		),
@@ -578,6 +581,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		}
 
 		traceID := request.GetString("trace_id", "")
+		spanID := request.GetString("span_id", "")
 		service := request.GetString("service", "")
 		attribute := request.GetString("attribute", "")
 		value := request.GetString("value", "")
@@ -589,7 +593,17 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		opts := formatOptions{Verbose: verbose}
 		since := time.Duration(sinceMinutes) * time.Minute
 
-		// Mode 1: specific trace ID
+		// Mode 1: specific trace ID or span ID
+		if traceID == "" && spanID != "" {
+			traces, err := backend.QueryTraces(ctx, observability.TraceQuery{SpanID: spanID})
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			if len(traces) == 0 || len(traces[0]) == 0 {
+				return mcp.NewToolResultText(fmt.Sprintf("Span %q not found.", spanID)), nil
+			}
+			traceID = traces[0][0].TraceID
+		}
 		if traceID != "" {
 			traces, err := backend.QueryTraces(ctx, observability.TraceQuery{TraceID: traceID})
 			if err != nil {
