@@ -105,11 +105,12 @@ func serveStdio() error {
 	// Only create Tilt client for local environments
 	var tiltClient *tilt.Client
 	if activeEnv.Type == workspace.EnvironmentTypeLocal {
+		resolvedName := ws.Name // capture resolved name, not raw wsName flag
 		tiltClient = tilt.NewDynamicClient(host, func() int {
-			if port := workspace.ResolvePort(wsName); port != 0 {
+			if port := workspace.ResolvePort(resolvedName); port != 0 {
 				return port
 			}
-			return viper.GetInt("tilt.port")
+			return ws.TiltPort // fall back to registry value, not viper (which may be 0)
 		})
 	}
 
@@ -128,7 +129,7 @@ func serveStdio() error {
 		ws.Path,
 	)
 
-	log.Printf("Starting devstack MCP server with stdio transport (env: %s, type: %s)", envName, activeEnv.Type)
+	log.Printf("Starting devstack MCP server (workspace: %s, env: %s/%s, tilt-port: %d)", ws.Name, envName, activeEnv.Type, ws.TiltPort)
 
 	return server.ServeStdio(mcpServer)
 }
@@ -138,14 +139,22 @@ func serveHTTP() error {
 	return fmt.Errorf("HTTP transport not yet implemented")
 }
 
-// resolveServeWorkspace returns the Workspace for a given name/path string,
-// falling back to a zero-value workspace if not found (e.g. before registration).
+// resolveServeWorkspace returns the Workspace for a given name/path string.
+// Falls back to cwd detection if nameOrPath is empty or not found.
+// Fatals with a clear message if the workspace cannot be resolved.
 func resolveServeWorkspace(nameOrPath string) *workspace.Workspace {
-	if ws, err := workspace.FindByName(nameOrPath); err == nil {
-		return ws
+	if nameOrPath != "" {
+		if ws, err := workspace.FindByName(nameOrPath); err == nil {
+			return ws
+		}
+		if ws, err := workspace.FindByPath(nameOrPath); err == nil {
+			return ws
+		}
+		log.Printf("Warning: workspace %q not found in registry, falling back to cwd detection", nameOrPath)
 	}
-	if ws, err := workspace.FindByPath(nameOrPath); err == nil {
-		return ws
+	ws, err := workspace.DetectFromCwd()
+	if err != nil {
+		log.Fatalf("Cannot resolve workspace: DEVSTACK_WORKSPACE=%q and cwd detection failed: %v\nRun 'devstack workspace add' to register this workspace.", nameOrPath, err)
 	}
-	return &workspace.Workspace{}
+	return ws
 }
