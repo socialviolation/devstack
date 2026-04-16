@@ -27,11 +27,28 @@ The SigNoz observability stack is also started automatically so services can
 begin shipping traces and logs immediately.
 
 Logs are written to ~/.local/share/devstack/<workspace-name>/tilt.log.`,
-	RunE:  runStart,
+	RunE: runStart,
+}
+
+var upAliasCmd = &cobra.Command{
+	Use:   "up",
+	Short: "Start the dev daemon for the current workspace (alias for: devstack workspace up)",
+	Long: `Start the dev daemon as a detached background process for the current workspace.
+
+The dev daemon is responsible for running all local services, watching source
+files for changes, and hot-reloading services when code is modified. It must
+be running before you can start, stop, or restart individual services.
+
+The SigNoz observability stack is also started automatically so services can
+begin shipping traces and logs immediately.
+
+Logs are written to ~/.local/share/devstack/<workspace-name>/tilt.log.`,
+	RunE: runStart,
 }
 
 func init() {
 	workspaceCmd.AddCommand(upCmd)
+	rootCmd.AddCommand(upAliasCmd)
 }
 
 func runStart(cmd *cobra.Command, args []string) error {
