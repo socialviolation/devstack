@@ -35,10 +35,11 @@ func init() {
 	svcStartCmd.Flags().String("group", "", "Start a named group of services instead of a single service")
 }
 
-func detectServiceFromCwd(cfg *config.WorkspaceConfig) (string, error) {
+// detectServicesFromCwd returns all services whose registered path contains the cwd.
+func detectServicesFromCwd(cfg *config.WorkspaceConfig) ([]string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", fmt.Errorf("failed to get current directory: %w", err)
+		return nil, fmt.Errorf("failed to get current directory: %w", err)
 	}
 
 	var matches []string
@@ -48,14 +49,23 @@ func detectServiceFromCwd(cfg *config.WorkspaceConfig) (string, error) {
 		}
 	}
 
-	switch len(matches) {
-	case 0:
-		return "", fmt.Errorf("must specify a service name or --group=<name>\nUsage: devstack start <service>\n       devstack start --group=<name>")
-	case 1:
-		return matches[0], nil
-	default:
-		return "", fmt.Errorf("multiple services match the current directory (%s); please specify a service name explicitly", strings.Join(matches, ", "))
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("must specify a service name or --group=<name>\nUsage: devstack start <service>\n       devstack start --group=<name>")
 	}
+	return matches, nil
+}
+
+// detectServiceFromCwd returns the single service matching the cwd.
+// Errors if multiple match — use detectServicesFromCwd for that case.
+func detectServiceFromCwd(cfg *config.WorkspaceConfig) (string, error) {
+	matches, err := detectServicesFromCwd(cfg)
+	if err != nil {
+		return "", err
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("multiple services match (%s); please specify explicitly", strings.Join(matches, ", "))
+	}
+	return matches[0], nil
 }
 
 func runEnable(cmd *cobra.Command, args []string) error {
@@ -95,21 +105,29 @@ func runEnable(cmd *cobra.Command, args []string) error {
 			}
 		}
 	} else {
-		var service string
+		var services []string
 		if len(args) > 0 {
-			service = args[0]
+			services = []string{args[0]}
 		} else {
-			service, err = detectServiceFromCwd(cfg)
+			services, err = detectServicesFromCwd(cfg)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Auto-detected service: %s\n", service)
+			fmt.Printf("Auto-detected: %s\n", strings.Join(services, ", "))
 		}
-		resolved, err := config.ResolveDeps(cfg, service)
-		if err != nil {
-			return err
+		seen := map[string]bool{}
+		for _, svc := range services {
+			resolved, err := config.ResolveDeps(cfg, svc)
+			if err != nil {
+				return err
+			}
+			for _, r := range resolved {
+				if !seen[r] {
+					seen[r] = true
+					toTrigger = append(toTrigger, r)
+				}
+			}
 		}
-		toTrigger = resolved
 	}
 
 	fmt.Printf("Starting: %s\n", strings.Join(toTrigger, ", "))
