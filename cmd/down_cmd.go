@@ -25,11 +25,11 @@ func init() {
 }
 
 func runDown(cmd *cobra.Command, args []string) error {
-	wsFlag, _ := cmd.Flags().GetString("workspace") // inherited persistent flag
-
-	// 1. Resolve workspace
-	ws, err := resolveWorkspace(wsFlag)
+	ws, env, envName, err := resolveWorkspaceAndEnv()
 	if err != nil {
+		return err
+	}
+	if err := requireLocalEnv(envName, env); err != nil {
 		return err
 	}
 

@@ -47,8 +47,7 @@ var groupPalette = []*color.Color{
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
-	wsFlag, _ := cmd.Flags().GetString("workspace") // inherited persistent flag
-	ws, err := resolveWorkspace(wsFlag)
+	ws, _, _, err := resolveWorkspaceAndEnv()
 	if err != nil {
 		return runStatusAll()
 	}
