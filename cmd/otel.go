@@ -175,9 +175,10 @@ func stopOtel(workspaceName string) error {
 		"-p", project,
 		"down",
 	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("docker compose down failed: %w\n%s", err, out)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker compose down failed (see output above)")
 	}
 	return nil
 }
