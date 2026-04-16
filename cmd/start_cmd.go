@@ -146,11 +146,11 @@ func runStart(cmd *cobra.Command, args []string) error {
 	if isOtelRunning(ws.Name) {
 		fmt.Printf("SigNoz already running\n")
 	} else {
-		fmt.Printf("Starting SigNoz...")
+		fmt.Printf("Starting SigNoz...\n")
 		if err := startOtel(ws); err != nil {
-			fmt.Fprintf(os.Stderr, " failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "SigNoz failed: %v\n", err)
 		} else {
-			fmt.Printf(" ✓ %s\n", workspace.OtelQueryEndpoint(ws))
+			fmt.Printf("✓ SigNoz %s\n", workspace.OtelQueryEndpoint(ws))
 		}
 	}
 

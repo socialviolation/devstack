@@ -151,9 +151,10 @@ func startOtel(ws *workspace.Workspace) error {
 		fmt.Sprintf("SIGNOZ_OTLP_GRPC_PORT=%d", ws.GRPCPort()),
 		fmt.Sprintf("SIGNOZ_OTLP_HTTP_PORT=%d", ws.HTTPPort()),
 	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("failed to start SigNoz: %w\n%s", err, out)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker compose up failed (see output above)")
 	}
 	return nil
 }
