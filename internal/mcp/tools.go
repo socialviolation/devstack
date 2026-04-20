@@ -142,7 +142,7 @@ func availableGroups(cfg *config.WorkspaceConfig) string {
 
 func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, serviceDirs map[string]string, cfg *config.WorkspaceConfig) {
 	tool := mcp.NewTool("status",
-		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack (via Tilt). Returns SERVICE, STATUS (idle/starting/running/building/error/disabled), PORT(S), PATH (source directory), GROUP, and last error. Also shows a groups summary. 'idle' means the service is known to Tilt but not currently running (not started yet, or was stopped). 'running' means the process is up. 'disabled' means it was explicitly stopped."),
+		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack (via Tilt). Status reflects current Tilt resource state — these are locally running services managed by Tilt, not production. Returns SERVICE, STATUS (idle/starting/running/building/error/disabled), PORT(S), PATH (source directory), GROUP, and last error. Also shows a groups summary. 'idle' means the service is known to Tilt but not currently running (not started yet, or was stopped). 'running' means the process is up. 'disabled' means it was explicitly stopped."),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -218,9 +218,9 @@ func shortenPath(path string) string {
 
 func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, cfg *config.WorkspaceConfig) {
 	tool := mcp.NewTool("restart",
-		mcp.WithDescription("Restart a specific service or all services in a group in the dev stack by triggering a rebuild. If neither service nor group is given, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
+		mcp.WithDescription("Restart a specific service or all services in a group in the LOCAL dev stack by triggering a rebuild. Operates on local Tilt services only — service name must be exact. If neither service nor group is given, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
 		mcp.WithString("service",
-			mcp.Description("The service name to restart. Can be the exact Tilt resource name or a configured alias. If omitted, uses the default service for this repo (unless group is given)."),
+			mcp.Description("Exact Tilt resource name or configured alias (e.g. 'api-service'). NOT a description or partial match. If omitted, uses the default service for this repo (unless group is given)."),
 		),
 		mcp.WithString("group",
 			mcp.Description("Group name to restart. All services in the group are restarted in parallel. Cannot be combined with service."),
@@ -322,9 +322,9 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 
 func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg *config.WorkspaceConfig) {
 	tool := mcp.NewTool("stop",
-		mcp.WithDescription("Stop (disable) one service, all services in a group, or all services. If service is given, stops that service. If group is given, stops all services in the group. If neither is given, stops all services. Cannot specify both service and group."),
+		mcp.WithDescription("Stop (disable) one service, all services in a group, or all services in the LOCAL dev stack. Operates on local Tilt services only — service name must be exact. If service is given, stops that service. If group is given, stops all services in the group. If neither is given, stops all services. Cannot specify both service and group."),
 		mcp.WithString("service",
-			mcp.Description("Service name or alias to stop. If omitted, all services are stopped (unless group is given)."),
+			mcp.Description("Exact Tilt resource name or alias to stop (e.g. 'api-service'). NOT a description or partial match. If omitted, all services are stopped (unless group is given)."),
 		),
 		mcp.WithString("group",
 			mcp.Description("Group name to stop. All services in the group are stopped in parallel. Cannot be combined with service."),
@@ -430,15 +430,15 @@ func filterErrorLines(raw string) []string {
 
 func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, cfg *config.WorkspaceConfig) {
 	tool := mcp.NewTool("process_logs",
-		mcp.WithDescription("Fetch raw stdout/stderr from a service process via Tilt. Use this for services not instrumented with OTEL, or when you need unstructured process output. If no service is given, uses the default or fetches all services in parallel. Supports grep filtering, paging via offset, and since_restart to isolate post-startup output. When group is given, fetches logs from all services in the group concurrently. Cannot specify both service and group."),
+		mcp.WithDescription("Fetch raw stdout/stderr from a locally running Tilt-managed service process. NOT a log search engine — fetches live process output directly from Tilt. Parameters are structured: exact service name, integer line count, boolean flags. Natural language queries are NOT accepted. Example: service='api-service' lines=100 since_restart=true. Use for services not instrumented with OTEL or when you need unstructured process output. If no service is given, uses the default or fetches all services in parallel. Supports grep filtering, paging via offset, and since_restart to isolate post-startup output. When group is given, fetches logs from all services in the group concurrently. Cannot specify both service and group."),
 		mcp.WithString("service",
-			mcp.Description("Service name or alias. If omitted, uses the default service for this repo or fetches all."),
+			mcp.Description("Exact service name or alias as registered in Tilt (e.g. 'api-service'). NOT a description or partial match. If omitted, uses the default service for this repo or fetches all."),
 		),
 		mcp.WithString("group",
 			mcp.Description("Group name. Fetches logs from all services in the group concurrently, prefixed with service name. Cannot be combined with service."),
 		),
 		mcp.WithNumber("lines",
-			mcp.Description("Number of lines to return. Defaults to 100."),
+			mcp.Description("Integer number of lines to return. Defaults to 100."),
 		),
 		mcp.WithNumber("offset",
 			mcp.Description("Skip this many lines from the most recent end before returning `lines`. Use for paging backward: offset=0 gives the last 100 lines, offset=100 gives the 100 lines before that. Defaults to 0."),
@@ -756,16 +756,18 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 	if activeEnv.Type == workspace.EnvironmentTypeLocal {
 		desc = fmt.Sprintf(
 			"Investigate distributed traces in the LOCAL dev environment (SigNoz @ %s). "+
-				"Look up a trace by ID, search by business attribute (e.g. portfolio.id=123, user.id=456), "+
-				"or show recent executions for a service. Returns an ASCII span tree showing service calls, "+
-				"durations, and errors. Combine with process_logs and status for full debugging context.",
+				"Queries SignOz via ClickHouse — NOT a natural language search engine. Parameters are structured: exact service names, structured time ranges, and exact attribute key=value pairs. "+
+				"Modes: (1) trace_id/span_id — look up a specific trace or span; (2) attribute+value — search by business attribute (e.g. attribute='portfolio.id' value='123'); (3) service — show recent executions for a service. "+
+				"Example: service='api-service' since_minutes=15 errors_only=true. "+
+				"Returns an ASCII span tree showing service calls, durations, and errors. Combine with process_logs and status for full debugging context.",
 			activeEnv.Observability.URL,
 		)
 	} else {
 		desc = fmt.Sprintf(
 			"Investigate distributed traces in the **%s** environment (SigNoz @ %s). "+
 				"READ-ONLY — service control tools (restart/stop/configure) are not available here. "+
-				"Look up a trace by ID, search by business attribute, or show recent executions. "+
+				"Queries SignOz via ClickHouse — NOT a natural language search engine. Parameters are structured: exact service names, structured time ranges, and exact attribute key=value pairs. "+
+				"Modes: (1) trace_id/span_id — look up a specific trace or span; (2) attribute+value — search by business attribute; (3) service — show recent executions. "+
 				"Returns an ASCII span tree showing service calls, durations, and errors.",
 			activeEnvName, activeEnv.Observability.URL,
 		)
@@ -780,16 +782,16 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			mcp.Description("Specific span ID to look up. Finds the trace containing this span. Ignored if trace_id is given."),
 		),
 		mcp.WithString("service",
-			mcp.Description("Filter by service name. Only applied when browsing recent executions (mode 3 — no trace_id or attribute given). Attribute searches and trace lookups always span all services."),
+			mcp.Description("Exact service name as registered in Tilt/SignOz (e.g. 'api-service'). NOT a description or partial match. Only applied in mode 3 (no trace_id or attribute given); attribute searches and trace lookups span all services."),
 		),
 		mcp.WithString("attribute",
-			mcp.Description("Business attribute key to search by (e.g. 'portfolio.id', 'user.id', 'process.id'). Requires value."),
+			mcp.Description("Exact attribute key to search by (e.g. 'portfolio.id', 'user.id', 'process.id'). NOT natural language. Requires value parameter."),
 		),
 		mcp.WithString("value",
-			mcp.Description("Value to match for the given attribute (e.g. '123')."),
+			mcp.Description("Exact value to match for the given attribute (e.g. '123'). NOT a pattern or description."),
 		),
 		mcp.WithNumber("since_minutes",
-			mcp.Description("Look-back window in minutes. Defaults to 5."),
+			mcp.Description("Look-back window in minutes (integer). Defaults to 5. Use larger values (e.g. 60) to search further back."),
 		),
 		mcp.WithNumber("limit",
 			mcp.Description("Maximum number of executions to expand. Defaults to 3."),

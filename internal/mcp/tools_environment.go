@@ -20,7 +20,10 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, activeEnvName string,
 		mcp.WithDescription(
 			"Show the active environment and available tools. "+
 				"Call this first to understand what you can and cannot do in the current context. "+
-				"Environments: local (full control) vs remote (observability-only, no service restart/stop).",
+				"Environments: local (full control) vs remote (observability-only, no service restart/stop). "+
+				"devstack is a LOCAL development environment. Data is ephemeral and local — not production. "+
+				"Observability: traces and metrics are collected by SignOz (ClickHouse backend). Service orchestration is via Tilt. "+
+				"Call this tool first to understand the context before using other tools.",
 		),
 	)
 
@@ -32,6 +35,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, activeEnvName string,
 			backend = "signoz"
 		}
 		fmt.Fprintf(&sb, "env: %s (%s) %s@%s\n", activeEnvName, activeEnv.Type, backend, activeEnv.Observability.URL)
+		fmt.Fprintf(&sb, "stack: SignOz (ClickHouse) + Tilt — local dev only, ephemeral data\n")
 
 		if activeEnv.Type == workspace.EnvironmentTypeLocal {
 			fmt.Fprintf(&sb, "tools: status, restart, stop, configure, process_logs, investigate\n")
