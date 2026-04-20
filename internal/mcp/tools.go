@@ -61,6 +61,7 @@ func RegisterTools(
 		registerStopTool(mcpServer, tiltClient, cfg)
 		registerConfigureTool(mcpServer, tiltClient)
 		registerProcessLogsTool(mcpServer, tiltClient, defaultService, cfg)
+		registerServiceEnvTool(mcpServer, tiltClient, ws, workspacePath)
 	} else {
 		// Remote-only tools
 		registerRemoteStatusTool(mcpServer, backend, activeEnvName, activeEnv.Observability.URL)
