@@ -127,6 +127,7 @@ func serveStdio() error {
 		allEnvs,
 		ws.Name,
 		ws.Path,
+		ws,
 	)
 
 	log.Printf("Starting devstack MCP server (workspace: %s, env: %s/%s, tilt-port: %d)", ws.Name, envName, activeEnv.Type, ws.TiltPort)

@@ -143,14 +143,24 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 
 	// 10. Start observability backend
-	if isOtelRunning(ws.Name) {
-		fmt.Printf("SigNoz already running\n")
+	if isOtelRunning(ws) {
+		fmt.Printf("OTEL stack already running\n")
 	} else {
-		fmt.Printf("Starting SigNoz...\n")
-		if err := startOtel(ws); err != nil {
-			fmt.Fprintf(os.Stderr, "SigNoz failed: %v\n", err)
+		plugin := activePlugin(ws)
+		if plugin == nil {
+			fmt.Fprintf(os.Stderr, "No OTEL plugin configured\n")
 		} else {
-			fmt.Printf("✓ SigNoz %s\n", workspace.OtelQueryEndpoint(ws))
+			fmt.Printf("Starting OTEL stack (plugin: %s)...\n", plugin.Name())
+			if err := startOtelStack(ws, plugin); err != nil {
+				fmt.Fprintf(os.Stderr, "OTEL stack failed: %v\n", err)
+			} else {
+				queryEndpoint := plugin.QueryEndpoint(ws)
+				if queryEndpoint != "" {
+					fmt.Printf("✓ OTEL %s\n", queryEndpoint)
+				} else {
+					fmt.Printf("✓ OTEL collector running (plugin: %s)\n", plugin.Name())
+				}
+			}
 		}
 	}
 

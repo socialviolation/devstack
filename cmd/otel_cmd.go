@@ -3,39 +3,43 @@ package cmd
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"devstack/internal/otel"
 	"devstack/internal/workspace"
 )
 
 var otelCmd = &cobra.Command{
 	Use:   "otel",
 	Short: "Manage the local observability stack (traces and logs)",
-	Long: `devstack runs a local SigNoz observability stack per workspace. Every service
+	Long: `devstack runs a local otelcol-contrib collector per workspace. Every service
 registered with 'devstack init' is pre-configured to ship OpenTelemetry traces
-and logs to this stack via OTEL_EXPORTER_OTLP_ENDPOINT.
+and logs to this collector via OTEL_EXPORTER_OTLP_ENDPOINT.
 
-This gives AI agents real-time visibility into what is happening across services
-during local development. The MCP 'investigate' tool queries this stack to
-correlate traces and logs when something goes wrong.
+The active plugin controls what the collector does with the telemetry. The default
+plugin is 'signoz', which ships telemetry to a local SigNoz stack. The 'forwarding'
+plugin forwards telemetry to a remote OTLP endpoint.
 
 The stack starts automatically when you run 'devstack workspace up'.
 
 SUBCOMMANDS
-  devstack otel status    show whether the stack is running and its ports
-  devstack otel start     start the SigNoz stack
-  devstack otel stop      stop the SigNoz stack
-  devstack otel open      open the SigNoz UI in the browser`,
+  devstack otel status             show whether the stack is running and its ports
+  devstack otel start              start the collector + companion stack
+  devstack otel stop               stop the collector + companion stack
+  devstack otel open               open the observability UI in the browser
+  devstack otel configure          configure the active plugin
+  devstack otel plugins            list all registered plugins`,
 }
 
 var otelStartCmd = &cobra.Command{
 	Use:   "start",
-	Short: "Start the managed SigNoz observability stack",
-	Long: `Start the local SigNoz container stack for the current workspace.
+	Short: "Start the managed observability stack",
+	Long: `Start the local otelcol-contrib collector and companion stack for the current workspace.
 
-SigNoz provides a trace and log UI, and exposes a query API that the devstack
-MCP tools use to surface correlated observability data to AI agents.
+The active plugin controls what the collector does with the telemetry.
+Use 'devstack otel configure' to change the plugin.
 
 This is called automatically by 'devstack workspace up'.`,
 	RunE: runOtelStart,
@@ -43,22 +47,37 @@ This is called automatically by 'devstack workspace up'.`,
 
 var otelStopCmd = &cobra.Command{
 	Use:   "stop",
-	Short: "Stop the managed SigNoz observability stack",
+	Short: "Stop the managed observability stack",
 	RunE:  runOtelStop,
 }
 
 var otelStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show whether the SigNoz stack is running and its ports",
+	Short: "Show whether the observability stack is running and its ports",
 	RunE:  runOtelStatus,
 }
 
 var otelOpenCmd = &cobra.Command{
 	Use:   "open",
-	Short: "Open the SigNoz trace UI in the browser",
-	Long: `Open the SigNoz UI for the current workspace. This is where you can browse
-distributed traces, logs, and service maps for all locally running services.`,
-	RunE: runOtelOpen,
+	Short: "Open the observability UI in the browser",
+	RunE:  runOtelOpen,
+}
+
+var otelConfigureCmd = &cobra.Command{
+	Use:   "configure",
+	Short: "Configure the active OTEL plugin for the current workspace",
+	Long: `Configure the active OTEL plugin for the current workspace.
+
+Examples:
+  devstack otel configure --plugin=signoz
+  devstack otel configure --plugin=forwarding --set upstream=https://otel.example.com:4318 --set deployment_env=dev`,
+	RunE: runOtelConfigure,
+}
+
+var otelPluginsCmd = &cobra.Command{
+	Use:   "plugins",
+	Short: "List all registered OTEL plugins",
+	RunE:  runOtelPlugins,
 }
 
 func init() {
@@ -67,8 +86,10 @@ func init() {
 	otelCmd.AddCommand(otelStopCmd)
 	otelCmd.AddCommand(otelStatusCmd)
 	otelCmd.AddCommand(otelOpenCmd)
+	otelCmd.AddCommand(otelConfigureCmd)
+	otelCmd.AddCommand(otelPluginsCmd)
 
-	for _, sub := range []*cobra.Command{otelStartCmd, otelStopCmd, otelStatusCmd, otelOpenCmd} {
+	for _, sub := range []*cobra.Command{otelStartCmd, otelStopCmd, otelStatusCmd, otelOpenCmd, otelConfigureCmd} {
 		sub.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
 	}
 
@@ -76,6 +97,10 @@ func init() {
 	otelStartCmd.Flags().Int("ui-port", 0, "SigNoz UI + query API port (default 3301)")
 	otelStartCmd.Flags().Int("otlp-grpc-port", 0, "OTLP gRPC ingestion port (default 4317)")
 	otelStartCmd.Flags().Int("otlp-http-port", 0, "OTLP HTTP ingestion port (default 4318)")
+
+	// Configure flags
+	otelConfigureCmd.Flags().String("plugin", "", "Plugin name to activate (e.g. signoz, forwarding)")
+	otelConfigureCmd.Flags().StringArray("set", nil, "Set a plugin config key (format: key=value, repeatable)")
 }
 
 func resolveOtelWorkspace(cmd *cobra.Command) (*workspace.Workspace, error) {
@@ -88,6 +113,14 @@ func resolveOtelWorkspace(cmd *cobra.Command) (*workspace.Workspace, error) {
 		return nil, fmt.Errorf("could not detect workspace: %w\nTry: devstack otel <subcommand> --workspace=<name>", err)
 	}
 	return ws, nil
+}
+
+func isOtelRunning(ws *workspace.Workspace) bool {
+	plugin := activePlugin(ws)
+	if plugin == nil {
+		return false
+	}
+	return otel.CollectorRunning(ws) && plugin.CompanionRunning(ws)
 }
 
 func runOtelStart(cmd *cobra.Command, args []string) error {
@@ -110,21 +143,45 @@ func runOtelStart(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if isOtelRunning(ws.Name) {
-		fmt.Printf("SigNoz already running for '%s' — %s\n", ws.Name, workspace.OtelQueryEndpoint(ws))
+	plugin := activePlugin(ws)
+	if plugin == nil {
+		return fmt.Errorf("no OTEL plugin registered — this is a bug")
+	}
+
+	if isOtelRunning(ws) {
+		queryEndpoint := plugin.QueryEndpoint(ws)
+		if queryEndpoint != "" {
+			fmt.Printf("OTEL stack already running for '%s' (plugin: %s) — %s\n", ws.Name, plugin.Name(), queryEndpoint)
+		} else {
+			fmt.Printf("OTEL stack already running for '%s' (plugin: %s)\n", ws.Name, plugin.Name())
+		}
 		return nil
 	}
 
-	fmt.Printf("Starting SigNoz for '%s'...", ws.Name)
-	if err := startOtel(ws); err != nil {
-		fmt.Println(" failed")
-		return err
+	// Validate prerequisites
+	if err := plugin.Validate(ws); err != nil {
+		return fmt.Errorf("plugin validation failed: %w", err)
 	}
-	fmt.Printf(" started\n  ui:   %s\n  otlp: %s\n  grpc: localhost:%d\n",
-		workspace.OtelQueryEndpoint(ws),
-		workspace.OtelOTLPEndpoint(ws),
-		ws.GRPCPort(),
-	)
+
+	fmt.Printf("Starting OTEL stack for '%s' (plugin: %s)...\n", ws.Name, plugin.Name())
+
+	// Start companion infrastructure
+	if err := plugin.StartCompanion(ws); err != nil {
+		return fmt.Errorf("failed to start companion: %w", err)
+	}
+
+	// Start collector
+	if err := otel.StartCollector(ws, plugin); err != nil {
+		return fmt.Errorf("failed to start collector: %w", err)
+	}
+
+	queryEndpoint := plugin.QueryEndpoint(ws)
+	fmt.Printf("  plugin:   %s\n", plugin.Name())
+	fmt.Printf("  otlp:     http://localhost:%d (HTTP)\n", ws.HTTPPort())
+	fmt.Printf("  grpc:     localhost:%d\n", ws.GRPCPort())
+	if queryEndpoint != "" {
+		fmt.Printf("  ui:       %s\n", queryEndpoint)
+	}
 	return nil
 }
 
@@ -134,16 +191,29 @@ func runOtelStop(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if !isOtelRunning(ws.Name) {
-		fmt.Printf("SigNoz is not running for '%s'\n", ws.Name)
+	plugin := activePlugin(ws)
+
+	if !isOtelRunning(ws) {
+		fmt.Printf("OTEL stack is not running for '%s'\n", ws.Name)
 		return nil
 	}
 
-	fmt.Printf("Stopping SigNoz for '%s'...", ws.Name)
-	if err := stopOtel(ws.Name); err != nil {
-		fmt.Println(" failed")
+	fmt.Printf("Stopping OTEL stack for '%s'...", ws.Name)
+
+	// Stop collector first
+	if err := otel.StopCollector(ws); err != nil {
+		fmt.Println(" collector stop failed:", err)
 		return err
 	}
+
+	// Stop companion
+	if plugin != nil {
+		if err := plugin.StopCompanion(ws); err != nil {
+			fmt.Println(" companion stop failed:", err)
+			return err
+		}
+	}
+
 	fmt.Println(" stopped")
 	return nil
 }
@@ -154,14 +224,43 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if isOtelRunning(ws.Name) {
-		fmt.Printf("SigNoz running for '%s'\n", ws.Name)
-		fmt.Printf("  ui:   %s\n", workspace.OtelQueryEndpoint(ws))
-		fmt.Printf("  otlp: %s\n", workspace.OtelOTLPEndpoint(ws))
-		fmt.Printf("  grpc: localhost:%d\n", ws.GRPCPort())
+	plugin := activePlugin(ws)
+	pluginName := "unknown"
+	if plugin != nil {
+		pluginName = plugin.Name()
+	}
+
+	collectorRunning := otel.CollectorRunning(ws)
+	companionRunning := plugin != nil && plugin.CompanionRunning(ws)
+
+	fmt.Printf("OTEL status for '%s':\n", ws.Name)
+	fmt.Printf("  plugin:     %s\n", pluginName)
+
+	if collectorRunning {
+		fmt.Printf("  collector:  running\n")
 	} else {
-		fmt.Printf("SigNoz not running for '%s'\n", ws.Name)
-		fmt.Printf("Run: devstack otel start\n")
+		fmt.Printf("  collector:  stopped\n")
+	}
+
+	if plugin != nil {
+		if companionRunning {
+			fmt.Printf("  companion:  running\n")
+		} else {
+			fmt.Printf("  companion:  stopped\n")
+		}
+	}
+
+	fmt.Printf("  otlp:       http://localhost:%d (HTTP)\n", ws.HTTPPort())
+	fmt.Printf("  grpc:       localhost:%d\n", ws.GRPCPort())
+
+	if plugin != nil {
+		if queryEndpoint := plugin.QueryEndpoint(ws); queryEndpoint != "" {
+			fmt.Printf("  ui:         %s\n", queryEndpoint)
+		}
+	}
+
+	if !collectorRunning || !companionRunning {
+		fmt.Printf("\nRun: devstack otel start\n")
 	}
 	return nil
 }
@@ -172,8 +271,127 @@ func runOtelOpen(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	url := workspace.OtelQueryEndpoint(ws)
-	fmt.Printf("Opening SigNoz for '%s': %s\n", ws.Name, url)
+	plugin := activePlugin(ws)
+	if plugin == nil {
+		return fmt.Errorf("no OTEL plugin active")
+	}
+
+	url := plugin.QueryEndpoint(ws)
+	if url == "" {
+		return fmt.Errorf("plugin '%s' has no local UI endpoint", plugin.Name())
+	}
+
+	fmt.Printf("Opening observability UI for '%s': %s\n", ws.Name, url)
 	return exec.Command("xdg-open", url).Start()
 }
 
+func runOtelConfigure(cmd *cobra.Command, args []string) error {
+	ws, err := resolveOtelWorkspace(cmd)
+	if err != nil {
+		return err
+	}
+
+	pluginName, _ := cmd.Flags().GetString("plugin")
+	setFlags, _ := cmd.Flags().GetStringArray("set")
+
+	// Parse --set key=value pairs
+	config := map[string]string{}
+	for _, kv := range setFlags {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid --set value %q (expected key=value)", kv)
+		}
+		config[parts[0]] = parts[1]
+	}
+
+	if pluginName == "" && len(config) == 0 {
+		return fmt.Errorf("specify --plugin=<name> and/or --set key=value")
+	}
+
+	if pluginName == "" {
+		pluginName = ws.OtelPlugin
+		if pluginName == "" {
+			pluginName = "signoz"
+		}
+	}
+
+	// Validate the plugin exists
+	p := otel.Get(pluginName)
+	if p == nil {
+		return fmt.Errorf("unknown plugin %q — run: devstack otel plugins", pluginName)
+	}
+
+	// Validate required config fields
+	for _, field := range p.ConfigSchema() {
+		if field.Required {
+			val := config[field.Key]
+			if val == "" {
+				val = ws.PluginConfig(field.Key)
+			}
+			if val == "" {
+				return fmt.Errorf("plugin %q requires config key %q — use --set %s=<value>", pluginName, field.Key, field.Key)
+			}
+		}
+	}
+
+	// Merge existing config with new values
+	merged := map[string]string{}
+	for k, v := range ws.OtelPluginConfig {
+		merged[k] = v
+	}
+	for k, v := range config {
+		merged[k] = v
+	}
+
+	if err := workspace.UpdateOtelPlugin(ws.Name, pluginName, merged); err != nil {
+		return fmt.Errorf("failed to update workspace config: %w", err)
+	}
+
+	fmt.Printf("Plugin configured: %s\n", pluginName)
+	for k, v := range config {
+		fmt.Printf("  %s = %s\n", k, v)
+	}
+	fmt.Printf("\nRun: devstack otel start\n")
+	return nil
+}
+
+func runOtelPlugins(cmd *cobra.Command, args []string) error {
+	// Try to detect workspace for active plugin marker
+	var activePluginName string
+	if ws, err := workspace.DetectFromCwd(); err == nil {
+		p := activePlugin(ws)
+		if p != nil {
+			activePluginName = p.Name()
+		}
+	}
+
+	plugins := otel.All()
+	if len(plugins) == 0 {
+		fmt.Println("No plugins registered.")
+		return nil
+	}
+
+	fmt.Println("Registered OTEL plugins:")
+	for _, p := range plugins {
+		active := "  "
+		if p.Name() == activePluginName {
+			active = "* "
+		}
+		fmt.Printf("%s%s\n", active, p.Name())
+		schema := p.ConfigSchema()
+		if len(schema) > 0 {
+			for _, field := range schema {
+				req := ""
+				if field.Required {
+					req = " (required)"
+				}
+				def := ""
+				if field.Default != "" {
+					def = fmt.Sprintf(" [default: %s]", field.Default)
+				}
+				fmt.Printf("      %-20s %s%s%s\n", field.Key, field.Description, req, def)
+			}
+		}
+	}
+	return nil
+}

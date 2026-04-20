@@ -16,6 +16,7 @@ import (
 
 	"devstack/internal/observability"
 	_ "devstack/internal/observability/signoz" // register signoz backend
+	"devstack/internal/otel"
 	"devstack/internal/tilt"
 	"devstack/internal/workspace"
 )
@@ -37,9 +38,10 @@ func RegisterTools(
 	allEnvs map[string]workspace.Environment,
 	workspaceName string,
 	workspacePath string,
+	ws *workspace.Workspace,
 ) {
 	// Always register these tools (all environment types)
-	registerInvestigateTool(mcpServer, tiltClient, defaultService, backend, activeEnvName, activeEnv, workspacePath)
+	registerInvestigateTool(mcpServer, tiltClient, defaultService, backend, activeEnvName, activeEnv, workspacePath, ws)
 	registerEnvironmentTool(mcpServer, activeEnvName, activeEnv, allEnvs, workspaceName)
 
 	if activeEnv.Type == workspace.EnvironmentTypeLocal {
@@ -524,15 +526,36 @@ func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client)
 	})
 }
 
-func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, backend observability.Backend, activeEnvName string, activeEnv workspace.Environment, workspacePath string) {
+func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, backend observability.Backend, activeEnvName string, activeEnv workspace.Environment, workspacePath string, ws *workspace.Workspace) {
+	// Determine the local plugin query endpoint (if any)
+	var localQueryEndpoint string
+	var localPluginName string
+	var localPluginHasNoUI bool
+	var localPluginUpstream string
+	if ws != nil && activeEnv.Type == workspace.EnvironmentTypeLocal {
+		plugin := otel.Get(ws.OtelPlugin)
+		if plugin != nil {
+			localQueryEndpoint = plugin.QueryEndpoint(ws)
+			localPluginName = plugin.Name()
+			if localQueryEndpoint == "" {
+				localPluginHasNoUI = true
+				localPluginUpstream = ws.PluginConfig("upstream")
+			}
+		}
+	}
+
 	var desc string
 	if activeEnv.Type == workspace.EnvironmentTypeLocal {
+		queryURL := localQueryEndpoint
+		if queryURL == "" {
+			queryURL = activeEnv.Observability.URL
+		}
 		desc = fmt.Sprintf(
-			"Investigate distributed traces in the LOCAL dev environment (SigNoz @ %s). "+
+			"Investigate distributed traces in the LOCAL dev environment (@ %s). "+
 				"Look up a trace by ID, search by business attribute (e.g. portfolio.id=123, user.id=456), "+
 				"or show recent executions for a service. Returns an ASCII span tree showing service calls, "+
 				"durations, and errors. Combine with process_logs and status for full debugging context.",
-			activeEnv.Observability.URL,
+			queryURL,
 		)
 	} else {
 		desc = fmt.Sprintf(
@@ -543,6 +566,11 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			activeEnvName, activeEnv.Observability.URL,
 		)
 	}
+
+	// Suppress unused variable warnings
+	_ = localPluginName
+	_ = localPluginHasNoUI
+	_ = localPluginUpstream
 
 	tool := mcp.NewTool("investigate",
 		mcp.WithDescription(desc),
@@ -577,6 +605,11 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if backend == nil {
+			// Check if this is a forwarding plugin with no local UI
+			if localPluginHasNoUI {
+				msg := fmt.Sprintf("No local query UI available with the active OTEL plugin (%s). Telemetry is forwarded to %s. Query it there instead.", localPluginName, localPluginUpstream)
+				return mcp.NewToolResultText(msg), nil
+			}
 			return mcp.NewToolResultError("Observability backend is not configured. Check your environment settings."), nil
 		}
 
