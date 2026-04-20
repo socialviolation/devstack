@@ -100,7 +100,8 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 	// 5. Stop observability stack
 	if isOtelRunning(ws) {
-		plugin := activePlugin(ws)
+		localEnv, _ := ws.ResolveEnvironment("local")
+		plugin := activePlugin(ws, localEnv)
 		if err := stopOtelStack(ws, plugin); err != nil {
 			fmt.Fprintf(os.Stderr, "  warning: OTEL stop failed: %v\n", err)
 		} else {
@@ -142,7 +143,8 @@ func runDownAll() error {
 		fmt.Printf("  ✓ Tilt stopped\n")
 
 		if isOtelRunning(&ws) {
-			plugin := activePlugin(&ws)
+			localEnv, _ := ws.ResolveEnvironment("local")
+			plugin := activePlugin(&ws, localEnv)
 			if err := stopOtelStack(&ws, plugin); err != nil {
 				fmt.Fprintf(os.Stderr, "  warning: OTEL stop failed: %v\n", err)
 			} else {

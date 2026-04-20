@@ -48,6 +48,7 @@ func init() {
 	envAddCmd.Flags().String("type", "remote", `environment type: "local" or "remote"`)
 	envAddCmd.Flags().String("backend", "signoz", `observability backend (currently only "signoz")`)
 	envAddCmd.Flags().String("url", "", "observability backend URL (required)")
+	envAddCmd.Flags().String("otlp-endpoint", "", "OTLP ingestion URL for the collector (e.g. https://otel.company.com:4318)")
 	envAddCmd.Flags().String("api-key", "", "API key for remote observability backend")
 	_ = envAddCmd.MarkFlagRequired("url")
 }
@@ -74,8 +75,8 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Environments for workspace %q:\n\n", ws.Name)
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "NAME\tTYPE\tBACKEND\tURL\t")
-	fmt.Fprintln(w, "----\t----\t-------\t---\t")
+	fmt.Fprintln(w, "NAME\tTYPE\tBACKEND\tURL\tOTLP ENDPOINT\t")
+	fmt.Fprintln(w, "----\t----\t-------\t---\t-------------\t")
 	for _, name := range names {
 		env := allEnvs[name]
 		marker := ""
@@ -86,7 +87,7 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 		if backend == "" {
 			backend = "signoz"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s%s\n", name, env.Type, backend, env.Observability.URL, marker)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s%s\n", name, env.Type, backend, env.Observability.URL, env.Observability.OTLPEndpoint, marker)
 	}
 	w.Flush()
 
@@ -106,6 +107,7 @@ func runEnvAdd(cmd *cobra.Command, args []string) error {
 	envType, _ := cmd.Flags().GetString("type")
 	backend, _ := cmd.Flags().GetString("backend")
 	url, _ := cmd.Flags().GetString("url")
+	otlpEndpoint, _ := cmd.Flags().GetString("otlp-endpoint")
 	apiKey, _ := cmd.Flags().GetString("api-key")
 
 	var eType workspace.EnvironmentType
@@ -121,9 +123,10 @@ func runEnvAdd(cmd *cobra.Command, args []string) error {
 	env := workspace.Environment{
 		Type: eType,
 		Observability: workspace.ObservabilityConfig{
-			Backend: backend,
-			URL:     url,
-			APIKey:  apiKey,
+			Backend:      backend,
+			URL:          url,
+			OTLPEndpoint: otlpEndpoint,
+			APIKey:       apiKey,
 		},
 	}
 
@@ -135,6 +138,9 @@ func runEnvAdd(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Type:    %s\n", eType)
 	fmt.Printf("  Backend: %s\n", backend)
 	fmt.Printf("  URL:     %s\n", url)
+	if otlpEndpoint != "" {
+		fmt.Printf("  OTLP:    %s\n", otlpEndpoint)
+	}
 	if apiKey != "" {
 		fmt.Printf("  API Key: (set)\n")
 	}

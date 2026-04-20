@@ -146,10 +146,30 @@ func runStart(cmd *cobra.Command, args []string) error {
 	if isOtelRunning(ws) {
 		fmt.Printf("OTEL stack already running\n")
 	} else {
-		plugin := activePlugin(ws)
+		plugin := activePlugin(ws, env)
 		if plugin == nil {
 			fmt.Fprintf(os.Stderr, "No OTEL plugin configured\n")
 		} else {
+			// If the environment drives forwarding mode, populate plugin config from env
+			// into a local (in-memory only) copy of the workspace. Never saved to disk.
+			if env.Observability.OTLPEndpoint != "" && ws.OtelPlugin == "" {
+				wsCopy := *ws
+				if wsCopy.OtelPluginConfig == nil {
+					wsCopy.OtelPluginConfig = map[string]string{}
+				} else {
+					copied := make(map[string]string, len(wsCopy.OtelPluginConfig))
+					for k, v := range wsCopy.OtelPluginConfig {
+						copied[k] = v
+					}
+					wsCopy.OtelPluginConfig = copied
+				}
+				wsCopy.OtelPluginConfig["upstream"] = env.Observability.OTLPEndpoint
+				if env.Observability.APIKey != "" {
+					wsCopy.OtelPluginConfig["api_key"] = env.Observability.APIKey
+				}
+				wsCopy.OtelPluginConfig["deployment_env"] = envName
+				ws = &wsCopy
+			}
 			fmt.Printf("Starting OTEL stack (plugin: %s)...\n", plugin.Name())
 			if err := startOtelStack(ws, plugin); err != nil {
 				fmt.Fprintf(os.Stderr, "OTEL stack failed: %v\n", err)

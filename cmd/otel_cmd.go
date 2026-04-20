@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"devstack/internal/otel"
 	"devstack/internal/workspace"
@@ -116,7 +117,11 @@ func resolveOtelWorkspace(cmd *cobra.Command) (*workspace.Workspace, error) {
 }
 
 func isOtelRunning(ws *workspace.Workspace) bool {
-	plugin := activePlugin(ws)
+	// Use a synthesized local env for running checks — the collector is running
+	// regardless of which env drove its start. CompanionRunning for forwarding
+	// always returns true; for signoz it checks docker-compose.
+	localEnv, _ := ws.ResolveEnvironment("local")
+	plugin := activePlugin(ws, localEnv)
 	if plugin == nil {
 		return false
 	}
@@ -143,9 +148,42 @@ func runOtelStart(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	plugin := activePlugin(ws)
+	// Resolve the active environment to drive plugin selection.
+	envName := viper.GetString("environment")
+	if envName == "" {
+		envName = "local"
+	}
+	env, ok := ws.ResolveEnvironment(envName)
+	if !ok {
+		env, _ = ws.ResolveEnvironment("local")
+		envName = "local"
+	}
+
+	plugin := activePlugin(ws, env)
 	if plugin == nil {
 		return fmt.Errorf("no OTEL plugin registered — this is a bug")
+	}
+
+	// If the environment drives forwarding mode, populate plugin config from env
+	// into a local (in-memory only) copy of the workspace. Never saved to disk.
+	if env.Observability.OTLPEndpoint != "" && ws.OtelPlugin == "" {
+		wsCopy := *ws
+		if wsCopy.OtelPluginConfig == nil {
+			wsCopy.OtelPluginConfig = map[string]string{}
+		} else {
+			// shallow copy the map so we don't mutate the original
+			copied := make(map[string]string, len(wsCopy.OtelPluginConfig))
+			for k, v := range wsCopy.OtelPluginConfig {
+				copied[k] = v
+			}
+			wsCopy.OtelPluginConfig = copied
+		}
+		wsCopy.OtelPluginConfig["upstream"] = env.Observability.OTLPEndpoint
+		if env.Observability.APIKey != "" {
+			wsCopy.OtelPluginConfig["api_key"] = env.Observability.APIKey
+		}
+		wsCopy.OtelPluginConfig["deployment_env"] = envName
+		ws = &wsCopy
 	}
 
 	if isOtelRunning(ws) {
@@ -191,7 +229,8 @@ func runOtelStop(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	plugin := activePlugin(ws)
+	localEnv, _ := ws.ResolveEnvironment("local")
+	plugin := activePlugin(ws, localEnv)
 
 	if !isOtelRunning(ws) {
 		fmt.Printf("OTEL stack is not running for '%s'\n", ws.Name)
@@ -224,7 +263,18 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	plugin := activePlugin(ws)
+	// Resolve active environment for status context
+	envName := viper.GetString("environment")
+	if envName == "" {
+		envName = "local"
+	}
+	env, ok := ws.ResolveEnvironment(envName)
+	if !ok {
+		env, _ = ws.ResolveEnvironment("local")
+		envName = "local"
+	}
+
+	plugin := activePlugin(ws, env)
 	pluginName := "unknown"
 	if plugin != nil {
 		pluginName = plugin.Name()
@@ -234,7 +284,14 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 	companionRunning := plugin != nil && plugin.CompanionRunning(ws)
 
 	fmt.Printf("OTEL status for '%s':\n", ws.Name)
-	fmt.Printf("  plugin:     %s\n", pluginName)
+
+	// Show plugin name with env context when env drives forwarding
+	if env.Observability.OTLPEndpoint != "" && ws.OtelPlugin == "" {
+		fmt.Printf("  plugin:     %s (from environment: %s)\n", pluginName, envName)
+		fmt.Printf("  upstream:   %s\n", env.Observability.OTLPEndpoint)
+	} else {
+		fmt.Printf("  plugin:     %s\n", pluginName)
+	}
 
 	if collectorRunning {
 		fmt.Printf("  collector:  running\n")
@@ -242,7 +299,7 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  collector:  stopped\n")
 	}
 
-	if plugin != nil {
+	if plugin != nil && plugin.Name() != "forwarding" {
 		if companionRunning {
 			fmt.Printf("  companion:  running\n")
 		} else {
@@ -250,8 +307,7 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Printf("  otlp:       http://localhost:%d (HTTP)\n", ws.HTTPPort())
-	fmt.Printf("  grpc:       localhost:%d\n", ws.GRPCPort())
+	fmt.Printf("  otlp:       grpc=localhost:%d  http=localhost:%d\n", ws.GRPCPort(), ws.HTTPPort())
 
 	if plugin != nil {
 		if queryEndpoint := plugin.QueryEndpoint(ws); queryEndpoint != "" {
@@ -271,7 +327,8 @@ func runOtelOpen(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	plugin := activePlugin(ws)
+	localEnv, _ := ws.ResolveEnvironment("local")
+	plugin := activePlugin(ws, localEnv)
 	if plugin == nil {
 		return fmt.Errorf("no OTEL plugin active")
 	}
@@ -359,7 +416,8 @@ func runOtelPlugins(cmd *cobra.Command, args []string) error {
 	// Try to detect workspace for active plugin marker
 	var activePluginName string
 	if ws, err := workspace.DetectFromCwd(); err == nil {
-		p := activePlugin(ws)
+		localEnv, _ := ws.ResolveEnvironment("local")
+		p := activePlugin(ws, localEnv)
 		if p != nil {
 			activePluginName = p.Name()
 		}

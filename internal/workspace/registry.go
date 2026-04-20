@@ -23,9 +23,10 @@ const (
 
 // ObservabilityConfig holds the connection config for an observability backend.
 type ObservabilityConfig struct {
-	Backend string `json:"backend"`           // "signoz" (default and only supported value)
-	URL     string `json:"url"`               // Base URL, e.g. "http://localhost:3301"
-	APIKey  string `json:"api_key,omitempty"` // Optional API key for remote instances
+	Backend      string `json:"backend"`                    // "signoz" (default and only supported value)
+	URL          string `json:"url"`                        // Base URL, e.g. "http://localhost:3301"
+	OTLPEndpoint string `json:"otlp_endpoint,omitempty"`    // OTLP ingestion URL for collector (e.g. https://otel.company.com:4318)
+	APIKey       string `json:"api_key,omitempty"`          // Optional API key for remote instances
 }
 
 // Environment represents a named deployment target with associated observability config.

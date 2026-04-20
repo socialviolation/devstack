@@ -32,6 +32,23 @@ func (p *ForwardingPlugin) CollectorConfig(ws *workspace.Workspace) ([]byte, err
 		deploymentEnv = "dev"
 	}
 
+	apiKey := ws.PluginConfig("api_key")
+
+	var exporterBlock string
+	if apiKey != "" {
+		exporterBlock = fmt.Sprintf(`exporters:
+  otlphttp:
+    endpoint: %s
+    headers:
+      Authorization: "Bearer %s"
+`, upstream, apiKey)
+	} else {
+		exporterBlock = fmt.Sprintf(`exporters:
+  otlphttp:
+    endpoint: %s
+`, upstream)
+	}
+
 	cfg := fmt.Sprintf(`processors:
   resource:
     attributes:
@@ -40,10 +57,7 @@ func (p *ForwardingPlugin) CollectorConfig(ws *workspace.Workspace) ([]byte, err
         value: %s
   batch: {}
 
-exporters:
-  otlphttp:
-    endpoint: %s
-
+%s
 service:
   pipelines:
     traces:
@@ -58,7 +72,7 @@ service:
       receivers: [otlp]
       processors: [resource, batch]
       exporters: [otlphttp]
-`, deploymentEnv, upstream)
+`, deploymentEnv, exporterBlock)
 
 	return []byte(cfg), nil
 }
@@ -76,9 +90,12 @@ func (p *ForwardingPlugin) CompanionRunning(ws *workspace.Workspace) bool { retu
 func (p *ForwardingPlugin) QueryEndpoint(ws *workspace.Workspace) string { return "" }
 
 // Validate checks that the upstream config key is set.
+// When the active environment drives forwarding mode, the cmd layer pre-populates
+// the upstream key before calling Validate, so this check catches manual-config
+// cases where the user forgot to set upstream via devstack otel configure.
 func (p *ForwardingPlugin) Validate(ws *workspace.Workspace) error {
 	if ws.PluginConfig("upstream") == "" {
-		return fmt.Errorf("forwarding plugin requires 'upstream' config key — run: devstack otel configure --plugin=forwarding --set upstream=https://otel.example.com:4318")
+		return fmt.Errorf("forwarding plugin requires 'upstream' config key — run: devstack otel configure --plugin=forwarding --set upstream=https://otel.example.com:4318\nor add an environment with --otlp-endpoint: devstack env add <name> --url=<query-url> --otlp-endpoint=<otlp-url>")
 	}
 	return nil
 }
@@ -96,6 +113,11 @@ func (p *ForwardingPlugin) ConfigSchema() []otel.ConfigField {
 			Description: "Value to inject as deployment.environment resource attribute",
 			Required:    false,
 			Default:     "dev",
+		},
+		{
+			Key:         "api_key",
+			Description: "API key sent as Authorization: Bearer <key> header to the upstream endpoint",
+			Required:    false,
 		},
 	}
 }

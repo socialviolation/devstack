@@ -34,7 +34,11 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, activeEnvName string,
 		if backend == "" {
 			backend = "signoz"
 		}
-		fmt.Fprintf(&sb, "env: %s (%s) %s@%s\n", activeEnvName, activeEnv.Type, backend, activeEnv.Observability.URL)
+		if activeEnv.Observability.OTLPEndpoint != "" {
+			fmt.Fprintf(&sb, "env: %s (%s) %s@%s  otlp->%s\n", activeEnvName, activeEnv.Type, backend, activeEnv.Observability.URL, activeEnv.Observability.OTLPEndpoint)
+		} else {
+			fmt.Fprintf(&sb, "env: %s (%s) %s@%s\n", activeEnvName, activeEnv.Type, backend, activeEnv.Observability.URL)
+		}
 		fmt.Fprintf(&sb, "stack: SignOz (ClickHouse) + Tilt — local dev only, ephemeral data\n")
 
 		if activeEnv.Type == workspace.EnvironmentTypeLocal {
