@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -12,9 +11,9 @@ import (
 )
 
 var svcStartCmd = &cobra.Command{
-	Use:   "start [service]",
-	Short: "Start a service and all its dependencies",
-	Long: `Start a service by name, automatically resolving and starting its dependencies first.
+	Use:   "start [service|group]",
+	Short: "Start a service or group and all its dependencies",
+	Long: `Start a service or group by name, automatically resolving and starting its dependencies first.
 
 devstack reads the dependency graph from .devstack.json and computes the correct
 startup order. Dependencies are enabled and triggered before the requested service,
@@ -23,7 +22,7 @@ so you never have to think about ordering.
 If no service name is given, devstack will auto-detect it from the current directory
 by matching against registered service paths in .devstack.json.
 
-Use --group to start every service in a named group at once (also resolves deps).
+Accepts a service name or group name. Run 'devstack groups' to see available groups.
 
 Requires the dev daemon to be running first:
   devstack workspace up`,
@@ -32,40 +31,11 @@ Requires the dev daemon to be running first:
 
 func init() {
 	rootCmd.AddCommand(svcStartCmd)
-	svcStartCmd.Flags().String("group", "", "Start a named group of services instead of a single service")
-}
-
-// detectServicesFromCwd returns all services whose registered path contains the cwd.
-func detectServicesFromCwd(cfg *config.WorkspaceConfig) ([]string, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get current directory: %w", err)
+	f := svcStartCmd.Flags().Lookup("group")
+	if f == nil {
+		svcStartCmd.Flags().String("group", "", "Start a named group of services (hidden alias: pass group name as positional arg instead)")
 	}
-
-	var matches []string
-	for name, path := range cfg.ServicePaths {
-		if cwd == path || strings.HasPrefix(cwd, path+"/") {
-			matches = append(matches, name)
-		}
-	}
-
-	if len(matches) == 0 {
-		return nil, fmt.Errorf("must specify a service name or --group=<name>\nUsage: devstack start <service>\n       devstack start --group=<name>")
-	}
-	return matches, nil
-}
-
-// detectServiceFromCwd returns the single service matching the cwd.
-// Errors if multiple match — use detectServicesFromCwd for that case.
-func detectServiceFromCwd(cfg *config.WorkspaceConfig) (string, error) {
-	matches, err := detectServicesFromCwd(cfg)
-	if err != nil {
-		return "", err
-	}
-	if len(matches) > 1 {
-		return "", fmt.Errorf("multiple services match (%s); please specify explicitly", strings.Join(matches, ", "))
-	}
-	return matches[0], nil
+	svcStartCmd.Flags().MarkHidden("group")
 }
 
 func runEnable(cmd *cobra.Command, args []string) error {
@@ -82,50 +52,36 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Determine the target name: --group flag is a hidden alias for the positional arg
+	targetName := ""
+	if len(args) > 0 {
+		targetName = args[0]
+	} else if groupFlag != "" {
+		targetName = groupFlag
+	}
+
+	// Resolve target to a list of services (service or group)
+	services, err := resolveTarget(targetName, cfg)
+	if err != nil {
+		return err
+	}
+
+	if targetName == "" {
+		fmt.Printf("Auto-detected: %s\n", strings.Join(services, ", "))
+	}
+
+	// Expand deps for each resolved service, union the sets
 	var toTrigger []string
-
-	if groupFlag != "" {
-		// Expand group to services, resolve deps for each, union the sets
-		services, ok := cfg.Groups[groupFlag]
-		if !ok {
-			return fmt.Errorf("group %q not found in .devstack.json", groupFlag)
+	seen := map[string]bool{}
+	for _, svc := range services {
+		resolved, err := config.ResolveDeps(cfg, svc)
+		if err != nil {
+			return err
 		}
-
-		seen := map[string]bool{}
-		for _, svc := range services {
-			resolved, err := config.ResolveDeps(cfg, svc)
-			if err != nil {
-				return err
-			}
-			for _, r := range resolved {
-				if !seen[r] {
-					seen[r] = true
-					toTrigger = append(toTrigger, r)
-				}
-			}
-		}
-	} else {
-		var services []string
-		if len(args) > 0 {
-			services = []string{args[0]}
-		} else {
-			services, err = detectServicesFromCwd(cfg)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("Auto-detected: %s\n", strings.Join(services, ", "))
-		}
-		seen := map[string]bool{}
-		for _, svc := range services {
-			resolved, err := config.ResolveDeps(cfg, svc)
-			if err != nil {
-				return err
-			}
-			for _, r := range resolved {
-				if !seen[r] {
-					seen[r] = true
-					toTrigger = append(toTrigger, r)
-				}
+		for _, r := range resolved {
+			if !seen[r] {
+				seen[r] = true
+				toTrigger = append(toTrigger, r)
 			}
 		}
 	}

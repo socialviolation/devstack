@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -10,15 +11,17 @@ import (
 )
 
 var stopCmd = &cobra.Command{
-	Use:   "stop [service]",
-	Short: "Stop a running service",
-	Long: `Disable and stop a named service. The service will not restart until explicitly
-started again with 'devstack start'.
+	Use:   "stop [service|group]",
+	Short: "Stop a running service or group",
+	Long: `Disable and stop a named service or group. Stopped services will not restart until
+explicitly started again with 'devstack start'.
 
 If no service name is given, devstack auto-detects the service from the current
-directory by matching against registered service paths in .devstack.json.`,
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runStop,
+directory by matching against registered service paths in .devstack.json.
+
+Accepts a service name or group name. Run 'devstack groups' to see available groups.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runStop,
 }
 
 func init() {
@@ -34,20 +37,24 @@ func runStop(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Resolve service name
-	service := ""
+	cfg, err := config.Load(ws.Path)
+	if err != nil {
+		return err
+	}
+
+	// Resolve target name
+	targetName := ""
 	if len(args) > 0 {
-		service = args[0]
-	} else {
-		cfg, err := config.Load(ws.Path)
-		if err != nil {
-			return err
-		}
-		service, err = detectServiceFromCwd(cfg)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("Auto-detected service: %s\n", service)
+		targetName = args[0]
+	}
+
+	services, err := resolveTarget(targetName, cfg)
+	if err != nil {
+		return err
+	}
+
+	if targetName == "" {
+		fmt.Printf("Auto-detected service: %s\n", strings.Join(services, ", "))
 	}
 
 	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
@@ -56,19 +63,23 @@ func runStop(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("dev daemon is not running — start it first with: devstack workspace up\n(%w)", err)
 	}
 
-	resolved, err := tilt.ResolveService(service, view)
-	if err != nil {
-		return fmt.Errorf("could not resolve service %q: %w", service, err)
+	var stopped []string
+	for _, svc := range services {
+		resolved, err := tilt.ResolveService(svc, view)
+		if err != nil {
+			return fmt.Errorf("could not resolve service %q: %w", svc, err)
+		}
+
+		out, err := tiltClient.RunCLI("disable", resolved)
+		if err != nil {
+			return fmt.Errorf("failed to stop %q: %v\n%s", resolved, err, out)
+		}
+		if out != "" {
+			fmt.Print(out)
+		}
+		stopped = append(stopped, resolved)
 	}
 
-	out, err := tiltClient.RunCLI("disable", resolved)
-	if err != nil {
-		return fmt.Errorf("failed to stop %q: %v\n%s", resolved, err, out)
-	}
-
-	if out != "" {
-		fmt.Print(out)
-	}
-	fmt.Printf("✓ Stopped: %s\n", resolved)
+	fmt.Printf("✓ Stopped: %s\n", strings.Join(stopped, ", "))
 	return nil
 }
