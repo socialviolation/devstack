@@ -166,7 +166,7 @@ func runOtelStart(cmd *cobra.Command, args []string) error {
 
 	// If the environment drives forwarding mode, populate plugin config from env
 	// into a local (in-memory only) copy of the workspace. Never saved to disk.
-	if env.Observability.OTLPEndpoint != "" && ws.OtelPlugin == "" {
+	if env.Observability.OTLPEndpoint != "" && (ws.OtelPlugin == "" || ws.OtelPlugin == "signoz") {
 		wsCopy := *ws
 		if wsCopy.OtelPluginConfig == nil {
 			wsCopy.OtelPluginConfig = map[string]string{}
@@ -286,7 +286,7 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("OTEL status for '%s':\n", ws.Name)
 
 	// Show plugin name with env context when env drives forwarding
-	if env.Observability.OTLPEndpoint != "" && ws.OtelPlugin == "" {
+	if env.Observability.OTLPEndpoint != "" && (ws.OtelPlugin == "" || ws.OtelPlugin == "signoz") {
 		fmt.Printf("  plugin:     %s (from environment: %s)\n", pluginName, envName)
 		fmt.Printf("  upstream:   %s\n", env.Observability.OTLPEndpoint)
 	} else {
@@ -365,15 +365,19 @@ func runOtelConfigure(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("specify --plugin=<name> and/or --set key=value")
 	}
 
-	if pluginName == "" {
-		pluginName = ws.OtelPlugin
-		if pluginName == "" {
-			pluginName = "signoz"
+	// pluginNameForValidation is used for schema validation only.
+	// If no --plugin flag was given we don't change ws.OtelPlugin — preserving ""
+	// keeps env-driven plugin selection working.
+	pluginNameForValidation := pluginName
+	if pluginNameForValidation == "" {
+		pluginNameForValidation = ws.OtelPlugin
+		if pluginNameForValidation == "" {
+			pluginNameForValidation = "signoz"
 		}
 	}
 
 	// Validate the plugin exists
-	p := otel.Get(pluginName)
+	p := otel.Get(pluginNameForValidation)
 	if p == nil {
 		return fmt.Errorf("unknown plugin %q — run: devstack otel plugins", pluginName)
 	}
@@ -404,7 +408,11 @@ func runOtelConfigure(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to update workspace config: %w", err)
 	}
 
-	fmt.Printf("Plugin configured: %s\n", pluginName)
+	displayName := pluginName
+	if displayName == "" {
+		displayName = pluginNameForValidation + " (env-driven)"
+	}
+	fmt.Printf("Plugin configured: %s\n", displayName)
 	for k, v := range config {
 		fmt.Printf("  %s = %s\n", k, v)
 	}
