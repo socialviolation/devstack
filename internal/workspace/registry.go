@@ -46,9 +46,22 @@ type Workspace struct {
 	OtelOTLPGRPCPort int `json:"otel_otlp_grpc_port,omitempty"` // OTLP gRPC (default 4317)
 	OtelOTLPHTTPPort int `json:"otel_otlp_http_port,omitempty"` // OTLP HTTP (default 4318)
 
+	// OtelPlugin names the active OTEL plugin (default "signoz").
+	OtelPlugin string `json:"otel_plugin,omitempty"`
+	// OtelPluginConfig holds plugin-specific configuration key-value pairs.
+	OtelPluginConfig map[string]string `json:"otel_plugin_config,omitempty"`
+
 	// Environments is an optional map of named environments (local, staging, prod, etc).
 	// When absent, the MCP server synthesizes a "local" environment from the legacy flat fields above.
 	Environments map[string]Environment `json:"environments,omitempty"`
+}
+
+// PluginConfig returns the value for a plugin config key, or "" if not set.
+func (ws *Workspace) PluginConfig(key string) string {
+	if ws.OtelPluginConfig == nil {
+		return ""
+	}
+	return ws.OtelPluginConfig[key]
 }
 
 // RegistryPath returns the path to the workspace registry JSON file.
@@ -266,6 +279,25 @@ func OtelOTLPEndpoint(ws *Workspace) string {
 // OtelQueryEndpoint returns the SigNoz query API base URL used by MCP tools.
 func OtelQueryEndpoint(ws *Workspace) string {
 	return fmt.Sprintf("http://localhost:%d", ws.UIPort())
+}
+
+// UpdateOtelPlugin sets the OTEL plugin name and config for a workspace.
+func UpdateOtelPlugin(name, pluginName string, config map[string]string) error {
+	workspaces, err := Load()
+	if err != nil {
+		return err
+	}
+	lower := strings.ToLower(name)
+	for i, ws := range workspaces {
+		if strings.ToLower(ws.Name) == lower {
+			workspaces[i].OtelPlugin = pluginName
+			if config != nil {
+				workspaces[i].OtelPluginConfig = config
+			}
+			return Save(workspaces)
+		}
+	}
+	return fmt.Errorf("workspace %q not found", name)
 }
 
 // UpdateOtelPorts sets port overrides for a workspace.

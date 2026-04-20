@@ -116,7 +116,7 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 	} else {
 		infraParts = append(infraParts, fmt.Sprintf("daemon :%d", ws.TiltPort))
 	}
-	if isOtelRunning(ws.Name) {
+	if isOtelRunning(ws) {
 		infraParts = append(infraParts,
 			fmt.Sprintf("otel ui:%d otlp:%d grpc:%d", ws.UIPort(), ws.HTTPPort(), ws.GRPCPort()),
 		)

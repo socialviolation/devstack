@@ -99,14 +99,15 @@ func runDown(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  ✓ Tilt stopped\n")
 
 	// 5. Stop observability stack
-	if isOtelRunning(ws.Name) {
-		if err := stopOtel(ws.Name); err != nil {
-			fmt.Fprintf(os.Stderr, "  warning: SigNoz stop failed: %v\n", err)
+	if isOtelRunning(ws) {
+		plugin := activePlugin(ws)
+		if err := stopOtelStack(ws, plugin); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: OTEL stop failed: %v\n", err)
 		} else {
-			fmt.Printf("  ✓ SigNoz stopped\n")
+			fmt.Printf("  ✓ OTEL stopped\n")
 		}
 	} else {
-		fmt.Printf("  SigNoz not running\n")
+		fmt.Printf("  OTEL not running\n")
 	}
 
 	return nil
@@ -140,11 +141,12 @@ func runDownAll() error {
 		os.Remove(pidFile)
 		fmt.Printf("  ✓ Tilt stopped\n")
 
-		if isOtelRunning(ws.Name) {
-			if err := stopOtel(ws.Name); err != nil {
-				fmt.Fprintf(os.Stderr, "  warning: SigNoz stop failed: %v\n", err)
+		if isOtelRunning(&ws) {
+			plugin := activePlugin(&ws)
+			if err := stopOtelStack(&ws, plugin); err != nil {
+				fmt.Fprintf(os.Stderr, "  warning: OTEL stop failed: %v\n", err)
 			} else {
-				fmt.Printf("  ✓ SigNoz stopped\n")
+				fmt.Printf("  ✓ OTEL stopped\n")
 			}
 		}
 	}

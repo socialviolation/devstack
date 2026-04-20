@@ -1,0 +1,9 @@
+{
+  "mssql": {
+    "driverUrls": ["drivers/mssql-jdbc-12.8.1.jre11.jar"],
+    "driverClassName": "com.microsoft.sqlserver.jdbc.SQLServerDriver",
+    "jdbcUrl": "jdbc:sqlserver://host:1433;databaseName=mydb;encrypt=true;trustServerCertificate=true",
+    "username": "user",
+    "password": "password"
+  }
+}
