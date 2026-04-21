@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"devstack/internal/tilt"
 	"devstack/internal/workspace"
 )
 
@@ -78,7 +79,15 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Stopping %s (pid %d)...\n", ws.Name, pid)
 
-	// 3. Kill the process
+	// 3. Gracefully tear down all services via tilt down
+	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
+	if out, err := tiltClient.RunCLI("down"); err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: tilt down failed: %v\n%s", err, out)
+	} else {
+		fmt.Printf("  ✓ Services stopped\n")
+	}
+
+	// 4. Kill the process
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not find process %d: %v\n", pid, err)
@@ -91,14 +100,14 @@ func runDown(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// 4. Remove PID file
+	// 5. Remove PID file
 	if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "Warning: failed to remove PID file: %v\n", err)
 	}
 
 	fmt.Printf("  ✓ Tilt stopped\n")
 
-	// 5. Stop observability stack
+	// 6. Stop observability stack
 	if isOtelRunning(ws) {
 		localEnv, _ := ws.ResolveEnvironment("local")
 		plugin := activePlugin(ws, localEnv)
