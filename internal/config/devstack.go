@@ -20,39 +20,17 @@ type WorkspaceConfig struct {
 
 const configFileName = ".devstack.json"
 
-// Load reads <workspacePath>/.devstack.json.
-// Returns an empty config (not an error) if the file doesn't exist.
+// Load resolves workspace config from the new manifest model when present,
+// falling back to the legacy .devstack.json file during migration.
 func Load(workspacePath string) (*WorkspaceConfig, error) {
-	path := filepath.Join(workspacePath, configFileName)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &WorkspaceConfig{
-				Deps:         map[string][]string{},
-				Groups:       map[string][]string{},
-				ServicePaths: map[string]string{},
-			}, nil
+	if HasWorkspaceManifest(workspacePath) {
+		resolved, err := ResolveWorkspace(workspacePath)
+		if err != nil {
+			return nil, err
 		}
-		return nil, fmt.Errorf("failed to read devstack config: %w", err)
+		return resolved.ToLegacyConfig(), nil
 	}
-
-	var cfg WorkspaceConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse devstack config: %w", err)
-	}
-
-	// Ensure maps are not nil
-	if cfg.Deps == nil {
-		cfg.Deps = map[string][]string{}
-	}
-	if cfg.Groups == nil {
-		cfg.Groups = map[string][]string{}
-	}
-	if cfg.ServicePaths == nil {
-		cfg.ServicePaths = map[string]string{}
-	}
-
-	return &cfg, nil
+	return loadLegacyConfig(workspacePath)
 }
 
 // Save writes <workspacePath>/.devstack.json with JSON indentation.

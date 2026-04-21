@@ -43,11 +43,17 @@ func requireLocalEnv(envName string, env workspace.Environment) error {
 	return nil
 }
 
-// detectServicesFromCwd returns all services whose registered path contains the cwd.
-func detectServicesFromCwd(cfg *config.WorkspaceConfig) ([]string, error) {
+// detectServicesFromCwd resolves services from the current directory using the new
+// manifest-aware resolver, falling back to service path matching for legacy workspaces.
+func detectServicesFromCwd(workspacePath string, cfg *config.WorkspaceConfig) ([]string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	ctx, err := config.ResolveContext(config.ResolveOptions{StartPath: cwd, WorkspacePath: workspacePath})
+	if err == nil && ctx.CurrentService.Value != "" {
+		return []string{ctx.CurrentService.Value}, nil
 	}
 
 	var matches []string
@@ -65,8 +71,8 @@ func detectServicesFromCwd(cfg *config.WorkspaceConfig) ([]string, error) {
 
 // detectServiceFromCwd returns the single service matching the cwd.
 // Errors if multiple match — use detectServicesFromCwd for that case.
-func detectServiceFromCwd(cfg *config.WorkspaceConfig) (string, error) {
-	matches, err := detectServicesFromCwd(cfg)
+func detectServiceFromCwd(workspacePath string, cfg *config.WorkspaceConfig) (string, error) {
+	matches, err := detectServicesFromCwd(workspacePath, cfg)
 	if err != nil {
 		return "", err
 	}
@@ -81,9 +87,9 @@ func detectServiceFromCwd(cfg *config.WorkspaceConfig) (string, error) {
 // 2. Exact match in cfg.Groups → returns the group's member list
 // 3. Returns error with helpful message
 // If name is empty, falls back to cwd auto-detection (detectServicesFromCwd).
-func resolveTarget(name string, cfg *config.WorkspaceConfig) ([]string, error) {
+func resolveTarget(workspacePath, name string, cfg *config.WorkspaceConfig) ([]string, error) {
 	if name == "" {
-		return detectServicesFromCwd(cfg)
+		return detectServicesFromCwd(workspacePath, cfg)
 	}
 
 	// Check service name first

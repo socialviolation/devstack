@@ -48,7 +48,7 @@ func runStop(cmd *cobra.Command, args []string) error {
 		targetName = args[0]
 	}
 
-	services, err := resolveTarget(targetName, cfg)
+	services, err := resolveTarget(ws.Path, targetName, cfg)
 	if err != nil {
 		return err
 	}

@@ -61,7 +61,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 	}
 
 	// Resolve target to a list of services (service or group)
-	services, err := resolveTarget(targetName, cfg)
+	services, err := resolveTarget(ws.Path, targetName, cfg)
 	if err != nil {
 		return err
 	}
