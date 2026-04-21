@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -109,6 +110,16 @@ func runDown(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Warning: failed to remove PID file: %v\n", err)
 	}
 
+	time.Sleep(500 * time.Millisecond)
+	ports := []int{ws.TiltPort}
+	if session, err := workspace.LoadSession(ws.Name); err == nil && len(session.ActivePorts) > 0 {
+		ports = session.ActivePorts
+	}
+	residue := workspace.DetectResidue(pid, ports)
+	if err := workspace.CloseSession(ws.Name, residue); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to update session state: %v\n", err)
+	}
+
 	fmt.Printf("  ✓ Tilt stopped\n")
 
 	// 6. Stop observability stack
@@ -122,6 +133,10 @@ func runDown(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		fmt.Printf("  OTEL not running\n")
+	}
+
+	if len(residue) > 0 {
+		return fmt.Errorf("workspace down left residue: %s", strings.Join(residue, ", "))
 	}
 
 	return nil

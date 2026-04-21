@@ -121,6 +121,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to write PID file: %w", err)
 	}
 
+	_, _ = workspace.OpenSession(ws, pid, []int{ws.TiltPort})
+
 	// 8. Poll until daemon is reachable (up to 45s, every 2s)
 	fmt.Printf("Starting dev daemon for '%s'", ws.Name)
 	deadline := time.Now().Add(45 * time.Second)
@@ -224,4 +226,3 @@ func isProcessAlive(pid int) bool {
 	_, err := os.Stat(statusPath)
 	return err == nil
 }
-
