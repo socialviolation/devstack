@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"devstack/internal/config"
 )
 
 // EnvironmentType describes whether an environment is locally Tilt-managed or remote-only.
@@ -55,6 +57,31 @@ type Workspace struct {
 	// Environments is an optional map of named environments (local, staging, prod, etc).
 	// When absent, the MCP server synthesizes a "local" environment from the legacy flat fields above.
 	Environments map[string]Environment `json:"environments,omitempty"`
+}
+
+// OverlayProjectConfig reads the workspace's .devstack.json and overlays any OTEL
+// plugin config found there, letting per-project config take precedence over the registry.
+func (ws *Workspace) OverlayProjectConfig() {
+	if ws.Path == "" {
+		return
+	}
+	cfg, err := config.Load(ws.Path)
+	if err != nil || cfg == nil {
+		return
+	}
+	if cfg.OtelPlugin != "" {
+		ws.OtelPlugin = cfg.OtelPlugin
+	}
+	if len(cfg.OtelPluginConfig) > 0 {
+		merged := make(map[string]string, len(ws.OtelPluginConfig)+len(cfg.OtelPluginConfig))
+		for k, v := range ws.OtelPluginConfig {
+			merged[k] = v
+		}
+		for k, v := range cfg.OtelPluginConfig {
+			merged[k] = v
+		}
+		ws.OtelPluginConfig = merged
+	}
 }
 
 // PluginConfig returns the value for a plugin config key, or "" if not set.

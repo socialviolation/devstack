@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"devstack/internal/config"
 	"devstack/internal/otel"
 	"devstack/internal/workspace"
 )
@@ -106,13 +108,19 @@ func init() {
 
 func resolveOtelWorkspace(cmd *cobra.Command) (*workspace.Workspace, error) {
 	wsFlag, _ := cmd.Flags().GetString("workspace")
+	var (
+		ws  *workspace.Workspace
+		err error
+	)
 	if wsFlag != "" {
-		return resolveWorkspace(wsFlag)
+		ws, err = resolveWorkspace(wsFlag)
+	} else {
+		ws, err = workspace.DetectFromCwd()
 	}
-	ws, err := workspace.DetectFromCwd()
 	if err != nil {
 		return nil, fmt.Errorf("could not detect workspace: %w\nTry: devstack otel <subcommand> --workspace=<name>", err)
 	}
+	ws.OverlayProjectConfig()
 	return ws, nil
 }
 
@@ -352,16 +360,16 @@ func runOtelConfigure(cmd *cobra.Command, args []string) error {
 	setFlags, _ := cmd.Flags().GetStringArray("set")
 
 	// Parse --set key=value pairs
-	config := map[string]string{}
+	setConfig := map[string]string{}
 	for _, kv := range setFlags {
 		parts := strings.SplitN(kv, "=", 2)
 		if len(parts) != 2 {
 			return fmt.Errorf("invalid --set value %q (expected key=value)", kv)
 		}
-		config[parts[0]] = parts[1]
+		setConfig[parts[0]] = parts[1]
 	}
 
-	if pluginName == "" && len(config) == 0 {
+	if pluginName == "" && len(setConfig) == 0 {
 		return fmt.Errorf("specify --plugin=<name> and/or --set key=value")
 	}
 
@@ -385,7 +393,7 @@ func runOtelConfigure(cmd *cobra.Command, args []string) error {
 	// Validate required config fields
 	for _, field := range p.ConfigSchema() {
 		if field.Required {
-			val := config[field.Key]
+			val := setConfig[field.Key]
 			if val == "" {
 				val = ws.PluginConfig(field.Key)
 			}
@@ -400,7 +408,7 @@ func runOtelConfigure(cmd *cobra.Command, args []string) error {
 	for k, v := range ws.OtelPluginConfig {
 		merged[k] = v
 	}
-	for k, v := range config {
+	for k, v := range setConfig {
 		merged[k] = v
 	}
 
@@ -408,16 +416,32 @@ func runOtelConfigure(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to update workspace config: %w", err)
 	}
 
+	if ws.Path != "" {
+		if err := saveOtelPluginToProject(ws.Path, pluginName, merged); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to save to project config: %v\n", err)
+		}
+	}
+
 	displayName := pluginName
 	if displayName == "" {
 		displayName = pluginNameForValidation + " (env-driven)"
 	}
 	fmt.Printf("Plugin configured: %s\n", displayName)
-	for k, v := range config {
+	for k, v := range setConfig {
 		fmt.Printf("  %s = %s\n", k, v)
 	}
 	fmt.Printf("\nRun: devstack otel start\n")
 	return nil
+}
+
+func saveOtelPluginToProject(wsPath, pluginName string, pluginConfig map[string]string) error {
+	cfg, err := config.Load(wsPath)
+	if err != nil {
+		return err
+	}
+	cfg.OtelPlugin = pluginName
+	cfg.OtelPluginConfig = pluginConfig
+	return config.Save(wsPath, cfg)
 }
 
 func runOtelPlugins(cmd *cobra.Command, args []string) error {

@@ -12,6 +12,10 @@ type WorkspaceConfig struct {
 	Deps         map[string][]string `json:"deps"`          // service -> list of deps
 	Groups       map[string][]string `json:"groups"`        // group name -> list of services
 	ServicePaths map[string]string   `json:"service_paths"` // service -> git repo root path
+
+	// OTEL plugin config — persisted here so settings travel with the project.
+	OtelPlugin       string            `json:"otel_plugin,omitempty"`
+	OtelPluginConfig map[string]string `json:"otel_plugin_config,omitempty"`
 }
 
 const configFileName = ".devstack.json"
