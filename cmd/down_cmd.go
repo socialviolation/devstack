@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"devstack/internal/infra"
 	"devstack/internal/tilt"
 	"devstack/internal/workspace"
 )
@@ -133,6 +134,16 @@ func runDown(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		fmt.Printf("  OTEL not running\n")
+	}
+
+	if composeSpec, err := infra.ResolveComposeSpec(ws.Path); err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: compose infra config error: %v\n", err)
+	} else if composeSpec != nil {
+		if err := infra.Down(composeSpec); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: compose infra stop failed: %v\n", err)
+		} else {
+			fmt.Printf("  ✓ Compose infra stopped\n")
+		}
 	}
 
 	if len(residue) > 0 {

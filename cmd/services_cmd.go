@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"devstack/internal/config"
+	"devstack/internal/infra"
 	"devstack/internal/tilt"
 	"devstack/internal/workspace"
 )
@@ -30,7 +31,7 @@ Service states:
   idle      — service is registered but not currently enabled
   disabled  — service has been explicitly stopped
   unknown   — daemon is not reachable (run: devstack workspace up)`,
-	RunE:  runStatus,
+	RunE: runStatus,
 }
 
 func init() {
@@ -120,6 +121,11 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 		infraParts = append(infraParts,
 			fmt.Sprintf("otel ui:%d otlp:%d grpc:%d", ws.UIPort(), ws.HTTPPort(), ws.GRPCPort()),
 		)
+	}
+	if composeSpec, err := infra.ResolveComposeSpec(ws.Path); err == nil && composeSpec != nil {
+		if running, err := infra.RunningServices(composeSpec); err == nil && len(running) > 0 {
+			infraParts = append(infraParts, fmt.Sprintf("infra %s", strings.Join(running, ",")))
+		}
 	}
 	color.New(color.Faint).Printf("  %s\n\n", strings.Join(infraParts, "  ·  "))
 
@@ -261,4 +267,3 @@ func printPorts(raw string, width int) {
 		fmt.Print(padded)
 	}
 }
-

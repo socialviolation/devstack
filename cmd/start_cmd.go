@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"devstack/internal/infra"
 	"devstack/internal/workspace"
 )
 
@@ -142,6 +143,17 @@ func runStart(cmd *cobra.Command, args []string) error {
 		fmt.Printf("✓ Started (pid %d, port %d, logs: %s)\n", pid, ws.TiltPort, logFile)
 	} else {
 		fmt.Printf("Started but not yet reachable — logs: %s\n", logFile)
+	}
+
+	if composeSpec, err := infra.ResolveComposeSpec(ws.Path); err != nil {
+		fmt.Fprintf(os.Stderr, "compose infra config error: %v\n", err)
+	} else if composeSpec != nil {
+		fmt.Printf("Starting compose infra...\n")
+		if err := infra.Up(composeSpec); err != nil {
+			fmt.Fprintf(os.Stderr, "compose infra failed: %v\n", err)
+		} else {
+			fmt.Printf("✓ Compose infra started\n")
+		}
 	}
 
 	// 10. Start observability backend

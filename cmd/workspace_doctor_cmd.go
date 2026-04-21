@@ -3,10 +3,12 @@ package cmd
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"devstack/internal/config"
+	"devstack/internal/infra"
 )
 
 var workspaceDoctorCmd = &cobra.Command{
@@ -38,6 +40,14 @@ func runWorkspaceDoctor(cmd *cobra.Command, args []string) error {
 	fmt.Printf("root: %s\n", graph.WorkspaceRoot)
 	fmt.Printf("config: %s\n", manifestFile)
 	fmt.Printf("services: %d\n", len(graph.Services))
+
+	if composeSpec, err := infra.ResolveComposeSpec(ctx.WorkspaceRoot.Value); err == nil && composeSpec != nil {
+		if running, err := infra.RunningServices(composeSpec); err == nil {
+			fmt.Printf("infra: compose (%s)\n", strings.Join(running, ", "))
+		} else {
+			fmt.Printf("infra: compose status unavailable (%v)\n", err)
+		}
+	}
 
 	if len(graph.Issues) == 0 {
 		fmt.Println("status: ok")
