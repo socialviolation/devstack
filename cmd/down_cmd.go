@@ -79,11 +79,15 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Stopping %s (pid %d)...\n", ws.Name, pid)
 
-	// 3. Gracefully tear down all services via tilt down
+	// 3. Disable all running services before killing the daemon
 	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
-	if out, err := tiltClient.RunCLI("down"); err != nil {
-		fmt.Fprintf(os.Stderr, "  warning: tilt down failed: %v\n%s", err, out)
-	} else {
+	if view, err := tiltClient.GetView(); err == nil {
+		for _, r := range view.UiResources {
+			if r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
+				continue
+			}
+			tiltClient.RunCLI("disable", r.Metadata.Name) //nolint:errcheck
+		}
 		fmt.Printf("  ✓ Services stopped\n")
 	}
 
