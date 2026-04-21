@@ -439,7 +439,11 @@ func saveOtelPluginToProject(wsPath, pluginName string, pluginConfig map[string]
 	if err != nil {
 		return err
 	}
-	cfg.OtelPlugin = pluginName
+	// Only overwrite plugin name when explicitly set; empty means env-driven
+	// selection and the existing project plugin name should be preserved.
+	if pluginName != "" {
+		cfg.OtelPlugin = pluginName
+	}
 	cfg.OtelPluginConfig = pluginConfig
 	return config.Save(wsPath, cfg)
 }
