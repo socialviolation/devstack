@@ -1,1 +1,0 @@
-Use topology, status, telemetry health, and process logs in that order. Missing telemetry is inconclusive by default.
