@@ -1,0 +1,18 @@
+version: 1
+
+service:
+  name: telemetry-good
+
+runtime:
+  workDir: .
+  run:
+    command: ../../scripts/run-placeholder.sh telemetry-good
+  restart:
+    strategy: process
+
+telemetry:
+  traces:
+    expected: true
+  logs:
+    expected: true
+  serviceName: telemetry-good

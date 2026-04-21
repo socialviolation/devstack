@@ -1,0 +1,22 @@
+version: 1
+
+service:
+  name: worker
+
+runtime:
+  workDir: .
+  run:
+    command: ../../scripts/run-placeholder.sh worker
+  restart:
+    strategy: process
+
+env:
+  files:
+    - .envrc
+
+telemetry:
+  traces:
+    expected: false
+  logs:
+    expected: true
+  serviceName: worker

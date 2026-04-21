@@ -1,0 +1,28 @@
+version: 1
+
+service:
+  name: frontend
+
+runtime:
+  workDir: .
+  run:
+    command: ../../scripts/run-placeholder.sh frontend
+  restart:
+    strategy: process
+  healthcheck:
+    type: http
+    url: http://localhost:3000/health
+
+ports:
+  http: 3000
+
+env:
+  files:
+    - .envrc
+
+telemetry:
+  traces:
+    expected: false
+  logs:
+    expected: true
+  serviceName: frontend

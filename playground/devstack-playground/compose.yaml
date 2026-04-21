@@ -1,0 +1,5 @@
+services:
+  playground-redis:
+    image: redis:7-alpine
+    ports:
+      - "16379:6379"

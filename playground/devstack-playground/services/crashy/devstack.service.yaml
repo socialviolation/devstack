@@ -1,0 +1,18 @@
+version: 1
+
+service:
+  name: crashy
+
+runtime:
+  workDir: .
+  run:
+    command: ../../scripts/run-placeholder.sh crashy
+  restart:
+    strategy: process
+
+telemetry:
+  traces:
+    expected: false
+  logs:
+    expected: true
+  serviceName: crashy

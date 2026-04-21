@@ -1,0 +1,30 @@
+version: 1
+
+service:
+  name: api
+
+runtime:
+  workDir: .
+  run:
+    command: ../../scripts/run-placeholder.sh api
+  restart:
+    strategy: process
+  healthcheck:
+    type: http
+    url: http://localhost:8080/health
+
+ports:
+  http: 8080
+
+env:
+  files:
+    - .envrc
+  required:
+    - OTEL_EXPORTER_OTLP_ENDPOINT
+
+telemetry:
+  traces:
+    expected: true
+  logs:
+    expected: true
+  serviceName: api

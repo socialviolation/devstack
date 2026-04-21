@@ -1,0 +1,1 @@
+Prefer restarting the smallest affected service or group. Verify cleanup residue before claiming teardown is complete.

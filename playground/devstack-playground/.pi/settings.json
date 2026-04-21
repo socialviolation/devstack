@@ -1,0 +1,5 @@
+{
+  "name": "devstack-playground",
+  "extensions": ["./extensions/devstack-playground"],
+  "skills": ["./skills/devstack-debugging", "./skills/devstack-operations"]
+}

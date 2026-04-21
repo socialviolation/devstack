@@ -1,0 +1,56 @@
+version: 1
+
+workspace:
+  name: devstack-playground
+  repoDiscovery:
+    mode: explicit
+    repos:
+      - ./services/frontend
+      - ./services/api
+      - ./services/worker
+      - ./services/telemetry-good
+      - ./services/telemetry-bad
+      - ./services/crashy
+
+runtime:
+  orchestrator: local-supervisor
+  infra:
+    provider: compose
+    composeFiles:
+      - ./compose.yaml
+
+observability:
+  backend: signoz
+  local:
+    enabled: true
+  defaults:
+    requireTraces: false
+    requireLogs: false
+
+groups:
+  frontend:
+    - frontend
+  backend:
+    - api
+    - worker
+  telemetry:
+    - telemetry-good
+    - telemetry-bad
+  unstable:
+    - crashy
+
+dependencies:
+  frontend:
+    - api
+  api:
+    - worker
+  telemetry-bad:
+    - api
+
+environments:
+  local:
+    type: local
+    observability:
+      backend: signoz
+      url: http://localhost:3301
+      otlpEndpoint: http://localhost:4318
