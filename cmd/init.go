@@ -393,6 +393,17 @@ func buildTiltBlock(name, serveCmd, path, lang string, port int, serveEnv map[st
 
 // writeMCPJson creates a .mcp.json file in the service directory.
 func writeMCPJson(mcpFile, serviceName string, ws *workspace.Workspace) error {
+	serviceDir := filepath.Dir(mcpFile)
+	if identity, err := config.ResolveIdentity(serviceDir); err == nil {
+		if identity.ServiceName != "" {
+			serviceName = identity.ServiceName
+		}
+		if identity.WorkspaceRoot != "" {
+			if resolvedWs, err := workspace.FindByPath(identity.WorkspaceRoot); err == nil {
+				ws = resolvedWs
+			}
+		}
+	}
 	type mcpEntry struct {
 		Type    string            `json:"type"`
 		Command string            `json:"command"`
@@ -453,7 +464,7 @@ func buildAgentInstructions(defaultService string, workspacePath string) string 
 		contextLine += fmt.Sprintf("Default service: `%s`", defaultService)
 	}
 	if contextLine != "" {
-		contextLine = contextLine + "\n\n"
+		contextLine += "\n\n"
 	}
 
 	startCmd := "devstack start <service>    # start a service + its dependencies"
@@ -462,45 +473,21 @@ func buildAgentInstructions(defaultService string, workspacePath string) string 
 	}
 
 	return "\n## Dev Stack (devstack MCP)\n\n" +
-		"devstack is a local development service manager. It runs your services,\n" +
-		"resolves startup dependencies, and ships OpenTelemetry traces and logs to a\n" +
-		"local SigNoz observability stack. AI agents interact with it through MCP tools\n" +
-		"that expose live service state and correlated trace/log data.\n\n" +
-		"**LOCAL DEV ONLY.** devstack controls local processes only. Never use it to\n" +
-		"investigate or modify staging or production environments.\n\n" +
+		"Local dev only. devstack controls local services and local observability only.\n\n" +
 		contextLine +
-		"### Starting the daemon and services\n\n" +
-		"The MCP tools require the dev daemon to be running. Check status first;\n" +
-		"start the daemon if it is stopped, then start the services you need.\n\n" +
 		"```bash\n" +
-		"devstack status                     # show live state of all services\n" +
-		"devstack workspace up               # start the dev daemon (if not running)\n" +
-		"devstack workspace down             # stop the dev daemon\n" +
+		"devstack status                     # live service state\n" +
+		"devstack topology                   # services, groups, deps, dependents\n" +
+		"devstack telemetry status           # telemetry evidence and confidence\n" +
+		"devstack workspace doctor           # config and topology checks\n" +
+		"devstack workspace up               # start the local daemon\n" +
+		"devstack workspace down             # stop the local daemon\n" +
 		startCmd + "\n" +
-		"devstack start --group=<group>      # start all services in a group (resolves deps)\n" +
-		"devstack stop <service>             # stop a service\n" +
-		"devstack init --all                 # refresh AGENTS.md in every service repo\n" +
-		"devstack otel open                  # open the SigNoz trace UI in the browser\n" +
 		"```\n\n" +
-		"Auto-detection: `start` and `stop` detect the service from the current directory\n" +
-		"when no service name is given.\n\n" +
-		"### MCP tools\n\n" +
-		"These tools are available to you via the configured MCP server. The `.mcp.json`\n" +
-		"in this repo wires them up automatically — no manual configuration needed.\n\n" +
-		"| Tool | When to use it |\n" +
-		"|------|----------------|\n" +
-		"| `investigate` | **Start here when something is broken.** Correlates traces and logs in one call to pinpoint the root cause. |\n" +
-		"| `status` | Check live state of all services — running/error/idle, ports, deps. |\n" +
-		"| `process_logs` | Fetch raw stdout/stderr from a service. Use `errors_only=true` to filter noise. |\n" +
-		"| `traces` | Query recent distributed traces from SigNoz. |\n" +
-		"| `errors` | Surface recent error-level spans across all services. |\n" +
-		"| `restart` | Trigger a rebuild and restart after a code change. |\n" +
-		"| `stop` | Disable a running service. |\n" +
-		"| `configure` | Set a runtime config value for a service. |\n\n" +
-		"### Rules\n\n" +
-		"1. **Call `investigate` first** when something is broken — it correlates traces\n" +
-		"   and logs in a single call and is faster than querying each tool separately.\n" +
-		"2. **Stop only what you started** — do not tear down the whole stack unless\n" +
-		"   the user explicitly asks for it.\n" +
-		"3. **Never use devstack for prod or staging** — it only controls local services.\n"
+		"Use the MCP tools from `.mcp.json` as discovery helpers, not as hidden sources of truth.\n\n" +
+		"Rules:\n" +
+		"1. Check topology before making dependency claims.\n" +
+		"2. Check telemetry status before inferring from missing traces or logs.\n" +
+		"3. Use process logs or runtime state when telemetry is partial or inconclusive.\n" +
+		"4. Do not use devstack against staging or production.\n"
 }

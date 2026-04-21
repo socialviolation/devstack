@@ -42,7 +42,8 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, activeEnvName string,
 		fmt.Fprintf(&sb, "stack: SignOz (ClickHouse) + Tilt — local dev only, ephemeral data\n")
 
 		if activeEnv.Type == workspace.EnvironmentTypeLocal {
-			fmt.Fprintf(&sb, "tools: status, restart, stop, configure, process_logs, investigate\n")
+			fmt.Fprintf(&sb, "tools: status, telemetry_health, restart, stop, configure, process_logs, investigate\n")
+			fmt.Fprintf(&sb, "recommended order: environment -> status -> telemetry_health -> process_logs/investigate\n")
 		} else {
 			fmt.Fprintf(&sb, "tools: status, investigate\n")
 			fmt.Fprintf(&sb, "unavailable: restart, stop, configure, process_logs (require Tilt; local only)\n")

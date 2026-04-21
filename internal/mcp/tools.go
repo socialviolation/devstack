@@ -57,6 +57,7 @@ func RegisterTools(
 			}
 		}
 		registerStatusTool(mcpServer, tiltClient, serviceDirs, cfg)
+		registerTelemetryHealthTool(mcpServer, workspacePath)
 		registerRestartTool(mcpServer, tiltClient, defaultService, cfg)
 		registerStopTool(mcpServer, tiltClient, cfg)
 		registerConfigureTool(mcpServer, tiltClient)
@@ -498,7 +499,7 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		processOutput := func(raw string) string {
 			allLines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
 
-				// offset + lines paging: fetch window is [len-offset-lines .. len-offset].
+			// offset + lines paging: fetch window is [len-offset-lines .. len-offset].
 			total := len(allLines)
 			end := total - offset
 			if end <= 0 {
@@ -1144,8 +1145,8 @@ func mergeServiceEdges(existing, newEdges []serviceMapEdge) []serviceMapEdge {
 
 // mutableWorkspaceConfig is a minimal struct for reading/writing the service map portion of .devstack.json.
 type mutableWorkspaceConfig struct {
-	raw             map[string]interface{}
-	ServiceMapEdges []serviceMapEdge
+	raw                 map[string]interface{}
+	ServiceMapEdges     []serviceMapEdge
 	ServiceMapUpdatedAt time.Time
 }
 
@@ -1335,4 +1336,3 @@ func formatExecutionDetailView(d *executionDetail, opts formatOptions) string {
 
 	return sb.String()
 }
-
