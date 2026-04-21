@@ -6,13 +6,16 @@ service:
 runtime:
   workDir: .
   run:
-    command: ../../scripts/run-placeholder.sh worker
+    command: python3 app.py
   restart:
     strategy: process
 
 env:
   files:
     - .envrc
+
+ports:
+  http: 9090
 
 telemetry:
   traces:

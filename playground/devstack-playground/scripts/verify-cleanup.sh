@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 residue=0
 
-if find "$root/logs" -type f | grep -q . 2>/dev/null; then
+if find "$root/logs" -type f ! -name '.gitkeep' | grep -q . 2>/dev/null; then
   echo "log files present under $root/logs"
 else
   echo "no log residue under $root/logs"

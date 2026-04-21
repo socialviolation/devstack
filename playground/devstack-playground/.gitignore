@@ -1,0 +1,6 @@
+logs/*
+!logs/.gitkeep
+state/runtime/*
+!state/runtime/.gitkeep
+state/*.mode
+!state/.gitkeep

@@ -6,7 +6,7 @@ service:
 runtime:
   workDir: .
   run:
-    command: ../../scripts/run-placeholder.sh frontend
+    command: python3 app.py
   restart:
     strategy: process
   healthcheck:
