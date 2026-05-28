@@ -24,6 +24,11 @@ If you're joining a team that already uses devstack, follow these steps once per
 
 **Prerequisites:** Go 1.24+, [Tilt](https://docs.tilt.dev/install.html), Docker
 
+The first `devstack workspace up` also looks for `otelcol-contrib` on `$PATH` so it can start the local OTEL collector. If it's missing, the workspace still comes up but `devstack otel start` will fail until you install it:
+
+- macOS / Linux: download the matching binary from [opentelemetry-collector-releases](https://github.com/open-telemetry/opentelemetry-collector-releases/releases) and place it on `$PATH`
+- Override the binary location with `OTELCOL_BIN=/path/to/otelcol-contrib`
+
 **1. Install devstack**
 
 ```bash

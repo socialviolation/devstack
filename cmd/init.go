@@ -281,11 +281,14 @@ func tiltfileHasService(tiltfilePath, name string) bool {
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(data), fmt.Sprintf("# %s\n", name)) ||
-		strings.Contains(string(data), fmt.Sprintf("%q,", name))
+	start, _ := locateServiceBlock(string(data), name)
+	return start != -1
 }
 
 // replaceTiltfileService removes the old block for a service and appends the new one.
+// Locates the block by the preceding `# <name>` comment marker, or falls back to the
+// `local_resource(\n    "<name>",` signature so user-edited blocks (which may have lost
+// the comment) are still replaced rather than duplicated.
 func replaceTiltfileService(tiltfilePath, name, newBlock string) error {
 	data, err := os.ReadFile(tiltfilePath)
 	if err != nil {
@@ -293,15 +296,12 @@ func replaceTiltfileService(tiltfilePath, name, newBlock string) error {
 	}
 
 	content := string(data)
-	marker := fmt.Sprintf("\n# %s\n", name)
-	start := strings.Index(content, marker)
+	start, blockStart := locateServiceBlock(content, name)
 	if start == -1 {
-		// Block not found via comment marker — just append
 		return appendToTiltfile(tiltfilePath, newBlock)
 	}
 
-	// Find the closing ')' of the local_resource block
-	end := start + len(marker)
+	end := blockStart
 	depth := 0
 	found := false
 	for i := end; i < len(content); i++ {
@@ -311,7 +311,6 @@ func replaceTiltfileService(tiltfilePath, name, newBlock string) error {
 		case ')':
 			if depth == 0 {
 				end = i + 1
-				// consume trailing newline
 				if end < len(content) && content[end] == '\n' {
 					end++
 				}
@@ -330,6 +329,39 @@ func replaceTiltfileService(tiltfilePath, name, newBlock string) error {
 
 	updated := content[:start] + newBlock + content[end:]
 	return os.WriteFile(tiltfilePath, []byte(updated), 0644)
+}
+
+// locateServiceBlock returns the start offset (where the replacement should be inserted,
+// inclusive of a leading newline if present) and the offset of the opening `local_resource(`
+// from which to walk bracket depth. Returns (-1, -1) if no block for the service is found.
+func locateServiceBlock(content, name string) (int, int) {
+	commentMarker := fmt.Sprintf("\n# %s\n", name)
+	if idx := strings.Index(content, commentMarker); idx != -1 {
+		return idx, idx + len(commentMarker)
+	}
+
+	nameToken := fmt.Sprintf("%q,", name)
+	for offset := 0; offset < len(content); {
+		i := strings.Index(content[offset:], nameToken)
+		if i == -1 {
+			return -1, -1
+		}
+		nameAt := offset + i
+		lineStart := strings.LastIndexByte(content[:nameAt], '\n') + 1
+		prefix := strings.TrimSpace(content[lineStart:nameAt])
+		if prefix == "" {
+			blockStart := strings.LastIndex(content[:lineStart], "local_resource(")
+			if blockStart != -1 {
+				start := strings.LastIndexByte(content[:blockStart], '\n')
+				if start == -1 {
+					start = 0
+				}
+				return start, blockStart
+			}
+		}
+		offset = nameAt + len(nameToken)
+	}
+	return -1, -1
 }
 
 // appendToTiltfile appends a block to the Tiltfile.
@@ -386,7 +418,7 @@ func buildTiltBlock(name, serveCmd, path, lang string, port int, serveEnv map[st
 	sb.WriteString("    auto_init=False,\n")
 	sb.WriteString(fmt.Sprintf("    labels=[%q],\n", lang))
 	if port > 0 {
-		sb.WriteString(fmt.Sprintf("    readiness_probe=probe(http_get_action(port=%d), period_secs=5, failure_threshold=10),\n", port))
+		sb.WriteString(fmt.Sprintf("    readiness_probe=probe(http_get=http_get_action(port=%d), period_secs=5, failure_threshold=10),\n", port))
 		sb.WriteString(fmt.Sprintf("    links=[link(%q, %q)],\n", fmt.Sprintf("http://localhost:%d", port), name))
 	}
 	sb.WriteString(")\n")
