@@ -27,7 +27,7 @@ If you're joining a team that already uses devstack, follow these steps once per
 **1. Install devstack**
 
 ```bash
-go install github.com/socialviolation/devstack@main
+go install ./...
 ```
 
 **2. Register a workspace**
