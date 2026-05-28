@@ -8,7 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"devstack/internal/workspace"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 // registerEnvironmentTool registers the "environment" tool which orients agents immediately.

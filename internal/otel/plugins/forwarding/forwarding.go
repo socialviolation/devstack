@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"devstack/internal/otel"
-	"devstack/internal/workspace"
+	"github.com/socialviolation/devstack/internal/otel"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 func init() {

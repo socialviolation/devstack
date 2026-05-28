@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"devstack/internal/otel"
-	"devstack/internal/workspace"
+	"github.com/socialviolation/devstack/internal/otel"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 //go:embed files

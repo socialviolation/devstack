@@ -14,12 +14,12 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"devstack/internal/config"
-	"devstack/internal/observability"
-	_ "devstack/internal/observability/signoz" // register signoz backend
-	"devstack/internal/otel"
-	"devstack/internal/tilt"
-	"devstack/internal/workspace"
+	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/observability"
+	_ "github.com/socialviolation/devstack/internal/observability/signoz" // register signoz backend
+	"github.com/socialviolation/devstack/internal/otel"
+	"github.com/socialviolation/devstack/internal/tilt"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 // errorRegex matches common error-indicating log keywords.

@@ -1,10 +1,10 @@
 package cmd
 
 import (
-	"devstack/internal/otel"
-	_ "devstack/internal/otel/plugins/forwarding" // register forwarding plugin
-	_ "devstack/internal/otel/plugins/signoz"     // register signoz plugin
-	"devstack/internal/workspace"
+	"github.com/socialviolation/devstack/internal/otel"
+	_ "github.com/socialviolation/devstack/internal/otel/plugins/forwarding" // register forwarding plugin
+	_ "github.com/socialviolation/devstack/internal/otel/plugins/signoz"     // register signoz plugin
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 // activePlugin returns the active otel plugin for the given workspace and environment.

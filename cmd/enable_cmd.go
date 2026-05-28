@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"devstack/internal/config"
-	"devstack/internal/tilt"
+	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/tilt"
 )
 
 var svcStartCmd = &cobra.Command{

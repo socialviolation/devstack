@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"devstack/internal/workspace"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 // collectorPIDFile returns the path to the collector PID file for a workspace.

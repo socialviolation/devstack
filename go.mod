@@ -1,4 +1,4 @@
-module devstack
+module github.com/socialviolation/devstack
 
 go 1.25.0
 

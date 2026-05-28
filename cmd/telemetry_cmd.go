@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"devstack/internal/telemetry"
+	"github.com/socialviolation/devstack/internal/telemetry"
 )
 
 var telemetryCmd = &cobra.Command{

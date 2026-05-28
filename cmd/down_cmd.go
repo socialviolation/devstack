@@ -9,9 +9,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"devstack/internal/infra"
-	"devstack/internal/tilt"
-	"devstack/internal/workspace"
+	"github.com/socialviolation/devstack/internal/infra"
+	"github.com/socialviolation/devstack/internal/tilt"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 var downCmd = &cobra.Command{

@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"devstack/internal/config"
-	"devstack/internal/workspace"
+	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 var workspaceCmd = &cobra.Command{

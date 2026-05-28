@@ -13,8 +13,8 @@ import (
 
 	"github.com/fatih/color"
 
-	"devstack/internal/tilt"
-	"devstack/internal/workspace"
+	"github.com/socialviolation/devstack/internal/tilt"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 // treeNode represents a service within an intra-group dependency tree.

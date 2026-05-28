@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"devstack/internal/workspace"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 var openCmd = &cobra.Command{

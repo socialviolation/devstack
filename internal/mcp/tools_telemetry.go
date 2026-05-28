@@ -8,7 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"devstack/internal/telemetry"
+	"github.com/socialviolation/devstack/internal/telemetry"
 )
 
 func registerTelemetryHealthTool(mcpServer *server.MCPServer, workspacePath string) {

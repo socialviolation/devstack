@@ -12,9 +12,9 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"devstack/internal/config"
-	"devstack/internal/tilt"
-	"devstack/internal/workspace"
+	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/tilt"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 // registerServiceEnvTool registers the service_env MCP tool (local environments only).

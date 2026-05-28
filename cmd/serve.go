@@ -11,11 +11,11 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	nvxmcp "devstack/internal/mcp"
-	"devstack/internal/observability"
-	_ "devstack/internal/observability/signoz" // register signoz backend
-	"devstack/internal/tilt"
-	"devstack/internal/workspace"
+	nvxmcp "github.com/socialviolation/devstack/internal/mcp"
+	"github.com/socialviolation/devstack/internal/observability"
+	_ "github.com/socialviolation/devstack/internal/observability/signoz" // register signoz backend
+	"github.com/socialviolation/devstack/internal/tilt"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 var serveCmd = &cobra.Command{

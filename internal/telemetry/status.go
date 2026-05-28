@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/config"
 )
 
 type ServiceStatus struct {

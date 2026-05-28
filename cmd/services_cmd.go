@@ -10,10 +10,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"devstack/internal/config"
-	"devstack/internal/infra"
-	"devstack/internal/tilt"
-	"devstack/internal/workspace"
+	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/infra"
+	"github.com/socialviolation/devstack/internal/tilt"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 var statusCmd = &cobra.Command{

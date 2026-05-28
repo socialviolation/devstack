@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/config"
 )
 
 // EnvironmentType describes whether an environment is locally Tilt-managed or remote-only.

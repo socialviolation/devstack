@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/viper"
 
-	"devstack/internal/config"
-	"devstack/internal/workspace"
+	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 // resolveWorkspaceAndEnv resolves the active workspace and environment from Viper config.

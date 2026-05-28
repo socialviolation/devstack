@@ -11,7 +11,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"devstack/internal/observability"
+	"github.com/socialviolation/devstack/internal/observability"
 )
 
 // registerRemoteStatusTool registers a "status" tool for remote environments.

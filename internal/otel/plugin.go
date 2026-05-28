@@ -1,6 +1,6 @@
 package otel
 
-import "devstack/internal/workspace"
+import "github.com/socialviolation/devstack/internal/workspace"
 
 // Plugin is the interface that all OTEL backend plugins must implement.
 // The collector always runs locally and receives telemetry via OTLP.

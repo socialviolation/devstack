@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"devstack/internal/observability"
+	"github.com/socialviolation/devstack/internal/observability"
 )
 
 func init() {

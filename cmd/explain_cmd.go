@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/config"
 )
 
 var explainCmd = &cobra.Command{

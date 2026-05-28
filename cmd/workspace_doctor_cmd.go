@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"devstack/internal/config"
-	"devstack/internal/infra"
+	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/infra"
 )
 
 var workspaceDoctorCmd = &cobra.Command{

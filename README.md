@@ -9,7 +9,7 @@ Devstack sits on top of Tilt to handle workspace registration, service dependenc
 ## Install
 
 ```bash
-go install ./...
+go install github.com/socialviolation/devstack@main
 ```
 
 Requires Go 1.24+ and [Tilt](https://docs.tilt.dev/install.html) on `$PATH`.
@@ -27,8 +27,7 @@ If you're joining a team that already uses devstack, follow these steps once per
 **1. Install devstack**
 
 ```bash
-cd ~/dev/devstack
-go install ./...
+go install github.com/socialviolation/devstack@main
 ```
 
 **2. Register a workspace**
