@@ -188,6 +188,7 @@ func runInitOnboard(cmd *cobra.Command) error {
 	// Build env map
 	serveEnv := map[string]string{
 		"OTEL_EXPORTER_OTLP_ENDPOINT": workspace.OtelOTLPEndpoint(ws),
+		"OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
 	}
 	switch lang {
 	case "dotnet":
@@ -373,8 +374,9 @@ func buildTiltBlock(name, serveCmd, path, lang string, port int, serveEnv map[st
 	sb.WriteString(fmt.Sprintf("    serve_dir=%q,\n", path))
 	sb.WriteString("    serve_env={\n")
 	sb.WriteString(fmt.Sprintf("        %q: %q,\n", "OTEL_EXPORTER_OTLP_ENDPOINT", serveEnv["OTEL_EXPORTER_OTLP_ENDPOINT"]))
+	sb.WriteString(fmt.Sprintf("        %q: %q,\n", "OTEL_EXPORTER_OTLP_PROTOCOL", serveEnv["OTEL_EXPORTER_OTLP_PROTOCOL"]))
 	for k, v := range serveEnv {
-		if k == "OTEL_EXPORTER_OTLP_ENDPOINT" {
+		if k == "OTEL_EXPORTER_OTLP_ENDPOINT" || k == "OTEL_EXPORTER_OTLP_PROTOCOL" {
 			continue
 		}
 		sb.WriteString(fmt.Sprintf("        %q: %q,\n", k, v))
@@ -473,6 +475,15 @@ func buildAgentInstructions(defaultService string, workspacePath string) string 
 	}
 
 	return "\n## Dev Stack (devstack MCP)\n\n" +
+		"devstack is a CLI and MCP server that gives agents programmatic control over a local development stack. " +
+		"It sits on top of [Tilt](https://tilt.dev) to manage service lifecycle, dependency ordering, and observability.\n\n" +
+		"**Concepts:**\n\n" +
+		"| Term | Meaning |\n" +
+		"|------|---------|\n" +
+		"| **Workspace** | A directory of interlinked services sharing a Tiltfile and OTEL stack |\n" +
+		"| **Service** | A single runnable process — API, worker, importer, etc. — managed by Tilt |\n" +
+		"| **Group** | A named set of services you can start/stop together |\n" +
+		"| **Dependency** | An ordering constraint: service A won't start until service B is running |\n\n" +
 		"Local dev only. devstack controls local services and local observability only.\n\n" +
 		contextLine +
 		"```bash\n" +
@@ -489,5 +500,21 @@ func buildAgentInstructions(defaultService string, workspacePath string) string 
 		"1. Check topology before making dependency claims.\n" +
 		"2. Check telemetry status before inferring from missing traces or logs.\n" +
 		"3. Use process logs or runtime state when telemetry is partial or inconclusive.\n" +
-		"4. Do not use devstack against staging or production.\n"
+		"4. Do not use devstack against staging or production.\n\n" +
+		"**Observability:** Services always send traces/logs to the local collector (gRPC `localhost:4317`). " +
+		"The collector routes telemetry upstream — configure with `devstack otel configure`. " +
+		"When no upstream is set, the collector runs in debug mode and telemetry is visible in collector logs. " +
+		"Per-developer endpoint override: set `OTEL_EXPORTER_OTLP_ENDPOINT` in `.envrc`.\n\n" +
+		"### First-time setup on a new machine\n\n" +
+		"If devstack MCP tools aren't responding or the workspace isn't registered yet, run:\n\n" +
+		"```bash\n" +
+		"devstack workspace add <path>        # register a workspace — a group of interlinked services under a directory\n" +
+		"devstack workspace up                # start Tilt + OTEL collector\n" +
+		"devstack init --all                  # regenerate .mcp.json and AGENTS.md for all services\n" +
+		"devstack status                      # verify\n" +
+		"```\n\n" +
+		"If services aren't registered yet (no `.devstack.json` in the workspace):\n\n" +
+		"```bash\n" +
+		"devstack init --name=<service> --path=<path> --cmd=\"<start command>\" --port=<port>\n" +
+		"```\n"
 }

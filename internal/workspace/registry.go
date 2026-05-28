@@ -256,6 +256,10 @@ func DetectFromCwd() (*Workspace, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current directory: %w", err)
 	}
+	// Resolve symlinks so $PWD-based logical paths match the stored canonical path.
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolved
+	}
 
 	workspaces, err := Load()
 	if err != nil {
@@ -263,7 +267,11 @@ func DetectFromCwd() (*Workspace, error) {
 	}
 
 	for _, ws := range workspaces {
-		if cwd == ws.Path || strings.HasPrefix(cwd, ws.Path+"/") {
+		wsPath := ws.Path
+		if resolved, err := filepath.EvalSymlinks(wsPath); err == nil {
+			wsPath = resolved
+		}
+		if cwd == wsPath || strings.HasPrefix(cwd, wsPath+"/") {
 			w := ws
 			return &w, nil
 		}
@@ -299,9 +307,9 @@ func (ws *Workspace) HTTPPort() int {
 	return defaultOtelOTLPHTTPPort
 }
 
-// OtelOTLPEndpoint returns the OTLP HTTP endpoint services should push to.
+// OtelOTLPEndpoint returns the OTLP gRPC endpoint services should push to.
 func OtelOTLPEndpoint(ws *Workspace) string {
-	return fmt.Sprintf("http://localhost:%d", ws.HTTPPort())
+	return fmt.Sprintf("http://localhost:%d", ws.GRPCPort())
 }
 
 // OtelQueryEndpoint returns the SigNoz query API base URL used by MCP tools.

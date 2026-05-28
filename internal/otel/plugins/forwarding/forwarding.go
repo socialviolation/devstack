@@ -22,10 +22,30 @@ type ForwardingPlugin struct{}
 func (p *ForwardingPlugin) Name() string { return "forwarding" }
 
 // CollectorConfig generates YAML to forward telemetry to the configured upstream endpoint.
+// When no upstream is configured, it generates a debug-exporter config so the collector
+// starts and telemetry is visible in collector stdout rather than silently dropped.
 func (p *ForwardingPlugin) CollectorConfig(ws *workspace.Workspace) ([]byte, error) {
 	upstream := ws.PluginConfig("upstream")
+
+	// No upstream configured: use debug exporter so telemetry isn't silently dropped.
 	if upstream == "" {
-		return nil, fmt.Errorf("forwarding plugin requires 'upstream' config key — run: devstack otel configure --plugin=forwarding --set upstream=https://otel.example.com:4318")
+		cfg := `exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [debug]
+    metrics:
+      receivers: [otlp]
+      exporters: [debug]
+    logs:
+      receivers: [otlp]
+      exporters: [debug]
+`
+		return []byte(cfg), nil
 	}
 
 	deploymentEnv := ws.PluginConfig("deployment_env")
@@ -127,11 +147,9 @@ func (p *ForwardingPlugin) CompanionRunning(ws *workspace.Workspace) bool { retu
 // QueryEndpoint returns "" — forwarding has no local UI.
 func (p *ForwardingPlugin) QueryEndpoint(ws *workspace.Workspace) string { return "" }
 
-// Validate checks that the upstream config key is set.
+// Validate always passes — upstream is optional. When not set the collector
+// runs in debug mode and writes telemetry to stdout.
 func (p *ForwardingPlugin) Validate(ws *workspace.Workspace) error {
-	if ws.PluginConfig("upstream") == "" {
-		return fmt.Errorf("forwarding plugin requires 'upstream' config key — run: devstack otel configure --plugin=forwarding --set upstream=https://otel.example.com:4318\nor add an environment with --otlp-endpoint: devstack env add <name> --url=<query-url> --otlp-endpoint=<otlp-url>")
-	}
 	return nil
 }
 
@@ -140,8 +158,8 @@ func (p *ForwardingPlugin) ConfigSchema() []otel.ConfigField {
 	return []otel.ConfigField{
 		{
 			Key:         "upstream",
-			Description: "OTLP endpoint to forward telemetry to (e.g. https://otel.example.com:4318 for HTTP, otel.example.com:4317 for gRPC)",
-			Required:    true,
+			Description: "OTLP endpoint to forward telemetry to (e.g. https://otel.example.com:4318 for HTTP, otel.example.com:4317 for gRPC). When not set, collector runs in debug mode and writes telemetry to stdout.",
+			Required:    false,
 		},
 		{
 			Key:         "protocol",

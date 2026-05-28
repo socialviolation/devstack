@@ -19,11 +19,13 @@ var otelCmd = &cobra.Command{
 	Short: "Manage the local observability stack (traces and logs)",
 	Long: `devstack runs a local otelcol-contrib collector per workspace. Every service
 registered with 'devstack init' is pre-configured to ship OpenTelemetry traces
-and logs to this collector via OTEL_EXPORTER_OTLP_ENDPOINT.
+and logs to this collector via OTEL_EXPORTER_OTLP_ENDPOINT (gRPC on port 4317).
 
-The active plugin controls what the collector does with the telemetry. The default
-plugin is 'signoz', which ships telemetry to a local SigNoz stack. The 'forwarding'
-plugin forwards telemetry to a remote OTLP endpoint.
+By default the collector runs in debug mode — telemetry is written to the collector
+stdout and not forwarded anywhere. Configure an upstream to route telemetry:
+
+  devstack otel configure --plugin=forwarding --set upstream=<host:port> --set protocol=grpc
+  devstack otel configure --plugin=signoz      # opt-in: local SigNoz UI via Docker
 
 The stack starts automatically when you run 'devstack workspace up'.
 
@@ -174,7 +176,7 @@ func runOtelStart(cmd *cobra.Command, args []string) error {
 
 	// If the environment drives forwarding mode, populate plugin config from env
 	// into a local (in-memory only) copy of the workspace. Never saved to disk.
-	if env.Observability.OTLPEndpoint != "" && (ws.OtelPlugin == "" || ws.OtelPlugin == "signoz") {
+	if env.Observability.OTLPEndpoint != "" && ws.OtelPlugin != "signoz" {
 		wsCopy := *ws
 		if wsCopy.OtelPluginConfig == nil {
 			wsCopy.OtelPluginConfig = map[string]string{}
@@ -294,7 +296,7 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("OTEL status for '%s':\n", ws.Name)
 
 	// Show plugin name with env context when env drives forwarding
-	if env.Observability.OTLPEndpoint != "" && (ws.OtelPlugin == "" || ws.OtelPlugin == "signoz") {
+	if env.Observability.OTLPEndpoint != "" && ws.OtelPlugin != "signoz" {
 		fmt.Printf("  plugin:     %s (from environment: %s)\n", pluginName, envName)
 		fmt.Printf("  upstream:   %s\n", env.Observability.OTLPEndpoint)
 	} else {
@@ -320,6 +322,17 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 	if plugin != nil {
 		if queryEndpoint := plugin.QueryEndpoint(ws); queryEndpoint != "" {
 			fmt.Printf("  ui:         %s\n", queryEndpoint)
+		}
+		// Forwarding plugin with no upstream configured → debug/local mode
+		if plugin.Name() == "forwarding" && env.Observability.OTLPEndpoint == "" && ws.PluginConfig("upstream") == "" {
+			fmt.Printf("  mode:       debug (no upstream configured — telemetry logged to collector stdout)\n")
+			fmt.Printf("              To forward: devstack otel configure --plugin=forwarding --set upstream=<host:port> --set protocol=grpc\n")
+		} else if plugin.Name() == "forwarding" {
+			upstream := ws.PluginConfig("upstream")
+			if upstream == "" {
+				upstream = env.Observability.OTLPEndpoint
+			}
+			fmt.Printf("  mode:       forwarding → %s\n", upstream)
 		}
 	}
 
@@ -380,7 +393,7 @@ func runOtelConfigure(cmd *cobra.Command, args []string) error {
 	if pluginNameForValidation == "" {
 		pluginNameForValidation = ws.OtelPlugin
 		if pluginNameForValidation == "" {
-			pluginNameForValidation = "signoz"
+			pluginNameForValidation = "forwarding"
 		}
 	}
 

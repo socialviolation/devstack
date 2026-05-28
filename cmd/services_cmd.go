@@ -8,6 +8,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"devstack/internal/config"
 	"devstack/internal/infra"
@@ -48,7 +49,7 @@ var groupPalette = []*color.Color{
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
-	ws, _, _, err := resolveWorkspaceAndEnv()
+	ws, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
 		return runStatusAll()
 	}

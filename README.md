@@ -16,6 +16,66 @@ Requires Go 1.24+ and [Tilt](https://docs.tilt.dev/install.html) on `$PATH`.
 
 ---
 
+## Getting Started
+
+### New developer setup
+
+If you're joining a team that already uses devstack, follow these steps once per machine. **Claude Code can run all of this for you** — open any repo, ask it to set up your workspace, and it will follow the steps below.
+
+**Prerequisites:** Go 1.24+, [Tilt](https://docs.tilt.dev/install.html), Docker
+
+**1. Install devstack**
+
+```bash
+cd ~/dev/devstack
+go install ./...
+```
+
+**2. Register a workspace**
+
+```bash
+devstack workspace add ~/dev/my-workspace   # register a workspace — a group of interlinked services under a directory
+```
+
+This writes the workspace path and a Tilt port to `~/.config/devstack/workspaces.json`. One-time, per machine.
+
+**3. Start the dev daemon**
+
+```bash
+devstack workspace up
+```
+
+Starts Tilt and the OTEL collector in the background. Leave it running during development.
+
+**4. Generate agent files for all services**
+
+If services are already declared in the workspace's `.devstack.json` (committed to the repo):
+
+```bash
+devstack init --all
+```
+
+This creates (or refreshes) `.mcp.json` and `AGENTS.md` in each service directory. Claude Code reads `.mcp.json` automatically and gains access to devstack MCP tools whenever you open a service repo.
+
+If you're registering services fresh (no `.devstack.json` yet):
+
+```bash
+devstack init --name=<service> --path=~/dev/my-workspace/<service> --cmd="<start command>" --port=<port>
+```
+
+**5. Verify**
+
+```bash
+devstack status       # shows running services
+devstack otel status  # shows collector mode and upstream
+```
+
+**6. Open Claude Code in any service repo**
+
+The devstack MCP server loads automatically from `.mcp.json`. Claude can now start/stop services, read logs, and investigate distributed traces without you pasting output.
+
+---
+
 ## Concepts
 
 | Term | Meaning |
@@ -36,7 +96,7 @@ devstack workspace list              # List all registered workspaces
 devstack workspace add [path]        # Register a directory as a workspace
 devstack workspace remove <name>     # Unregister a workspace
 devstack workspace up                # Start the Tilt dev daemon (background)
-devstack workspace down              # Stop the Tilt dev daemon and SigNoz
+devstack workspace down              # Stop the Tilt dev daemon and OTEL collector
 ```
 
 `devstack ws` is an alias for `devstack workspace`.
@@ -80,16 +140,34 @@ devstack groups add <group> <service> [service...]
 devstack groups remove <group> <service> [service...]
 ```
 
-### Observability (SigNoz)
+### Observability (OTEL collector)
+
+devstack starts a local `otelcol-contrib` collector per workspace. Services always send telemetry to `localhost:4317` (gRPC) — they never need to know where it goes from there. The collector handles routing.
+
+By default the collector runs in **debug mode**: telemetry is written to collector stdout and not forwarded anywhere. Configure an upstream when you're ready:
 
 ```bash
-devstack otel status
-devstack otel start                  # Start the SigNoz container stack
-devstack otel stop
-devstack otel open                   # Open the SigNoz UI in the browser
+# Forward to any OTLP endpoint via gRPC
+devstack otel configure --plugin=forwarding --set upstream=telemetry.example.com:443 --set protocol=grpc
+
+# Forward via HTTP
+devstack otel configure --plugin=forwarding --set upstream=https://otel.example.com:4318
+
+# Opt-in to local SigNoz UI (requires Docker — spins up ClickHouse + SigNoz)
+devstack otel configure --plugin=signoz
 ```
 
-Flags for `start`: `--ui-port` (default 3301), `--otlp-grpc-port` (default 4317), `--otlp-http-port` (default 4318).
+Per-developer endpoint override: set `OTEL_EXPORTER_OTLP_ENDPOINT` in `.envrc` in any service repo.
+
+```bash
+devstack otel status                 # show mode, ports, upstream
+devstack otel start                  # start the collector (and companion if signoz)
+devstack otel stop
+devstack otel open                   # open the UI (signoz only)
+devstack otel plugins                # list available plugins and their config keys
+```
+
+Flags for `start`: `--otlp-grpc-port` (default 4317), `--otlp-http-port` (default 4318), `--ui-port` (default 3301, signoz only).
 
 ### MCP Server
 
