@@ -61,10 +61,10 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./config.json)")
 	_ = rootCmd.PersistentFlags().MarkHidden("config")
 
-	// Dashboard (internal dev daemon) connection
-	rootCmd.PersistentFlags().Int("dashboard-port", 10350, "Dashboard port")
-	rootCmd.PersistentFlags().String("dashboard-host", "localhost", "Dashboard host")
-	_ = rootCmd.PersistentFlags().MarkHidden("dashboard-host")
+	// Dev daemon connection
+	rootCmd.PersistentFlags().Int("daemon-port", 10350, "Dev daemon API port")
+	rootCmd.PersistentFlags().String("daemon-host", "localhost", "Dev daemon host")
+	_ = rootCmd.PersistentFlags().MarkHidden("daemon-host")
 
 	// Default service context
 	rootCmd.PersistentFlags().String("default-service", "", "Default service name when none is specified (env: DEVSTACK_DEFAULT_SERVICE)")
@@ -76,8 +76,8 @@ func init() {
 	rootCmd.PersistentFlags().String("env", "local", "Active environment name (env: DEVSTACK_ENVIRONMENT)")
 
 	// Bind flags to viper (keep internal keys stable)
-	viper.BindPFlag("tilt.port", rootCmd.PersistentFlags().Lookup("dashboard-port"))
-	viper.BindPFlag("tilt.host", rootCmd.PersistentFlags().Lookup("dashboard-host"))
+	viper.BindPFlag("tilt.port", rootCmd.PersistentFlags().Lookup("daemon-port"))
+	viper.BindPFlag("tilt.host", rootCmd.PersistentFlags().Lookup("daemon-host"))
 	viper.BindPFlag("default_service", rootCmd.PersistentFlags().Lookup("default-service"))
 	viper.BindPFlag("workspace", rootCmd.PersistentFlags().Lookup("workspace"))
 	viper.BindPFlag("environment", rootCmd.PersistentFlags().Lookup("env"))
@@ -93,9 +93,9 @@ func initConfig() {
 		viper.AddConfigPath("$HOME/.devstack")
 	}
 
-	// Environment variable bindings
-	viper.BindEnv("tilt.port", "TILT_PORT")
-	viper.BindEnv("tilt.host", "TILT_HOST")
+	// Environment variable bindings (new devstack names, with legacy TILT_* fallback)
+	viper.BindEnv("tilt.port", "DEVSTACK_DAEMON_PORT", "TILT_PORT")
+	viper.BindEnv("tilt.host", "DEVSTACK_DAEMON_HOST", "TILT_HOST")
 	viper.BindEnv("default_service", "DEVSTACK_DEFAULT_SERVICE")
 	viper.BindEnv("workspace", "DEVSTACK_WORKSPACE")
 	viper.BindEnv("environment", "DEVSTACK_ENVIRONMENT")

@@ -25,10 +25,10 @@ const (
 
 // ObservabilityConfig holds the connection config for an observability backend.
 type ObservabilityConfig struct {
-	Backend      string `json:"backend"`                    // "signoz" (default and only supported value)
-	URL          string `json:"url"`                        // Base URL, e.g. "http://localhost:3301"
-	OTLPEndpoint string `json:"otlp_endpoint,omitempty"`    // OTLP ingestion URL for collector (e.g. https://otel.company.com:4318)
-	APIKey       string `json:"api_key,omitempty"`          // Optional API key for remote instances
+	Backend      string `json:"backend"`                 // "signoz" (default and only supported value)
+	URL          string `json:"url"`                     // Base URL, e.g. "http://localhost:3301"
+	OTLPEndpoint string `json:"otlp_endpoint,omitempty"` // OTLP ingestion URL for collector (e.g. https://otel.company.com:4318)
+	APIKey       string `json:"api_key,omitempty"`       // Optional API key for remote instances
 }
 
 // Environment represents a named deployment target with associated observability config.
@@ -57,6 +57,11 @@ type Workspace struct {
 	// Environments is an optional map of named environments (local, staging, prod, etc).
 	// When absent, the MCP server synthesizes a "local" environment from the legacy flat fields above.
 	Environments map[string]Environment `json:"environments,omitempty"`
+
+	// Tunnel remote defaults for `devstack tunnel push/pull`. Machine-specific, so
+	// they live in the per-user registry rather than the committed project config.
+	TunnelHost string `json:"tunnel_host,omitempty"`
+	TunnelUser string `json:"tunnel_user,omitempty"`
 }
 
 // OverlayProjectConfig reads the workspace's .devstack.json and overlays any OTEL
@@ -353,6 +358,27 @@ func UpdateOtelPorts(name string, uiPort, grpcPort, httpPort int) error {
 			}
 			if httpPort > 0 {
 				workspaces[i].OtelOTLPHTTPPort = httpPort
+			}
+			return Save(workspaces)
+		}
+	}
+	return fmt.Errorf("workspace %q not found", name)
+}
+
+// UpdateTunnelRemote persists the default tunnel host/user for a named workspace.
+// Empty values are left unchanged so a --user override doesn't wipe a saved host.
+func UpdateTunnelRemote(name, host, user string) error {
+	workspaces, err := Load()
+	if err != nil {
+		return err
+	}
+	for i, ws := range workspaces {
+		if strings.ToLower(ws.Name) == strings.ToLower(name) {
+			if host != "" {
+				workspaces[i].TunnelHost = host
+			}
+			if user != "" {
+				workspaces[i].TunnelUser = user
 			}
 			return Save(workspaces)
 		}

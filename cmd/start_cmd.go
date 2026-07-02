@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/infra"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -101,6 +102,14 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to open log file %s: %w", logFile, err)
 	}
 	defer lf.Close()
+
+	// 5b. Regenerate the Tiltfile from manifests (manifest-based workspaces only;
+	// legacy Tiltfile/.devstack.json workspaces are left untouched).
+	if config.HasWorkspaceManifest(ws.Path) {
+		if _, err := regenerateTiltfile(ws); err != nil {
+			return fmt.Errorf("failed to generate Tiltfile from manifests: %w", err)
+		}
+	}
 
 	// 6. Start daemon
 	tiltCmd := exec.Command("tilt", "up", "--host", "0.0.0.0", "--port", strconv.Itoa(ws.TiltPort))

@@ -22,7 +22,7 @@ func init() {
 	rootCmd.AddCommand(registerCmd)
 	registerCmd.Flags().String("name", "", "Workspace name (default: basename of --path or cwd)")
 	registerCmd.Flags().String("path", "", "Workspace root directory (default: current working directory)")
-	registerCmd.Flags().Int("port", 0, "Tilt API port (default: auto-assigned)")
+	registerCmd.Flags().Int("port", 0, "Dev daemon API port (default: auto-assigned)")
 }
 
 func runRegister(cmd *cobra.Command, args []string) error {

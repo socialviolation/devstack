@@ -58,13 +58,62 @@ var workspaceRemoveCmd = &cobra.Command{
 	RunE:  runWorkspaceRemove,
 }
 
+var workspaceScaffoldServiceCmd = &cobra.Command{
+	Use:   "scaffold-service [name]",
+	Short: "Write an educational devstack.service.yaml in the current (or given) repo",
+	Long: `Scaffold a fully-commented devstack.service.yaml that teaches how a service
+is declared (run command, ports, healthcheck, env, links). Writes into the
+current directory by default; name defaults to the directory basename.`,
+	Args:         cobra.MaximumNArgs(1),
+	SilenceUsage: true,
+	RunE:         runWorkspaceScaffoldService,
+}
+
 func init() {
 	rootCmd.AddCommand(workspaceCmd)
 	workspaceCmd.AddCommand(workspaceAddCmd)
 	workspaceCmd.AddCommand(workspaceRemoveCmd)
+	workspaceCmd.AddCommand(workspaceScaffoldServiceCmd)
 
 	workspaceAddCmd.Flags().String("name", "", "Workspace name (default: directory basename)")
 	workspaceAddCmd.Flags().Int("port", 0, "Dashboard port (default: auto-assign)")
+	workspaceAddCmd.Flags().Bool("no-scaffold", false, "Don't create a devstack.workspace.yaml")
+
+	workspaceScaffoldServiceCmd.Flags().String("name", "", "Service name (default: directory basename)")
+	workspaceScaffoldServiceCmd.Flags().String("dir", "", "Directory to write into (default: current directory)")
+	workspaceScaffoldServiceCmd.Flags().Bool("force", false, "Overwrite an existing devstack.service.yaml")
+}
+
+func runWorkspaceScaffoldService(cmd *cobra.Command, args []string) error {
+	dir, _ := cmd.Flags().GetString("dir")
+	if dir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		dir = cwd
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+
+	name, _ := cmd.Flags().GetString("name")
+	if name == "" && len(args) > 0 {
+		name = args[0]
+	}
+	if name == "" {
+		name = filepath.Base(abs)
+	}
+	force, _ := cmd.Flags().GetBool("force")
+
+	path, err := scaffoldServiceManifest(abs, name, force)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("✓ Wrote %s\n", path)
+	fmt.Println("  Fill in runtime.run.command, then add this repo to devstack.workspace.yaml's repos list.")
+	return nil
 }
 
 func runWorkspaceList(cmd *cobra.Command, args []string) error {
@@ -153,6 +202,22 @@ func runWorkspaceAdd(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("✓ Registered workspace '%s' at %s (dashboard port: %d)\n",
 		registered.Name, registered.Path, registered.TiltPort)
+
+	// Bootstrap an educational workspace manifest for fresh workspaces. Leave
+	// legacy .devstack.json workspaces alone (migrate deliberately).
+	noScaffold, _ := cmd.Flags().GetBool("no-scaffold")
+	if !noScaffold {
+		if hasLegacyConfig(path) {
+			fmt.Println("  Found legacy .devstack.json — run 'devstack generate' after migrating it to manifests.")
+		} else {
+			wrote, err := scaffoldWorkspaceManifest(path, registered.Name)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  warning: could not scaffold manifest: %v\n", err)
+			} else if wrote {
+				fmt.Printf("  ✓ Created %s — edit it, then 'devstack workspace scaffold-service' in each repo.\n", config.WorkspaceManifestFileName)
+			}
+		}
+	}
 	return nil
 }
 

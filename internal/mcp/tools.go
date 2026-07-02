@@ -19,6 +19,7 @@ import (
 	_ "github.com/socialviolation/devstack/internal/observability/signoz" // register signoz backend
 	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/tilt"
+	"github.com/socialviolation/devstack/internal/tunnel"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -63,6 +64,7 @@ func RegisterTools(
 		registerConfigureTool(mcpServer, tiltClient)
 		registerProcessLogsTool(mcpServer, tiltClient, defaultService, cfg)
 		registerServiceEnvTool(mcpServer, tiltClient, ws, workspacePath)
+		registerTunnelTool(mcpServer, tiltClient, ws)
 	} else {
 		// Remote-only tools
 		registerRemoteStatusTool(mcpServer, backend, activeEnvName, activeEnv.Observability.URL)
@@ -146,7 +148,7 @@ func availableGroups(cfg *config.WorkspaceConfig) string {
 
 func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, serviceDirs map[string]string, cfg *config.WorkspaceConfig) {
 	tool := mcp.NewTool("status",
-		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack (via Tilt). Status reflects current Tilt resource state — these are locally running services managed by Tilt, not production. Returns SERVICE, STATUS (idle/starting/running/building/error/disabled), PORT(S), PATH (source directory), GROUP, and last error. Also shows a groups summary. 'idle' means the service is known to Tilt but not currently running (not started yet, or was stopped). 'running' means the process is up. 'disabled' means it was explicitly stopped."),
+		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack. Status reflects the current state of locally running dev services, not production. Returns SERVICE, STATUS (idle/starting/running/building/error/disabled), PORT(S), PATH (source directory), GROUP, and last error. Also shows a groups summary. 'idle' means the service is known but not currently running (not started yet, or was stopped). 'running' means the process is up. 'disabled' means it was explicitly stopped."),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -222,9 +224,9 @@ func shortenPath(path string) string {
 
 func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, cfg *config.WorkspaceConfig) {
 	tool := mcp.NewTool("restart",
-		mcp.WithDescription("Restart a specific service or all services in a group in the LOCAL dev stack by triggering a rebuild. Operates on local Tilt services only — service name must be exact. If neither service nor group is given, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
+		mcp.WithDescription("Restart a specific service or all services in a group in the LOCAL dev stack by triggering a rebuild. Operates on local dev services only — service name must be exact. If neither service nor group is given, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
 		mcp.WithString("service",
-			mcp.Description("Exact Tilt resource name or configured alias (e.g. 'api-service'). NOT a description or partial match. If omitted, uses the default service for this repo (unless group is given)."),
+			mcp.Description("Exact service name or configured alias (e.g. 'api-service'). NOT a description or partial match. If omitted, uses the default service for this repo (unless group is given)."),
 		),
 		mcp.WithString("group",
 			mcp.Description("Group name to restart. All services in the group are restarted in parallel. Cannot be combined with service."),
@@ -326,9 +328,9 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 
 func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg *config.WorkspaceConfig) {
 	tool := mcp.NewTool("stop",
-		mcp.WithDescription("Stop (disable) one service, all services in a group, or all services in the LOCAL dev stack. Operates on local Tilt services only — service name must be exact. If service is given, stops that service. If group is given, stops all services in the group. If neither is given, stops all services. Cannot specify both service and group."),
+		mcp.WithDescription("Stop (disable) one service, all services in a group, or all services in the LOCAL dev stack. Operates on local dev services only — service name must be exact. If service is given, stops that service. If group is given, stops all services in the group. If neither is given, stops all services. Cannot specify both service and group."),
 		mcp.WithString("service",
-			mcp.Description("Exact Tilt resource name or alias to stop (e.g. 'api-service'). NOT a description or partial match. If omitted, all services are stopped (unless group is given)."),
+			mcp.Description("Exact service name or alias to stop (e.g. 'api-service'). NOT a description or partial match. If omitted, all services are stopped (unless group is given)."),
 		),
 		mcp.WithString("group",
 			mcp.Description("Group name to stop. All services in the group are stopped in parallel. Cannot be combined with service."),
@@ -434,9 +436,9 @@ func filterErrorLines(raw string) []string {
 
 func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, cfg *config.WorkspaceConfig) {
 	tool := mcp.NewTool("process_logs",
-		mcp.WithDescription("Fetch raw stdout/stderr from a locally running Tilt-managed service process. NOT a log search engine — fetches live process output directly from Tilt. Parameters are structured: exact service name, integer line count, boolean flags. Natural language queries are NOT accepted. Example: service='api-service' lines=100 since_restart=true. Use for services not instrumented with OTEL or when you need unstructured process output. If no service is given, uses the default or fetches all services in parallel. Supports grep filtering, paging via offset, and since_restart to isolate post-startup output. When group is given, fetches logs from all services in the group concurrently. Cannot specify both service and group."),
+		mcp.WithDescription("Fetch raw stdout/stderr from a locally running dev service process. NOT a log search engine — fetches live process output directly from the dev daemon. Parameters are structured: exact service name, integer line count, boolean flags. Natural language queries are NOT accepted. Example: service='api-service' lines=100 since_restart=true. Use for services not instrumented with OTEL or when you need unstructured process output. If no service is given, uses the default or fetches all services in parallel. Supports grep filtering, paging via offset, and since_restart to isolate post-startup output. When group is given, fetches logs from all services in the group concurrently. Cannot specify both service and group."),
 		mcp.WithString("service",
-			mcp.Description("Exact service name or alias as registered in Tilt (e.g. 'api-service'). NOT a description or partial match. If omitted, uses the default service for this repo or fetches all."),
+			mcp.Description("Exact service name or alias (e.g. 'api-service'). NOT a description or partial match. If omitted, uses the default service for this repo or fetches all."),
 		),
 		mcp.WithString("group",
 			mcp.Description("Group name. Fetches logs from all services in the group concurrently, prefixed with service name. Cannot be combined with service."),
@@ -454,7 +456,7 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			mcp.Description("Number of lines before and after each grep match to include (like grep -C N). Only used when grep is set. Defaults to 0."),
 		),
 		mcp.WithBoolean("since_restart",
-			mcp.Description("If true, return only lines since the last deploy/restart of the service. Uses the Tilt deploy timestamp — no heuristics. Defaults to true."),
+			mcp.Description("If true, return only lines since the last deploy/restart of the service. Uses the dev daemon's deploy timestamp — no heuristics. Defaults to true."),
 		),
 		mcp.WithBoolean("errors_only",
 			mcp.Description("If true, return only lines matching error/exception/panic/fatal/fail. Defaults to false."),
@@ -728,7 +730,7 @@ func applyGrep(lines []string, re *regexp.Regexp, contextLines int) []string {
 
 func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
 	tool := mcp.NewTool("configure",
-		mcp.WithDescription("Set a Tilt runtime argument (key=value) that controls how services are configured. Passed via `tilt args -- key=value`. Use this to change feature flags, modes, or other Tilt-managed config. Affected services will restart automatically."),
+		mcp.WithDescription("Set a dev daemon runtime argument (key=value) that controls how services are configured. Use this to change feature flags, modes, or other runtime config. Affected services will restart automatically."),
 		mcp.WithString("key",
 			mcp.Required(),
 			mcp.Description("The argument key (e.g. 'env', 'debug', 'profile')."),
@@ -751,7 +753,162 @@ func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client)
 			return mcp.NewToolResultError(fmt.Sprintf("failed to set %s=%s: %v\n%s", key, value, err, out)), nil
 		}
 
-		return mcp.NewToolResultText(fmt.Sprintf("Set %s=%s. Tilt will restart affected services.", key, value)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("Set %s=%s. Affected services will restart automatically.", key, value)), nil
+	})
+}
+
+func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws *workspace.Workspace) {
+	tool := mcp.NewTool("tunnel",
+		mcp.WithDescription("Forward this workspace's LOCAL service ports to/from a remote host over SSH, so a remote machine can reach services running on this dev box. "+
+			"Requires key-based SSH access to the remote (no passwords) — if keys aren't installed you'll get instructions to run ssh-copy-id. "+
+			"Only ports that are actually serving traffic are forwarded; dead/idle services are skipped. "+
+			"The remote host/user are remembered per-workspace after the first successful push, so later calls can omit them. "+
+			"Actions: 'list' (discovered services + whether each is serving), 'status' (which tunnels are currently up), "+
+			"'push' (expose local ports on the remote via ssh -R — the common case), 'pull' (pull ports from a source machine to here via ssh -L), "+
+			"'stop' (tear down all tunnels), 'set-remote' (save the default host/user without connecting)."),
+		mcp.WithString("action", mcp.Required(),
+			mcp.Description("One of: list, status, push, pull, stop, set-remote.")),
+		mcp.WithString("host",
+			mcp.Description("Remote host or SSH config alias (e.g. 'macbook'). Optional if a default is saved for this workspace; required for set-remote.")),
+		mcp.WithString("user",
+			mcp.Description("SSH user. Optional — falls back to the saved user for this workspace.")),
+		mcp.WithString("services",
+			mcp.Description("Comma-separated exact service names to limit to. Optional; default is all serving services.")),
+	)
+
+	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if ws == nil {
+			return mcp.NewToolResultError("no workspace resolved for tunnels"), nil
+		}
+		action := strings.ToLower(request.GetString("action", ""))
+		host := request.GetString("host", "")
+		user := request.GetString("user", "")
+
+		// set-remote is pure config — no Tilt needed.
+		if action == "set-remote" {
+			if host == "" {
+				return mcp.NewToolResultError("set-remote requires a host"), nil
+			}
+			if user == "" {
+				user = ws.TunnelUser
+			}
+			if err := workspace.UpdateTunnelRemote(ws.Name, host, user); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(fmt.Sprintf("Saved tunnel remote for %s: %s@%s", ws.Name, user, host)), nil
+		}
+
+		view, err := tiltClient.GetView()
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		filter := map[string]bool{}
+		for _, s := range strings.Split(request.GetString("services", ""), ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				filter[s] = true
+			}
+		}
+		svcs := tunnel.Discover(view, filter)
+		sort.Slice(svcs, func(i, j int) bool { return svcs[i].Port < svcs[j].Port })
+
+		switch action {
+		case "list":
+			var sb strings.Builder
+			sb.WriteString("Discovered services:\n")
+			for _, s := range svcs {
+				state := "not serving"
+				if tunnel.Listening(s.Port) {
+					state = "serving"
+				}
+				fmt.Fprintf(&sb, "  %-30s :%d  (%s)\n", s.Name, s.Port, state)
+			}
+			return mcp.NewToolResultText(sb.String()), nil
+
+		case "status":
+			var sb strings.Builder
+			if ws.TunnelHost != "" {
+				fmt.Fprintf(&sb, "remote: %s@%s\n", ws.TunnelUser, ws.TunnelHost)
+			}
+			for _, s := range svcs {
+				state := "down"
+				if tunnel.IsUp(ws.Name, s.Port) {
+					state = "up"
+				}
+				fmt.Fprintf(&sb, "  [%-4s] %-30s :%d\n", state, s.Name, s.Port)
+			}
+			return mcp.NewToolResultText(sb.String()), nil
+
+		case "stop":
+			for _, s := range svcs {
+				tunnel.KillPort(ws.Name, s.Port)
+			}
+			return mcp.NewToolResultText(fmt.Sprintf("Stopped tunnels for %d service(s).", len(svcs))), nil
+
+		case "push", "pull":
+			mode := tunnel.ModePush
+			if action == "pull" {
+				mode = tunnel.ModePull
+			}
+			rhost := host
+			if rhost == "" {
+				rhost = ws.TunnelHost
+			}
+			if rhost == "" {
+				return mcp.NewToolResultError("no remote host given and none saved. Pass host, or call action=set-remote first."), nil
+			}
+			ruser := user
+			if ruser == "" {
+				ruser = ws.TunnelUser
+			}
+			if ruser == "" {
+				return mcp.NewToolResultError("no SSH user given and none saved. Pass user, or call action=set-remote first."), nil
+			}
+
+			var skipped []tunnel.Service
+			if mode == tunnel.ModePush {
+				svcs, skipped = tunnel.PartitionServing(svcs)
+			}
+			if len(svcs) == 0 {
+				return mcp.NewToolResultText("No serving ports to forward right now. Start the services first (devstack start)."), nil
+			}
+
+			if cerr := tunnel.CheckConnectivity(ruser, rhost); cerr != nil {
+				return mcp.NewToolResultText(fmt.Sprintf(
+					"Can't open an SSH session to %s@%s.\nssh: %s\n\ndevstack tunnels use key-based SSH (no passwords). Enable it with:\n  1. ssh %s@%s\n  2. ssh-copy-id %s@%s\n  3. retry this tool.",
+					ruser, rhost, cerr, ruser, rhost, ruser, rhost)), nil
+			}
+
+			// Remember an explicitly provided remote now that it's known to work.
+			if host != "" || user != "" {
+				_ = workspace.UpdateTunnelRemote(ws.Name, rhost, ruser)
+			}
+
+			if mode == tunnel.ModePush {
+				ports := make([]int, len(svcs))
+				for i, s := range svcs {
+					ports[i] = s.Port
+				}
+				tunnel.ReclaimRemote(ruser, rhost, ports)
+			}
+
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "%s tunnels → %s@%s\n", strings.ToUpper(action), ruser, rhost)
+			for _, s := range skipped {
+				fmt.Fprintf(&sb, "  [skip]    %-30s :%d  (not serving)\n", s.Name, s.Port)
+			}
+			for _, s := range svcs {
+				pid, lerr := tunnel.Launch(ws.Name, mode, ruser, rhost, s.Port)
+				if lerr != nil {
+					fmt.Fprintf(&sb, "  [FAILED]  %-30s :%d  (%v)\n", s.Name, s.Port, lerr)
+					continue
+				}
+				fmt.Fprintf(&sb, "  [started] %-30s :%d  (pid %d)\n", s.Name, s.Port, pid)
+			}
+			return mcp.NewToolResultText(sb.String()), nil
+
+		default:
+			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — use list, status, push, pull, stop, or set-remote", action)), nil
+		}
 	})
 }
 
@@ -812,7 +969,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			mcp.Description("Specific span ID to look up. Finds the trace containing this span. Ignored if trace_id is given."),
 		),
 		mcp.WithString("service",
-			mcp.Description("Exact service name as registered in Tilt/SignOz (e.g. 'api-service'). NOT a description or partial match. Only applied in mode 3 (no trace_id or attribute given); attribute searches and trace lookups span all services."),
+			mcp.Description("Exact service name as registered in SignOz (e.g. 'api-service'). NOT a description or partial match. Only applied in mode 3 (no trace_id or attribute given); attribute searches and trace lookups span all services."),
 		),
 		mcp.WithString("attribute",
 			mcp.Description("Exact attribute key to search by (e.g. 'portfolio.id', 'user.id', 'process.id'). NOT natural language. Requires value parameter."),

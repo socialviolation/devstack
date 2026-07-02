@@ -30,9 +30,17 @@ type WorkspaceManifest struct {
 	Workspace     WorkspaceManifestWorkspace      `yaml:"workspace"`
 	Runtime       WorkspaceManifestRuntime        `yaml:"runtime,omitempty"`
 	Observability WorkspaceManifestObservability  `yaml:"observability,omitempty"`
+	Env           WorkspaceManifestEnv            `yaml:"env,omitempty"`
 	Groups        map[string][]string             `yaml:"groups,omitempty"`
 	Dependencies  map[string][]string             `yaml:"dependencies,omitempty"`
 	Environments  map[string]WorkspaceEnvironment `yaml:"environments,omitempty"`
+}
+
+// WorkspaceManifestEnv holds environment defaults that trickle down to every
+// service in the workspace. A service's own env.values override these.
+type WorkspaceManifestEnv struct {
+	Values map[string]string `yaml:"values,omitempty"`
+	Files  []string          `yaml:"files,omitempty"`
 }
 
 type WorkspaceManifestWorkspace struct {
@@ -88,8 +96,15 @@ type ServiceManifest struct {
 	Runtime   ServiceRuntime         `yaml:"runtime,omitempty"`
 	Ports     map[string]int         `yaml:"ports,omitempty"`
 	Env       ServiceEnv             `yaml:"env,omitempty"`
+	Links     []ServiceLink          `yaml:"links,omitempty"`
 	Telemetry ServiceTelemetry       `yaml:"telemetry,omitempty"`
 	Dev       map[string]any         `yaml:"dev,omitempty"`
+}
+
+// ServiceLink is a named URL surfaced in the dev daemon UI for a service.
+type ServiceLink struct {
+	URL   string `yaml:"url"`
+	Label string `yaml:"label,omitempty"`
 }
 
 type ServiceManifestService struct {
@@ -100,11 +115,25 @@ type ServiceManifestService struct {
 type ServiceRuntime struct {
 	WorkDir     string             `yaml:"workDir,omitempty"`
 	Run         ServiceRun         `yaml:"run,omitempty"`
+	Prep        ServicePrep        `yaml:"prep,omitempty"`
 	Restart     ServiceRestart     `yaml:"restart,omitempty"`
 	Healthcheck ServiceHealthcheck `yaml:"healthcheck,omitempty"`
+	// TriggerMode is "manual" (start via devstack) or "auto" (start with the
+	// daemon and re-run on change). Empty defaults to "manual".
+	TriggerMode string `yaml:"triggerMode,omitempty"`
+	// AutoStart starts the service as soon as the daemon comes up. Default false.
+	AutoStart bool `yaml:"autoStart,omitempty"`
+	// Watch lists file/directory paths that re-trigger the service on change.
+	Watch []string `yaml:"watch,omitempty"`
 }
 
 type ServiceRun struct {
+	Command string `yaml:"command,omitempty"`
+}
+
+// ServicePrep is a one-shot command run before the long-running service command
+// (e.g. freeing a port or a build step).
+type ServicePrep struct {
 	Command string `yaml:"command,omitempty"`
 }
 
@@ -113,13 +142,24 @@ type ServiceRestart struct {
 }
 
 type ServiceHealthcheck struct {
+	// Type is "http" or "exec". Empty means no healthcheck.
 	Type string `yaml:"type,omitempty"`
+	// URL is used by http checks (full URL). Alternatively Port+Path.
 	URL  string `yaml:"url,omitempty"`
+	Port int    `yaml:"port,omitempty"`
+	Path string `yaml:"path,omitempty"`
+	// Command is the shell command for exec checks (success = healthy).
+	Command string `yaml:"command,omitempty"`
+	// Probe tuning. Zero values fall back to generator defaults.
+	PeriodSecs       int `yaml:"periodSecs,omitempty"`
+	FailureThreshold int `yaml:"failureThreshold,omitempty"`
 }
 
 type ServiceEnv struct {
-	Files    []string `yaml:"files,omitempty"`
-	Required []string `yaml:"required,omitempty"`
+	// Values are inline KEY=VALUE pairs for this service (override workspace env).
+	Values   map[string]string `yaml:"values,omitempty"`
+	Files    []string          `yaml:"files,omitempty"`
+	Required []string          `yaml:"required,omitempty"`
 }
 
 type ServiceTelemetry struct {

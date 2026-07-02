@@ -70,7 +70,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		fmt.Fprintf(os.Stderr, "Warning: no PID file found but daemon is reachable — it may have been started outside devstack\n")
-		fmt.Printf("  ✓ Tilt stopped\n")
+		fmt.Printf("  ✓ Dev daemon stopped\n")
 		return nil
 	}
 
@@ -121,7 +121,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Warning: failed to update session state: %v\n", err)
 	}
 
-	fmt.Printf("  ✓ Tilt stopped\n")
+	fmt.Printf("  ✓ Dev daemon stopped\n")
 
 	// 6. Stop observability stack
 	if isOtelRunning(ws) {
@@ -179,7 +179,7 @@ func runDownAll() error {
 			proc.Kill()
 		}
 		os.Remove(pidFile)
-		fmt.Printf("  ✓ Tilt stopped\n")
+		fmt.Printf("  ✓ Dev daemon stopped\n")
 
 		if isOtelRunning(&ws) {
 			localEnv, _ := ws.ResolveEnvironment("local")

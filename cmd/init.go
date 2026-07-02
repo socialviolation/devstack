@@ -422,7 +422,7 @@ func writeMCPJson(mcpFile, serviceName string, ws *workspace.Workspace) error {
 				Command: "devstack",
 				Args:    []string{"serve", "--transport=stdio"},
 				Env: map[string]string{
-					"TILT_PORT":                strconv.Itoa(ws.TiltPort),
+					"DEVSTACK_DAEMON_PORT":     strconv.Itoa(ws.TiltPort),
 					"DEVSTACK_WORKSPACE":       ws.Path,
 					"DEVSTACK_DEFAULT_SERVICE": serviceName,
 				},
@@ -480,8 +480,8 @@ func buildAgentInstructions(defaultService string, workspacePath string) string 
 		"**Concepts:**\n\n" +
 		"| Term | Meaning |\n" +
 		"|------|---------|\n" +
-		"| **Workspace** | A directory of interlinked services sharing a Tiltfile and OTEL stack |\n" +
-		"| **Service** | A single runnable process — API, worker, importer, etc. — managed by Tilt |\n" +
+		"| **Workspace** | A directory of interlinked services sharing a dev daemon and OTEL stack |\n" +
+		"| **Service** | A single runnable process — API, worker, importer, etc. — managed by the dev daemon |\n" +
 		"| **Group** | A named set of services you can start/stop together |\n" +
 		"| **Dependency** | An ordering constraint: service A won't start until service B is running |\n\n" +
 		"Local dev only. devstack controls local services and local observability only.\n\n" +

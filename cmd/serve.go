@@ -35,6 +35,7 @@ TOOLS EXPOSED TO AI AGENTS
   process_logs    fetch stdout/stderr from a service          [local only]
   investigate     correlated traces + logs in one call — primary diagnostic tool
   configure       set a Tilt runtime argument                 [local only]
+  tunnel          forward local service ports to/from a remote over SSH [local only]
 
 TRANSPORT
   stdio (default)   used by Claude Code and most AI tooling

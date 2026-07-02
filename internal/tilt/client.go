@@ -96,8 +96,8 @@ func isRealService(name string) bool {
 	return len(name) == 0 || name[0] != '('
 }
 
-// GetView fetches the current Tilt state from the HTTP API.
-// Returns a descriptive error if Tilt is not running.
+// GetView fetches the current dev daemon state from the HTTP API.
+// Returns a descriptive error if the daemon is not running.
 // Pseudo-resources (names starting with "(") are filtered from the result.
 func (c *Client) GetView() (*TiltView, error) {
 	url := fmt.Sprintf("http://%s:%d/api/view", c.host, c.currentPort())
@@ -105,7 +105,7 @@ func (c *Client) GetView() (*TiltView, error) {
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	resp, err := httpClient.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("Tilt is not running. Start it with: `tilt up`")
+		return nil, fmt.Errorf("dev daemon is not running. Start it with: `devstack up`")
 	}
 	defer resp.Body.Close()
 

@@ -63,6 +63,87 @@ runtime:
 	}
 }
 
+func TestManifestExtendedFields(t *testing.T) {
+	workspaceDir := t.TempDir()
+	apiDir := filepath.Join(workspaceDir, "repos", "api")
+
+	mustWriteFile(t, filepath.Join(workspaceDir, WorkspaceManifestFileName), `version: 1
+workspace:
+  name: playground
+  repoDiscovery:
+    mode: explicit
+    repos:
+      - ./repos/api
+env:
+  values:
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://localhost:4317
+    DATABASE_HOST: localhost
+groups:
+  backend:
+    - api
+`)
+	mustWriteFile(t, filepath.Join(apiDir, ServiceManifestFileName), `version: 1
+service:
+  name: api
+runtime:
+  workDir: src/App
+  run:
+    command: dotnet run
+  prep:
+    command: fuser -k 8080/tcp
+  triggerMode: auto
+  autoStart: true
+  watch:
+    - ./bin
+  healthcheck:
+    type: exec
+    command: bash -c "curl -sf http://localhost:8080/"
+    periodSecs: 5
+    failureThreshold: 12
+ports:
+  http: 8080
+env:
+  values:
+    OTEL_SERVICE_NAME: api
+links:
+  - url: http://localhost:8080
+    label: API
+`)
+
+	rw, err := ResolveWorkspace(workspaceDir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace(): %v", err)
+	}
+
+	if got := rw.Manifest.Env.Values["DATABASE_HOST"]; got != "localhost" {
+		t.Errorf("workspace env DATABASE_HOST = %q, want localhost", got)
+	}
+
+	svc := rw.Services["api"]
+	if svc.Manifest == nil {
+		t.Fatal("api manifest is nil")
+	}
+	m := svc.Manifest
+	if m.Runtime.Prep.Command != "fuser -k 8080/tcp" {
+		t.Errorf("prep = %q", m.Runtime.Prep.Command)
+	}
+	if m.Runtime.TriggerMode != "auto" || !m.Runtime.AutoStart {
+		t.Errorf("triggerMode=%q autoStart=%v", m.Runtime.TriggerMode, m.Runtime.AutoStart)
+	}
+	if len(m.Runtime.Watch) != 1 || m.Runtime.Watch[0] != "./bin" {
+		t.Errorf("watch = %#v", m.Runtime.Watch)
+	}
+	if m.Runtime.Healthcheck.Type != "exec" || m.Runtime.Healthcheck.FailureThreshold != 12 {
+		t.Errorf("healthcheck = %#v", m.Runtime.Healthcheck)
+	}
+	if m.Env.Values["OTEL_SERVICE_NAME"] != "api" {
+		t.Errorf("service env = %#v", m.Env.Values)
+	}
+	if len(m.Links) != 1 || m.Links[0].URL != "http://localhost:8080" || m.Links[0].Label != "API" {
+		t.Errorf("links = %#v", m.Links)
+	}
+}
+
 func TestResolveWorkspaceScanMode(t *testing.T) {
 	workspaceDir := t.TempDir()
 	apiDir := filepath.Join(workspaceDir, "services", "api")
