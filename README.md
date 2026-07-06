@@ -12,7 +12,7 @@ Devstack sits on top of Tilt to handle workspace registration, service dependenc
 go install github.com/socialviolation/devstack@main
 ```
 
-Requires Go 1.24+ and [Tilt](https://docs.tilt.dev/install.html) on `$PATH`.
+Requires Go 1.25+ and [Tilt](https://docs.tilt.dev/install.html) on `$PATH`.
 
 ---
 
@@ -22,7 +22,7 @@ Requires Go 1.24+ and [Tilt](https://docs.tilt.dev/install.html) on `$PATH`.
 
 If you're joining a team that already uses devstack, follow these steps once per machine. **Claude Code can run all of this for you** — open any repo, ask it to set up your workspace, and it will follow the steps below.
 
-**Prerequisites:** Go 1.24+, [Tilt](https://docs.tilt.dev/install.html), Docker
+**Prerequisites:** Go 1.25+, [Tilt](https://docs.tilt.dev/install.html), and Docker (only needed if you enable local SigNoz observability)
 
 **1. Install devstack**
 
@@ -44,11 +44,11 @@ This writes the workspace path and a Tilt port to `~/.config/devstack/workspaces
 devstack workspace up
 ```
 
-Starts Tilt and the OTEL collector in the background. Leave it running during development.
+Starts the dev daemon in the background. If observability is enabled for the workspace, the OTEL collector starts too. Leave it running during development.
 
 **4. Generate agent files for all services**
 
-If services are already declared in the workspace's `.devstack.json` (committed to the repo):
+If services are already declared in the workspace's `devstack.workspace.yaml` manifest (committed to the repo):
 
 ```bash
 devstack init --all
@@ -56,7 +56,7 @@ devstack init --all
 
 This creates (or refreshes) `.mcp.json` and `AGENTS.md` in each service directory. Claude Code reads `.mcp.json` automatically and gains access to devstack MCP tools whenever you open a service repo.
 
-If you're registering services fresh (no `.devstack.json` yet):
+If you're registering services fresh (not yet in the manifest):
 
 ```bash
 devstack init --name=<service> --path=~/dev/my-workspace/<service> --cmd="<start command>" --port=<port>
@@ -66,7 +66,7 @@ devstack init --name=<service> --path=~/dev/my-workspace/<service> --cmd="<start
 
 ```bash
 devstack status       # shows running services
-devstack otel status  # shows collector mode and upstream
+devstack otel status  # collector state, ports, and telemetry evidence
 ```
 
 **6. Open Claude Code in any service repo**
@@ -79,8 +79,8 @@ The devstack MCP server loads automatically from `.mcp.json`. Claude can now sta
 
 | Term | Meaning |
 |------|---------|
-| **Workspace** | A directory containing a Tiltfile that defines one or more services |
-| **Service** | A single Tilt resource (`local_resource`) — an API, worker, importer, etc. |
+| **Workspace** | A directory with a `devstack.workspace.yaml` manifest that groups one or more services |
+| **Service** | A process defined by a `devstack.service.yaml` manifest — an API, worker, importer, etc. |
 | **Group** | A named set of services you can start/stop together |
 | **Dependency** | A declared ordering constraint: service A won't start until service B is running |
 
@@ -94,8 +94,8 @@ The devstack MCP server loads automatically from `.mcp.json`. Claude can now sta
 devstack workspace list              # List all registered workspaces
 devstack workspace add [path]        # Register a directory as a workspace
 devstack workspace remove <name>     # Unregister a workspace
-devstack workspace up                # Start the Tilt dev daemon (background)
-devstack workspace down              # Stop the Tilt dev daemon and OTEL collector
+devstack workspace up                # Start the dev daemon (background)
+devstack workspace down              # Stop the dev daemon and OTEL collector
 ```
 
 `devstack ws` is an alias for `devstack workspace`.
@@ -109,7 +109,7 @@ devstack stop [service]              # Stop a service
 devstack status                      # Show live service tree: state, ports, deps
 ```
 
-`start` and `stop` auto-detect the current service from the working directory when no name is given.
+`start` and `stop` auto-detect the current service from the working directory when no name is given. If the dev daemon isn't running, `start` boots it automatically — you don't need a separate `workspace up`.
 
 ### Service Registration
 
@@ -141,9 +141,27 @@ devstack groups remove <group> <service> [service...]
 
 ### Observability (OTEL collector)
 
-devstack starts a local `otelcol-contrib` collector per workspace. Services always send telemetry to `localhost:4317` (gRPC) — they never need to know where it goes from there. The collector handles routing.
+Observability is **opt-in per workspace** — devstack does not assume your services are OTEL-instrumented. While it's off, no collector runs and nothing is injected into services. Turn it on when you want traces/logs:
 
-By default the collector runs in **debug mode**: telemetry is written to collector stdout and not forwarded anywhere. Configure an upstream when you're ready:
+```bash
+devstack otel enable                 # sets observability.enabled in the workspace manifest
+devstack otel enable --backend=forwarding   # enable with a specific backend
+devstack otel disable
+```
+
+Or set it directly in `devstack.workspace.yaml`:
+
+```yaml
+observability:
+  enabled: true
+  backend: signoz        # default when enabled; use "forwarding" for collector-only / BYO backend
+```
+
+When enabled, `devstack workspace up` starts a local `otelcol-contrib` collector and the OTLP endpoint (`localhost:4317`, gRPC) is pushed down to every service automatically — you never repeat it.
+
+> **Prereq:** the collector needs `otelcol-contrib` on `$PATH`. If it's missing, the workspace still comes up but `devstack otel start` fails until you install it — download the matching binary from [opentelemetry-collector-releases](https://github.com/open-telemetry/opentelemetry-collector-releases/releases), or point `OTELCOL_BIN=/path/to/otelcol-contrib`.
+
+**Backends.** The default backend when enabled is **SigNoz** (local UI via Docker — spins up ClickHouse + SigNoz). To forward to your own OTLP endpoint instead of running SigNoz, use the `forwarding` backend:
 
 ```bash
 # Forward to any OTLP endpoint via gRPC
@@ -151,15 +169,12 @@ devstack otel configure --plugin=forwarding --set upstream=telemetry.example.com
 
 # Forward via HTTP
 devstack otel configure --plugin=forwarding --set upstream=https://otel.example.com:4318
-
-# Opt-in to local SigNoz UI (requires Docker — spins up ClickHouse + SigNoz)
-devstack otel configure --plugin=signoz
 ```
 
-Per-developer endpoint override: set `OTEL_EXPORTER_OTLP_ENDPOINT` in `.envrc` in any service repo.
+`--plugin` (the backend) is persisted to the workspace manifest, so the choice sticks. Per-developer endpoint override: set `OTEL_EXPORTER_OTLP_ENDPOINT` in `.envrc` in any service repo.
 
 ```bash
-devstack otel status                 # show mode, ports, upstream
+devstack otel status                 # collector state, ports, upstream + per-service telemetry evidence
 devstack otel start                  # start the collector (and companion if signoz)
 devstack otel stop
 devstack otel open                   # open the UI (signoz only)
@@ -179,6 +194,11 @@ This is what `.mcp.json` invokes. You don't run it directly.
 ---
 
 ## MCP Tools (available to Claude Code)
+
+The tool set adapts to the active workspace: trace tools (`investigate`) appear only when observability is enabled, and the `tunnel` tool only when Tailscale is installed. Call `environment` first to see what's actually available.
+
+### `environment`
+Orientation tool — shows the active environment, backend, and which tools exist in this context. Call this first.
 
 ### `status`
 Show all services with state (`running` / `building` / `starting` / `idle` / `disabled` / `error`), ports, source path, and last build error.
@@ -205,8 +225,17 @@ Parameters: `service` (optional), `lines` (default 100), `errors_only` (filter t
 
 If no service is given and no default is configured, fetches all services in parallel.
 
+### `service_env`
+Inspect and edit a service's `.envrc` environment (get, diff across services, set, check required keys).
+
+### `observability`
+Inspect and change the workspace's OTEL config: `status` (enabled, backend, collector, + per-service telemetry evidence), `enable`, `disable`, `configure`. Always available locally, so an agent can discover and turn observability on.
+
+### `tunnel`
+Forward service ports to/from a remote host over SSH (push/pull/list/status/stop). Only registered when Tailscale is installed.
+
 ### `investigate`
-Primary diagnostic tool. Queries SigNoz for distributed traces and correlated logs, then falls back to Tilt process logs if OTEL logs are unavailable.
+Primary trace tool — **only available when observability is enabled**. Queries the backend (SigNoz by default) for distributed traces and correlated logs, then falls back to dev-daemon process logs if OTEL logs are unavailable.
 
 Three modes:
 
@@ -263,6 +292,7 @@ Claude Code reads `.mcp.json` automatically and loads the MCP server when you op
 | `~/.config/devstack/workspaces.json` | Registered workspaces and their ports |
 | `~/.local/share/devstack/<name>/tilt.pid` | Tilt daemon PID |
 | `~/.local/share/devstack/<name>/tilt.log` | Tilt daemon stdout |
-| `<workspace>/.devstack.json` | Services, dependencies, groups |
+| `<workspace>/devstack.workspace.yaml` | Workspace manifest: services, groups, dependencies, observability |
+| `<service>/devstack.service.yaml` | Service manifest: run command, ports, healthcheck, env |
 | `<service>/.mcp.json` | MCP config for that service repo |
 | `<service>/AGENTS.md` | Tool reference injected for Claude Code |
