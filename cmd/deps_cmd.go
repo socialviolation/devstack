@@ -26,7 +26,7 @@ Example: if 'api' depends on 'postgres' and 'redis':
 SUBCOMMANDS
   devstack deps add <svc> <dep>    declare that svc requires dep to be running first
   devstack deps remove <svc> <dep> remove a declared dependency
-  devstack deps order <svc>        show the full resolved startup sequence for a service`,
+  devstack deps list <svc>         show the full resolved startup sequence for a service`,
 }
 
 var depsAddCmd = &cobra.Command{
@@ -44,8 +44,9 @@ var depsRemoveCmd = &cobra.Command{
 }
 
 var depsOrderCmd = &cobra.Command{
-	Use:   "order <service>",
-	Short: "Show the full resolved startup sequence for a service",
+	Use:     "list <service>",
+	Aliases: []string{"order"},
+	Short:   "Show the full resolved startup sequence for a service",
 	Long: `Resolves the complete dependency graph for a service and prints the startup
 order — the sequence devstack will use when you run 'devstack start <service>'.
 Useful for verifying that dependencies are declared correctly.`,

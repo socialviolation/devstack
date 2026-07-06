@@ -65,9 +65,42 @@ type WorkspaceManifestInfra struct {
 }
 
 type WorkspaceManifestObservability struct {
+	// Enabled is the master switch for OTEL in this workspace: whether `up`
+	// starts a local collector and whether OTEL export env is pushed down to
+	// services. When nil (unset) it is inferred for backward compatibility from
+	// local.enabled or the presence of a backend. Services are NOT assumed to be
+	// instrumented unless this resolves true.
+	Enabled  *bool                                  `yaml:"enabled,omitempty"`
 	Backend  string                                 `yaml:"backend,omitempty"`
 	Local    WorkspaceManifestObservabilityLocal    `yaml:"local,omitempty"`
 	Defaults WorkspaceManifestObservabilityDefaults `yaml:"defaults,omitempty"`
+}
+
+// IsEnabled reports whether observability is turned on for the workspace.
+// An explicit `enabled` wins; otherwise it is inferred from legacy config
+// (local.enabled true, or a non-empty backend) so existing workspaces keep
+// working without editing their manifest.
+func (o WorkspaceManifestObservability) IsEnabled() bool {
+	if o.Enabled != nil {
+		return *o.Enabled
+	}
+	if o.Local.Enabled {
+		return true
+	}
+	return strings.TrimSpace(o.Backend) != ""
+}
+
+// ResolvedBackend returns the backend plugin to use when observability is
+// enabled: the explicit backend if set, otherwise "signoz" as the default.
+// Returns "" when observability is disabled.
+func (o WorkspaceManifestObservability) ResolvedBackend() string {
+	if !o.IsEnabled() {
+		return ""
+	}
+	if b := strings.TrimSpace(o.Backend); b != "" {
+		return b
+	}
+	return "signoz"
 }
 
 type WorkspaceManifestObservabilityLocal struct {
@@ -210,6 +243,17 @@ func HasWorkspaceManifest(workspacePath string) bool {
 func HasServiceManifest(repoPath string) bool {
 	_, err := os.Stat(ServiceManifestPath(repoPath))
 	return err == nil
+}
+
+// ObservabilityEnabled reports whether the workspace at workspacePath should run
+// a local OTEL collector and push OTEL export env down to its services. Returns
+// false when the workspace can't be resolved or has no observability configured.
+func ObservabilityEnabled(workspacePath string) bool {
+	rw, err := ResolveWorkspace(workspacePath)
+	if err != nil || rw.Manifest == nil {
+		return false
+	}
+	return rw.Manifest.Observability.IsEnabled()
 }
 
 func LoadWorkspaceManifest(workspacePath string) (*WorkspaceManifest, error) {
@@ -402,7 +446,7 @@ func (rw *ResolvedWorkspace) ToLegacyConfig() *WorkspaceConfig {
 		Deps:         cloneStringSlicesMap(rw.Manifest.Dependencies),
 		Groups:       cloneStringSlicesMap(rw.Manifest.Groups),
 		ServicePaths: map[string]string{},
-		OtelPlugin:   rw.Manifest.Observability.Backend,
+		OtelPlugin:   rw.Manifest.Observability.ResolvedBackend(),
 	}
 	for name, service := range rw.Services {
 		cfg.ServicePaths[name] = service.RepoPath

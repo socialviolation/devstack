@@ -33,9 +33,14 @@ TOOLS EXPOSED TO AI AGENTS
   restart         trigger a rebuild and restart of a service  [local only]
   stop            disable one or all services                 [local only]
   process_logs    fetch stdout/stderr from a service          [local only]
-  investigate     correlated traces + logs in one call — primary diagnostic tool
+  investigate     correlated traces + logs in one call        [when observability enabled]
+  observability   inspect/enable/disable OTEL + telemetry evidence [local only]
   configure       set a Tilt runtime argument                 [local only]
-  tunnel          forward local service ports to/from a remote over SSH [local only]
+  tunnel          forward local service ports to/from a remote over SSH [local, when tailscale installed]
+
+The exact tool set adapts to the active workspace: trace/telemetry tools appear only
+when observability is enabled in the manifest, and tunnel tools only when tailscale is installed.
+Call the 'environment' tool first to see what's available.
 
 TRANSPORT
   stdio (default)   used by Claude Code and most AI tooling

@@ -314,6 +314,105 @@ runtime:
 	}
 }
 
+func TestObservabilityEnabledResolution(t *testing.T) {
+	boolPtr := func(b bool) *bool { return &b }
+
+	cases := []struct {
+		name        string
+		obs         WorkspaceManifestObservability
+		wantEnabled bool
+		wantBackend string
+	}{
+		{
+			name:        "empty defaults off",
+			obs:         WorkspaceManifestObservability{},
+			wantEnabled: false,
+			wantBackend: "",
+		},
+		{
+			name:        "explicit enabled true, no backend defaults signoz",
+			obs:         WorkspaceManifestObservability{Enabled: boolPtr(true)},
+			wantEnabled: true,
+			wantBackend: "signoz",
+		},
+		{
+			name:        "explicit enabled false wins over backend",
+			obs:         WorkspaceManifestObservability{Enabled: boolPtr(false), Backend: "signoz"},
+			wantEnabled: false,
+			wantBackend: "",
+		},
+		{
+			name:        "inferred from local.enabled",
+			obs:         WorkspaceManifestObservability{Local: WorkspaceManifestObservabilityLocal{Enabled: true}},
+			wantEnabled: true,
+			wantBackend: "signoz",
+		},
+		{
+			name:        "inferred from backend",
+			obs:         WorkspaceManifestObservability{Backend: "grafana"},
+			wantEnabled: true,
+			wantBackend: "grafana",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.obs.IsEnabled(); got != tc.wantEnabled {
+				t.Errorf("IsEnabled() = %v, want %v", got, tc.wantEnabled)
+			}
+			if got := tc.obs.ResolvedBackend(); got != tc.wantBackend {
+				t.Errorf("ResolvedBackend() = %q, want %q", got, tc.wantBackend)
+			}
+		})
+	}
+}
+
+func TestObservabilityEnabledFromWorkspace(t *testing.T) {
+	// Manifest with no observability block → disabled.
+	off := t.TempDir()
+	mustWriteFile(t, filepath.Join(off, WorkspaceManifestFileName), `version: 1
+workspace:
+  name: off-ws
+  repoDiscovery:
+    mode: explicit
+    repos:
+      - ./api
+`)
+	mustWriteFile(t, filepath.Join(off, "api", ServiceManifestFileName), `version: 1
+service:
+  name: api
+runtime:
+  run:
+    command: go run .
+`)
+	if ObservabilityEnabled(off) {
+		t.Errorf("ObservabilityEnabled(no block) = true, want false")
+	}
+
+	// Manifest that opts in via observability.enabled → enabled.
+	on := t.TempDir()
+	mustWriteFile(t, filepath.Join(on, WorkspaceManifestFileName), `version: 1
+workspace:
+  name: on-ws
+  repoDiscovery:
+    mode: explicit
+    repos:
+      - ./api
+observability:
+  enabled: true
+`)
+	mustWriteFile(t, filepath.Join(on, "api", ServiceManifestFileName), `version: 1
+service:
+  name: api
+runtime:
+  run:
+    command: go run .
+`)
+	if !ObservabilityEnabled(on) {
+		t.Errorf("ObservabilityEnabled(enabled) = false, want true")
+	}
+}
+
 func mustWriteFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

@@ -32,25 +32,8 @@ Logs are written to ~/.local/share/devstack/<workspace-name>/tilt.log.`,
 	RunE: runStart,
 }
 
-var upAliasCmd = &cobra.Command{
-	Use:   "up",
-	Short: "Start the dev daemon for the current workspace (alias for: devstack workspace up)",
-	Long: `Start the dev daemon as a detached background process for the current workspace.
-
-The dev daemon is responsible for running all local services, watching source
-files for changes, and hot-reloading services when code is modified. It must
-be running before you can start, stop, or restart individual services.
-
-The SigNoz observability stack is also started automatically so services can
-begin shipping traces and logs immediately.
-
-Logs are written to ~/.local/share/devstack/<workspace-name>/tilt.log.`,
-	RunE: runStart,
-}
-
 func init() {
 	workspaceCmd.AddCommand(upCmd)
-	rootCmd.AddCommand(upAliasCmd)
 }
 
 func runStart(cmd *cobra.Command, args []string) error {
@@ -165,8 +148,13 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// 10. Start observability backend
-	if isOtelRunning(ws) {
+	// 10. Start observability backend — only when the workspace opts in.
+	// We don't assume services are OTEL-instrumented; enable it in the workspace
+	// manifest (observability.enabled) to run a collector and ship telemetry.
+	if !config.ObservabilityEnabled(ws.Path) {
+		fmt.Printf("Observability disabled for this workspace — skipping collector.\n")
+		fmt.Printf("  Enable it: set observability.enabled: true in %s, then: devstack otel start\n", config.WorkspaceManifestFileName)
+	} else if isOtelRunning(ws) {
 		fmt.Printf("OTEL stack already running\n")
 	} else {
 		plugin := activePlugin(ws, env)

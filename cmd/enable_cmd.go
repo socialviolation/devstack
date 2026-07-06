@@ -91,7 +91,17 @@ func runEnable(cmd *cobra.Command, args []string) error {
 	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
 	view, err := tiltClient.GetView()
 	if err != nil {
-		return fmt.Errorf("dev daemon is not running — start it first with: devstack workspace up\n(%w)", err)
+		// Daemon not running — bring it up automatically, then retry. runStart is
+		// idempotent and self-resolves the workspace, so this is a no-op if it's
+		// already up by the time we get here.
+		fmt.Println("Dev daemon not running — starting it...")
+		if startErr := runStart(cmd, args); startErr != nil {
+			return fmt.Errorf("failed to auto-start dev daemon: %w", startErr)
+		}
+		view, err = tiltClient.GetView()
+		if err != nil {
+			return fmt.Errorf("dev daemon started but not reachable yet — retry: devstack start %s\n(%w)", targetName, err)
+		}
 	}
 
 	// Build a set of disabled resources for quick lookup

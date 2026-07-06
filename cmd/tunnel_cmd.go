@@ -80,26 +80,14 @@ func init() {
 		Args:  cobra.NoArgs,
 		RunE:  runTunnelList,
 	}
-	setRemoteCmd := &cobra.Command{
-		Use:   "set-remote <host>",
-		Short: "Save the default SSH remote (host/user) for this workspace",
-		Long: `Persist the default tunnel remote for this workspace so push/pull can be run
-without arguments. Stored per-machine in the devstack registry — it is not
-committed to the repo.
-
-  devstack tunnel set-remote macbook --user nickfreemantle`,
-		Args: cobra.ExactArgs(1),
-		RunE: runTunnelSetRemote,
-	}
-
-	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, setRemoteCmd} {
+	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd} {
 		c.Flags().StringVar(&tunnelUserFlag, "user", "", "SSH user (default: saved user or current user)")
 	}
 	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd} {
 		c.Flags().StringVar(&tunnelServicesFlag, "services", "", "Comma-separated service names to forward (default: all)")
 	}
 	restartCmd.Flags().String("mode", string(tunnel.ModePush), "Direction to re-establish: push or pull")
-	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, tunnelStopCmd, tunnelStatusCmd, listCmd, setRemoteCmd} {
+	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, tunnelStopCmd, tunnelStatusCmd, listCmd} {
 		// Runtime failures (daemon down, unreachable remote) shouldn't dump the
 		// full usage block — the messages are self-explanatory.
 		c.SilenceUsage = true
@@ -333,29 +321,6 @@ func runTunnelStatus(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("%-30s :%d  devstack:%s\n", s.Name, s.Port, s.Runtime)
 	}
-	return nil
-}
-
-func runTunnelSetRemote(cmd *cobra.Command, args []string) error {
-	ws, err := tunnelContext()
-	if err != nil {
-		return err
-	}
-	host := args[0]
-	user := tunnelUserFlag
-	if user == "" {
-		user = ws.TunnelUser
-	}
-	if user == "" {
-		if u, uerr := currentUser(); uerr == nil {
-			user = u
-		}
-	}
-	if err := workspace.UpdateTunnelRemote(ws.Name, host, user); err != nil {
-		return err
-	}
-	fmt.Printf("✓ Saved tunnel remote for '%s': %s@%s\n", ws.Name, user, host)
-	color.New(color.Faint).Printf("  Run: devstack tunnel push\n")
 	return nil
 }
 

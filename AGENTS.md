@@ -139,7 +139,7 @@ MCP tools require Tilt already running. Always use the shell CLI to spin up.
 
 ```bash
 devstack status                    # check if Tilt is running
-devstack up                        # start Tilt if stopped
+devstack workspace up              # start the dev daemon if stopped
 devstack services                  # list services, groups, and declared deps
 devstack start --group=<group>     # start a named group (resolves deps)
 devstack start devstack                       # start this service + its deps

@@ -23,13 +23,13 @@ var initCmd = &cobra.Command{
 
 FIRST-TIME SERVICE SETUP (provide --name, --path, --cmd)
   Registers a new service so devstack can run and observe it:
-    1. Adds the service to the workspace run configuration
-    2. Creates .mcp.json to wire up the devstack MCP server for AI agents
-    3. Writes AGENTS.md with instructions for AI agents on how to run and observe it
-    4. Registers the service path so 'devstack start' auto-detects it from the directory
-    5. Sets OTEL_EXPORTER_OTLP_ENDPOINT so traces ship to the workspace SigNoz stack
+    1. Writes devstack.service.yaml in the service repo (how devstack runs it)
+    2. Adds the repo to the workspace manifest's repoDiscovery.repos list
+    3. Creates .mcp.json to wire up the devstack MCP server for AI agents
+    4. Writes AGENTS.md with instructions for AI agents on how to run and observe it
+    5. Regenerates the dev daemon config so 'devstack start' can run it
 
-  Use --force to overwrite an existing service entry (e.g. to update the run command).
+  Use --force to overwrite an existing service manifest (e.g. to update the run command).
 
 REFRESH ONLY (no --name/--path/--cmd flags)
   Re-writes the devstack section of AGENTS.md in the current service directory with
@@ -58,7 +58,7 @@ func init() {
 	initCmd.Flags().String("cmd", "", "Command to run the service (e.g. \"go run .\" or \"dotnet run\")")
 	initCmd.Flags().Int("port", 0, "HTTP port the service listens on (enables health checks and dashboard links)")
 	initCmd.Flags().String("language", "", "Language override: dotnet, python, node, go (default: auto-detect)")
-	initCmd.Flags().String("group", "", "Group to add the service to in .devstack.json")
+	initCmd.Flags().String("group", "", "Suggest a group for the service (add it with 'devstack groups add')")
 	initCmd.Flags().Bool("all", false, "Refresh AGENTS.md for every registered service in the workspace")
 	initCmd.Flags().Bool("force", false, "Overwrite existing service configuration if it already exists")
 }
@@ -185,41 +185,44 @@ func runInitOnboard(cmd *cobra.Command) error {
 		fmt.Fprintf(os.Stderr, "Auto-detected language: %s\n", lang)
 	}
 
-	// Build env map
-	serveEnv := map[string]string{
-		"OTEL_EXPORTER_OTLP_ENDPOINT": workspace.OtelOTLPEndpoint(ws),
-		"OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+	// This workspace must be manifest-based — init writes manifests, and the
+	// Tiltfile is generated from them.
+	if !config.HasWorkspaceManifest(ws.Path) {
+		return fmt.Errorf("workspace %q has no %s — run 'devstack workspace add' first", ws.Name, config.WorkspaceManifestFileName)
 	}
+
+	// Language-default runtime env for the service manifest.
+	langEnv := map[string]string{}
 	switch lang {
 	case "dotnet":
-		serveEnv["ASPNETCORE_ENVIRONMENT"] = "Development"
+		langEnv["ASPNETCORE_ENVIRONMENT"] = "Development"
 	case "python":
-		serveEnv["APP_ENV"] = "Development"
+		langEnv["APP_ENV"] = "Development"
 	case "node":
-		serveEnv["NODE_ENV"] = "development"
+		langEnv["NODE_ENV"] = "development"
 	}
 
-	// Write to Tiltfile
-	tiltfilePath := filepath.Join(ws.Path, "Tiltfile")
-	tiltBlock := buildTiltBlock(name, serveCmd, path, lang, port, serveEnv)
-
-	existing := tiltfileHasService(tiltfilePath, name)
-	if existing && !force {
-		return fmt.Errorf("service %q already exists in the workspace configuration\nUse --force to overwrite", name)
+	// 1. Write the service manifest — the source of truth for how it runs.
+	manifestPath := config.ServiceManifestPath(path)
+	if _, statErr := os.Stat(manifestPath); statErr == nil && !force {
+		return fmt.Errorf("service %q already has %s\nUse --force to overwrite", name, config.ServiceManifestFileName)
 	}
-	if existing && force {
-		if err := replaceTiltfileService(tiltfilePath, name, tiltBlock); err != nil {
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "✓ Updated service %q in workspace configuration\n", name)
-	} else {
-		if err := appendToTiltfile(tiltfilePath, tiltBlock); err != nil {
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "✓ Added service %q to workspace configuration\n", name)
+	if err := writeServiceManifest(path, name, serveCmd, port, langEnv); err != nil {
+		return fmt.Errorf("failed to write service manifest: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "✓ Wrote %s\n", manifestPath)
 
-	// Write .mcp.json
+	// 2. Register the repo in the workspace manifest's repos list.
+	rel := path
+	if r, relErr := filepath.Rel(ws.Path, path); relErr == nil {
+		rel = "./" + filepath.ToSlash(r)
+	}
+	if err := config.AddServiceRepo(ws.Path, rel); err != nil {
+		return fmt.Errorf("failed to register service in workspace manifest: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "✓ Registered %s in %s\n", rel, config.WorkspaceManifestFileName)
+
+	// 3. Write .mcp.json for AI agent access.
 	mcpFile := filepath.Join(path, ".mcp.json")
 	if _, err := os.Stat(mcpFile); os.IsNotExist(err) || force {
 		if err := writeMCPJson(mcpFile, name, ws); err != nil {
@@ -230,117 +233,73 @@ func runInitOnboard(cmd *cobra.Command) error {
 		fmt.Fprintf(os.Stderr, ".mcp.json already exists — skipping (use --force to overwrite)\n")
 	}
 
-	// Write AGENTS.md
+	// 4. Write AGENTS.md instructions.
 	if err := writeAgentsMD(name, path, ws.Path); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to write AGENTS.md: %v\n", err)
 	} else {
 		fmt.Fprintf(os.Stderr, "✓ Wrote AGENTS.md\n")
 	}
 
-	// Update .devstack.json
-	cfg, err := config.Load(ws.Path)
-	if err != nil {
-		return fmt.Errorf("failed to load workspace config: %w", err)
+	// 5. Regenerate the Tiltfile so the daemon picks up the new service.
+	if _, err := regenerateTiltfile(ws); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to regenerate Tiltfile: %v\n", err)
 	}
-	cfg.ServicePaths[name] = path
-	if group != "" {
-		// Avoid duplicates
-		found := false
-		for _, s := range cfg.Groups[group] {
-			if s == name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			cfg.Groups[group] = append(cfg.Groups[group], name)
-		}
-	}
-	if err := config.Save(ws.Path, cfg); err != nil {
-		return fmt.Errorf("failed to save workspace config: %w", err)
-	}
-	fmt.Fprintf(os.Stderr, "✓ Registered in workspace config\n")
 
 	// Summary
 	fmt.Printf("\n✓ %q registered in workspace %q\n\n", name, ws.Name)
+	fmt.Printf("  manifest:   %s\n", manifestPath)
 	fmt.Printf("  .mcp.json:  %s\n", mcpFile)
 	fmt.Printf("  AGENTS.md:  %s\n", filepath.Join(path, "AGENTS.md"))
-	if group != "" {
-		fmt.Printf("  Group:      %s\n", group)
-	}
 	fmt.Printf("\nNext:\n")
+	if group != "" {
+		fmt.Printf("  devstack groups add %s %s\n", group, name)
+	}
 	fmt.Printf("  devstack deps add %s <dep>   # declare dependencies\n", name)
 	fmt.Printf("  devstack start %s            # start it\n", name)
 
 	return nil
 }
 
-// tiltfileHasService checks if a service block already exists in the Tiltfile.
-func tiltfileHasService(tiltfilePath, name string) bool {
-	data, err := os.ReadFile(tiltfilePath)
-	if err != nil {
-		return false
+// writeServiceManifest writes a filled devstack.service.yaml for a service with
+// a known run command (and optional port/env), unlike the placeholder scaffold.
+func writeServiceManifest(dir, name, command string, port int, env map[string]string) error {
+	target := config.ServiceManifestPath(dir)
+	var sb strings.Builder
+	sb.WriteString("version: 1\n\n")
+	sb.WriteString("service:\n")
+	fmt.Fprintf(&sb, "  name: %s\n\n", name)
+	sb.WriteString("runtime:\n")
+	sb.WriteString("  run:\n")
+	fmt.Fprintf(&sb, "    command: %q\n", command)
+	if port > 0 {
+		sb.WriteString("  healthcheck:\n")
+		sb.WriteString("    type: http\n")
+		fmt.Fprintf(&sb, "    port: %d\n", port)
+		sb.WriteString("    path: /\n")
+		sb.WriteString("    periodSecs: 5\n")
+		sb.WriteString("    failureThreshold: 10\n")
 	}
-	return strings.Contains(string(data), fmt.Sprintf("# %s\n", name)) ||
-		strings.Contains(string(data), fmt.Sprintf("%q,", name))
-}
-
-// replaceTiltfileService removes the old block for a service and appends the new one.
-func replaceTiltfileService(tiltfilePath, name, newBlock string) error {
-	data, err := os.ReadFile(tiltfilePath)
-	if err != nil {
-		return fmt.Errorf("failed to read Tiltfile: %w", err)
+	if port > 0 {
+		sb.WriteString("\nports:\n")
+		fmt.Fprintf(&sb, "  http: %d\n", port)
 	}
-
-	content := string(data)
-	marker := fmt.Sprintf("\n# %s\n", name)
-	start := strings.Index(content, marker)
-	if start == -1 {
-		// Block not found via comment marker — just append
-		return appendToTiltfile(tiltfilePath, newBlock)
-	}
-
-	// Find the closing ')' of the local_resource block
-	end := start + len(marker)
-	depth := 0
-	found := false
-	for i := end; i < len(content); i++ {
-		switch content[i] {
-		case '(':
-			depth++
-		case ')':
-			if depth == 0 {
-				end = i + 1
-				// consume trailing newline
-				if end < len(content) && content[end] == '\n' {
-					end++
-				}
-				found = true
-			}
-			depth--
+	if len(env) > 0 {
+		sb.WriteString("\nenv:\n  values:\n")
+		keys := make([]string, 0, len(env))
+		for k := range env {
+			keys = append(keys, k)
 		}
-		if found {
-			break
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintf(&sb, "    %s: %q\n", k, env[k])
 		}
 	}
-
-	if !found {
-		return appendToTiltfile(tiltfilePath, newBlock)
+	if port > 0 {
+		sb.WriteString("\nlinks:\n")
+		fmt.Fprintf(&sb, "  - url: http://localhost:%d\n", port)
+		fmt.Fprintf(&sb, "    label: %s\n", name)
 	}
-
-	updated := content[:start] + newBlock + content[end:]
-	return os.WriteFile(tiltfilePath, []byte(updated), 0644)
-}
-
-// appendToTiltfile appends a block to the Tiltfile.
-func appendToTiltfile(tiltfilePath, block string) error {
-	f, err := os.OpenFile(tiltfilePath, os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open workspace configuration at %s: %w", tiltfilePath, err)
-	}
-	_, writeErr := f.WriteString(block)
-	f.Close()
-	return writeErr
+	return os.WriteFile(target, []byte(sb.String()), 0644)
 }
 
 // detectLanguage inspects a directory and returns a language string.
@@ -362,35 +321,6 @@ func detectLanguage(path string) string {
 		}
 	}
 	return "unknown"
-}
-
-// buildTiltBlock builds the local_resource block for a service.
-func buildTiltBlock(name, serveCmd, path, lang string, port int, serveEnv map[string]string) string {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("\n# %s\n", name))
-	sb.WriteString("local_resource(\n")
-	sb.WriteString(fmt.Sprintf("    %q,\n", name))
-	sb.WriteString(fmt.Sprintf("    serve_cmd=%q,\n", serveCmd))
-	sb.WriteString(fmt.Sprintf("    serve_dir=%q,\n", path))
-	sb.WriteString("    serve_env={\n")
-	sb.WriteString(fmt.Sprintf("        %q: %q,\n", "OTEL_EXPORTER_OTLP_ENDPOINT", serveEnv["OTEL_EXPORTER_OTLP_ENDPOINT"]))
-	sb.WriteString(fmt.Sprintf("        %q: %q,\n", "OTEL_EXPORTER_OTLP_PROTOCOL", serveEnv["OTEL_EXPORTER_OTLP_PROTOCOL"]))
-	for k, v := range serveEnv {
-		if k == "OTEL_EXPORTER_OTLP_ENDPOINT" || k == "OTEL_EXPORTER_OTLP_PROTOCOL" {
-			continue
-		}
-		sb.WriteString(fmt.Sprintf("        %q: %q,\n", k, v))
-	}
-	sb.WriteString("    },\n")
-	sb.WriteString("    trigger_mode=TRIGGER_MODE_MANUAL,\n")
-	sb.WriteString("    auto_init=False,\n")
-	sb.WriteString(fmt.Sprintf("    labels=[%q],\n", lang))
-	if port > 0 {
-		sb.WriteString(fmt.Sprintf("    readiness_probe=probe(http_get_action(port=%d), period_secs=5, failure_threshold=10),\n", port))
-		sb.WriteString(fmt.Sprintf("    links=[link(%q, %q)],\n", fmt.Sprintf("http://localhost:%d", port), name))
-	}
-	sb.WriteString(")\n")
-	return sb.String()
 }
 
 // writeMCPJson creates a .mcp.json file in the service directory.
@@ -474,6 +404,15 @@ func buildAgentInstructions(defaultService string, workspacePath string) string 
 		startCmd = fmt.Sprintf("devstack start %-19s # start this service + its dependencies", defaultService)
 	}
 
+	observabilityBlock := "**Observability:** Not enabled for this workspace — services are not assumed to be OTEL-instrumented and no collector runs. " +
+		"To turn it on, set `observability.enabled: true` in the workspace manifest, then `devstack otel start`.\n\n"
+	if config.ObservabilityEnabled(workspacePath) {
+		observabilityBlock = "**Observability:** Services send traces/logs to the local collector (gRPC `localhost:4317`). " +
+			"The collector routes telemetry upstream — configure with `devstack otel configure`. " +
+			"When no upstream is set, the collector runs in debug mode and telemetry is visible in collector logs. " +
+			"Per-developer endpoint override: set `OTEL_EXPORTER_OTLP_ENDPOINT` in `.envrc`.\n\n"
+	}
+
 	return "\n## Dev Stack (devstack MCP)\n\n" +
 		"devstack is a CLI and MCP server that gives agents programmatic control over a local development stack. " +
 		"It sits on top of [Tilt](https://tilt.dev) to manage service lifecycle, dependency ordering, and observability.\n\n" +
@@ -489,7 +428,7 @@ func buildAgentInstructions(defaultService string, workspacePath string) string 
 		"```bash\n" +
 		"devstack status                     # live service state\n" +
 		"devstack topology                   # services, groups, deps, dependents\n" +
-		"devstack telemetry status           # telemetry evidence and confidence\n" +
+		"devstack otel status                # collector state + telemetry evidence\n" +
 		"devstack workspace doctor           # config and topology checks\n" +
 		"devstack workspace up               # start the local daemon\n" +
 		"devstack workspace down             # stop the local daemon\n" +
@@ -501,10 +440,7 @@ func buildAgentInstructions(defaultService string, workspacePath string) string 
 		"2. Check telemetry status before inferring from missing traces or logs.\n" +
 		"3. Use process logs or runtime state when telemetry is partial or inconclusive.\n" +
 		"4. Do not use devstack against staging or production.\n\n" +
-		"**Observability:** Services always send traces/logs to the local collector (gRPC `localhost:4317`). " +
-		"The collector routes telemetry upstream — configure with `devstack otel configure`. " +
-		"When no upstream is set, the collector runs in debug mode and telemetry is visible in collector logs. " +
-		"Per-developer endpoint override: set `OTEL_EXPORTER_OTLP_ENDPOINT` in `.envrc`.\n\n" +
+		observabilityBlock +
 		"### First-time setup on a new machine\n\n" +
 		"If devstack MCP tools aren't responding or the workspace isn't registered yet, run:\n\n" +
 		"```bash\n" +

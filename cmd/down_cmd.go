@@ -24,24 +24,10 @@ The PID file is removed. Run 'devstack workspace up' to start again.`,
 	RunE: runDown,
 }
 
-var downAliasCmd = &cobra.Command{
-	Use:   "down",
-	Short: "Stop the dev daemon for the current workspace (alias for: devstack workspace down)",
-	Long: `Stop the dev daemon and all locally running services for the current workspace.
-
-Also stops the managed SigNoz observability stack if it is running.
-The PID file is removed. Run 'devstack up' to start again.
-
-Use --all to stop every running workspace at once.`,
-	RunE: runDown,
-}
-
 func init() {
 	workspaceCmd.AddCommand(downCmd)
-	rootCmd.AddCommand(downAliasCmd)
 
 	downCmd.Flags().Bool("all", false, "Stop all running workspaces")
-	downAliasCmd.Flags().Bool("all", false, "Stop all running workspaces")
 }
 
 func runDown(cmd *cobra.Command, args []string) error {

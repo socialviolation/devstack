@@ -10,9 +10,13 @@ import (
 )
 
 var topologyCmd = &cobra.Command{
-	Use:   "topology",
-	Short: "Show services, groups, dependencies, and dependents",
-	RunE:  runTopology,
+	Use:   "topology [service]",
+	Short: "Explain the workspace, or a single service's resolved config",
+	Long: `With no arguments, shows the resolved workspace/environment plus the service
+graph (groups, dependencies, dependents). With a service name, shows that
+service's fully resolved configuration and where each value came from.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runTopology,
 }
 
 func init() {
@@ -24,14 +28,20 @@ func runTopology(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	// With a service argument, explain just that service.
+	if len(args) > 0 {
+		return printServiceExplain(ctx, args[0])
+	}
+
+	// Otherwise: workspace/environment resolution + the service graph.
+	printConfigExplain(ctx)
+	fmt.Println()
+
 	graph, err := config.BuildTopology(ctx.WorkspaceRoot.Value)
 	if err != nil {
 		return err
 	}
-
-	fmt.Printf("Workspace: %s\n", graph.WorkspaceName)
-	fmt.Printf("Root: %s\n", graph.WorkspaceRoot)
-	fmt.Println()
 
 	if len(graph.Groups) == 0 {
 		fmt.Println("Groups: -")

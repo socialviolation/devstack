@@ -119,7 +119,7 @@ devstack init                                     # Refresh AGENTS.md for curren
 devstack init --all                               # Refresh AGENTS.md for all services
 ```
 
-`devstack init` auto-detects the language (`go`, `python`, `node`, `dotnet`), writes a Tiltfile block, creates `.mcp.json`, and writes `AGENTS.md` with tool instructions for Claude Code.
+`devstack init` auto-detects the language (`go`, `python`, `node`, `dotnet`), writes `devstack.service.yaml`, registers the repo in the workspace manifest, creates `.mcp.json`, and writes `AGENTS.md` with tool instructions for Claude Code.
 
 Flags: `--language`, `--port` (for health checks), `--group`, `--force`.
 
@@ -128,7 +128,7 @@ Flags: `--language`, `--port` (for health checks), `--group`, `--force`.
 ```bash
 devstack deps add <service> <dep>    # Declare that <service> depends on <dep>
 devstack deps remove <service> <dep>
-devstack deps order <service>        # Show full resolved startup sequence
+devstack deps list <service>         # Show full resolved startup sequence
 ```
 
 ### Groups

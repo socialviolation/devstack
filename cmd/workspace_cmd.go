@@ -63,7 +63,12 @@ var workspaceScaffoldServiceCmd = &cobra.Command{
 	Short: "Write an educational devstack.service.yaml in the current (or given) repo",
 	Long: `Scaffold a fully-commented devstack.service.yaml that teaches how a service
 is declared (run command, ports, healthcheck, env, links). Writes into the
-current directory by default; name defaults to the directory basename.`,
+current directory by default; name defaults to the directory basename.
+
+Superseded by 'devstack init', which writes a filled manifest, registers the
+repo, and wires up MCP/AGENTS in one step.`,
+	Hidden:       true,
+	Deprecated:   "use `devstack init --name=<n> --path=<p> --cmd=<c>` instead.",
 	Args:         cobra.MaximumNArgs(1),
 	SilenceUsage: true,
 	RunE:         runWorkspaceScaffoldService,
@@ -208,13 +213,13 @@ func runWorkspaceAdd(cmd *cobra.Command, args []string) error {
 	noScaffold, _ := cmd.Flags().GetBool("no-scaffold")
 	if !noScaffold {
 		if hasLegacyConfig(path) {
-			fmt.Println("  Found legacy .devstack.json — run 'devstack generate' after migrating it to manifests.")
+			fmt.Println("  Found legacy .devstack.json — run 'devstack workspace generate' after migrating it to manifests.")
 		} else {
 			wrote, err := scaffoldWorkspaceManifest(path, registered.Name)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "  warning: could not scaffold manifest: %v\n", err)
 			} else if wrote {
-				fmt.Printf("  ✓ Created %s — edit it, then 'devstack workspace scaffold-service' in each repo.\n", config.WorkspaceManifestFileName)
+				fmt.Printf("  ✓ Created %s — add services with 'devstack init --name=<n> --path=<p> --cmd=<c>'.\n", config.WorkspaceManifestFileName)
 			}
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -42,9 +43,9 @@ func RegisterTools(
 	workspacePath string,
 	ws *workspace.Workspace,
 ) {
-	// Always register these tools (all environment types)
-	registerInvestigateTool(mcpServer, tiltClient, defaultService, backend, activeEnvName, activeEnv, workspacePath, ws)
-	registerEnvironmentTool(mcpServer, activeEnvName, activeEnv, allEnvs, workspaceName)
+	// The environment orientation tool is always available — it tells the agent
+	// which of the capability-gated tools below actually exist for this context.
+	registerEnvironmentTool(mcpServer, activeEnvName, activeEnv, allEnvs, workspaceName, workspacePath)
 
 	if activeEnv.Type == workspace.EnvironmentTypeLocal {
 		// Local-only tools: full service control
@@ -58,17 +59,41 @@ func RegisterTools(
 			}
 		}
 		registerStatusTool(mcpServer, tiltClient, serviceDirs, cfg)
-		registerTelemetryHealthTool(mcpServer, workspacePath)
 		registerRestartTool(mcpServer, tiltClient, defaultService, cfg)
 		registerStopTool(mcpServer, tiltClient, cfg)
 		registerConfigureTool(mcpServer, tiltClient)
 		registerProcessLogsTool(mcpServer, tiltClient, defaultService, cfg)
 		registerServiceEnvTool(mcpServer, tiltClient, ws, workspacePath)
-		registerTunnelTool(mcpServer, tiltClient, ws)
+
+		// Observability control (status/enable/disable/configure) is always
+		// available locally so an agent can discover and turn it on.
+		registerObservabilityTool(mcpServer, ws, workspacePath)
+
+		// The trace-query tool only makes sense when the workspace has opted into
+		// observability — otherwise there's no collector or backend to query.
+		// (Telemetry evidence/confidence lives in the observability tool's status.)
+		if config.ObservabilityEnabled(workspacePath) {
+			registerInvestigateTool(mcpServer, tiltClient, defaultService, backend, activeEnvName, activeEnv, workspacePath, ws)
+		}
+
+		// Tunneling is SSH-over-tailnet; only expose it where tailscale exists.
+		if tailscaleInstalled() {
+			registerTunnelTool(mcpServer, tiltClient, ws)
+		}
 	} else {
-		// Remote-only tools
+		// Remote environments are inherently observability-backed — investigate is
+		// the primary diagnostic tool there.
+		registerInvestigateTool(mcpServer, tiltClient, defaultService, backend, activeEnvName, activeEnv, workspacePath, ws)
 		registerRemoteStatusTool(mcpServer, backend, activeEnvName, activeEnv.Observability.URL)
 	}
+}
+
+// tailscaleInstalled reports whether the tailscale CLI is on PATH. devstack
+// tunnels reach remote hosts over a tailnet, so the tunnel tool is only exposed
+// when tailscale is present on this machine.
+func tailscaleInstalled() bool {
+	_, err := exec.LookPath("tailscale")
+	return err == nil
 }
 
 // mcpServiceStatus derives a human-readable status string from Tilt resource state.
@@ -765,11 +790,11 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			"The remote host/user are remembered per-workspace after the first successful push, so later calls can omit them. "+
 			"Actions: 'list' (discovered services + whether each is serving), 'status' (which tunnels are currently up), "+
 			"'push' (expose local ports on the remote via ssh -R — the common case), 'pull' (pull ports from a source machine to here via ssh -L), "+
-			"'stop' (tear down all tunnels), 'set-remote' (save the default host/user without connecting)."),
+			"'stop' (tear down all tunnels). The remote is saved automatically on the first successful push/pull."),
 		mcp.WithString("action", mcp.Required(),
-			mcp.Description("One of: list, status, push, pull, stop, set-remote.")),
+			mcp.Description("One of: list, status, push, pull, stop.")),
 		mcp.WithString("host",
-			mcp.Description("Remote host or SSH config alias (e.g. 'macbook'). Optional if a default is saved for this workspace; required for set-remote.")),
+			mcp.Description("Remote host or SSH config alias (e.g. 'macbook'). Optional if a default is saved for this workspace.")),
 		mcp.WithString("user",
 			mcp.Description("SSH user. Optional — falls back to the saved user for this workspace.")),
 		mcp.WithString("services",
@@ -783,20 +808,6 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 		action := strings.ToLower(request.GetString("action", ""))
 		host := request.GetString("host", "")
 		user := request.GetString("user", "")
-
-		// set-remote is pure config — no Tilt needed.
-		if action == "set-remote" {
-			if host == "" {
-				return mcp.NewToolResultError("set-remote requires a host"), nil
-			}
-			if user == "" {
-				user = ws.TunnelUser
-			}
-			if err := workspace.UpdateTunnelRemote(ws.Name, host, user); err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			return mcp.NewToolResultText(fmt.Sprintf("Saved tunnel remote for %s: %s@%s", ws.Name, user, host)), nil
-		}
 
 		view, err := tiltClient.GetView()
 		if err != nil {
@@ -854,14 +865,14 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 				rhost = ws.TunnelHost
 			}
 			if rhost == "" {
-				return mcp.NewToolResultError("no remote host given and none saved. Pass host, or call action=set-remote first."), nil
+				return mcp.NewToolResultError("no remote host given and none saved. Pass host (it's remembered after the first successful push)."), nil
 			}
 			ruser := user
 			if ruser == "" {
 				ruser = ws.TunnelUser
 			}
 			if ruser == "" {
-				return mcp.NewToolResultError("no SSH user given and none saved. Pass user, or call action=set-remote first."), nil
+				return mcp.NewToolResultError("no SSH user given and none saved. Pass user (it's remembered after the first successful push)."), nil
 			}
 
 			var skipped []tunnel.Service
@@ -907,7 +918,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			return mcp.NewToolResultText(sb.String()), nil
 
 		default:
-			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — use list, status, push, pull, stop, or set-remote", action)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — use list, status, push, pull, or stop", action)), nil
 		}
 	})
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/otel"
+	"github.com/socialviolation/devstack/internal/telemetry"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -30,11 +31,13 @@ stdout and not forwarded anywhere. Configure an upstream to route telemetry:
 The stack starts automatically when you run 'devstack workspace up'.
 
 SUBCOMMANDS
-  devstack otel status             show whether the stack is running and its ports
+  devstack otel enable             turn observability on for this workspace
+  devstack otel disable            turn observability off for this workspace
+  devstack otel status             collector state, ports, and per-service telemetry evidence
   devstack otel start              start the collector + companion stack
   devstack otel stop               stop the collector + companion stack
   devstack otel open               open the observability UI in the browser
-  devstack otel configure          configure the active plugin
+  devstack otel configure          configure the active plugin (backend, upstream)
   devstack otel plugins            list all registered plugins`,
 }
 
@@ -58,7 +61,7 @@ var otelStopCmd = &cobra.Command{
 
 var otelStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show whether the observability stack is running and its ports",
+	Short: "Show collector state, ports, and per-service telemetry evidence",
 	RunE:  runOtelStatus,
 }
 
@@ -73,10 +76,35 @@ var otelConfigureCmd = &cobra.Command{
 	Short: "Configure the active OTEL plugin for the current workspace",
 	Long: `Configure the active OTEL plugin for the current workspace.
 
+The --plugin (backend) is written to the workspace manifest so it persists;
+--set values (upstream, api keys, etc.) are stored in per-machine config.
+
 Examples:
   devstack otel configure --plugin=signoz
   devstack otel configure --plugin=forwarding --set upstream=https://otel.example.com:4318 --set deployment_env=dev`,
 	RunE: runOtelConfigure,
+}
+
+var otelEnableCmd = &cobra.Command{
+	Use:   "enable",
+	Short: "Enable observability for the current workspace",
+	Long: `Turn observability on for the workspace: 'devstack workspace up' will start a
+collector and OTEL export env is pushed down to services. Writes
+observability.enabled: true to the workspace manifest.
+
+Examples:
+  devstack otel enable
+  devstack otel enable --backend=signoz`,
+	RunE: runOtelEnable,
+}
+
+var otelDisableCmd = &cobra.Command{
+	Use:   "disable",
+	Short: "Disable observability for the current workspace",
+	Long: `Turn observability off for the workspace: no collector is started and services
+are not assumed to be OTEL-instrumented. Writes observability.enabled: false to
+the workspace manifest.`,
+	RunE: runOtelDisable,
 }
 
 var otelPluginsCmd = &cobra.Command{
@@ -87,6 +115,8 @@ var otelPluginsCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(otelCmd)
+	otelCmd.AddCommand(otelEnableCmd)
+	otelCmd.AddCommand(otelDisableCmd)
 	otelCmd.AddCommand(otelStartCmd)
 	otelCmd.AddCommand(otelStopCmd)
 	otelCmd.AddCommand(otelStatusCmd)
@@ -94,9 +124,10 @@ func init() {
 	otelCmd.AddCommand(otelConfigureCmd)
 	otelCmd.AddCommand(otelPluginsCmd)
 
-	for _, sub := range []*cobra.Command{otelStartCmd, otelStopCmd, otelStatusCmd, otelOpenCmd, otelConfigureCmd} {
+	for _, sub := range []*cobra.Command{otelEnableCmd, otelDisableCmd, otelStartCmd, otelStopCmd, otelStatusCmd, otelOpenCmd, otelConfigureCmd} {
 		sub.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
 	}
+	otelEnableCmd.Flags().String("backend", "", "Observability backend to use (default: signoz)")
 
 	// Port flags — stored in workspace config so they persist.
 	otelStartCmd.Flags().Int("ui-port", 0, "SigNoz UI + query API port (default 3301)")
@@ -336,6 +367,16 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Per-service telemetry evidence — whether signals are actually arriving.
+	if statuses, terr := telemetry.Status(ws.Path); terr == nil && len(statuses) > 0 {
+		fmt.Printf("\nevidence:\n")
+		for _, s := range statuses {
+			fmt.Printf("  %s: confidence=%s traces=%d logs=%t collector_reachable=%t mode=%s\n",
+				s.Service, s.Confidence, s.TraceCount, s.LogEvidence, s.CollectorReachable, s.Mode)
+			fmt.Printf("    %s\n", s.Interpretation)
+		}
+	}
+
 	if !collectorRunning || !companionRunning {
 		fmt.Printf("\nRun: devstack otel start\n")
 	}
@@ -429,8 +470,17 @@ func runOtelConfigure(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to update workspace config: %w", err)
 	}
 
+	// Persist the backend where it's actually read from. On manifest workspaces
+	// that's the manifest (otherwise the manifest shadows the change on reload);
+	// legacy workspaces keep using .devstack.json.
 	if ws.Path != "" {
-		if err := saveOtelPluginToProject(ws.Path, pluginName, merged); err != nil {
+		if config.HasWorkspaceManifest(ws.Path) {
+			if pluginName != "" {
+				if err := config.SetObservabilityBackend(ws.Path, pluginName); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: failed to write backend to manifest: %v\n", err)
+				}
+			}
+		} else if err := saveOtelPluginToProject(ws.Path, pluginName, merged); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to save to project config: %v\n", err)
 		}
 	}
@@ -444,6 +494,44 @@ func runOtelConfigure(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s = %s\n", k, v)
 	}
 	fmt.Printf("\nRun: devstack otel start\n")
+	return nil
+}
+
+func runOtelEnable(cmd *cobra.Command, args []string) error {
+	ws, err := resolveOtelWorkspace(cmd)
+	if err != nil {
+		return err
+	}
+	backend, _ := cmd.Flags().GetString("backend")
+
+	if err := config.SetObservabilityEnabled(ws.Path, true); err != nil {
+		return err
+	}
+	if backend != "" {
+		if err := config.SetObservabilityBackend(ws.Path, backend); err != nil {
+			return err
+		}
+	}
+
+	effective := backend
+	if effective == "" {
+		effective = "signoz (default)"
+	}
+	fmt.Printf("Observability enabled for '%s' (backend: %s)\n", ws.Name, effective)
+	fmt.Printf("\nRun: devstack otel start\n")
+	return nil
+}
+
+func runOtelDisable(cmd *cobra.Command, args []string) error {
+	ws, err := resolveOtelWorkspace(cmd)
+	if err != nil {
+		return err
+	}
+	if err := config.SetObservabilityEnabled(ws.Path, false); err != nil {
+		return err
+	}
+	fmt.Printf("Observability disabled for '%s'. No collector will start on 'devstack workspace up'.\n", ws.Name)
+	fmt.Printf("Stop a running collector now with: devstack otel stop\n")
 	return nil
 }
 

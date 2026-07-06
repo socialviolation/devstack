@@ -13,20 +13,23 @@ import (
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
-var generateCmd = &cobra.Command{
+// workspaceGenerateCmd manually refreshes the generated Tiltfile. It normally
+// runs automatically as part of `devstack workspace up`, so this is only for
+// inspecting the artifact without starting the daemon.
+var workspaceGenerateCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Generate the dev daemon config from devstack manifests",
 	Long: `Regenerate the workspace's Tiltfile from its devstack manifests
 (devstack.workspace.yaml + each service's devstack.service.yaml).
 
 The Tiltfile is a build artifact — edit the manifests, not the Tiltfile.
-Runs automatically as part of 'devstack up' for manifest-based workspaces.`,
+Runs automatically as part of 'devstack workspace up'.`,
 	SilenceUsage: true,
 	RunE:         runGenerate,
 }
 
 func init() {
-	rootCmd.AddCommand(generateCmd)
+	workspaceCmd.AddCommand(workspaceGenerateCmd)
 }
 
 func runGenerate(cmd *cobra.Command, args []string) error {
@@ -54,9 +57,13 @@ func regenerateTiltfile(ws *workspace.Workspace) (string, error) {
 	}
 
 	managed := map[string]string{}
-	if ep := workspace.OtelOTLPEndpoint(ws); ep != "" {
-		managed["OTEL_EXPORTER_OTLP_ENDPOINT"] = ep
-		managed["OTEL_EXPORTER_OTLP_PROTOCOL"] = "grpc"
+	// Only push OTEL export env down to services when the workspace opts into
+	// observability. Otherwise services are left un-instrumented by default.
+	if config.ObservabilityEnabled(ws.Path) {
+		if ep := workspace.OtelOTLPEndpoint(ws); ep != "" {
+			managed["OTEL_EXPORTER_OTLP_ENDPOINT"] = ep
+			managed["OTEL_EXPORTER_OTLP_PROTOCOL"] = "grpc"
+		}
 	}
 
 	out, err := tiltgen.Generate(rw, tiltgen.Options{ManagedEnv: managed})
