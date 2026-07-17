@@ -95,6 +95,43 @@ ports: { http: 4200 }
 	}
 }
 
+func TestGenerateAbsoluteWorkDir(t *testing.T) {
+	dir := t.TempDir()
+	svcDir := filepath.Join(dir, "repos", "svc")
+	absWork := t.TempDir()
+
+	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: demo
+  repoDiscovery:
+    mode: explicit
+    repos: [./repos/svc]
+`)
+	write(t, filepath.Join(svcDir, config.ServiceManifestFileName), `version: 1
+service:
+  name: svc
+runtime:
+  workDir: `+absWork+`
+  run: { command: ./bin/svc }
+`)
+
+	rw, err := config.ResolveWorkspace(dir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace: %v", err)
+	}
+	out, err := Generate(rw, Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	if !strings.Contains(out, "serve_dir=\""+absWork+"\"") {
+		t.Errorf("absolute workDir should be used verbatim as serve_dir; got:\n%s", out)
+	}
+	if strings.Contains(out, filepath.Join(svcDir, absWork)) {
+		t.Errorf("absolute workDir must not be joined onto the repo path")
+	}
+}
+
 func write(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

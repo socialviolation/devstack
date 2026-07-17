@@ -73,8 +73,12 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	}
 
 	serveDir := svc.RepoPath
-	if m.Runtime.WorkDir != "" && m.Runtime.WorkDir != "." {
-		serveDir = filepath.Join(svc.RepoPath, m.Runtime.WorkDir)
+	if wd := m.Runtime.WorkDir; wd != "" && wd != "." {
+		if filepath.IsAbs(wd) {
+			serveDir = filepath.Clean(wd)
+		} else {
+			serveDir = filepath.Join(svc.RepoPath, wd)
+		}
 	}
 
 	var b strings.Builder
