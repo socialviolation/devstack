@@ -242,19 +242,56 @@ func KillPort(wsName string, port int) {
 	}
 }
 
-// strayForwards scans /proc for ssh processes forwarding the given port
-// (matching either "-L <fwd>" or "-R <fwd>"), regardless of PID-file tracking.
+// trackedForwards returns every PID recorded in any workspace's tunnel PID
+// files. It reads the data root rather than the registry so that an
+// unregistered workspace's forwards still count as owned.
+func trackedForwards() map[int]bool {
+	owned := map[int]bool{}
+	names, err := os.ReadDir(workspace.DataRoot())
+	if err != nil {
+		return owned
+	}
+	for _, n := range names {
+		if !n.IsDir() {
+			continue
+		}
+		dir := Dir(n.Name())
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if !strings.HasSuffix(f.Name(), ".pid") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(dir, f.Name()))
+			if err != nil {
+				continue
+			}
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
+				owned[pid] = true
+			}
+		}
+	}
+	return owned
+}
+
+// strayForwards scans /proc for ssh processes forwarding the given port that no
+// workspace claims. A forward another workspace tracks is never stray: killing
+// it would sabotage that stack, so the clash surfaces via ExitOnForwardFailure
+// instead.
 func strayForwards(port int) []int {
 	fwd := fmt.Sprintf("%d:localhost:%d", port, port)
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil
 	}
+	owned := trackedForwards()
 	self := os.Getpid()
 	var pids []int
 	for _, e := range entries {
 		pid, err := strconv.Atoi(e.Name())
-		if err != nil || pid == self {
+		if err != nil || pid == self || owned[pid] {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
@@ -275,8 +312,10 @@ func strayForwards(port int) []int {
 	return pids
 }
 
-// ReclaimRemote frees the given ports on the remote host before a push, killing
-// whatever is bound there so the reverse forwards can bind. Best-effort.
+// ReclaimRemote frees the given ports on the remote host, killing whatever is
+// bound there so a reverse forward can bind. Best-effort, and indiscriminate:
+// it cannot tell a stale forward of ours from a live one another stack owns, so
+// callers must keep it opt-in.
 func ReclaimRemote(user, host string, ports []int) {
 	if len(ports) == 0 {
 		return

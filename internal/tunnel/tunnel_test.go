@@ -1,10 +1,14 @@
 package tunnel
 
 import (
+	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -108,6 +112,98 @@ func mustWrite(t *testing.T, path, body string) {
 	if err := os.WriteFile(path, []byte(body), 0755); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestSleepHelper is inert unless re-executed by fakeForward.
+func TestSleepHelper(t *testing.T) {
+	if os.Getenv("DEVSTACK_TEST_SLEEP") != "1" {
+		t.Skip("helper process only")
+	}
+	time.Sleep(30 * time.Second)
+}
+
+// fakeForward spawns a live process whose /proc cmdline reads as
+// `ssh ... -L p:localhost:p`, which is what strayForwards matches on. Args[0]
+// is set independently of Path so the test binary presents as ssh, and the ssh
+// flags sit behind -- so the binary's own flag parser ignores them.
+func fakeForward(t *testing.T, port int) int {
+	t.Helper()
+	fwd := fmt.Sprintf("%d:localhost:%d", port, port)
+	cmd := exec.Command(os.Args[0])
+	cmd.Path = os.Args[0]
+	cmd.Args = []string{"ssh", "-test.run=TestSleepHelper", "--", "-N", "-L", fwd, "user@host"}
+	cmd.Env = append(os.Environ(), "DEVSTACK_TEST_SLEEP=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("spawn fake forward: %v", err)
+	}
+	pid := cmd.Process.Pid
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+	return pid
+}
+
+func writePID(t *testing.T, wsName string, port, pid int) {
+	t.Helper()
+	if err := os.MkdirAll(Dir(wsName), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pidFile(wsName, port), []byte(strconv.Itoa(pid)), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTrackedForwardsSpansWorkspaces(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	writePID(t, "ws-a", 5432, 111)
+	writePID(t, "ws-b", 6379, 222)
+
+	owned := trackedForwards()
+	for _, pid := range []int{111, 222} {
+		if !owned[pid] {
+			t.Errorf("pid %d from another workspace should be tracked; got %v", pid, owned)
+		}
+	}
+}
+
+func TestStrayForwardsSparesOtherWorkspaces(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const port = 59322
+
+	pid := fakeForward(t, port)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && !matchesFwd(pid, port) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !matchesFwd(pid, port) {
+		t.Fatalf("fake forward %d never presented an ssh cmdline", pid)
+	}
+
+	if got := strayForwards(port); !contains(got, pid) {
+		t.Fatalf("untracked forward %d should be stray; got %v", pid, got)
+	}
+
+	writePID(t, "ws-other", port, pid)
+	if got := strayForwards(port); contains(got, pid) {
+		t.Fatalf("forward %d tracked by ws-other must not be stray; got %v", pid, got)
+	}
+
+	KillPort("ws-mine", port)
+	if !Alive(pid) {
+		t.Fatal("KillPort from ws-mine killed a forward owned by ws-other")
+	}
+}
+
+func matchesFwd(pid, port int) bool {
+	return contains(strayForwards(port), pid) || trackedForwards()[pid]
+}
+
+func contains(pids []int, want int) bool {
+	for _, p := range pids {
+		if p == want {
+			return true
+		}
+	}
+	return false
 }
 
 // TestLaunchLifecycle verifies Launch spawns a tracked, detached process and

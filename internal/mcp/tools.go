@@ -799,6 +799,8 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			mcp.Description("SSH user. Optional — falls back to the saved user for this workspace.")),
 		mcp.WithString("services",
 			mcp.Description("Comma-separated exact service names to limit to. Optional; default is all serving services.")),
+		mcp.WithBoolean("reclaim",
+			mcp.Description("Push only. Kill whatever already holds these ports on the remote before forwarding. Destructive: it tears down forwards belonging to other stacks, so leave it off unless a push failed to bind and you know the port is yours.")),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -894,7 +896,8 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 				_ = workspace.UpdateTunnelRemote(ws.Name, rhost, ruser)
 			}
 
-			if mode == tunnel.ModePush {
+			reclaim := request.GetBool("reclaim", false)
+			if mode == tunnel.ModePush && reclaim {
 				ports := make([]int, len(svcs))
 				for i, s := range svcs {
 					ports[i] = s.Port
@@ -907,13 +910,19 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			for _, s := range skipped {
 				fmt.Fprintf(&sb, "  [skip]    %-30s :%d  (not serving)\n", s.Name, s.Port)
 			}
+			var clashed bool
 			for _, s := range svcs {
 				pid, lerr := tunnel.Launch(ws.Name, mode, ruser, rhost, s.Port)
 				if lerr != nil {
+					clashed = true
 					fmt.Fprintf(&sb, "  [FAILED]  %-30s :%d  (%v)\n", s.Name, s.Port, lerr)
 					continue
 				}
 				fmt.Fprintf(&sb, "  [started] %-30s :%d  (pid %d)\n", s.Name, s.Port, pid)
+			}
+			if clashed && mode == tunnel.ModePush && !reclaim {
+				fmt.Fprintf(&sb, "\nA forward fails when something already holds the port on %s. It may be a stale "+
+					"forward of your own, or it may belong to another stack — check before retrying with reclaim=true.\n", rhost)
 			}
 			return mcp.NewToolResultText(sb.String()), nil
 

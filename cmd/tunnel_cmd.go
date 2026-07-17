@@ -39,6 +39,7 @@ Filter to specific services with --services:
 var (
 	tunnelUserFlag     string
 	tunnelServicesFlag string
+	tunnelReclaimFlag  bool
 )
 
 func init() {
@@ -85,6 +86,10 @@ func init() {
 	}
 	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd} {
 		c.Flags().StringVar(&tunnelServicesFlag, "services", "", "Comma-separated service names to forward (default: all)")
+	}
+	for _, c := range []*cobra.Command{pushCmd, restartCmd} {
+		c.Flags().BoolVar(&tunnelReclaimFlag, "reclaim", false,
+			"Kill whatever already holds these ports on the remote before forwarding (destructive: will tear down other stacks' forwards)")
 	}
 	restartCmd.Flags().String("mode", string(tunnel.ModePush), "Direction to re-establish: push or pull")
 	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, tunnelStopCmd, tunnelStatusCmd, listCmd} {
@@ -251,7 +256,7 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 
 	fmt.Printf("%s tunnels → %s@%s\n", strings.ToUpper(string(mode)), sshUser, host)
 
-	if mode == tunnel.ModePush {
+	if mode == tunnel.ModePush && tunnelReclaimFlag {
 		ports := make([]int, len(svcs))
 		for i, s := range svcs {
 			ports[i] = s.Port
@@ -260,13 +265,20 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 		tunnel.ReclaimRemote(sshUser, host, ports)
 	}
 
+	var clashed bool
 	for _, s := range svcs {
 		pid, err := tunnel.Launch(ws.Name, mode, sshUser, host, s.Port)
 		if err != nil {
+			clashed = true
 			color.New(color.FgRed).Printf("  [FAILED]  %-30s :%d  (%v)\n", s.Name, s.Port, err)
 			continue
 		}
 		fmt.Printf("  [started] %-30s :%d  (pid %d)\n", s.Name, s.Port, pid)
+	}
+	if clashed && mode == tunnel.ModePush && !tunnelReclaimFlag {
+		fmt.Printf("\n  A forward fails when something already holds the port on %s — often a stale\n"+
+			"  forward of your own, but it may belong to another stack. Check the remote, or\n"+
+			"  re-run with --reclaim to kill whatever holds these ports there.\n", host)
 	}
 	return nil
 }

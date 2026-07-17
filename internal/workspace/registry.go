@@ -108,13 +108,18 @@ func RegistryPath() string {
 	return filepath.Join(home, ".config", "devstack", "workspaces.json")
 }
 
-// DataDir returns the runtime data directory for a named workspace.
-func DataDir(name string) string {
+// DataRoot returns the directory holding every workspace's runtime data.
+func DataRoot() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = os.Getenv("HOME")
 	}
-	return filepath.Join(home, ".local", "share", "devstack", name) + "/"
+	return filepath.Join(home, ".local", "share", "devstack")
+}
+
+// DataDir returns the runtime data directory for a named workspace.
+func DataDir(name string) string {
+	return filepath.Join(DataRoot(), name) + "/"
 }
 
 // PIDFile returns the path to the Tilt PID file for a named workspace.
