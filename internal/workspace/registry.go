@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/socialviolation/devstack/internal/config"
 )
@@ -203,35 +204,58 @@ func expandPath(path string) string {
 func Register(ws Workspace) error {
 	ws.Path = filepath.Clean(expandPath(ws.Path))
 
-	workspaces, err := Load()
-	if err != nil {
-		return err
-	}
-
-	if ws.TiltPort == 0 {
-		port, err := NextPort()
+	return withRegistryLock(func() error {
+		workspaces, err := Load()
 		if err != nil {
 			return err
 		}
-		ws.TiltPort = port
-	}
 
-	lowerName := strings.ToLower(ws.Name)
-	for _, existing := range workspaces {
-		if existing.Path != ws.Path && strings.ToLower(existing.Name) == lowerName {
-			return fmt.Errorf("workspace name %q already registered at %s", ws.Name, existing.Path)
+		if ws.TiltPort == 0 {
+			port, err := nextPortFrom(workspaces)
+			if err != nil {
+				return err
+			}
+			ws.TiltPort = port
 		}
-	}
 
-	for i, existing := range workspaces {
-		if existing.Path == ws.Path {
-			workspaces[i] = ws
-			return Save(workspaces)
+		lowerName := strings.ToLower(ws.Name)
+		for _, existing := range workspaces {
+			if existing.Path != ws.Path && strings.ToLower(existing.Name) == lowerName {
+				return fmt.Errorf("workspace name %q already registered at %s", ws.Name, existing.Path)
+			}
 		}
-	}
 
-	workspaces = append(workspaces, ws)
-	return Save(workspaces)
+		for i, existing := range workspaces {
+			if existing.Path == ws.Path {
+				workspaces[i] = ws
+				return Save(workspaces)
+			}
+		}
+
+		workspaces = append(workspaces, ws)
+		return Save(workspaces)
+	})
+}
+
+// withRegistryLock runs fn while holding an exclusive advisory lock on a
+// dedicated lockfile beside the registry, serialising concurrent read-compute-write
+// sequences (allocate a port, then Save) across processes and goroutines. The
+// registry file itself is not locked because Save rewrites it.
+func withRegistryLock(fn func() error) error {
+	lockPath := RegistryPath() + ".lock"
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
+		return fmt.Errorf("failed to create registry directory: %w", err)
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open registry lock: %w", err)
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("failed to lock registry: %w", err)
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return fn()
 }
 
 // All returns all registered workspaces.
@@ -500,24 +524,44 @@ func RemoveEnvironment(workspaceName, envName string) error {
 	return fmt.Errorf("workspace %q not found", workspaceName)
 }
 
-// NextPort returns the next available Tilt port (max existing port + 1, minimum 10350).
-// If no workspaces are registered, returns 10350.
+const minPort = 10350
+const portScanLimit = 1000
+
+// portInUse reports whether a port is already listening on localhost. It aliases
+// the session dial-probe so the allocator and the residue detector share one
+// implementation; tests override it to exercise the exhaustion path.
+var portInUse = portListening
+
+// NextPort returns the next free Tilt port, starting from max-registered-port+1
+// (minimum 10350) and skipping any candidate that is already a registered
+// TiltPort or currently listening on localhost. Not race-safe on its own; the
+// atomic allocate-and-register path goes through Register.
 func NextPort() (int, error) {
 	workspaces, err := Load()
 	if err != nil {
 		return 0, err
 	}
+	return nextPortFrom(workspaces)
+}
 
-	const minPort = 10350
+// nextPortFrom computes the next free port against an already-loaded registry,
+// so a caller holding the registry lock reserves without a second Load.
+func nextPortFrom(workspaces []Workspace) (int, error) {
+	used := make(map[int]bool, len(workspaces))
 	max := minPort - 1
 	for _, ws := range workspaces {
+		used[ws.TiltPort] = true
 		if ws.TiltPort > max {
 			max = ws.TiltPort
 		}
 	}
 
-	if max < minPort {
-		return minPort, nil
+	start := max + 1
+	for candidate := start; candidate < start+portScanLimit; candidate++ {
+		if used[candidate] || portInUse(candidate) {
+			continue
+		}
+		return candidate, nil
 	}
-	return max + 1, nil
+	return 0, fmt.Errorf("no free port found in range %d-%d", start, start+portScanLimit-1)
 }

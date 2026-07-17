@@ -1,9 +1,12 @@
 package workspace
 
 import (
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -104,6 +107,87 @@ func TestNextPortEmpty(t *testing.T) {
 	}
 	if port != 10350 {
 		t.Fatalf("NextPort() on empty registry = %d, want 10350", port)
+	}
+}
+
+func TestNextPortSkipsListeningPort(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer ln.Close()
+	bound := ln.Addr().(*net.TCPAddr).Port
+
+	if err := Save([]Workspace{{Name: "held", Path: tmpHome + "/dev/held", TiltPort: bound - 1}}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	port, err := NextPort()
+	if err != nil {
+		t.Fatalf("NextPort(): %v", err)
+	}
+	if port == bound {
+		t.Fatalf("NextPort() returned the bound port %d; the probe did not skip it", port)
+	}
+	if port <= bound {
+		t.Fatalf("NextPort() = %d, want > %d (the bound port)", port, bound)
+	}
+}
+
+func TestRegisterConcurrentDistinctPorts(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	const n = 20
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = Register(Workspace{
+				Name: fmt.Sprintf("ws-%d", i),
+				Path: fmt.Sprintf("%s/dev/ws-%d", tmpHome, i),
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("Register ws-%d: %v", i, err)
+		}
+	}
+
+	all, err := All()
+	if err != nil {
+		t.Fatalf("All(): %v", err)
+	}
+	if len(all) != n {
+		t.Fatalf("got %d registrations, want %d (lost writes)", len(all), n)
+	}
+	seen := map[int]string{}
+	for _, ws := range all {
+		if prev, dup := seen[ws.TiltPort]; dup {
+			t.Fatalf("duplicate TiltPort %d assigned to %q and %q", ws.TiltPort, prev, ws.Name)
+		}
+		seen[ws.TiltPort] = ws.Name
+	}
+}
+
+func TestNextPortExhausted(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	orig := portInUse
+	portInUse = func(int) bool { return true }
+	defer func() { portInUse = orig }()
+
+	if _, err := NextPort(); err == nil {
+		t.Fatal("NextPort() with every port busy returned nil error, want an exhaustion error")
 	}
 }
 
