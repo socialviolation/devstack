@@ -63,7 +63,7 @@ func RegisterTools(
 		registerStopTool(mcpServer, tiltClient, cfg)
 		registerConfigureTool(mcpServer, tiltClient)
 		registerProcessLogsTool(mcpServer, tiltClient, defaultService, cfg)
-		registerServiceEnvTool(mcpServer, tiltClient, ws, workspacePath)
+		registerServiceEnvTool(mcpServer, ws, workspacePath)
 
 		// Observability control (status/enable/disable/configure) is always
 		// available locally so an agent can discover and turn it on.

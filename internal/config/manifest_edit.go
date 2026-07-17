@@ -16,18 +16,23 @@ func editWorkspaceManifest(workspacePath string, mutate func(root *yaml.Node) er
 	if !HasWorkspaceManifest(workspacePath) {
 		return fmt.Errorf("no %s in %s — observability config lives in the workspace manifest", WorkspaceManifestFileName, workspacePath)
 	}
-	path := WorkspaceManifestPath(workspacePath)
+	return editManifest(WorkspaceManifestPath(workspacePath), mutate)
+}
+
+// editManifest applies mutate to the manifest's root mapping node at path and
+// writes the result back.
+func editManifest(path string, mutate func(root *yaml.Node) error) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("failed to read workspace manifest %s: %w", path, err)
+		return fmt.Errorf("failed to read manifest %s: %w", path, err)
 	}
 
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return fmt.Errorf("failed to parse workspace manifest %s: %w", path, err)
+		return fmt.Errorf("failed to parse manifest %s: %w", path, err)
 	}
 	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
-		return fmt.Errorf("workspace manifest %s is not a mapping", path)
+		return fmt.Errorf("manifest %s is not a mapping", path)
 	}
 
 	if err := mutate(doc.Content[0]); err != nil {
@@ -38,14 +43,33 @@ func editWorkspaceManifest(workspacePath string, mutate func(root *yaml.Node) er
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
 	if err := enc.Encode(&doc); err != nil {
-		return fmt.Errorf("failed to encode workspace manifest: %w", err)
+		return fmt.Errorf("failed to encode manifest %s: %w", path, err)
 	}
 	enc.Close()
 
 	if err := os.WriteFile(path, buf.Bytes(), 0644); err != nil {
-		return fmt.Errorf("failed to write workspace manifest %s: %w", path, err)
+		return fmt.Errorf("failed to write manifest %s: %w", path, err)
 	}
 	return nil
+}
+
+// SetServiceEnvValue writes key=value into the service manifest's env.values at
+// repoPath, creating the env.values block if absent. It preserves comments and
+// unrelated fields.
+//
+// env.values is committed to git: callers must not route secrets here.
+func SetServiceEnvValue(repoPath, key, value string) error {
+	if !HasServiceManifest(repoPath) {
+		return fmt.Errorf("no %s in %s", ServiceManifestFileName, repoPath)
+	}
+	return editManifest(ServiceManifestPath(repoPath), func(root *yaml.Node) error {
+		values := mappingChild(mappingChild(root, "env"), "values")
+		if values.Kind != yaml.MappingNode {
+			return fmt.Errorf("env.values in %s is not a mapping", ServiceManifestPath(repoPath))
+		}
+		setScalar(values, key, value, "!!str")
+		return nil
+	})
 }
 
 // SetObservabilityEnabled writes observability.enabled into the workspace
@@ -104,6 +128,12 @@ func AddServiceRepo(workspacePath, repoRelPath string) error {
 // empty mapping (and the key) when it does not yet exist.
 func mappingChild(parent *yaml.Node, key string) *yaml.Node {
 	if v := mapValue(parent, key); v != nil {
+		// A bare "key:" parses as a null scalar; appending to it would emit garbage.
+		if v.Kind == yaml.ScalarNode && v.Tag == "!!null" {
+			v.Kind = yaml.MappingNode
+			v.Tag = "!!map"
+			v.Value = ""
+		}
 		return v
 	}
 	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}

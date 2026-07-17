@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -13,20 +13,19 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/socialviolation/devstack/internal/config"
-	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 // registerServiceEnvTool registers the service_env MCP tool (local environments only).
-func registerServiceEnvTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws *workspace.Workspace, workspacePath string) {
+func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	tool := mcp.NewTool("service_env",
 		mcp.WithDescription(
 			"Inspect and manage environment variables across local services. "+
 				"Supports four actions: "+
-				"'get' — show configured (.envrc) and live (/proc/<pid>/environ) env vars for a service or group; "+
-				"'diff' — compare .envrc env vars across multiple services or a group side-by-side; "+
-				"'set' — update or append a key=value in a service's .envrc file; "+
-				"'check' — audit services for missing, mismatched, or suspicious env var patterns (DB URLs, OTEL endpoints, placeholders).",
+				"'get' — show the env a service actually resolves to, with the rung each value comes from; "+
+				"'diff' — compare resolved env across multiple services or a group side-by-side; "+
+				"'set' — write a key=value to a service's manifest (env.values) or .envrc, and report if a higher rung overrides it; "+
+				"'check' — audit resolved env for placeholder and asymmetric values.",
 		),
 		mcp.WithString("action",
 			mcp.Required(),
@@ -47,6 +46,16 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, tiltClient *tilt.Client
 		mcp.WithString("value",
 			mcp.Description("Env var value (required for set)."),
 		),
+		mcp.WithString("target",
+			mcp.Description(
+				"Where to write (required for set). "+
+					"'manifest' — the service's devstack.service.yaml env.values. Committed to git. "+
+					"Use for devstack-managed config: service addresses, ports, URLs of other services, feature flags. "+
+					"'envrc' — the service's local .envrc. Not committed. "+
+					"Use for secrets and anything credential-bearing: API keys, tokens, passwords, DSNs with credentials. "+
+					"Never write a secret to 'manifest' — it would be committed.",
+			),
+		),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -56,6 +65,7 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, tiltClient *tilt.Client
 		filter := req.GetString("filter", "")
 		key := req.GetString("key", "")
 		value := req.GetString("value", "")
+		target := req.GetString("target", "")
 
 		cfg, _ := config.Load(workspacePath)
 		if cfg == nil {
@@ -68,92 +78,80 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, tiltClient *tilt.Client
 
 		switch action {
 		case "get":
-			return handleServiceEnvGet(tiltClient, cfg, serviceName, groupName, filter)
+			return handleServiceEnvGet(ws, workspacePath, cfg, serviceName, groupName, filter)
 		case "diff":
-			return handleServiceEnvDiff(cfg, serviceName, groupName, filter)
+			return handleServiceEnvDiff(ws, workspacePath, cfg, serviceName, groupName, filter)
 		case "set":
-			return handleServiceEnvSet(cfg, serviceName, key, value)
+			return handleServiceEnvSet(ws, workspacePath, serviceName, key, value, target)
 		case "check":
-			return handleServiceEnvCheck(cfg, ws, serviceName, groupName)
+			return handleServiceEnvCheck(ws, workspacePath, cfg, serviceName, groupName)
 		default:
 			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — must be one of: get, diff, set, check", action)), nil
 		}
 	})
 }
 
-// parseEnvrc reads a .envrc file and returns a map of KEY -> VALUE.
-// Handles: export KEY=VALUE, KEY=VALUE; strips surrounding quotes; skips comments and blanks.
-func parseEnvrc(path string) (map[string]string, error) {
-	data, err := os.ReadFile(path)
+// resolveLadders resolves each service's env precedence ladder from the
+// workspace's manifests — the same ladder the generator feeds the service, so
+// what this reports is what the service gets. Services with no service manifest
+// are absent from the result.
+func resolveLadders(ws *workspace.Workspace, workspacePath string, services []string) (map[string][]config.EnvLayer, error) {
+	rw, err := config.ResolveWorkspace(workspacePath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return map[string]string{}, nil
-		}
-		return nil, fmt.Errorf("failed to read %s: %w", path, err)
+		return nil, fmt.Errorf("failed to resolve workspace manifests: %w", err)
 	}
+	managed := workspace.ManagedEnv(ws, services)
 
-	result := map[string]string{}
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
+	out := map[string][]config.EnvLayer{}
+	for _, name := range services {
+		svc, ok := rw.Services[name]
+		if !ok || svc.Manifest == nil {
 			continue
 		}
-		// Strip leading "export "
-		line = strings.TrimPrefix(line, "export ")
-		idx := strings.IndexByte(line, '=')
-		if idx < 1 {
-			continue
+		layers, err := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, managed[name])
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve env for %s: %w", name, err)
 		}
-		k := strings.TrimSpace(line[:idx])
-		v := strings.TrimSpace(line[idx+1:])
-		// Strip surrounding quotes (single or double)
-		if len(v) >= 2 {
-			if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'') {
-				v = v[1 : len(v)-1]
-			}
-		}
-		result[k] = v
+		out[name] = layers
 	}
-	return result, scanner.Err()
+	return out, nil
 }
 
-// readProcEnv reads /proc/<pid>/environ and returns a KEY -> VALUE map.
-func readProcEnv(pid int) (map[string]string, error) {
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
+// resolvedEnvs flattens each service's ladder into the env it actually receives.
+func resolvedEnvs(ws *workspace.Workspace, workspacePath string, services []string) (map[string]map[string]string, error) {
+	ladders, err := resolveLadders(ws, workspacePath, services)
 	if err != nil {
-		return nil, fmt.Errorf("cannot read /proc/%d/environ: %w", pid, err)
+		return nil, err
 	}
-	result := map[string]string{}
-	for _, entry := range strings.Split(string(data), "\x00") {
-		if entry == "" {
-			continue
-		}
-		idx := strings.IndexByte(entry, '=')
-		if idx < 1 {
-			continue
-		}
-		result[entry[:idx]] = entry[idx+1:]
+	out := make(map[string]map[string]string, len(ladders))
+	for name, layers := range ladders {
+		out[name] = config.MergeEnvLadder(layers)
 	}
-	return result, nil
+	return out, nil
 }
 
-// pidForService looks up the PID from Tilt for the given service. Returns 0 if not available.
-func pidForService(tiltClient *tilt.Client, serviceName string) int {
-	view, err := tiltClient.GetView()
-	if err != nil {
-		return 0
+// describeRung names a rung for a human, without ever naming its value.
+func describeRung(l config.EnvLayer) string {
+	if l.Source == "" {
+		return string(l.Rung)
 	}
-	for _, r := range view.UiResources {
-		if r.Metadata.Name == serviceName {
-			if r.Status.RuntimeStatus != "ok" {
-				return 0
-			}
-			// Tilt does not expose PID directly in the UIResource; live env is unavailable.
-			return 0
+	return fmt.Sprintf("%s (%s)", l.Rung, l.Source)
+}
+
+// rungOf reports which rung supplies key, for display alongside a value.
+func rungOf(layers []config.EnvLayer, key string) string {
+	var winner config.EnvLayer
+	found := false
+	for _, l := range layers {
+		if _, ok := l.Values[key]; ok {
+			winner = l
+			found = true
 		}
 	}
-	return 0
+	if !found {
+		return ""
+	}
+	return describeRung(winner)
 }
 
 // resolveServices expands service/group inputs to a list of service names.
@@ -181,87 +179,35 @@ func resolveServices(cfg *config.WorkspaceConfig, serviceName, groupName string)
 }
 
 // handleServiceEnvGet implements the "get" action.
-func handleServiceEnvGet(tiltClient *tilt.Client, cfg *config.WorkspaceConfig, serviceName, groupName, filter string) (*mcp.CallToolResult, error) {
+func handleServiceEnvGet(ws *workspace.Workspace, workspacePath string, cfg *config.WorkspaceConfig, serviceName, groupName, filter string) (*mcp.CallToolResult, error) {
 	services, err := resolveServices(cfg, serviceName, groupName)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
+	ladders, err := resolveLadders(ws, workspacePath, services)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
 	var sb strings.Builder
+	filterLower := strings.ToLower(filter)
 
 	for _, svc := range services {
 		fmt.Fprintf(&sb, "service: %s\n", svc)
 
-		svcPath, ok := cfg.ServicePaths[svc]
+		layers, ok := ladders[svc]
 		if !ok {
-			fmt.Fprintf(&sb, "  (no service path configured for %s)\n\n", svc)
+			fmt.Fprintf(&sb, "  (no %s for %s \u2014 env cannot be resolved)\n\n", config.ServiceManifestFileName, svc)
 			continue
 		}
 
-		envrcPath := svcPath + "/.envrc"
-		configured, err := parseEnvrc(envrcPath)
-		if err != nil {
-			fmt.Fprintf(&sb, "  error reading .envrc: %v\n\n", err)
-			continue
-		}
-
-		// Try to get live process env
-		pid := pidForService(tiltClient, svc)
-		var live map[string]string
-		var liveNote string
-		if pid > 0 {
-			live, err = readProcEnv(pid)
-			if err != nil {
-				liveNote = fmt.Sprintf(" (live env unavailable: %v)", err)
-			}
-		} else {
-			liveNote = " (live env unavailable: PID not exposed by Tilt)"
-		}
-
-		if liveNote != "" {
-			fmt.Fprintf(&sb, "  note:%s\n", liveNote)
-		}
-
-		// Collect all keys
-		allKeys := map[string]bool{}
-		for k := range configured {
-			allKeys[k] = true
-		}
-		if live != nil {
-			for k := range live {
-				allKeys[k] = true
-			}
-		}
-
-		keys := make([]string, 0, len(allKeys))
-		for k := range allKeys {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		filterLower := strings.ToLower(filter)
-		for _, k := range keys {
+		env := config.MergeEnvLadder(layers)
+		for _, k := range sortedKeys(env) {
 			if filter != "" && !strings.Contains(strings.ToLower(k), filterLower) {
 				continue
 			}
-			cfgVal, inCfg := configured[k]
-			liveVal, inLive := live[k]
-
-			var line string
-			switch {
-			case live == nil:
-				// No live data
-				line = fmt.Sprintf("  %s=%s", k, cfgVal)
-			case inCfg && inLive && cfgVal == liveVal:
-				line = fmt.Sprintf("  %s=%s", k, cfgVal)
-			case inCfg && inLive && cfgVal != liveVal:
-				line = fmt.Sprintf("  %s=%s\u2260live (%s)", k, cfgVal, liveVal)
-			case inCfg && !inLive:
-				line = fmt.Sprintf("  %s=%s  (configured only)", k, cfgVal)
-			case !inCfg && inLive:
-				line = fmt.Sprintf("  %s=%s  (live only)", k, liveVal)
-			}
-			sb.WriteString(line + "\n")
+			fmt.Fprintf(&sb, "  %s=%s  [%s]\n", k, env[k], rungOf(layers, k))
 		}
 		sb.WriteString("\n")
 	}
@@ -269,8 +215,17 @@ func handleServiceEnvGet(tiltClient *tilt.Client, cfg *config.WorkspaceConfig, s
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // handleServiceEnvDiff implements the "diff" action.
-func handleServiceEnvDiff(cfg *config.WorkspaceConfig, serviceName, groupName, filter string) (*mcp.CallToolResult, error) {
+func handleServiceEnvDiff(ws *workspace.Workspace, workspacePath string, cfg *config.WorkspaceConfig, serviceName, groupName, filter string) (*mcp.CallToolResult, error) {
 	services, err := resolveServices(cfg, serviceName, groupName)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -279,17 +234,17 @@ func handleServiceEnvDiff(cfg *config.WorkspaceConfig, serviceName, groupName, f
 		return mcp.NewToolResultError("diff requires at least 2 services (use group or comma-separated service list)"), nil
 	}
 
-	// Collect env from each service
+	resolved, err := resolvedEnvs(ws, workspacePath, services)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
 	envMaps := make([]map[string]string, len(services))
 	for i, svc := range services {
-		svcPath, ok := cfg.ServicePaths[svc]
-		if !ok {
+		if env, ok := resolved[svc]; ok {
+			envMaps[i] = env
+		} else {
 			envMaps[i] = map[string]string{}
-			continue
-		}
-		envMaps[i], err = parseEnvrc(svcPath + "/.envrc")
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("error reading .envrc for %s: %v", svc, err)), nil
 		}
 	}
 
@@ -371,8 +326,10 @@ func handleServiceEnvDiff(cfg *config.WorkspaceConfig, serviceName, groupName, f
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
-// handleServiceEnvSet implements the "set" action.
-func handleServiceEnvSet(cfg *config.WorkspaceConfig, serviceName, key, value string) (*mcp.CallToolResult, error) {
+// handleServiceEnvSet implements the "set" action. It writes to the rung the
+// caller names, then re-resolves the ladder from disk and reports whether the
+// value can actually reach the service.
+func handleServiceEnvSet(ws *workspace.Workspace, workspacePath, serviceName, key, value, target string) (*mcp.CallToolResult, error) {
 	if serviceName == "" {
 		return mcp.NewToolResultError("service is required for set"), nil
 	}
@@ -380,15 +337,86 @@ func handleServiceEnvSet(cfg *config.WorkspaceConfig, serviceName, key, value st
 		return mcp.NewToolResultError("key is required for set"), nil
 	}
 
-	svcPath, ok := cfg.ServicePaths[serviceName]
-	if !ok {
-		return mcp.NewToolResultError(fmt.Sprintf("service %q not found in service_paths config", serviceName)), nil
+	var rung config.EnvRung
+	switch target {
+	case "manifest":
+		rung = config.RungServiceValues
+	case "envrc":
+		rung = config.RungEnvrc
+	case "":
+		return mcp.NewToolResultError(
+			"target is required for set — 'manifest' for devstack-managed config (env.values, committed to git), " +
+				"'envrc' for secrets and credentials (local, not committed)"), nil
+	default:
+		return mcp.NewToolResultError(fmt.Sprintf("unknown target %q — must be 'manifest' or 'envrc'", target)), nil
 	}
 
-	envrcPath := svcPath + "/.envrc"
-	data, err := os.ReadFile(envrcPath)
+	rw, err := config.ResolveWorkspace(workspacePath)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to resolve workspace manifests: %v", err)), nil
+	}
+	svc, ok := rw.Services[serviceName]
+	if !ok {
+		return mcp.NewToolResultError(fmt.Sprintf("service %q not found in workspace", serviceName)), nil
+	}
+	if svc.Manifest == nil {
+		return mcp.NewToolResultError(fmt.Sprintf("service %q has no %s — env cannot be resolved for it", serviceName, config.ServiceManifestFileName)), nil
+	}
+
+	var written string
+	if target == "manifest" {
+		if err := config.SetServiceEnvValue(svc.RepoPath, key, value); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to write %s: %v", key, err)), nil
+		}
+		written = config.ServiceManifestPath(svc.RepoPath)
+	} else {
+		written, err = setEnvrcValue(svc.EnvDir(), key, value)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to write %s: %v", key, err)), nil
+		}
+	}
+
+	layers, err := reresolveLadder(ws, workspacePath, serviceName)
+	if err != nil {
+		return mcp.NewToolResultText(fmt.Sprintf(
+			"wrote %s to %s (%s), but the env ladder could not be resolved to confirm it takes effect: %v",
+			key, written, rung, err)), nil
+	}
+
+	if over, overridden := config.OverriderOf(layers, rung, key); overridden {
+		return mcp.NewToolResultText(fmt.Sprintf(
+			"wrote %s to %s (%s) — but it will NOT reach %s: %s also sets %s and wins.\n"+
+				"Set it at that rung instead, or remove it from there.",
+			key, written, rung, serviceName, describeRung(over), key)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf(
+		"wrote %s to %s (%s) — no higher rung overrides it. Takes effect for %s on next generate + restart.",
+		key, written, rung, serviceName)), nil
+}
+
+// reresolveLadder re-reads the workspace from disk so the ladder reflects a write
+// that just landed.
+func reresolveLadder(ws *workspace.Workspace, workspacePath, serviceName string) ([]config.EnvLayer, error) {
+	ladders, err := resolveLadders(ws, workspacePath, []string{serviceName})
+	if err != nil {
+		return nil, err
+	}
+	layers, ok := ladders[serviceName]
+	if !ok {
+		return nil, fmt.Errorf("service %q could not be resolved", serviceName)
+	}
+	return layers, nil
+}
+
+// setEnvrcValue updates or appends `export KEY='value'` in dir's .envrc and
+// returns the path written. dir is the service's env dir, which is where the
+// ladder reads .envrc from.
+func setEnvrcValue(dir, key, value string) (string, error) {
+	path := filepath.Join(dir, config.EnvrcFileName)
+	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to read %s: %v", envrcPath, err)), nil
+		return "", fmt.Errorf("failed to read %s: %w", path, err)
 	}
 
 	lines := []string{}
@@ -398,16 +426,15 @@ func handleServiceEnvSet(cfg *config.WorkspaceConfig, serviceName, key, value st
 			lines = append(lines, scanner.Text())
 		}
 		if err := scanner.Err(); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to parse %s: %v", envrcPath, err)), nil
+			return "", fmt.Errorf("failed to parse %s: %w", path, err)
 		}
 	}
 
-	newLine := fmt.Sprintf("export %s=%s", key, value)
+	// .envrc is executed, not line-parsed, so an unquoted value would be word-split.
+	newLine := fmt.Sprintf("export %s=%s", key, shQuote(value))
 	found := false
 	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		// Match "export KEY=..." or "KEY=..."
-		withoutExport := strings.TrimPrefix(trimmed, "export ")
+		withoutExport := strings.TrimPrefix(strings.TrimSpace(line), "export ")
 		if strings.HasPrefix(withoutExport, key+"=") {
 			lines[i] = newLine
 			found = true
@@ -423,54 +450,20 @@ func handleServiceEnvSet(cfg *config.WorkspaceConfig, serviceName, key, value st
 		content += "\n"
 	}
 
-	if err := os.WriteFile(envrcPath, []byte(content), 0644); err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to write %s: %v", envrcPath, err)), nil
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		return "", fmt.Errorf("failed to write %s: %w", path, err)
 	}
-
-	action := "updated"
-	if !found {
-		action = "appended"
-	}
-	return mcp.NewToolResultText(fmt.Sprintf("%s: %s in %s", action, newLine, envrcPath)), nil
+	return path, nil
 }
 
-// dbURLPatterns are key name patterns that indicate database connection strings.
-var dbURLPatterns = []string{
-	"_DATABASE_URL", "_DB_URL", "_DSN", "_POSTGRES_URL", "_MYSQL_URL", "_MONGO_URL", "_REDIS_URL",
-}
-
-// otelEndpointKeys are OTEL exporter endpoint keys to audit.
-var otelEndpointKeys = []string{
-	"OTEL_EXPORTER_OTLP_ENDPOINT",
-	"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-	"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
-	"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+// shQuote single-quotes a value for embedding in .envrc.
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // placeholderPatterns are substrings that indicate a placeholder value.
 var placeholderPatterns = []string{
 	"TODO", "CHANGEME", "<replace>", "your-", "example.com",
-}
-
-// isDBURLKey returns true if the key name matches a database URL pattern.
-func isDBURLKey(key string) bool {
-	upper := strings.ToUpper(key)
-	for _, pat := range dbURLPatterns {
-		if strings.HasSuffix(upper, pat) {
-			return true
-		}
-	}
-	return false
-}
-
-// isOtelEndpointKey returns true if the key is an OTEL endpoint key.
-func isOtelEndpointKey(key string) bool {
-	for _, k := range otelEndpointKeys {
-		if key == k {
-			return true
-		}
-	}
-	return false
 }
 
 // isPlaceholderValue returns true if the value looks like a placeholder.
@@ -487,44 +480,17 @@ func isPlaceholderValue(v string) bool {
 	return false
 }
 
-// isSafeHost returns true if the host is considered local/docker-safe.
-func isSafeHost(host string) bool {
-	if host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" {
-		return true
-	}
-	// Docker gateway IPs
-	if host == "172.17.0.1" || host == "host-gateway" {
-		return true
-	}
-	// No dots => likely a docker service name
-	if !strings.Contains(host, ".") {
-		return true
-	}
-	return false
-}
-
-// extractHost parses a host from a DSN or URL value.
-func extractHost(val string) string {
-	// Try URL parse first
-	u, err := url.Parse(val)
-	if err == nil && u.Host != "" {
-		h := u.Hostname()
-		return h
-	}
-	// Fallback: look for @host or first host-like token
-	return ""
-}
-
 type checkFinding struct {
-	level   string // PASS, WARN, FAIL, MISMATCH
+	level   string // PASS, WARN, FAIL
 	service string
 	key     string
 	message string
 }
 
-// handleServiceEnvCheck implements the "check" action.
-func handleServiceEnvCheck(cfg *config.WorkspaceConfig, ws *workspace.Workspace, serviceName, groupName string) (*mcp.CallToolResult, error) {
-	// Determine services to check
+// handleServiceEnvCheck implements the "check" action. It audits the env each
+// service actually resolves to. It deliberately makes no cross-service agreement
+// claims: services agreeing is consensus, not correctness.
+func handleServiceEnvCheck(ws *workspace.Workspace, workspacePath string, cfg *config.WorkspaceConfig, serviceName, groupName string) (*mcp.CallToolResult, error) {
 	var services []string
 	if groupName != "" || serviceName != "" {
 		var err error
@@ -533,36 +499,19 @@ func handleServiceEnvCheck(cfg *config.WorkspaceConfig, ws *workspace.Workspace,
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 	} else {
-		// All registered services
 		for svc := range cfg.ServicePaths {
 			services = append(services, svc)
 		}
 		sort.Strings(services)
 	}
 
-	// Load env for each service
-	svcEnvs := make(map[string]map[string]string, len(services))
-	for _, svc := range services {
-		svcPath, ok := cfg.ServicePaths[svc]
-		if !ok {
-			svcEnvs[svc] = map[string]string{}
-			continue
-		}
-		env, err := parseEnvrc(svcPath + "/.envrc")
-		if err != nil {
-			svcEnvs[svc] = map[string]string{}
-			continue
-		}
-		svcEnvs[svc] = env
+	svcEnvs, err := resolvedEnvs(ws, workspacePath, services)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 
 	var findings []checkFinding
 
-	// Expected OTEL endpoints
-	expectedHTTP := fmt.Sprintf("http://localhost:%d", ws.HTTPPort())
-	expectedGRPC := fmt.Sprintf("http://localhost:%d", ws.GRPCPort())
-
-	// Collect all unique keys across services
 	allKeys := map[string]bool{}
 	for _, env := range svcEnvs {
 		for k := range env {
@@ -570,132 +519,17 @@ func handleServiceEnvCheck(cfg *config.WorkspaceConfig, ws *workspace.Workspace,
 		}
 	}
 
-	// Per-key analysis
 	for k := range allKeys {
-		// Gather which services have this key and what their values are
-		svcValues := map[string]string{}
+		presentIn := []string{}
 		for _, svc := range services {
-			if v, ok := svcEnvs[svc][k]; ok {
-				svcValues[svc] = v
+			if _, ok := svcEnvs[svc][k]; ok {
+				presentIn = append(presentIn, svc)
 			}
 		}
 
-		// OTEL endpoint checks
-		if isOtelEndpointKey(k) {
-			for _, svc := range services {
-				v, present := svcEnvs[svc][k]
-				if !present || v == "" {
-					findings = append(findings, checkFinding{
-						level:   "FAIL",
-						service: svc,
-						key:     k,
-						message: "missing or empty",
-					})
-					continue
-				}
-				if v != expectedHTTP && v != expectedGRPC {
-					// Check if it's right host but wrong port
-					u, err := url.Parse(v)
-					if err == nil && u.Hostname() == "localhost" {
-						findings = append(findings, checkFinding{
-							level:   "WARN",
-							service: svc,
-							key:     k,
-							message: fmt.Sprintf("%s (expected %s or %s)", v, expectedHTTP, expectedGRPC),
-						})
-					} else {
-						findings = append(findings, checkFinding{
-							level:   "FAIL",
-							service: svc,
-							key:     k,
-							message: fmt.Sprintf("%s (expected %s or %s)", v, expectedHTTP, expectedGRPC),
-						})
-					}
-				} else {
-					findings = append(findings, checkFinding{
-						level:   "PASS",
-						service: svc,
-						key:     k,
-						message: v,
-					})
-				}
-			}
-			continue
-		}
-
-		// DB URL checks
-		if isDBURLKey(k) {
-			// Check for presence mismatch: present in some but not others
-			presentIn := []string{}
-			missingIn := []string{}
-			for _, svc := range services {
-				if _, ok := svcEnvs[svc][k]; ok {
-					presentIn = append(presentIn, svc)
-				} else {
-					missingIn = append(missingIn, svc)
-				}
-			}
-			if len(presentIn) > 0 && len(missingIn) > 0 {
-				for _, svc := range missingIn {
-					findings = append(findings, checkFinding{
-						level:   "FAIL",
-						service: svc,
-						key:     k,
-						message: fmt.Sprintf("missing (present in: %s)", strings.Join(presentIn, ", ")),
-					})
-				}
-			}
-
-			// Check for value drift among services that have it
-			if len(presentIn) > 1 {
-				firstSvc := presentIn[0]
-				firstVal := svcValues[firstSvc]
-				for _, svc := range presentIn[1:] {
-					v := svcValues[svc]
-					if v != firstVal {
-						findings = append(findings, checkFinding{
-							level:   "MISMATCH",
-							service: fmt.Sprintf("%s vs %s", firstSvc, svc),
-							key:     k,
-							message: fmt.Sprintf("%s \u2260 %s", firstVal, v),
-						})
-					}
-				}
-			}
-
-			// Check for non-local hosts
-			for _, svc := range presentIn {
-				v := svcValues[svc]
-				host := extractHost(v)
-				if host != "" && !isSafeHost(host) {
-					findings = append(findings, checkFinding{
-						level:   "WARN",
-						service: svc,
-						key:     k,
-						message: fmt.Sprintf("%s (host %q may be remote/prod)", v, host),
-					})
-				} else if host != "" {
-					findings = append(findings, checkFinding{
-						level:   "PASS",
-						service: svc,
-						key:     k,
-						message: v,
-					})
-				}
-			}
-			continue
-		}
-
-		// General: asymmetric config (key in some but not all services)
-		if len(svcValues) > 0 && len(svcValues) < len(services) {
+		if len(presentIn) > 0 && len(presentIn) < len(services) {
 			for _, svc := range services {
 				if _, ok := svcEnvs[svc][k]; !ok {
-					presentIn := []string{}
-					for _, s := range services {
-						if _, ok2 := svcEnvs[s][k]; ok2 {
-							presentIn = append(presentIn, s)
-						}
-					}
 					findings = append(findings, checkFinding{
 						level:   "WARN",
 						service: svc,
@@ -706,18 +540,13 @@ func handleServiceEnvCheck(cfg *config.WorkspaceConfig, ws *workspace.Workspace,
 			}
 		}
 
-		// General: placeholder values
-		for _, svc := range services {
-			v, ok := svcEnvs[svc][k]
-			if !ok {
-				continue
-			}
-			if isPlaceholderValue(v) {
+		for _, svc := range presentIn {
+			if isPlaceholderValue(svcEnvs[svc][k]) {
 				findings = append(findings, checkFinding{
 					level:   "WARN",
 					service: svc,
 					key:     k,
-					message: fmt.Sprintf("placeholder value: %q", v),
+					message: "placeholder or empty value",
 				})
 			}
 		}

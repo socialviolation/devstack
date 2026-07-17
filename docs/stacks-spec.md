@@ -296,6 +296,78 @@ sets no opinion on those keys, so the conflict only exists where it does.
 KEY=VALUE, so the drift audit inspects a different environment than the service
 gets — same bug, same fix, and it should share the new resolver.
 
+## Owning configuration
+
+devstack has **no model of correct configuration**. Not a weak one — none.
+
+- `ServiceEnv.Required` (`manifests.go:191-196`) is declared and **read by
+  nobody**. No service can state what it needs.
+- `pidForService` (`tools_service_env.go:142-157`) returns 0 on **every path**,
+  including success — Tilt does not expose a PID. The live `/proc/<pid>/environ`
+  inspection above it is dead code. devstack has never looked at what a running
+  service actually has; it audits files and infers.
+- "Correct" is two hardcoded heuristics, both matching on key *names*: OTEL
+  endpoint keys must equal the workspace's ports (`:562-563`), and seven
+  `_DATABASE_URL`-ish suffixes must **agree across services** (`:438-440`,
+  `:649-664`). The second is **consensus, not correctness** — if every service is
+  wrong identically, it reports healthy.
+- Nothing declares what a service *provides* or *calls*. `ports:` is dead,
+  `links:` are hand-written URLs, `dependencies:` is start-order.
+
+`service_env check` exists **because** there is no resolution. Drift detection is
+a symptom of hand-maintained config — devstack noticing two services disagree
+while being structurally unable to make them agree. Resolution does not extend
+the checker; it **deletes** it.
+
+### Computed vs required
+
+Config splits in two, and the boundary is firm.
+
+**Computed** — devstack owns these, injects them at the top rung, and they are
+correct by construction. Nothing to check:
+
+- addresses of services devstack runs (allocated port)
+- the OTEL endpoint
+- tunnel-backed remote addresses (devstack manages the tunnel)
+- anything derivable from the graph plus allocation
+
+**Required** — devstack **demands these and never invents them**:
+
+- secrets: API keys, tokens, DB passwords
+- external URLs: Auth0, OpenRouter
+- app config: feature flags, model names
+
+**Revive `env.required`.** A required key absent from every rung of the ladder
+fails at **generate**, naming the key and which rung to put it on — not at
+runtime with a 500. devstack never fabricates a secret.
+
+### Where inference belongs
+
+"Match services" splits into a deterministic half and a fuzzy half. Keep them
+apart.
+
+- **devstack resolves explicit references.** `env.values: { NAVEXA_API_URL:
+  "${api.url}" }` — the reference is declared, devstack resolves it from the
+  graph. It never guesses.
+- **The agent infers the reference.** It notices `NAVEXA_API_URL` means the `api`
+  service, writes `${api.url}` into the manifest (`manifest_edit.go` is the write
+  seam), and from then on it is explicit config resolved deterministically.
+
+The fuzziness happens **once**, under review, and is **crystallised into git** —
+not re-guessed every run. Baking name-matching heuristics into devstack itself
+(the `dbURLPatterns` approach) is the anti-pattern: zero-config when it guesses
+right, silently wrong when it doesn't.
+
+This is also what makes the agent's write path real. `service_env set` re-homing
+from `.envrc` to the manifest is not just a fix for the ladder — the manifest
+**is** the agent's medium.
+
+### To delete
+
+- the `MISMATCH` consensus detector (`:649-664`) and `dbURLPatterns` (`:438-440`)
+- the OTEL endpoint drift audit (`:562-563`) — computed, so it cannot drift
+- `pidForService` and the dead live-env inspection (`:122-157`)
+
 ## Links
 
 Links are the primary output — dynamic ports make them the only way to find a
@@ -501,9 +573,16 @@ without; revision 1 had them as step 5.
      tunnel port stays pinned across `up`
 5. **Call graph.** `calls:` vs `startsAfter:`; transitive closure, visited-guarded.
    → verify: overlay set from a shared `auth` dep doesn't swallow the workspace
-6. **Reference syntax + overlay-first resolution.**
+6. **Reference syntax + overlay-first resolution.** Revive `env.required`:
+   validate against the merged ladder, fail at generate naming the key and rung.
+   Delete the drift checker, `dbURLPatterns`, and `pidForService`.
    → verify: overlay backend's address reaches overlay frontend; untouched
-     service resolves to base
+     service resolves to base; a missing required secret fails at generate, not
+     at runtime
+6a. **Agent inference.** `service_env` gains the power to match a required key to
+   a provider and write `${svc.url}` into the manifest via `manifest_edit.go`.
+   → verify: agent resolves an unwired service end to end and the result is a
+     reviewable manifest diff, not a runtime side effect
 7. **`stack create`/`rm` + MCP tool.** Worktree lifecycle, dirty-base handling,
    `.mcp.json` de-baking, reconciliation in `workspace doctor`.
    → verify: prose request → two stacks live, independently reachable; `rm`

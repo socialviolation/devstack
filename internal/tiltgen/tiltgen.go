@@ -5,7 +5,6 @@ package tiltgen
 
 import (
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -72,14 +71,7 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 		return "", fmt.Errorf("runtime.run.command is required")
 	}
 
-	serveDir := svc.RepoPath
-	if wd := m.Runtime.WorkDir; wd != "" && wd != "." {
-		if filepath.IsAbs(wd) {
-			serveDir = filepath.Clean(wd)
-		} else {
-			serveDir = filepath.Join(svc.RepoPath, wd)
-		}
-	}
+	serveDir := svc.EnvDir()
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n# %s\n", svc.Name)
@@ -93,11 +85,11 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	fmt.Fprintf(&b, "    serve_cmd=%s,\n", starStr(m.Runtime.Run.Command))
 	fmt.Fprintf(&b, "    serve_dir=%s,\n", starStr(serveDir))
 
-	layers, err := envLayers(serveDir, ws, m, opts.ManagedEnv[svc.Name])
+	layers, err := config.EnvLadder(serveDir, ws, m, opts.ManagedEnv[svc.Name])
 	if err != nil {
 		return "", err
 	}
-	if env := mergedEnv(layers...); len(env) > 0 {
+	if env := config.MergeEnvLadder(layers); len(env) > 0 {
 		b.WriteString("    serve_env={\n")
 		for _, k := range sortedKeys(env) {
 			fmt.Fprintf(&b, "        %s: %s,\n", starStr(k), starStr(env[k]))
@@ -136,45 +128,6 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 
 	b.WriteString(")\n")
 	return b.String(), nil
-}
-
-// envLayers resolves the precedence ladder, lowest rung first: .envrc, workspace
-// env.files, service env.files, workspace env.values, service env.values, and
-// finally devstack's own computed values. Env files are executed rather than
-// line-parsed, so conditionals and ${VAR:-default} resolve as the developer's
-// shell resolves them; dir is both where they are looked up and where the
-// service's command runs.
-func envLayers(dir string, ws *config.WorkspaceManifest, m *config.ServiceManifest, managed map[string]string) ([]map[string]string, error) {
-	envrc, err := config.ResolveEnvrc(dir)
-	if err != nil {
-		return nil, err
-	}
-	layers := []map[string]string{envrc}
-
-	seen := map[string]bool{config.EnvrcFileName: true}
-	for _, f := range append(append([]string{}, ws.Env.Files...), m.Env.Files...) {
-		if f == "" || seen[f] {
-			continue
-		}
-		seen[f] = true
-		vals, err := config.ResolveEnvFile(dir, f)
-		if err != nil {
-			return nil, err
-		}
-		layers = append(layers, vals)
-	}
-
-	return append(layers, ws.Env.Values, m.Env.Values, managed), nil
-}
-
-func mergedEnv(layers ...map[string]string) map[string]string {
-	out := map[string]string{}
-	for _, l := range layers {
-		for k, v := range l {
-			out[k] = v
-		}
-	}
-	return out
 }
 
 func renderProbe(h config.ServiceHealthcheck) string {

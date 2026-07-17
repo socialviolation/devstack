@@ -56,21 +56,12 @@ func regenerateTiltfile(ws *workspace.Workspace) (string, error) {
 		return "", fmt.Errorf("failed to resolve workspace manifests: %w", err)
 	}
 
-	managed := map[string]map[string]string{}
-	// Only push OTEL export env down to services when the workspace opts into
-	// observability. Otherwise services are left un-instrumented by default.
-	if config.ObservabilityEnabled(ws.Path) {
-		if ep := workspace.OtelOTLPEndpoint(ws); ep != "" {
-			for name := range rw.Services {
-				managed[name] = map[string]string{
-					"OTEL_EXPORTER_OTLP_ENDPOINT": ep,
-					"OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
-				}
-			}
-		}
+	names := make([]string, 0, len(rw.Services))
+	for name := range rw.Services {
+		names = append(names, name)
 	}
 
-	out, err := tiltgen.Generate(rw, tiltgen.Options{ManagedEnv: managed})
+	out, err := tiltgen.Generate(rw, tiltgen.Options{ManagedEnv: workspace.ManagedEnv(ws, names)})
 	if err != nil {
 		return "", err
 	}
