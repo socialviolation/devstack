@@ -26,7 +26,19 @@ var envrcNoise = map[string]bool{
 //
 // Errors never carry env values: .envrc files hold live credentials.
 func ResolveEnvrc(dir string) (map[string]string, error) {
-	path := filepath.Join(dir, EnvrcFileName)
+	return ResolveEnvFile(dir, EnvrcFileName)
+}
+
+// ResolveEnvFile evaluates an env file in a shell and returns only the variables
+// it contributes. A relative name resolves against dir, which is also the
+// shell's working directory. A missing file yields an empty map and a nil error.
+//
+// Errors never carry env values: these files hold live credentials.
+func ResolveEnvFile(dir, name string) (map[string]string, error) {
+	path := name
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(dir, name)
+	}
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return map[string]string{}, nil
@@ -39,7 +51,8 @@ func ResolveEnvrc(dir string) (map[string]string, error) {
 	// `|| exit $?` is load-bearing: bash's `.` returns non-zero on a syntax error
 	// but does not abort the shell, so without it a broken .envrc yields partial
 	// env and exit 0 — the failure-swallowing bug this replaces.
-	cmd := exec.Command("sh", "-c", "set -a; . ./"+EnvrcFileName+" || exit $?; set +a; env -0")
+	ref := shQuote(sourceRef(name))
+	cmd := exec.Command("sh", "-c", "set -a; . "+ref+" || exit $?; set +a; env -0")
 	cmd.Dir = dir
 	cmd.Env = baseline
 
@@ -87,6 +100,21 @@ func stripXtrace(s string) string {
 		keep = append(keep, line)
 	}
 	return strings.TrimSpace(strings.Join(keep, "\n"))
+}
+
+// shQuote single-quotes a string for embedding in a shell command.
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// sourceRef ensures a relative env-file path has a slash so the POSIX `.` builtin
+// loads it from the run dir instead of searching $PATH (dash won't fall back to
+// the cwd like bash does).
+func sourceRef(f string) string {
+	if strings.HasPrefix(f, "/") || strings.HasPrefix(f, "./") || strings.HasPrefix(f, "../") {
+		return f
+	}
+	return "./" + f
 }
 
 func splitNUL(b []byte) []string {

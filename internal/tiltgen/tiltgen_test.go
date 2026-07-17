@@ -59,7 +59,9 @@ ports: { http: 4200 }
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
 
-	out, err := Generate(rw, Options{ManagedEnv: map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317"}})
+	out, err := Generate(rw, Options{ManagedEnv: map[string]map[string]string{
+		"api": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317"},
+	}})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -68,8 +70,8 @@ ports: { http: 4200 }
 	checks := []string{
 		`"api"`,
 		"cmd=\"fuser -k 8080/tcp\"",
-		// serve_cmd sources ./.envrc by default (./ so dash loads it from cwd, not $PATH)
-		`[ -f './.envrc' ] && set -a && . './.envrc' && set +a; dotnet run`,
+		// serve_cmd is the run command alone: all env now flows through serve_env
+		`serve_cmd="dotnet run"`,
 		filepath.Join(apiDir, "src/App"), // serve_dir with workDir
 		// merged env: managed + workspace + service, sorted
 		`"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317"`,
@@ -129,6 +131,299 @@ runtime:
 	}
 	if strings.Contains(out, filepath.Join(svcDir, absWork)) {
 		t.Errorf("absolute workDir must not be joined onto the repo path")
+	}
+}
+
+// ladderRungs are the six env layers, lowest precedence first. Each sets LADDER
+// to its own name, so the value reaching serve_env names the rung that won.
+var ladderRungs = []string{"envrc", "ws-files", "svc-files", "ws-values", "svc-values", "managed"}
+
+// buildLadder writes a one-service workspace where LADDER is set on rungs 1..upTo
+// (1-indexed, matching ladderRungs) and nowhere above, then generates it.
+func buildLadder(t *testing.T, upTo int) string {
+	t.Helper()
+	dir := t.TempDir()
+	svcDir := filepath.Join(dir, "repos", "svc")
+
+	has := func(rung int) bool { return upTo >= rung }
+
+	if has(1) {
+		write(t, filepath.Join(svcDir, ".envrc"), "export LADDER=envrc\n")
+	}
+	if has(2) {
+		write(t, filepath.Join(svcDir, "ws.env"), "export LADDER=ws-files\n")
+	}
+	if has(3) {
+		write(t, filepath.Join(svcDir, "svc.env"), "export LADDER=svc-files\n")
+	}
+
+	wsEnv := "env:\n  files: [ws.env]\n"
+	if has(4) {
+		wsEnv += "  values: { LADDER: ws-values }\n"
+	}
+	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: demo
+  repoDiscovery:
+    mode: explicit
+    repos: [./repos/svc]
+`+wsEnv)
+
+	svcEnv := "env:\n  files: [svc.env]\n"
+	if has(5) {
+		svcEnv += "  values: { LADDER: svc-values }\n"
+	}
+	write(t, filepath.Join(svcDir, config.ServiceManifestFileName), `version: 1
+service:
+  name: svc
+runtime:
+  run: { command: ./bin/svc }
+`+svcEnv)
+
+	rw, err := config.ResolveWorkspace(dir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace: %v", err)
+	}
+	opts := Options{}
+	if has(6) {
+		opts.ManagedEnv = map[string]map[string]string{"svc": {"LADDER": "managed"}}
+	}
+	out, err := Generate(rw, opts)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	return out
+}
+
+// TestEnvPrecedenceLadder pins the whole ladder: with rungs 1..N present, rung N
+// must win. Knocking off the top rung must hand the key to the one below it.
+func TestEnvPrecedenceLadder(t *testing.T) {
+	for i, want := range ladderRungs {
+		rung := i + 1
+		t.Run(want, func(t *testing.T) {
+			out := buildLadder(t, rung)
+			if !strings.Contains(out, `"LADDER": "`+want+`"`) {
+				t.Errorf("with rungs 1..%d present, %q should win; got:\n%s", rung, want, out)
+			}
+			for _, loser := range ladderRungs {
+				if loser == want {
+					continue
+				}
+				if strings.Contains(out, `"LADDER": "`+loser+`"`) {
+					t.Errorf("rung %q beat %q", loser, want)
+				}
+			}
+		})
+	}
+}
+
+// TestManagedEnvBeatsEnvrc is the behaviour flip: .envrc used to be sourced at
+// service start and clobbered everything devstack injected. It is now the floor.
+func TestManagedEnvBeatsEnvrc(t *testing.T) {
+	dir := t.TempDir()
+	svcDir := filepath.Join(dir, "repos", "svc")
+
+	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: demo
+  repoDiscovery:
+    mode: explicit
+    repos: [./repos/svc]
+`)
+	write(t, filepath.Join(svcDir, config.ServiceManifestFileName), `version: 1
+service:
+  name: svc
+runtime:
+  run: { command: ./bin/svc }
+`)
+	write(t, filepath.Join(svcDir, ".envrc"), "export BACKEND_URL=http://localhost:9999\n")
+
+	rw, err := config.ResolveWorkspace(dir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace: %v", err)
+	}
+	out, err := Generate(rw, Options{ManagedEnv: map[string]map[string]string{
+		"svc": {"BACKEND_URL": "http://localhost:8080"},
+	}})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	if !strings.Contains(out, `"BACKEND_URL": "http://localhost:8080"`) {
+		t.Errorf("ManagedEnv must beat .envrc; got:\n%s", out)
+	}
+	if strings.Contains(out, "9999") {
+		t.Errorf(".envrc value must not survive; got:\n%s", out)
+	}
+}
+
+// TestServeCmdHasNoEnvSourcing guards the removal: sourcing .envrc inside the
+// started process re-exported over serve_env, which is what inverted the ladder.
+func TestServeCmdHasNoEnvSourcing(t *testing.T) {
+	out := buildLadder(t, len(ladderRungs))
+	for _, banned := range []string{".envrc", "set -a", "set +a", "ws.env", "svc.env"} {
+		if strings.Contains(out, banned) {
+			t.Errorf("generated Tiltfile must not reference %q; got:\n%s", banned, out)
+		}
+	}
+	if !strings.Contains(out, `serve_cmd="./bin/svc"`) {
+		t.Errorf("serve_cmd should be the run command alone; got:\n%s", out)
+	}
+}
+
+// TestManagedEnvIsPerService pins the widening: one map for all services cannot
+// express "backend gets frontend's address".
+func TestManagedEnvIsPerService(t *testing.T) {
+	dir := t.TempDir()
+
+	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: demo
+  repoDiscovery:
+    mode: explicit
+    repos: [./repos/a, ./repos/b]
+`)
+	for _, name := range []string{"a", "b"} {
+		write(t, filepath.Join(dir, "repos", name, config.ServiceManifestFileName), `version: 1
+service:
+  name: `+name+`
+runtime:
+  run: { command: ./bin/`+name+` }
+`)
+	}
+
+	rw, err := config.ResolveWorkspace(dir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace: %v", err)
+	}
+	out, err := Generate(rw, Options{ManagedEnv: map[string]map[string]string{
+		"a": {"PEER_URL": "http://localhost:1111"},
+		"b": {"PEER_URL": "http://localhost:2222"},
+	}})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	aBlock, bBlock, ok := strings.Cut(out, "# b\n")
+	if !ok {
+		t.Fatalf("expected a block per service; got:\n%s", out)
+	}
+	if !strings.Contains(aBlock, `"PEER_URL": "http://localhost:1111"`) || strings.Contains(aBlock, "2222") {
+		t.Errorf("service a should get only its own PEER_URL; got:\n%s", aBlock)
+	}
+	if !strings.Contains(bBlock, `"PEER_URL": "http://localhost:2222"`) || strings.Contains(bBlock, "1111") {
+		t.Errorf("service b should get only its own PEER_URL; got:\n%s", bBlock)
+	}
+}
+
+// TestEnvrcResolvedFromWorkDir pins that .envrc is read from the directory the
+// command actually runs in, which is what runtime sourcing did.
+func TestEnvrcResolvedFromWorkDir(t *testing.T) {
+	dir := t.TempDir()
+	svcDir := filepath.Join(dir, "repos", "svc")
+
+	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: demo
+  repoDiscovery:
+    mode: explicit
+    repos: [./repos/svc]
+`)
+	write(t, filepath.Join(svcDir, config.ServiceManifestFileName), `version: 1
+service:
+  name: svc
+runtime:
+  workDir: src/App
+  run: { command: ./bin/svc }
+`)
+	write(t, filepath.Join(svcDir, ".envrc"), "export WHERE=repo-root\n")
+	write(t, filepath.Join(svcDir, "src", "App", ".envrc"), "export WHERE=work-dir\n")
+
+	rw, err := config.ResolveWorkspace(dir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace: %v", err)
+	}
+	out, err := Generate(rw, Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	if !strings.Contains(out, `"WHERE": "work-dir"`) {
+		t.Errorf(".envrc should resolve from serve_dir (the workDir); got:\n%s", out)
+	}
+	if strings.Contains(out, `"WHERE": "repo-root"`) {
+		t.Errorf("the repo-root .envrc must not be used when workDir is set; got:\n%s", out)
+	}
+}
+
+// TestAwkwardValuesSurviveIntoServeEnv: these used to travel through shell
+// sourcing and now travel through a Starlark literal.
+func TestAwkwardValuesSurviveIntoServeEnv(t *testing.T) {
+	dir := t.TempDir()
+	svcDir := filepath.Join(dir, "repos", "svc")
+
+	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: demo
+  repoDiscovery:
+    mode: explicit
+    repos: [./repos/svc]
+`)
+	write(t, filepath.Join(svcDir, config.ServiceManifestFileName), `version: 1
+service:
+  name: svc
+runtime:
+  run: { command: ./bin/svc }
+`)
+	write(t, filepath.Join(svcDir, ".envrc"), "export TRICKY='a=b\nc=d'\n")
+
+	rw, err := config.ResolveWorkspace(dir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace: %v", err)
+	}
+	out, err := Generate(rw, Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	if !strings.Contains(out, `"TRICKY": "a=b\nc=d"`) {
+		t.Errorf("multi-line, =-containing value should round-trip escaped; got:\n%s", out)
+	}
+	if strings.Contains(out, "\nc=d'") {
+		t.Errorf("raw newline leaked into the Tiltfile; got:\n%s", out)
+	}
+}
+
+// TestGenerateFailsOnBrokenEnvrc: the old `;` swallowed sourcing failures.
+func TestGenerateFailsOnBrokenEnvrc(t *testing.T) {
+	dir := t.TempDir()
+	svcDir := filepath.Join(dir, "repos", "svc")
+
+	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: demo
+  repoDiscovery:
+    mode: explicit
+    repos: [./repos/svc]
+`)
+	write(t, filepath.Join(svcDir, config.ServiceManifestFileName), `version: 1
+service:
+  name: svc
+runtime:
+  run: { command: ./bin/svc }
+`)
+	write(t, filepath.Join(svcDir, ".envrc"), "export SECRET_TOKEN=hunter2\nif then fi(\n")
+
+	rw, err := config.ResolveWorkspace(dir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace: %v", err)
+	}
+	out, err := Generate(rw, Options{})
+	if err == nil {
+		t.Fatalf("a broken .envrc must fail generation; got:\n%s", out)
+	}
+	if strings.Contains(err.Error(), "hunter2") {
+		t.Errorf("error must never carry an env value: %v", err)
 	}
 }
 
