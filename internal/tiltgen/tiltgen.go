@@ -47,6 +47,8 @@ func Generate(rw *config.ResolvedWorkspace, opts Options) (string, error) {
 	}
 	sort.Strings(names)
 
+	book := config.BuildPortBook(rw)
+
 	var b strings.Builder
 	b.WriteString(header)
 
@@ -55,7 +57,7 @@ func Generate(rw *config.ResolvedWorkspace, opts Options) (string, error) {
 		if svc.Manifest == nil {
 			return "", fmt.Errorf("service %q has no manifest (legacy .devstack.json cannot be generated from)", name)
 		}
-		block, err := renderService(svc, rw.Manifest, groupsOf[name], opts)
+		block, err := renderService(svc, rw.Manifest, groupsOf[name], opts, book)
 		if err != nil {
 			return "", fmt.Errorf("service %q: %w", name, err)
 		}
@@ -65,7 +67,7 @@ func Generate(rw *config.ResolvedWorkspace, opts Options) (string, error) {
 	return b.String(), nil
 }
 
-func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, groups []string, opts Options) (string, error) {
+func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, groups []string, opts Options, book config.PortBook) (string, error) {
 	m := svc.Manifest
 	if m.Runtime.Run.Command == "" {
 		return "", fmt.Errorf("runtime.run.command is required")
@@ -87,6 +89,12 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 
 	layers, err := config.EnvLadder(serveDir, ws, m, opts.ManagedEnv[svc.Name])
 	if err != nil {
+		return "", err
+	}
+	if err := resolveLayerRefs(layers, svc.Name, book); err != nil {
+		return "", err
+	}
+	if err := checkRequiredEnv(layers, m.Env.Required, svc.Name); err != nil {
 		return "", err
 	}
 	if env := config.MergeEnvLadder(layers); len(env) > 0 {
@@ -112,20 +120,102 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	if probe := renderProbe(m.Runtime.Healthcheck); probe != "" {
 		fmt.Fprintf(&b, "    readiness_probe=%s,\n", probe)
 	}
-	if len(m.Links) > 0 {
-		parts := make([]string, 0, len(m.Links))
-		for _, l := range m.Links {
-			label := l.Label
-			if label == "" {
-				label = svc.Name
-			}
-			parts = append(parts, fmt.Sprintf("link(%s, %s)", starStr(l.URL), starStr(label)))
+	links, err := buildLinks(svc.Name, m, book)
+	if err != nil {
+		return "", err
+	}
+	if len(links) > 0 {
+		parts := make([]string, 0, len(links))
+		for _, l := range links {
+			parts = append(parts, fmt.Sprintf("link(%s, %s)", starStr(l.url), starStr(l.label)))
 		}
 		fmt.Fprintf(&b, "    links=[%s],\n", strings.Join(parts, ", "))
 	}
 
 	b.WriteString(")\n")
 	return b.String(), nil
+}
+
+func resolveLayerRefs(layers []config.EnvLayer, self string, book config.PortBook) error {
+	for i := range layers {
+		if layers[i].Rung != config.RungWorkspaceValues && layers[i].Rung != config.RungServiceValues {
+			continue
+		}
+		resolved := make(map[string]string, len(layers[i].Values))
+		for k, v := range layers[i].Values {
+			rv, err := config.ResolveRefs(v, self, book)
+			if err != nil {
+				return err
+			}
+			resolved[k] = rv
+		}
+		layers[i].Values = resolved
+	}
+	return nil
+}
+
+func checkRequiredEnv(layers []config.EnvLayer, required []string, service string) error {
+	var missing []string
+	for _, key := range required {
+		found := false
+		for _, l := range layers {
+			if v, ok := l.Values[key]; ok && strings.TrimSpace(v) != "" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return fmt.Errorf("service %q missing required env: %s", service, strings.Join(missing, ", "))
+}
+
+type serviceLink struct {
+	url   string
+	label string
+}
+
+// buildLinks merges a service's links: derived one per ports: entry, plus any
+// explicit links: (references resolved). Explicit links keep their manifest
+// order, and a derived link is dropped when an explicit link already covers its
+// URL, so an explicit link for a port replaces the bare derived default.
+func buildLinks(self string, m *config.ServiceManifest, book config.PortBook) ([]serviceLink, error) {
+	var out []serviceLink
+	seen := map[string]bool{}
+
+	for _, l := range m.Links {
+		url, err := config.ResolveRefs(l.URL, self, book)
+		if err != nil {
+			return nil, err
+		}
+		label := l.Label
+		if label == "" {
+			label = self
+		}
+		out = append(out, serviceLink{url: url, label: label})
+		seen[url] = true
+	}
+
+	keys := make([]string, 0, len(m.Ports))
+	for k := range m.Ports {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		url := fmt.Sprintf("http://%s:%d", book.Host(self), m.Ports[key])
+		if seen[url] {
+			continue
+		}
+		out = append(out, serviceLink{url: url, label: key})
+		seen[url] = true
+	}
+
+	return out, nil
 }
 
 func renderProbe(h config.ServiceHealthcheck) string {

@@ -493,6 +493,229 @@ calls:
 	}
 }
 
+// generateOne writes a one-service workspace (svc) with the given service-manifest
+// body and optional workspace env block, then generates it.
+func generateOne(t *testing.T, svcBody, wsEnv string) (string, error) {
+	t.Helper()
+	dir := t.TempDir()
+	svcDir := filepath.Join(dir, "repos", "svc")
+	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: demo
+  repoDiscovery:
+    mode: explicit
+    repos: [./repos/svc]
+`+wsEnv)
+	write(t, filepath.Join(svcDir, config.ServiceManifestFileName), svcBody)
+	rw, err := config.ResolveWorkspace(dir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace: %v", err)
+	}
+	return Generate(rw, Options{})
+}
+
+// TestSelfPortResolves: a service reads its own listen port via ${self.port.http}.
+func TestSelfPortResolves(t *testing.T) {
+	out, err := generateOne(t, `version: 1
+service:
+  name: svc
+runtime:
+  run: { command: ./bin/svc }
+ports: { http: 5555 }
+env:
+  values: { PORT: "${self.port.http}" }
+`, "")
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !strings.Contains(out, `"PORT": "5555"`) {
+		t.Errorf("${self.port.http} should resolve to the service's own port; got:\n%s", out)
+	}
+	if strings.Contains(out, "${") {
+		t.Errorf("unresolved reference leaked into the Tiltfile; got:\n%s", out)
+	}
+}
+
+// TestCrossServiceURLResolves: ${api.url} resolves to api's http address.
+func TestCrossServiceURLResolves(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: demo
+  repoDiscovery:
+    mode: explicit
+    repos: [./repos/api, ./repos/web]
+`)
+	write(t, filepath.Join(dir, "repos", "api", config.ServiceManifestFileName), `version: 1
+service:
+  name: api
+runtime:
+  run: { command: ./bin/api }
+ports: { http: 8080 }
+`)
+	write(t, filepath.Join(dir, "repos", "web", config.ServiceManifestFileName), `version: 1
+service:
+  name: web
+runtime:
+  run: { command: ./bin/web }
+env:
+  values: { NAVEXA_API_URL: "${api.url}" }
+`)
+	rw, err := config.ResolveWorkspace(dir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace: %v", err)
+	}
+	out, err := Generate(rw, Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !strings.Contains(out, `"NAVEXA_API_URL": "http://localhost:8080"`) {
+		t.Errorf("${api.url} should resolve to api's http address; got:\n%s", out)
+	}
+}
+
+// TestLinksDerivedAndMerged: one link per ports: entry, explicit links resolved
+// and kept in order, and an explicit link for a port's URL replaces its derived
+// default while a path-bearing explicit link is kept alongside.
+func TestLinksDerivedAndMerged(t *testing.T) {
+	out, err := generateOne(t, `version: 1
+service:
+  name: svc
+runtime:
+  run: { command: ./bin/svc }
+ports: { http: 3000, admin: 9000 }
+links:
+  - { url: "http://localhost:3000", label: Home }
+  - { url: "http://localhost:3000/health", label: health }
+`, "")
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	want := `links=[link("http://localhost:3000", "Home"), link("http://localhost:3000/health", "health"), link("http://localhost:9000", "admin")]`
+	if !strings.Contains(out, want) {
+		t.Errorf("link merge wrong;\nwant substring: %s\ngot:\n%s", want, out)
+	}
+}
+
+// TestDerivedLinkFromPortsOnly: a service with ports: and no links: gains a
+// derived link labelled by its port key.
+func TestDerivedLinkFromPortsOnly(t *testing.T) {
+	out, err := generateOne(t, `version: 1
+service:
+  name: svc
+runtime:
+  run: { command: ./bin/svc }
+ports: { http: 4200 }
+`, "")
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !strings.Contains(out, `links=[link("http://localhost:4200", "http")]`) {
+		t.Errorf("ports: entry should derive a link; got:\n%s", out)
+	}
+}
+
+// TestRequiredEnvPresentPasses: a required key set on any rung passes generation.
+func TestRequiredEnvPresentPasses(t *testing.T) {
+	out, err := generateOne(t, `version: 1
+service:
+  name: svc
+runtime:
+  run: { command: ./bin/svc }
+env:
+  values: { API_KEY: secret }
+  required: [API_KEY]
+`, "")
+	if err != nil {
+		t.Fatalf("a present required key must pass; got: %v", err)
+	}
+	if !strings.Contains(out, `"API_KEY": "secret"`) {
+		t.Errorf("expected API_KEY in serve_env; got:\n%s", out)
+	}
+}
+
+// TestRequiredEnvAbsentFails: a required key on no rung fails at generate, naming
+// the key and the service.
+func TestRequiredEnvAbsentFails(t *testing.T) {
+	_, err := generateOne(t, `version: 1
+service:
+  name: svc
+runtime:
+  run: { command: ./bin/svc }
+env:
+  required: [MISSING_KEY]
+`, "")
+	if err == nil {
+		t.Fatal("an absent required key must fail generation")
+	}
+	if !strings.Contains(err.Error(), "MISSING_KEY") || !strings.Contains(err.Error(), "svc") {
+		t.Errorf("error should name the missing key and service; got: %v", err)
+	}
+}
+
+// TestUnresolvableRefFails: an unresolvable reference fails generation and no
+// ${ ever reaches the output.
+func TestUnresolvableRefFails(t *testing.T) {
+	out, err := generateOne(t, `version: 1
+service:
+  name: svc
+runtime:
+  run: { command: ./bin/svc }
+env:
+  values: { PEER: "${ghost.port.http}" }
+`, "")
+	if err == nil {
+		t.Fatalf("an unresolvable reference must fail generation; got:\n%s", out)
+	}
+	if strings.Contains(out, "${") {
+		t.Errorf("output must not contain an unresolved reference; got:\n%s", out)
+	}
+}
+
+// TestRegressionNoPortsNoRefs pins byte-identical output for a manifest with a
+// hand-written link, no ports:, and no references — the pre-resolver behaviour.
+func TestRegressionNoPortsNoRefs(t *testing.T) {
+	dir := t.TempDir()
+	svcDir := filepath.Join(dir, "repos", "svc")
+	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: demo
+  repoDiscovery:
+    mode: explicit
+    repos: [./repos/svc]
+`)
+	write(t, filepath.Join(svcDir, config.ServiceManifestFileName), `version: 1
+service:
+  name: svc
+runtime:
+  run: { command: ./bin/svc }
+links:
+  - { url: "http://example.com", label: Docs }
+`)
+	rw, err := config.ResolveWorkspace(dir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace: %v", err)
+	}
+	out, err := Generate(rw, Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	want := header + `
+# svc
+local_resource(
+    "svc",
+    serve_cmd="./bin/svc",
+    serve_dir="` + svcDir + `",
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    auto_init=False,
+    links=[link("http://example.com", "Docs")],
+)
+`
+	if out != want {
+		t.Errorf("output not byte-identical to pre-resolver behaviour;\nwant:\n%q\ngot:\n%q", want, out)
+	}
+}
+
 func write(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
