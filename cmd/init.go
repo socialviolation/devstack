@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -225,7 +224,7 @@ func runInitOnboard(cmd *cobra.Command) error {
 	// 3. Write .mcp.json for AI agent access.
 	mcpFile := filepath.Join(path, ".mcp.json")
 	if _, err := os.Stat(mcpFile); os.IsNotExist(err) || force {
-		if err := writeMCPJson(mcpFile, name, ws); err != nil {
+		if err := writeMCPJson(mcpFile, name); err != nil {
 			return fmt.Errorf("failed to write .mcp.json: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "✓ Wrote .mcp.json\n")
@@ -324,17 +323,10 @@ func detectLanguage(path string) string {
 }
 
 // writeMCPJson creates a .mcp.json file in the service directory.
-func writeMCPJson(mcpFile, serviceName string, ws *workspace.Workspace) error {
+func writeMCPJson(mcpFile, serviceName string) error {
 	serviceDir := filepath.Dir(mcpFile)
-	if identity, err := config.ResolveIdentity(serviceDir); err == nil {
-		if identity.ServiceName != "" {
-			serviceName = identity.ServiceName
-		}
-		if identity.WorkspaceRoot != "" {
-			if resolvedWs, err := workspace.FindByPath(identity.WorkspaceRoot); err == nil {
-				ws = resolvedWs
-			}
-		}
+	if identity, err := config.ResolveIdentity(serviceDir); err == nil && identity.ServiceName != "" {
+		serviceName = identity.ServiceName
 	}
 	type mcpEntry struct {
 		Type    string            `json:"type"`
@@ -352,8 +344,6 @@ func writeMCPJson(mcpFile, serviceName string, ws *workspace.Workspace) error {
 				Command: "devstack",
 				Args:    []string{"serve", "--transport=stdio"},
 				Env: map[string]string{
-					"DEVSTACK_DAEMON_PORT":     strconv.Itoa(ws.TiltPort),
-					"DEVSTACK_WORKSPACE":       ws.Path,
 					"DEVSTACK_DEFAULT_SERVICE": serviceName,
 				},
 			},
