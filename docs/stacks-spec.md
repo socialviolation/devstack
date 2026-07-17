@@ -341,6 +341,23 @@ correct by construction. Nothing to check:
 fails at **generate**, naming the key and which rung to put it on — not at
 runtime with a 500. devstack never fabricates a secret.
 
+### How an allocated port reaches a service
+
+Decided by the "no guessing" principle above, not a new choice. A conventional
+injected `PORT` would be devstack guessing which env var a service reads — the
+`dbURLPatterns` anti-pattern. So ports reach services the same way any address
+does: **explicit references**.
+
+- A service's own listen port: `env.values: { PORT: "${self.port.http}" }`.
+- A callee's address: `env.values: { NAVEXA_API_URL: "${api.url}" }`.
+
+There is **one** resolver, mapping `${service.field}` (field ∈ `url`, `host`,
+`port.<key>`; `self` = the current service) to allocated values. `links:`
+derivation and own-port injection are both just this resolver. Because of that,
+**the port model (step 4b) and reference syntax (step 6) are one step** — a
+resolver over allocated ports — not two; splitting them forces an artificial
+seam. The allocator (step 4a) feeds it.
+
 ### Where inference belongs
 
 "Match services" splits into a deterministic half and a fuzzy half. Keep them
@@ -567,10 +584,20 @@ without; revision 1 had them as step 5.
    attaches to base's collector/SigNoz instead of booting its own.
    → verify: `stack up`/`down` leaves base's compose project and collector
      untouched; no second ClickHouse
-4. **Port model.** `ports:` live, pin-vs-allocate split, locked allocation with
-   ownership, links derived. Tunnel local↔remote remapping.
-   → verify: two stacks bind different local ports, neither hardcoded; remote
-     tunnel port stays pinned across `up`
+   → **folded into step 7**: neither half is testable before a stack exists, so
+     "omit infra" and "attach to base observability" are built as part of stack
+     creation/run rather than ahead of it. Steps 4-6 are the independently
+     testable foundations and come first.
+4a. ~~**Allocator.** Locked, free-probing, registry as ownership record.~~ (`badfbd2`)
+   → verified: 20 concurrent Registers get distinct ports under -race; a bound
+     port is skipped.
+4b. **Port model + references (merged with step 6).** `ports:` live, pin-vs-allocate
+   split, links derived, own-port and cross-service injection — all via one
+   `${service.field}` resolver over allocated ports. Tunnel local↔remote remapping
+   is a separable sub-slice (touches only the tunnel package).
+   → verify: two stacks bind different local ports, neither hardcoded; a
+     `${self.port.http}` reaches the service; remote tunnel port stays pinned
+     across `up`
 5. **Call graph.** `calls:` vs `startsAfter:`; transitive closure, visited-guarded.
    → verify: overlay set from a shared `auth` dep doesn't swallow the workspace
 6. **Reference syntax + overlay-first resolution.** Revive `env.required`:
