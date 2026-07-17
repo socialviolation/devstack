@@ -427,6 +427,72 @@ runtime:
 	}
 }
 
+func resourceDepsFor(t *testing.T, edges string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range []string{"api", "worker", "db"} {
+		write(t, filepath.Join(dir, "repos", name, config.ServiceManifestFileName), `version: 1
+service:
+  name: `+name+`
+runtime:
+  run: { command: ./bin/`+name+` }
+`)
+	}
+	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: demo
+  repoDiscovery:
+    mode: explicit
+    repos: [./repos/api, ./repos/worker, ./repos/db]
+`+edges)
+
+	rw, err := config.ResolveWorkspace(dir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace: %v", err)
+	}
+	out, err := Generate(rw, Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	return out
+}
+
+// TestResourceDepsLegacyDependencies pins the regression: a manifest that only
+// uses the legacy dependencies: field emits exactly the resource_deps it did
+// before calls/startsAfter existed.
+func TestResourceDepsLegacyDependencies(t *testing.T) {
+	out := resourceDepsFor(t, `dependencies:
+  api: [worker]
+`)
+	if !strings.Contains(out, `resource_deps=["worker"]`) {
+		t.Errorf("legacy dependencies must still drive resource_deps; got:\n%s", out)
+	}
+}
+
+// TestResourceDepsCallsOnly proves a calls: edge alone produces resource_deps —
+// a called service must be up before its caller, so calls fold into ordering.
+func TestResourceDepsCallsOnly(t *testing.T) {
+	out := resourceDepsFor(t, `calls:
+  api: [worker]
+`)
+	if !strings.Contains(out, `resource_deps=["worker"]`) {
+		t.Errorf("calls must drive resource_deps; got:\n%s", out)
+	}
+}
+
+// TestResourceDepsUnionDeduped pins that startsAfter and calls on one service
+// merge into a single deduped, sorted resource_deps list.
+func TestResourceDepsUnionDeduped(t *testing.T) {
+	out := resourceDepsFor(t, `startsAfter:
+  api: [worker, db]
+calls:
+  api: [worker]
+`)
+	if !strings.Contains(out, `resource_deps=["db", "worker"]`) {
+		t.Errorf("resource_deps should be the deduped union of startsAfter and calls; got:\n%s", out)
+	}
+}
+
 func write(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

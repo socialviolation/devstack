@@ -103,10 +103,8 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	if len(groups) > 0 {
 		fmt.Fprintf(&b, "    labels=[%s],\n", starList(groups))
 	}
-	if deps := ws.Dependencies[svc.Name]; len(deps) > 0 {
-		sorted := append([]string(nil), deps...)
-		sort.Strings(sorted)
-		fmt.Fprintf(&b, "    resource_deps=[%s],\n", starList(sorted))
+	if deps := ws.ResourceDeps(svc.Name); len(deps) > 0 {
+		fmt.Fprintf(&b, "    resource_deps=[%s],\n", starList(deps))
 	}
 	if len(m.Runtime.Watch) > 0 {
 		fmt.Fprintf(&b, "    deps=[%s],\n", starList(m.Runtime.Watch))

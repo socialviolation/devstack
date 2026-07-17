@@ -26,6 +26,8 @@ type ServiceTopology struct {
 	Groups       []string
 	Dependencies []string
 	Dependents   []string
+	Calls        []string
+	CalledBy     []string
 	Source       string
 }
 
@@ -54,7 +56,8 @@ func BuildTopology(workspacePath string) (*TopologyGraph, error) {
 		graph.Services[name] = &ServiceTopology{
 			Name:         name,
 			Path:         service.RepoPath,
-			Dependencies: append([]string(nil), resolved.Manifest.Dependencies[name]...),
+			Dependencies: resolved.Manifest.ResourceDeps(name),
+			Calls:        unionSorted(resolved.Manifest.Calls[name]),
 			Source:       service.Source,
 		}
 	}
@@ -91,10 +94,18 @@ func BuildTopology(workspacePath string) (*TopologyGraph, error) {
 			}
 			depService.Dependents = append(depService.Dependents, name)
 		}
+		for _, callee := range service.Calls {
+			calleeService, ok := graph.Services[callee]
+			if !ok {
+				continue
+			}
+			calleeService.CalledBy = append(calleeService.CalledBy, name)
+		}
 	}
 
 	for _, service := range graph.Services {
 		sort.Strings(service.Dependents)
+		sort.Strings(service.CalledBy)
 	}
 
 	graph.Issues = append(graph.Issues, detectTopologyCycles(graph.Services)...)
@@ -136,6 +147,40 @@ func (g *TopologyGraph) HasErrors() bool {
 		}
 	}
 	return false
+}
+
+// TransitiveCallers returns the set of services that directly or transitively
+// call name, walking CalledBy edges only (start-order edges are excluded, so a
+// shared start-order dependency does not inflate the closure). The result is
+// sorted and normally excludes name itself; a cyclic call graph can include it
+// because it genuinely calls itself transitively. Visited-set guarded, so it
+// terminates on call cycles even though tiltgen never validates them.
+func (g *TopologyGraph) TransitiveCallers(name string) []string {
+	result := map[string]bool{}
+	visited := map[string]bool{}
+
+	var visit func(string)
+	visit = func(n string) {
+		service, ok := g.Services[n]
+		if !ok {
+			return
+		}
+		for _, caller := range service.CalledBy {
+			result[caller] = true
+			if !visited[caller] {
+				visited[caller] = true
+				visit(caller)
+			}
+		}
+	}
+	visit(name)
+
+	callers := make([]string, 0, len(result))
+	for caller := range result {
+		callers = append(callers, caller)
+	}
+	sort.Strings(callers)
+	return callers
 }
 
 func detectTopologyCycles(services map[string]*ServiceTopology) []TopologyIssue {

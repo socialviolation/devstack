@@ -33,7 +33,17 @@ type WorkspaceManifest struct {
 	Env           WorkspaceManifestEnv            `yaml:"env,omitempty"`
 	Groups        map[string][]string             `yaml:"groups,omitempty"`
 	Dependencies  map[string][]string             `yaml:"dependencies,omitempty"`
+	Calls         map[string][]string             `yaml:"calls,omitempty"`
+	StartsAfter   map[string][]string             `yaml:"startsAfter,omitempty"`
 	Environments  map[string]WorkspaceEnvironment `yaml:"environments,omitempty"`
+}
+
+// ResourceDeps returns the effective startup ordering for svc: the deduped,
+// sorted union of the legacy dependencies alias, startsAfter, and calls. A
+// called service must be running before its caller, so calls fold into the
+// ordering set that drives Tilt's resource_deps.
+func (m *WorkspaceManifest) ResourceDeps(svc string) []string {
+	return unionSorted(m.Dependencies[svc], m.StartsAfter[svc], m.Calls[svc])
 }
 
 // WorkspaceManifestEnv holds environment defaults that trickle down to every
@@ -588,6 +598,22 @@ func resolveRelative(basePath, value string) string {
 		return filepath.Clean(value)
 	}
 	return filepath.Clean(filepath.Join(basePath, value))
+}
+
+func unionSorted(lists ...[]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, list := range lists {
+		for _, v := range list {
+			if v == "" || seen[v] {
+				continue
+			}
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func cloneStringSlicesMap(in map[string][]string) map[string][]string {
