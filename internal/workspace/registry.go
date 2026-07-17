@@ -62,6 +62,14 @@ type Workspace struct {
 	// they live in the per-user registry rather than the committed project config.
 	TunnelHost string `json:"tunnel_host,omitempty"`
 	TunnelUser string `json:"tunnel_user,omitempty"`
+
+	// BaseName names the base workspace a feature stack overlays. Empty for a base workspace.
+	BaseName string `json:"base_name,omitempty"`
+}
+
+// IsStack reports whether the workspace is a feature stack overlaying a base.
+func (ws *Workspace) IsStack() bool {
+	return ws.BaseName != ""
 }
 
 // OverlayProjectConfig reads the workspace's .devstack.json and overlays any OTEL
@@ -189,9 +197,9 @@ func expandPath(path string) string {
 	return home + path[1:]
 }
 
-// Register adds or updates a workspace in the registry.
-// If a workspace with the same path already exists, it is updated in place.
-// If TiltPort is 0, a port is auto-assigned starting from 10350.
+// Register adds a workspace, or updates the existing entry at the same path.
+// A name that collides case-insensitively with an entry at a different path is
+// rejected. If TiltPort is 0, a port is auto-assigned starting from 10350.
 func Register(ws Workspace) error {
 	ws.Path = filepath.Clean(expandPath(ws.Path))
 
@@ -200,7 +208,6 @@ func Register(ws Workspace) error {
 		return err
 	}
 
-	// Auto-assign port if not specified
 	if ws.TiltPort == 0 {
 		port, err := NextPort()
 		if err != nil {
@@ -209,7 +216,13 @@ func Register(ws Workspace) error {
 		ws.TiltPort = port
 	}
 
-	// Check for duplicate by path — update if exists
+	lowerName := strings.ToLower(ws.Name)
+	for _, existing := range workspaces {
+		if existing.Path != ws.Path && strings.ToLower(existing.Name) == lowerName {
+			return fmt.Errorf("workspace name %q already registered at %s", ws.Name, existing.Path)
+		}
+	}
+
 	for i, existing := range workspaces {
 		if existing.Path == ws.Path {
 			workspaces[i] = ws
@@ -217,7 +230,6 @@ func Register(ws Workspace) error {
 		}
 	}
 
-	// Append new workspace
 	workspaces = append(workspaces, ws)
 	return Save(workspaces)
 }
@@ -259,14 +271,15 @@ func FindByPath(path string) (*Workspace, error) {
 	return nil, fmt.Errorf("no workspace registered at path %q", path)
 }
 
-// DetectFromCwd detects the workspace that contains the current working directory.
-// Returns an error if the cwd is not inside any registered workspace.
+// DetectFromCwd returns the registered workspace whose path is the longest prefix
+// of the current working directory, so a nested worktree resolves to itself rather
+// than to an ancestor workspace. Returns an error if the cwd is not inside any
+// registered workspace.
 func DetectFromCwd() (*Workspace, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current directory: %w", err)
 	}
-	// Resolve symlinks so $PWD-based logical paths match the stored canonical path.
 	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 		cwd = resolved
 	}
@@ -276,15 +289,23 @@ func DetectFromCwd() (*Workspace, error) {
 		return nil, err
 	}
 
-	for _, ws := range workspaces {
-		wsPath := ws.Path
+	best := -1
+	bestLen := -1
+	for i := range workspaces {
+		wsPath := workspaces[i].Path
 		if resolved, err := filepath.EvalSymlinks(wsPath); err == nil {
 			wsPath = resolved
 		}
 		if cwd == wsPath || strings.HasPrefix(cwd, wsPath+"/") {
-			w := ws
-			return &w, nil
+			if len(wsPath) > bestLen {
+				bestLen = len(wsPath)
+				best = i
+			}
 		}
+	}
+	if best >= 0 {
+		w := workspaces[best]
+		return &w, nil
 	}
 	return nil, fmt.Errorf("not inside a registered devstack workspace. Run: devstack register")
 }
