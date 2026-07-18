@@ -3,6 +3,15 @@
 Run more than one feature live at once, without standing up a full replica of
 the world for each.
 
+> **Build status (as of this revision):** steps 0-6 and 7a/7b/7f-1/7f-3a/7f-3b
+> are implemented, verified, and committed — `devstack stack create/rm/list`
+> works end-to-end (worktrees, overlay computation, generated infra-less
+> manifest, dynamic service ports, overlay-first Tiltfile, base-collector
+> reuse). Remaining: 7f-4 (MCP `stack_*` tools) in progress; then the user
+> confirms the UX defaults below and runs the live multi-stack **serving**
+> test (real Tilt + services), which was not verifiable from the build harness.
+> `workspace doctor` reconciliation for hand-deleted worktrees is not yet built.
+
 > Revision 2. Revised after three independent reviews. Revision 1 claimed "no
 > re-keying of the registry is required" — that was false and is corrected in
 > §Identity. Line references verified against HEAD.
@@ -615,11 +624,27 @@ without; revision 1 had them as step 5.
    → verify: prose request → two stacks live, independently reachable; `rm`
      leaves no debris
 
+## Step 7 UX defaults — PENDING USER CONFIRMATION
+
+Built against these defaults because the autonomous goal can't stall on them.
+All are cheap to change; flagged for override.
+
+- **Dirty base on `stack create`:** proceed with a loud warning listing
+  uncommitted files. Rationale: `git worktree add` checks out HEAD (committed
+  state); the changed repos get a NEW branch off current HEAD, so uncommitted
+  work stays in the main checkout by design. Refusing would obstruct the common
+  "I'm mid-feature" case; a silent proceed would hide that the stack lacks the
+  WIP. Warn-and-proceed threads both.
+- **Feature branch already exists:** attach to it (checkout in the worktree)
+  rather than error — supports "I started a branch, now make a stack for it."
+- **`stack rm` with uncommitted changes in a worktree:** refuse unless `--force`.
+  Never destroy uncommitted work silently.
+- **Branch policy:** changed repos → new branch off current HEAD; dependent repos
+  → worktree on base's current branch (unmodified, isolated only for config).
+
 ## Open questions
 
-- Does `stack create` refuse on a dirty base, stash, or carry the work?
 - What is the resource budget per stack, and does anything enforce it?
-- Should `stack rm` refuse when a worktree has uncommitted changes?
 - Do queue-coupled services get an explicit `isolate:` escape hatch, or are they
   simply out of scope?
 - Does the base stack need a `stack` identity of its own, or stay implicit?

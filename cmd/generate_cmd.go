@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tiltgen"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -63,7 +64,7 @@ func regenerateTiltfile(ws *workspace.Workspace) (string, error) {
 
 	opts := tiltgen.Options{ManagedEnv: workspace.ManagedEnv(ws, names)}
 	if ws.IsStack() {
-		opts, err = stackGenerateOptions(ws, names)
+		opts, err = stack.GenerateOptions(ws, names)
 		if err != nil {
 			return "", err
 		}

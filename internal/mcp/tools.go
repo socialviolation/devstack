@@ -80,6 +80,9 @@ func RegisterTools(
 		if tailscaleInstalled() {
 			registerTunnelTool(mcpServer, tiltClient, ws)
 		}
+
+		// Feature stacks overlay this workspace as their base.
+		registerStackTools(mcpServer, ws)
 	} else {
 		// Remote environments are inherently observability-backed — investigate is
 		// the primary diagnostic tool there.

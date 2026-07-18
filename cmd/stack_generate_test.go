@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tiltgen"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -97,11 +98,11 @@ calls:
 		t.Fatalf("register stack: %v", err)
 	}
 
-	allocated, err := workspace.AllocatePorts("navexa--feat", []string{qualifyPortKey("backend", "http")})
+	allocated, err := workspace.AllocatePorts("navexa--feat", []string{stack.QualifyPortKey("backend", "http")})
 	if err != nil {
 		t.Fatalf("allocate ports: %v", err)
 	}
-	port := allocated[qualifyPortKey("backend", "http")]
+	port := allocated[stack.QualifyPortKey("backend", "http")]
 	if port == 0 {
 		t.Fatalf("no port allocated for backend/http")
 	}
