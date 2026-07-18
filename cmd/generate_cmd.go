@@ -61,7 +61,15 @@ func regenerateTiltfile(ws *workspace.Workspace) (string, error) {
 		names = append(names, name)
 	}
 
-	out, err := tiltgen.Generate(rw, tiltgen.Options{ManagedEnv: workspace.ManagedEnv(ws, names)})
+	opts := tiltgen.Options{ManagedEnv: workspace.ManagedEnv(ws, names)}
+	if ws.IsStack() {
+		opts, err = stackGenerateOptions(ws, names)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	out, err := tiltgen.Generate(rw, opts)
 	if err != nil {
 		return "", err
 	}
