@@ -32,6 +32,32 @@ func BuildPortBook(rw *ResolvedWorkspace) PortBook {
 	return book
 }
 
+// MergeStackBook merges an overlay book onto a base book, overlay-first: a
+// service present in overlay replaces the base entry for that service wholesale
+// (the stack runs its own instance on allocated ports); a service only in base is
+// carried through unchanged (reused). Entries merge per service, never per port
+// key — a service's ports come entirely from overlay or entirely from base. The
+// result and every inner map are fresh copies, so mutating it cannot corrupt
+// either input.
+func MergeStackBook(base, overlay PortBook) PortBook {
+	merged := make(PortBook, len(base)+len(overlay))
+	for name, ports := range base {
+		merged[name] = copyPorts(ports)
+	}
+	for name, ports := range overlay {
+		merged[name] = copyPorts(ports)
+	}
+	return merged
+}
+
+func copyPorts(ports map[string]int) map[string]int {
+	c := make(map[string]int, len(ports))
+	for k, v := range ports {
+		c[k] = v
+	}
+	return c
+}
+
 var refPattern = regexp.MustCompile(`\$\{([^}]*)\}`)
 
 // ResolveRefs replaces every ${service.field} reference in s with its value from

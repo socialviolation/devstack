@@ -716,6 +716,125 @@ local_resource(
 	}
 }
 
+// TestInjectedBookDrivesResolution: with Options.Book set, references resolve
+// against the injected book's ports, not the manifest's ports:. The manifest
+// pins http:8080 but the book allocates 20001, so 20001 must reach serve_env and
+// the resolved link.
+func TestInjectedBookDrivesResolution(t *testing.T) {
+	dir := t.TempDir()
+	svcDir := filepath.Join(dir, "repos", "svc")
+	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: demo
+  repoDiscovery:
+    mode: explicit
+    repos: [./repos/svc]
+`)
+	write(t, filepath.Join(svcDir, config.ServiceManifestFileName), `version: 1
+service:
+  name: svc
+runtime:
+  run: { command: ./bin/svc }
+ports: { http: 8080 }
+env:
+  values: { PORT: "${self.port.http}" }
+links:
+  - { url: "${self.url}", label: Home }
+`)
+	rw, err := config.ResolveWorkspace(dir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace: %v", err)
+	}
+	out, err := Generate(rw, Options{Book: config.PortBook{"svc": {"http": 20001}}})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !strings.Contains(out, `"PORT": "20001"`) {
+		t.Errorf("injected book must drive ${self.port.http}; want 20001, got:\n%s", out)
+	}
+	if strings.Contains(out, `"PORT": "8080"`) {
+		t.Errorf("manifest port must not win over the injected book; got:\n%s", out)
+	}
+	if !strings.Contains(out, `link("http://localhost:20001", "Home")`) {
+		t.Errorf("injected book must drive the resolved ${self.url} link; want 20001, got:\n%s", out)
+	}
+}
+
+func TestInjectedBookDrivesDerivedLinks(t *testing.T) {
+	dir := t.TempDir()
+	svcDir := filepath.Join(dir, "repos", "svc")
+	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: demo
+  repoDiscovery:
+    mode: explicit
+    repos: [./repos/svc]
+`)
+	write(t, filepath.Join(svcDir, config.ServiceManifestFileName), `version: 1
+service:
+  name: svc
+runtime:
+  run: { command: ./bin/svc }
+ports: { http: 8080 }
+`)
+	rw, err := config.ResolveWorkspace(dir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace: %v", err)
+	}
+	out, err := Generate(rw, Options{Book: config.PortBook{"svc": {"http": 20001}}})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !strings.Contains(out, `link("http://localhost:20001", "http")`) {
+		t.Errorf("derived link must follow the injected book port 20001, not the manifest 8080; got:\n%s", out)
+	}
+	if strings.Contains(out, "8080") {
+		t.Errorf("manifest port 8080 must not appear under an injected book; got:\n%s", out)
+	}
+}
+
+// TestNoBookMatchesBuildPortBook pins the fallback regression: a nil Options.Book
+// generates byte-identically to passing BuildPortBook(rw) explicitly, so existing
+// callers get exactly the manifest-derived behaviour.
+func TestNoBookMatchesBuildPortBook(t *testing.T) {
+	dir := t.TempDir()
+	svcDir := filepath.Join(dir, "repos", "svc")
+	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: demo
+  repoDiscovery:
+    mode: explicit
+    repos: [./repos/svc]
+`)
+	write(t, filepath.Join(svcDir, config.ServiceManifestFileName), `version: 1
+service:
+  name: svc
+runtime:
+  run: { command: ./bin/svc }
+ports: { http: 8080 }
+env:
+  values: { PORT: "${self.port.http}" }
+`)
+	rw, err := config.ResolveWorkspace(dir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace: %v", err)
+	}
+	nilBook, err := Generate(rw, Options{})
+	if err != nil {
+		t.Fatalf("Generate(nil book): %v", err)
+	}
+	explicit, err := Generate(rw, Options{Book: config.BuildPortBook(rw)})
+	if err != nil {
+		t.Fatalf("Generate(explicit book): %v", err)
+	}
+	if nilBook != explicit {
+		t.Errorf("nil Book must fall back to BuildPortBook byte-identically;\nnil:\n%q\nexplicit:\n%q", nilBook, explicit)
+	}
+	if !strings.Contains(nilBook, `"PORT": "8080"`) {
+		t.Errorf("manifest ports must drive resolution when no Book is set; got:\n%s", nilBook)
+	}
+}
+
 func write(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

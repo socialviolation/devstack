@@ -82,6 +82,66 @@ func TestResolveRefsNeverLeaksSigil(t *testing.T) {
 	}
 }
 
+// TestMergeStackBookOverlayFirst: a service in overlay wins wholesale; a service
+// only in base is carried through.
+func TestMergeStackBookOverlayFirst(t *testing.T) {
+	base := PortBook{"api": {"http": 8080}, "db": {"pg": 5432}}
+	overlay := PortBook{"api": {"http": 20001}}
+
+	merged := MergeStackBook(base, overlay)
+
+	if merged["api"]["http"] != 20001 {
+		t.Errorf("overlay must win: api http = %d, want 20001 (overlay), not 8080 (base)", merged["api"]["http"])
+	}
+	if merged["db"]["pg"] != 5432 {
+		t.Errorf("base-only service must be reused: db pg = %d, want 5432", merged["db"]["pg"])
+	}
+	if merged.Host("api") != "localhost" || merged.Host("db") != "localhost" {
+		t.Errorf("merged book Host must stay localhost; got api=%q db=%q", merged.Host("api"), merged.Host("db"))
+	}
+}
+
+// TestMergeStackBookDoesNotMutateInputs: mutating the result — including its inner
+// maps — must not corrupt either input.
+func TestMergeStackBookDoesNotMutateInputs(t *testing.T) {
+	base := PortBook{"api": {"http": 8080}, "db": {"pg": 5432}}
+	overlay := PortBook{"api": {"http": 20001}}
+
+	merged := MergeStackBook(base, overlay)
+	merged["api"]["http"] = 1
+	merged["db"]["pg"] = 2
+	merged["new"] = map[string]int{"http": 3}
+
+	if base["db"]["pg"] != 5432 {
+		t.Errorf("mutating merged leaked into base: db pg = %d, want 5432", base["db"]["pg"])
+	}
+	if base["api"]["http"] != 8080 {
+		t.Errorf("mutating merged leaked into base: api http = %d, want 8080", base["api"]["http"])
+	}
+	if overlay["api"]["http"] != 20001 {
+		t.Errorf("mutating merged leaked into overlay: api http = %d, want 20001", overlay["api"]["http"])
+	}
+	if _, ok := base["new"]; ok {
+		t.Error("adding a service to merged leaked into base")
+	}
+}
+
+// TestMergeStackBookNewOverlayService: an overlay service absent from base is
+// present in the result.
+func TestMergeStackBookNewOverlayService(t *testing.T) {
+	base := PortBook{"api": {"http": 8080}}
+	overlay := PortBook{"worker": {"http": 20002}}
+
+	merged := MergeStackBook(base, overlay)
+
+	if merged["worker"]["http"] != 20002 {
+		t.Errorf("new overlay service must appear: worker http = %d, want 20002", merged["worker"]["http"])
+	}
+	if merged["api"]["http"] != 8080 {
+		t.Errorf("base service must remain: api http = %d, want 8080", merged["api"]["http"])
+	}
+}
+
 func TestBuildPortBook(t *testing.T) {
 	rw := &ResolvedWorkspace{Services: map[string]ResolvedService{
 		"api":        {Name: "api", Manifest: &ServiceManifest{Ports: map[string]int{"http": 8080}}},
