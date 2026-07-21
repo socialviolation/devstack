@@ -3,6 +3,7 @@ package tiltgen
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -922,6 +923,135 @@ ports: { http: 63290 }
 		t.Fatalf("Generate: %v", err)
 	}
 	return out
+}
+
+// writeFEBEWorkspace writes a two-service workspace (frontend depends on backend,
+// grouped web/api) at a fresh temp dir and returns the resolved workspace. Both
+// services pin http ports so the port book resolves their derived links.
+func writeFEBEWorkspace(t *testing.T, fePort, bePort int) *config.ResolvedWorkspace {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: demo
+  repoDiscovery:
+    mode: explicit
+    repos: [./repos/frontend, ./repos/backend]
+groups:
+  web: [frontend]
+  api: [backend]
+dependencies:
+  frontend: [backend]
+`)
+	write(t, filepath.Join(dir, "repos", "backend", config.ServiceManifestFileName), `version: 1
+service:
+  name: backend
+runtime:
+  run: { command: ./bin/backend }
+ports: { http: `+itoa(bePort)+` }
+`)
+	write(t, filepath.Join(dir, "repos", "frontend", config.ServiceManifestFileName), `version: 1
+service:
+  name: frontend
+runtime:
+  run: { command: ./bin/frontend }
+ports: { http: `+itoa(fePort)+` }
+`)
+	rw, err := config.ResolveWorkspace(dir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace: %v", err)
+	}
+	return rw
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
+
+// TestGenerateCombinedNamespacesStack is the stage-1 load-bearing test: base's
+// services plus one stack's overlay services in ONE Tiltfile, the stack namespaced
+// so nothing collides and its deps rewire to its own services.
+func TestGenerateCombinedNamespacesStack(t *testing.T) {
+	baseRW := writeFEBEWorkspace(t, 4200, 8080)
+	stackRW := writeFEBEWorkspace(t, 4200, 8080)
+	stackBook := config.PortBook{"frontend": {"http": 14200}, "backend": {"http": 18080}}
+
+	out, err := GenerateCombined(baseRW, Options{}, []StackGen{{
+		Workspace: stackRW,
+		Options:   Options{Book: stackBook},
+		Namespace: "perf",
+	}})
+	if err != nil {
+		t.Fatalf("GenerateCombined: %v", err)
+	}
+	t.Log("\n" + out)
+
+	// 1. base resources keep bare names and base ports
+	for _, want := range []string{
+		`    "frontend",`,
+		`    "backend",`,
+		`link("http://localhost:4200", "http")`,
+		`link("http://localhost:8080", "http")`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("base resource missing: %s", want)
+		}
+	}
+
+	// 2. stack resources are namespaced and carry the injected ports
+	for _, want := range []string{
+		`    "frontend:perf",`,
+		`    "backend:perf",`,
+		`link("http://localhost:14200", "http")`,
+		`link("http://localhost:18080", "http")`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("namespaced stack resource missing: %s", want)
+		}
+	}
+
+	// 3. THE load-bearing one: the stack's frontend depends on the stack's own
+	// backend (backend:perf), never base's bare backend.
+	_, stackFE, ok := strings.Cut(out, "\n# frontend:perf\n")
+	if !ok {
+		t.Fatalf("no frontend:perf block in output:\n%s", out)
+	}
+	if !strings.Contains(stackFE, `resource_deps=["backend:perf"]`) {
+		t.Errorf("frontend:perf must depend on backend:perf; got:\n%s", stackFE)
+	}
+	if strings.Contains(stackFE, `resource_deps=["backend"]`) {
+		t.Errorf("frontend:perf must NOT depend on base's bare backend; got:\n%s", stackFE)
+	}
+
+	// 4. stack resources carry the stack label alongside their group label
+	if !strings.Contains(stackFE, `labels=["web", "perf"]`) {
+		t.Errorf("frontend:perf must carry group + stack label; got:\n%s", stackFE)
+	}
+
+	// 5. the base portion is byte-identical to a standalone Generate(baseRW): the
+	// combined file is base's file with the stack blocks appended.
+	standalone, err := Generate(baseRW, Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !strings.HasPrefix(out, standalone) {
+		t.Errorf("combined output must start with the standalone base Tiltfile;\nstandalone:\n%q\ncombined:\n%q", standalone, out)
+	}
+}
+
+// TestGenerateCombinedNoStacksMatchesGenerate pins that GenerateCombined with no
+// stacks is byte-identical to Generate — single-workspace generation is untouched.
+func TestGenerateCombinedNoStacksMatchesGenerate(t *testing.T) {
+	rw := writeFEBEWorkspace(t, 4200, 8080)
+	gen, err := Generate(rw, Options{})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	combined, err := GenerateCombined(rw, Options{}, nil)
+	if err != nil {
+		t.Fatalf("GenerateCombined: %v", err)
+	}
+	if gen != combined {
+		t.Errorf("GenerateCombined with no stacks must equal Generate;\nGenerate:\n%q\nCombined:\n%q", gen, combined)
+	}
 }
 
 func write(t *testing.T, path, body string) {
