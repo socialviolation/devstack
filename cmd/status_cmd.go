@@ -13,6 +13,7 @@ import (
 
 	"github.com/fatih/color"
 
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -129,7 +130,6 @@ func renderStatusNodes(nodes []*treeNode, indent string, resourceMap map[string]
 	}
 }
 
-
 // runStatusAll shows a summary table of all registered workspaces.
 func runStatusAll() error {
 	workspaces, err := workspace.All()
@@ -226,6 +226,11 @@ func runStatusAll() error {
 			r.status,
 			r.services,
 		)
+		if stacks, serr := stack.List(r.ws.Name); serr == nil {
+			for _, s := range stacks {
+				fmt.Printf("  └ %-14s %-36s %-8d %s\n", s.Name, "", s.Port, s.Status)
+			}
+		}
 	}
 
 	return nil
@@ -307,4 +312,3 @@ func shortDir(path string) string {
 	}
 	return path
 }
-

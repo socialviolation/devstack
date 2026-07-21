@@ -236,9 +236,42 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 		fmt.Println()
 	}
 
+	printStackSection(ws.Name)
+
 	color.New(color.Faint).Printf("  devstack start <service>   ·   devstack start --group=<group>\n")
 
 	return nil
+}
+
+// printStackSection lists the workspace's in-flight feature stacks under the base
+// service tree, so a status check surfaces the other running versions. It prints
+// nothing for a workspace with no stacks (or when the target is itself a stack,
+// whose name has no store of its own).
+func printStackSection(wsName string) {
+	stacks, err := stack.List(wsName)
+	if err != nil || len(stacks) == 0 {
+		return
+	}
+	fmt.Println()
+	color.New(color.Bold).Printf("Feature stacks of %s (%d in flight):\n", wsName, len(stacks))
+	for _, s := range stacks {
+		statusClr := color.New(color.Faint)
+		if s.Status == "running" {
+			statusClr = color.New(color.FgGreen)
+		}
+		fmt.Printf("  %-22s ", s.Name)
+		statusClr.Printf("%-9s", s.Status)
+		fmt.Printf("  daemon :%d", s.Port)
+		links := make([]string, 0, len(s.Ports))
+		for _, k := range sortedKeys(s.Ports) {
+			links = append(links, fmt.Sprintf("%s→:%d", k, s.Ports[k]))
+		}
+		if len(links) > 0 {
+			color.New(color.Faint).Printf("   %s", strings.Join(links, " "))
+		}
+		fmt.Println()
+	}
+	color.New(color.Faint).Printf("  devstack stack up <name>   ·   devstack stack config <svc> --stack <name>\n")
 }
 
 func svcStatusColor(svc string, resourceMap map[string]tilt.UIResource) (string, *color.Color) {
