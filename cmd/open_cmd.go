@@ -36,7 +36,7 @@ func runOpen(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("could not resolve workspace: %w\nTry: devstack open --workspace=<name>", err)
 	}
 
-	url := fmt.Sprintf("http://localhost:%d", ws.TiltPort)
+	url := fmt.Sprintf("http://localhost:%d", workspace.HostTiltPort)
 	fmt.Printf("Opening dashboard for '%s': %s\n", ws.Name, url)
 	return exec.Command("xdg-open", url).Start()
 }

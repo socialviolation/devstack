@@ -65,17 +65,14 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	return runWorkspaceStatus(ws)
 }
 
-// runStackStatus shows a feature stack's services as they run in the base
-// workspace's one daemon: it reads base's view and filters to the stack's
-// <service>:<stack> resources, printing them de-namespaced. A stack is up only
-// when base's daemon is running and the stack is active — otherwise it prints the
-// same "not up" guidance the other --stack commands give, without dialing a dead
-// per-stack port.
+// runStackStatus shows a feature stack's services as they run in the one host
+// daemon: it reads the host view and filters to the stack's
+// <base>:<service>:<stack> resources, printing them de-namespaced. A stack is up
+// only when the host daemon is running and the stack is active — otherwise it
+// prints the same "not up" guidance the other --stack commands give, without
+// dialing a dead port.
 func runStackStatus(base *workspace.Workspace, rec *stack.Record) error {
-	port := base.TiltPort
-	if actual := workspace.ResolvePort(base.Name); actual != 0 {
-		port = actual
-	}
+	port := workspace.HostTiltPort
 	if !isTiltReachable(fmt.Sprintf("http://localhost:%d/api/view", port)) || !rec.Active {
 		fmt.Printf("stack %q is not up — run: devstack stack up %s\n", rec.Name, rec.Name)
 		return nil
@@ -90,24 +87,25 @@ func runStackStatus(base *workspace.Workspace, rec *stack.Record) error {
 		resourceMap[r.Metadata.Name] = r
 	}
 
+	prefix := base.Name + ":"
 	suffix := ":" + rec.Name
 	names := make([]string, 0)
 	for name := range resourceMap {
-		if strings.HasSuffix(name, suffix) {
+		if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, suffix) {
 			names = append(names, name)
 		}
 	}
 	sort.Strings(names)
 
 	color.New(color.Bold).Printf("stack %q", rec.Name)
-	color.New(color.Faint).Printf("  (in base %s's daemon :%d)\n\n", base.Name, port)
+	color.New(color.Faint).Printf("  (in the host daemon :%d as %s<service>%s)\n\n", port, prefix, suffix)
 
 	if len(names) == 0 {
-		fmt.Printf("  No resources for stack %q in the base daemon yet.\n", rec.Name)
+		fmt.Printf("  No resources for stack %q in the host daemon yet.\n", rec.Name)
 		return nil
 	}
 	for _, name := range names {
-		svc := strings.TrimSuffix(name, suffix)
+		svc := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
 		statusStr, statusClr := svcStatusColor(name, resourceMap)
 		fmt.Printf("  %-22s  ", svc)
 		statusClr.Printf("%-10s", statusStr)
@@ -119,9 +117,7 @@ func runStackStatus(base *workspace.Workspace, rec *stack.Record) error {
 }
 
 func runWorkspaceStatus(ws *workspace.Workspace) error {
-	if actual := workspace.ResolvePort(ws.Name); actual != 0 && actual != ws.TiltPort {
-		ws.TiltPort = actual
-	}
+	ws.TiltPort = workspace.HostTiltPort
 
 	cfg, _ := config.Load(ws.Path)
 	serviceDirs := tilt.ParseTiltfileServeDirs(filepath.Join(ws.Path, "Tiltfile"))
@@ -131,8 +127,13 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 
 	resourceMap := make(map[string]tilt.UIResource)
 	if tiltErr == nil {
+		prefix := ws.Name + ":"
 		for _, r := range view.UiResources {
-			resourceMap[r.Metadata.Name] = r
+			bare, ok := strings.CutPrefix(r.Metadata.Name, prefix)
+			if !ok || strings.Contains(bare, ":") {
+				continue
+			}
+			resourceMap[bare] = r
 		}
 	}
 
@@ -178,7 +179,7 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 	if tiltErr != nil {
 		infraParts = append(infraParts, color.New(color.FgRed).Sprint("daemon stopped"))
 	} else {
-		infraParts = append(infraParts, fmt.Sprintf("daemon :%d", ws.TiltPort))
+		infraParts = append(infraParts, fmt.Sprintf("host daemon :%d", ws.TiltPort))
 	}
 	if isOtelRunning(ws) {
 		infraParts = append(infraParts,

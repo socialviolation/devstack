@@ -2,12 +2,12 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -16,6 +16,24 @@ import (
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
+
+// serveHostDaemon starts an httptest server bound to the fixed host daemon port so
+// resolveLocalTarget's DaemonReachable(HostTiltPort) check succeeds. If the port is
+// unavailable the test is skipped rather than reported as a failure.
+func serveHostDaemon(t *testing.T) *httptest.Server {
+	t.Helper()
+	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", workspace.HostTiltPort))
+	if err != nil {
+		t.Skipf("host port %d unavailable: %v", workspace.HostTiltPort, err)
+	}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"uiResources":[]}`))
+	}))
+	srv.Listener.Close()
+	srv.Listener = l
+	srv.Start()
+	return srv
+}
 
 const targetService = `version: 1
 service:
@@ -226,17 +244,14 @@ func TestResolveLocalTargetStackNotUp(t *testing.T) {
 func TestResolveLocalTargetActiveStackReusesBaseClientAndNamespaces(t *testing.T) {
 	ws, _, _ := seedStack(t)
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"uiResources":[]}`))
-	}))
+	srv := serveHostDaemon(t)
 	defer srv.Close()
-	ws.TiltPort = portFromURL(t, srv.URL)
 
 	if err := stack.SetActive("testws", "feat", true); err != nil {
 		t.Fatalf("SetActive: %v", err)
 	}
 
-	baseClient := tilt.NewClient("localhost", ws.TiltPort)
+	baseClient := tilt.NewClient("localhost", workspace.HostTiltPort)
 	got, err := resolveLocalTarget(ws, localTarget{client: baseClient}, "feat")
 	if err != nil {
 		t.Fatalf("resolveLocalTarget: %v", err)
@@ -250,23 +265,21 @@ func TestResolveLocalTargetActiveStackReusesBaseClientAndNamespaces(t *testing.T
 	if !strings.Contains(got.label, "feat") {
 		t.Errorf("label = %q, want it to name the stack", got.label)
 	}
-	if rn := resourceName("api", got.namespace); rn != "api:feat" {
-		t.Errorf("resourceName = %q, want the namespaced resource %q", rn, "api:feat")
+	if rn := resourceName(ws.Name, "api", got.namespace); rn != "testws:api:feat" {
+		t.Errorf("resourceName = %q, want the host-namespaced resource %q", rn, "testws:api:feat")
 	}
 }
 
-// portFromURL extracts the integer port from an http://host:port URL.
-func portFromURL(t *testing.T, raw string) int {
-	t.Helper()
-	u, err := url.Parse(raw)
-	if err != nil {
-		t.Fatalf("parse url %q: %v", raw, err)
+// resourceName must match tiltgen's hostName scheme exactly: <ws>:<svc> for a base
+// service and <ws>:<svc>:<stack> for a stack overlay. Drift here means the
+// daemon-facing tools would address resources the host daemon does not have.
+func TestResourceNameHostScheme(t *testing.T) {
+	if got := resourceName("navexa", "api", ""); got != "navexa:api" {
+		t.Errorf("resourceName(navexa, api, \"\") = %q, want %q", got, "navexa:api")
 	}
-	p, err := strconv.Atoi(u.Port())
-	if err != nil {
-		t.Fatalf("port from %q: %v", raw, err)
+	if got := resourceName("navexa", "api", "perf"); got != "navexa:api:perf" {
+		t.Errorf("resourceName(navexa, api, perf) = %q, want %q", got, "navexa:api:perf")
 	}
-	return p
 }
 
 // Absent stack param returns the base target unchanged (byte-identical path).
@@ -281,4 +294,46 @@ func TestResolveLocalTargetBasePassthrough(t *testing.T) {
 	if got.label != "" || got.defaultSvc != "api" {
 		t.Errorf("base passthrough altered the target: %+v", got)
 	}
+}
+
+func TestStackResourceNamesScopedToWorkspace(t *testing.T) {
+	mk := func(name string) tilt.UIResource {
+		var r tilt.UIResource
+		r.Metadata.Name = name
+		return r
+	}
+	view := &tilt.TiltView{UiResources: []tilt.UIResource{
+		mk("navexa:api"), mk("navexa:web"), mk("navexa:api:perf"),
+		mk("other:api"), mk("other:api:perf"),
+	}}
+
+	base := stackResourceNames(view, "navexa", "")
+	if want := []string{"navexa:api", "navexa:web"}; !equalStrings(base, want) {
+		t.Errorf("base scope = %v, want %v (must exclude stack overlays and other workspaces)", base, want)
+	}
+
+	perf := stackResourceNames(view, "navexa", "perf")
+	if want := []string{"navexa:api:perf"}; !equalStrings(perf, want) {
+		t.Errorf("stack scope = %v, want %v (must exclude other workspaces' perf)", perf, want)
+	}
+
+	if _, _, ok := splitHostResource("other:api", "navexa:"); ok {
+		t.Errorf("splitHostResource must reject a resource from another workspace")
+	}
+	svc, ns, ok := splitHostResource("navexa:api:perf", "navexa:")
+	if !ok || svc != "api" || ns != "perf" {
+		t.Errorf("splitHostResource(navexa:api:perf) = (%q,%q,%v), want (api,perf,true)", svc, ns, ok)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

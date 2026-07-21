@@ -8,6 +8,7 @@ import (
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/tilt"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 var svcStartCmd = &cobra.Command{
@@ -88,7 +89,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Starting: %s\n", strings.Join(toTrigger, ", "))
 
-	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
+	tiltClient := tilt.NewClient("localhost", workspace.HostTiltPort)
 	view, err := tiltClient.GetView()
 	if err != nil {
 		// Daemon not running — bring it up automatically, then retry. runStart is
@@ -113,20 +114,21 @@ func runEnable(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, svc := range toTrigger {
-		if disabled[svc] {
-			if out, err := tiltClient.RunCLI("enable", svc); err != nil {
+		rn := resourceName(ws.Name, svc, "")
+		if disabled[rn] {
+			if out, err := tiltClient.RunCLI("enable", rn); err != nil {
 				if out != "" {
 					fmt.Print(out)
 				}
-				return fmt.Errorf("enable %s failed: %w", svc, err)
+				return fmt.Errorf("enable %s failed: %w", rn, err)
 			}
 		}
-		out, err := tiltClient.RunCLI("trigger", svc)
+		out, err := tiltClient.RunCLI("trigger", rn)
 		if err != nil {
 			if out != "" {
 				fmt.Print(out)
 			}
-			return fmt.Errorf("trigger %s failed: %w", svc, err)
+			return fmt.Errorf("trigger %s failed: %w", rn, err)
 		}
 		if out != "" {
 			fmt.Print(out)

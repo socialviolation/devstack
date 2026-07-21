@@ -75,7 +75,7 @@ func runStop(cmd *cobra.Command, args []string) error {
 
 	var stopped []string
 	for _, svc := range services {
-		resolved, err := tilt.ResolveService(resourceName(svc, namespace), view)
+		resolved, err := tilt.ResolveService(resourceName(ws.Name, svc, namespace), view)
 		if err != nil {
 			return fmt.Errorf("could not resolve service %q: %w", svc, err)
 		}

@@ -110,9 +110,7 @@ func tunnelContext() (*workspace.Workspace, error) {
 	if err := requireLocalEnv(envName, env); err != nil {
 		return nil, err
 	}
-	if actual := workspace.ResolvePort(ws.Name); actual != 0 {
-		ws.TiltPort = actual
-	}
+	ws.TiltPort = workspace.HostTiltPort
 	return ws, nil
 }
 
