@@ -187,6 +187,44 @@ func TestCreateOverlayWorktreesAndPorts(t *testing.T) {
 	}
 }
 
+func TestCreateMaterializesIgnoredConfig(t *testing.T) {
+	base := newBase(t)
+
+	backend := filepath.Join(base.Path, "backend")
+	writeFile(t, filepath.Join(backend, ".gitignore"), "appsettings.*.json\nobj/\n")
+	git(t, backend, "add", "-f", ".gitignore")
+	git(t, backend, "commit", "-q", "-m", "gitignore")
+	writeFile(t, filepath.Join(backend, "appsettings.Development.json"), `{"ConnectionStrings":{"Db":"secret"}}`)
+	writeFile(t, filepath.Join(backend, "obj", "junk.dll"), "build output")
+
+	res, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"backend"}})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	var backendWT WorktreeResult
+	for _, w := range res.Worktrees {
+		if w.Service == "backend" {
+			backendWT = w
+		}
+	}
+
+	dst := filepath.Join(backendWT.Path, "appsettings.Development.json")
+	if b, err := os.ReadFile(dst); err != nil {
+		t.Errorf("ignored dev config not materialized into worktree: %v", err)
+	} else if string(b) != `{"ConnectionStrings":{"Db":"secret"}}` {
+		t.Errorf("materialized content = %q, want the base bytes", b)
+	}
+
+	if _, err := os.Stat(filepath.Join(backendWT.Path, "obj", "junk.dll")); !os.IsNotExist(err) {
+		t.Errorf("build output obj/junk.dll leaked into worktree")
+	}
+
+	if strings.Join(backendWT.Materialized, ",") != "appsettings.Development.json" {
+		t.Errorf("Materialized = %v, want [appsettings.Development.json]", backendWT.Materialized)
+	}
+}
+
 // The core re-key: a created stack must NOT become a top-level workspace, but it
 // MUST be visible in the workspace's stack list. This fails if Create still
 // registered the stack as a workspace.

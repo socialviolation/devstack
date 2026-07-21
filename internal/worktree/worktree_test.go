@@ -175,6 +175,63 @@ func TestCreate_TwoWorktreesCoexist(t *testing.T) {
 	}
 }
 
+func TestMaterializeIgnoredConfig(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "base")
+	if err := os.MkdirAll(filepath.Join(repo, "src", "API"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "init", "-b", "main")
+	git(t, repo, "config", "user.email", "t@example.com")
+	git(t, repo, "config", "user.name", "tester")
+	git(t, repo, "config", "commit.gpgsign", "false")
+	write(t, filepath.Join(repo, ".gitignore"), "appsettings.*.json\nobj/\n.envrc\ndevstack.service.yaml\n")
+	write(t, filepath.Join(repo, "src", "API", "Program.cs"), "tracked\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "init")
+
+	write(t, filepath.Join(repo, "src", "API", "appsettings.Development.json"), `{"conn":"secret"}`)
+	write(t, filepath.Join(repo, ".envrc"), "export TOKEN=abc\n")
+	write(t, filepath.Join(repo, "devstack.service.yaml"), "port: 5000\n")
+	if err := os.MkdirAll(filepath.Join(repo, "obj"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(repo, "obj", "junk"), "build output\n")
+
+	wt := filepath.Join(root, "base-feat")
+	if _, err := Create(repo, wt, "feature/x", true); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	preexisting := filepath.Join(wt, "devstack.service.yaml")
+	write(t, preexisting, "port: 9999\n")
+
+	copied, err := MaterializeIgnoredConfig(repo, wt)
+	if err != nil {
+		t.Fatalf("MaterializeIgnoredConfig: %v", err)
+	}
+
+	appSettings := filepath.Join(wt, "src", "API", "appsettings.Development.json")
+	if b, err := os.ReadFile(appSettings); err != nil {
+		t.Errorf("appsettings.Development.json not materialized: %v", err)
+	} else if string(b) != `{"conn":"secret"}` {
+		t.Errorf("appsettings content = %q, want copied bytes", b)
+	}
+
+	if _, err := os.Stat(filepath.Join(wt, "obj", "junk")); !os.IsNotExist(err) {
+		t.Errorf("obj/junk was copied into worktree; build output must be excluded")
+	}
+
+	if b, _ := os.ReadFile(preexisting); string(b) != "port: 9999\n" {
+		t.Errorf("pre-existing worktree file was overwritten: %q", b)
+	}
+
+	want := []string{".envrc", "src/API/appsettings.Development.json"}
+	if strings.Join(copied, "|") != strings.Join(want, "|") {
+		t.Errorf("copied = %v, want %v", copied, want)
+	}
+}
+
 func TestPrune_ReclaimsHandDeletedWorktree(t *testing.T) {
 	root, repo := newRepo(t)
 	wt := filepath.Join(root, "base-gone")

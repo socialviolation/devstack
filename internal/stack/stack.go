@@ -32,11 +32,12 @@ type OverlayMember struct {
 }
 
 type WorktreeResult struct {
-	Service  string
-	Path     string
-	Branch   string
-	Detached bool
-	Dirty    bool
+	Service      string
+	Path         string
+	Branch       string
+	Detached     bool
+	Dirty        bool
+	Materialized []string
 }
 
 type CreateResult struct {
@@ -151,6 +152,11 @@ func Create(in CreateInput) (*CreateResult, error) {
 		} else {
 			wr.Detached = true
 		}
+		materialized, err := worktree.MaterializeIgnoredConfig(repoPath, worktreePaths[s])
+		if err != nil {
+			return nil, fmt.Errorf("materialize local config for %q: %w", s, err)
+		}
+		wr.Materialized = materialized
 		res.Worktrees = append(res.Worktrees, wr)
 		if wt.SourceDirty {
 			dirty = append(dirty, s)

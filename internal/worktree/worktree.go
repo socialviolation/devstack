@@ -5,7 +5,11 @@ package worktree
 import (
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -105,6 +109,88 @@ func HasUncommittedChanges(path string) (bool, error) {
 		return false, fmt.Errorf("git status in %s failed: %w\n%s", path, err, strings.TrimSpace(string(out)))
 	}
 	return strings.TrimSpace(string(out)) != "", nil
+}
+
+var configPatterns = []string{
+	"appsettings*.json",
+	"*.local.json",
+	".envrc",
+	".env",
+	".env.*",
+	"devstack.service.yaml",
+}
+
+func isConfigFile(rel string) bool {
+	base := filepath.Base(rel)
+	for _, p := range configPatterns {
+		if ok, _ := filepath.Match(p, base); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// MaterializeIgnoredConfig copies a base repo's machine-local, git-ignored config
+// files into a freshly created worktree. A git worktree checks out committed state
+// only, so gitignored dev config (appsettings.Development.json, .envrc,
+// devstack.service.yaml) is absent and the service boots without it. It copies only
+// files whose basename matches configPatterns — never build output (bin/, obj/,
+// node_modules/) that git also ignores. It never overwrites a file the worktree
+// already holds, and never reads or logs file contents (they carry secrets); it
+// copies bytes and returns the relative paths materialized.
+func MaterializeIgnoredConfig(baseRepo, worktreePath string) ([]string, error) {
+	cmd := exec.Command("git", "ls-files", "--others", "--ignored", "--exclude-standard")
+	cmd.Dir = baseRepo
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files ignored in %s failed: %w\n%s", baseRepo, err, strings.TrimSpace(string(out)))
+	}
+
+	var copied []string
+	for _, rel := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		rel = strings.TrimSpace(rel)
+		if rel == "" || strings.HasSuffix(rel, "/") || !isConfigFile(rel) {
+			continue
+		}
+		src := filepath.Join(baseRepo, rel)
+		dst := filepath.Join(worktreePath, rel)
+		if _, err := os.Stat(dst); err == nil {
+			continue
+		}
+		if fi, err := os.Stat(src); err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		if err := copyFile(src, dst); err != nil {
+			return copied, fmt.Errorf("materialize %s into worktree: %w", rel, err)
+		}
+		copied = append(copied, rel)
+	}
+	sort.Strings(copied)
+	return copied, nil
+}
+
+func copyFile(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	fi, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fi.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 func branchExists(repoPath, branch string) (bool, error) {

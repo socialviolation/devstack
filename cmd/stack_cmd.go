@@ -128,6 +128,9 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 			branchNote = "branch " + wt.Branch
 		}
 		fmt.Printf("  ✓ worktree %-16s %s (%s)\n", wt.Service, wt.Path, branchNote)
+		if len(wt.Materialized) > 0 {
+			fmt.Printf("    ↳ materialized %d local config file(s): %s\n", len(wt.Materialized), strings.Join(wt.Materialized, ", "))
+		}
 	}
 	fmt.Printf("  ✓ generated %s\n", res.ManifestPath)
 	fmt.Printf("  ✓ recorded stack %q (base %q, daemon port %d)\n", res.StackName, res.BaseName, res.DaemonPort)
