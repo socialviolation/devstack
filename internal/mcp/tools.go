@@ -1031,7 +1031,8 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			"Investigate distributed traces in the LOCAL dev environment (@ %s). "+
 				"Queries SignOz via ClickHouse — NOT a natural language search engine. Parameters are structured: exact service names, structured time ranges, and exact attribute key=value pairs. "+
 				"Modes: (1) trace_id/span_id — look up a specific trace or span; (2) attribute+value — search by business attribute (e.g. attribute='portfolio.id' value='123'); (3) service — show recent executions for a service. "+
-				"Example: service='api-service' since_minutes=15 errors_only=true. "+
+				"Results can be isolated to one stack's service: 'service' pins the service and 'stack' pins the devstack.stack resource attribute (a stack's short name, or 'stack'='base' to select base-workspace services). "+
+				"Example: service='api-service' stack='perf' since_minutes=15 errors_only=true. "+
 				"Returns an ASCII span tree showing service calls, durations, and errors. Combine with process_logs and status for full debugging context.",
 			queryURL,
 		)
@@ -1041,6 +1042,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 				"READ-ONLY — service control tools (restart/stop/configure) are not available here. "+
 				"Queries SignOz via ClickHouse — NOT a natural language search engine. Parameters are structured: exact service names, structured time ranges, and exact attribute key=value pairs. "+
 				"Modes: (1) trace_id/span_id — look up a specific trace or span; (2) attribute+value — search by business attribute; (3) service — show recent executions. "+
+				"Results can be isolated to one stack's service via 'service' plus 'stack' (a stack's short name, or 'stack'='base' for base-workspace services), which filter on service.name and the devstack.stack resource attribute. "+
 				"Returns an ASCII span tree showing service calls, durations, and errors.",
 			activeEnvName, activeEnv.Observability.URL,
 		)
@@ -1061,6 +1063,9 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		),
 		mcp.WithString("service",
 			mcp.Description("Exact service name as registered in SignOz (e.g. 'api-service'). NOT a description or partial match. Only applied in mode 3 (no trace_id or attribute given); attribute searches and trace lookups span all services."),
+		),
+		mcp.WithString("stack",
+			mcp.Description("Isolate results to one stack's telemetry via the devstack.stack resource attribute. Pass a stack's short name (e.g. 'perf'), or 'base' to select base-workspace services. Combine with 'service' to pin a single stack's service. Applied in mode 2 (attribute search) and mode 3 (recent executions)."),
 		),
 		mcp.WithString("attribute",
 			mcp.Description("Exact attribute key to search by (e.g. 'portfolio.id', 'user.id', 'process.id'). NOT natural language. Requires value parameter."),
@@ -1095,6 +1100,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		traceID := request.GetString("trace_id", "")
 		spanID := request.GetString("span_id", "")
 		service := request.GetString("service", "")
+		stack := request.GetString("stack", "")
 		attribute := request.GetString("attribute", "")
 		value := request.GetString("value", "")
 		sinceMinutes := int(request.GetFloat("since_minutes", 5))
@@ -1146,6 +1152,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 				Attribute: attribute,
 				Value:     value,
 				Service:   service,
+				Stack:     stack,
 				Since:     since,
 				Limit:     limit * 5,
 			})
@@ -1160,6 +1167,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			}
 			recent, err := backend.QueryTraces(ctx, observability.TraceQuery{
 				Service: service,
+				Stack:   stack,
 				Since:   since,
 				Limit:   limit * 5,
 			})

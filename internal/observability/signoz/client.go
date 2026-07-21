@@ -388,10 +388,24 @@ func (c *Client) QueryTraces(ctx context.Context, req observability.TraceQuery) 
 	}
 
 	if req.Attribute != "" && req.Value != "" {
-		return c.searchByAttribute(req.Attribute, req.Value, req.Service, limit, since)
+		return c.searchByAttribute(req.Attribute, req.Value, req.Service, req.Stack, limit, since)
 	}
 
-	return c.fetchRootTraces(req.Service, limit, since)
+	return c.fetchRootTraces(req.Service, req.Stack, limit, since)
+}
+
+// stackFilter returns a resource-attribute filter constraining results to one
+// stack's telemetry via the devstack.stack resource attribute, or nil when no
+// stack is given.
+func stackFilter(stack string) []filter {
+	if stack == "" {
+		return nil
+	}
+	return []filter{{
+		Key:   filterKey{Key: "devstack.stack", Type: "resource", DataType: "string", IsColumn: false},
+		Op:    "=",
+		Value: stack,
+	}}
 }
 
 func (c *Client) fetchTraceByID(traceID string) ([]observability.Span, error) {
@@ -504,7 +518,7 @@ func (c *Client) fetchTraceByID(traceID string) ([]observability.Span, error) {
 	return spans, nil
 }
 
-func (c *Client) searchByAttribute(attribute, value, service string, limit int, since time.Duration) ([][]observability.Span, error) {
+func (c *Client) searchByAttribute(attribute, value, service, stack string, limit int, since time.Duration) ([][]observability.Span, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/query_range", c.baseURL)
 
 	extraFilters := []filter{
@@ -517,6 +531,7 @@ func (c *Client) searchByAttribute(attribute, value, service string, limit int, 
 			Op:  "=", Value: "",
 		},
 	}
+	extraFilters = append(extraFilters, stackFilter(stack)...)
 
 	fetchLimit := limit * 5
 	if fetchLimit < 10 {
@@ -543,7 +558,7 @@ func (c *Client) searchByAttribute(attribute, value, service string, limit int, 
 	return result, nil
 }
 
-func (c *Client) fetchRootTraces(service string, limit int, since time.Duration) ([][]observability.Span, error) {
+func (c *Client) fetchRootTraces(service, stack string, limit int, since time.Duration) ([][]observability.Span, error) {
 	fetchLimit := limit * 10
 	if fetchLimit > 500 {
 		fetchLimit = 500
@@ -553,7 +568,7 @@ func (c *Client) fetchRootTraces(service string, limit int, since time.Duration)
 	}
 
 	apiURL := fmt.Sprintf("%s/api/v3/query_range", c.baseURL)
-	req := buildQueryRangeRequest("traces", service, fetchLimit, since, nil)
+	req := buildQueryRangeRequest("traces", service, fetchLimit, since, stackFilter(stack))
 
 	var resp queryRangeResponse
 	if err := c.post(apiURL, req, &resp); err != nil {

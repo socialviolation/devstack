@@ -350,7 +350,7 @@ func GenerateOptions(rec *Record, names []string) (tiltgen.Options, error) {
 	}
 
 	return tiltgen.Options{
-		ManagedEnv: workspace.ManagedEnv(base, names),
+		ManagedEnv: workspace.ManagedEnvFor(base, names, rec.Name),
 		Book:       config.MergeStackBook(config.BuildPortBook(baseRW), overlay),
 	}, nil
 }
