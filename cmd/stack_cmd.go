@@ -3,12 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"sort"
-	"strconv"
 	"strings"
-	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -16,7 +12,6 @@ import (
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/svcconfig"
-	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -133,7 +128,7 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 	fmt.Printf("  ✓ generated %s\n", res.ManifestPath)
-	fmt.Printf("  ✓ recorded stack %q (base %q, daemon port %d)\n", res.StackName, res.BaseName, res.DaemonPort)
+	fmt.Printf("  ✓ recorded stack %q (base %q, inactive)\n", res.StackName, res.BaseName)
 	fmt.Printf("Allocated service ports (key scheme: service/portKey):\n")
 	for _, k := range sortedKeys(res.Ports) {
 		fmt.Printf("  %-24s http://localhost:%d\n", k, res.Ports[k])
@@ -155,12 +150,18 @@ func runStackRemove(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if err := stack.SetActive(base.Name, args[0], false); err != nil {
+		return err
+	}
+	if isTiltReachable(fmt.Sprintf("http://localhost:%d/api/view", base.TiltPort)) {
+		if _, gerr := regenerateTiltfile(base); gerr != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to regenerate base Tiltfile: %v\n", gerr)
+		}
+	}
+
 	res, err := stack.Remove(base, args[0], force)
 	if res != nil {
 		fmt.Printf("Removing stack %q (base %q)\n", res.Name, res.BaseName)
-		if res.DaemonPID > 0 {
-			fmt.Printf("  ✓ stopped daemon (pid %d)\n", res.DaemonPID)
-		}
 		for _, p := range res.RemovedWorktrees {
 			fmt.Printf("  ✓ removed worktree %s\n", p)
 		}
@@ -199,7 +200,8 @@ func runStackList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Printf("%-24s %-14s %-6s %-9s %s\n", "STACK", "BASE", "PORT", "STATUS", "LINKS")
+	fmt.Println("Active stacks' services run in the base workspace's daemon (RUNS ON), namespaced <service>:<stack>.")
+	fmt.Printf("%-24s %-14s %-9s %-9s %s\n", "STACK", "BASE", "STATUS", "RUNS ON", "LINKS")
 	fmt.Println(strings.Repeat("-", 90))
 	for _, s := range stacks {
 		links := make([]string, 0, len(s.Ports))
@@ -210,7 +212,7 @@ func runStackList(cmd *cobra.Command, args []string) error {
 		if len(links) > 0 {
 			linkStr = strings.Join(links, " ")
 		}
-		fmt.Printf("%-24s %-14s %-6d %-9s %s\n", s.Name, s.BaseName, s.Port, s.Status, linkStr)
+		fmt.Printf("%-24s %-14s %-9s :%-8d %s\n", s.Name, s.BaseName, s.Status, s.BasePort, linkStr)
 	}
 	return nil
 }
@@ -265,11 +267,10 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// resolveStackTarget maps a --stack flag to the path and daemon port that CLI
-// service commands (status/restart/stop) should act on. Empty name returns the
-// base workspace unchanged. A named stack returns its synthesised root and own
-// daemon port, erroring clearly (never hanging) when the stack is unknown or its
-// daemon isn't running.
+// runStackUp marks a stack active and folds its services into the base
+// workspace's single Tilt daemon: it regenerates the base Tiltfile (now including
+// the stack's <svc>:<stack> resources) and ensures the base daemon is running, so
+// Tilt hot-reloads the new resources. There is no per-stack daemon.
 func runStackUp(cmd *cobra.Command, args []string) error {
 	base, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
@@ -280,75 +281,27 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	key := rec.RuntimeKey()
-	pidFile := workspace.PIDFile(key)
-	logFile := workspace.LogFile(key)
-	dataDir := workspace.DataDir(key)
-	apiURL := fmt.Sprintf("http://localhost:%d/api/view", rec.DaemonPort)
-
-	if isTiltReachable(apiURL) {
-		fmt.Printf("Stack %q already running (port %d).\n", rec.Name, rec.DaemonPort)
-		return nil
-	}
-	if data, rerr := os.ReadFile(pidFile); rerr == nil {
-		if pid, perr := strconv.Atoi(strings.TrimSpace(string(data))); perr == nil {
-			if isProcessAlive(pid) {
-				fmt.Printf("Stack %q already running (pid %d, port %d).\n", rec.Name, pid, rec.DaemonPort)
-				return nil
-			}
-			os.Remove(pidFile)
-		}
+	if err := stack.SetActive(base.Name, rec.Name, true); err != nil {
+		return err
 	}
 
-	if !stack.DaemonReachable(base.TiltPort) {
-		fmt.Fprintf(os.Stderr, "warning: base %q daemon is not running on :%d — the stack reuses base's services and DB tunnel; start base first.\n", base.Name, base.TiltPort)
-	}
-
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		return fmt.Errorf("failed to create data dir %s: %w", dataDir, err)
-	}
-	if _, err := regenerateStackTiltfile(rec); err != nil {
-		return fmt.Errorf("failed to generate stack Tiltfile: %w", err)
-	}
-	lf, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open log file %s: %w", logFile, err)
-	}
-	defer lf.Close()
-
-	tiltCmd := exec.Command("tilt", "up", "--host", "0.0.0.0", "--port", strconv.Itoa(rec.DaemonPort))
-	tiltCmd.Dir = rec.Root
-	tiltCmd.Stdout = lf
-	tiltCmd.Stderr = lf
-	tiltCmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := tiltCmd.Start(); err != nil {
-		return fmt.Errorf("failed to start stack daemon: %w", err)
-	}
-	pid := tiltCmd.Process.Pid
-	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
-		tiltCmd.Process.Kill()
-		return fmt.Errorf("failed to write PID file: %w", err)
-	}
-
-	fmt.Printf("Starting stack %q daemon (base %q)", rec.Name, base.Name)
-	deadline := time.Now().Add(45 * time.Second)
-	reached := false
-	for time.Now().Before(deadline) {
-		if isTiltReachable(apiURL) {
-			reached = true
-			break
-		}
-		fmt.Print(".")
-		time.Sleep(2 * time.Second)
-	}
-	fmt.Println()
-	if reached {
-		fmt.Printf("✓ Stack %q up (pid %d, daemon :%d)\n", rec.Name, pid, rec.DaemonPort)
-		for _, k := range sortedKeys(rec.Ports) {
-			fmt.Printf("  %-24s http://localhost:%d\n", k, rec.Ports[k])
+	apiURL := fmt.Sprintf("http://localhost:%d/api/view", base.TiltPort)
+	if !isTiltReachable(apiURL) {
+		fmt.Printf("Base %q daemon not running — starting it (its Tiltfile now includes stack %q)...\n", base.Name, rec.Name)
+		if err := runStart(cmd, nil); err != nil {
+			return err
 		}
 	} else {
-		fmt.Printf("Stack daemon started (pid %d) but not reachable on :%d yet — check logs: %s\n", pid, rec.DaemonPort, logFile)
+		path, err := regenerateTiltfile(base)
+		if err != nil {
+			return fmt.Errorf("failed to regenerate base Tiltfile: %w", err)
+		}
+		fmt.Printf("✓ Regenerated %s — base daemon will hot-reload stack %q's resources.\n", path, rec.Name)
+	}
+
+	fmt.Printf("Stack %q is active in base %q; its services run in the base daemon on :%d as <service>:%s.\n", rec.Name, base.Name, base.TiltPort, rec.Name)
+	for _, k := range sortedKeys(rec.Ports) {
+		fmt.Printf("  %-24s http://localhost:%d\n", k, rec.Ports[k])
 	}
 	return nil
 }
@@ -363,29 +316,19 @@ func runStackDown(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	pidFile := workspace.PIDFile(rec.RuntimeKey())
-	data, rerr := os.ReadFile(pidFile)
-	if rerr != nil {
-		fmt.Printf("Stack %q is not running.\n", rec.Name)
-		return nil
-	}
-	pid, perr := strconv.Atoi(strings.TrimSpace(string(data)))
-	if perr != nil {
-		return fmt.Errorf("invalid PID in %s: %w", pidFile, perr)
+	if err := stack.SetActive(base.Name, rec.Name, false); err != nil {
+		return err
 	}
 
-	fmt.Printf("Stopping stack %q (pid %d)...\n", rec.Name, pid)
-	client := tilt.NewClient("localhost", rec.DaemonPort)
-	if view, verr := client.GetView(); verr == nil {
-		for _, r := range view.UiResources {
-			client.RunCLI("disable", r.Metadata.Name) //nolint:errcheck
+	if isTiltReachable(fmt.Sprintf("http://localhost:%d/api/view", base.TiltPort)) {
+		path, err := regenerateTiltfile(base)
+		if err != nil {
+			return fmt.Errorf("failed to regenerate base Tiltfile: %w", err)
 		}
+		fmt.Printf("✓ Regenerated %s — base daemon will drop stack %q's resources.\n", path, rec.Name)
 	}
-	if proc, ferr := os.FindProcess(pid); ferr == nil {
-		_ = proc.Kill()
-	}
-	os.Remove(pidFile)
-	fmt.Printf("✓ Stack %q stopped (worktrees and record kept; remove with: devstack stack rm %s).\n", rec.Name, rec.Name)
+
+	fmt.Printf("✓ Stack %q is now inactive (worktrees and record kept; remove with: devstack stack rm %s).\n", rec.Name, rec.Name)
 	return nil
 }
 

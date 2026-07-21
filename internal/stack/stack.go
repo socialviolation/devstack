@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -48,7 +47,6 @@ type CreateResult struct {
 	Overlay      []OverlayMember
 	Worktrees    []WorktreeResult
 	ManifestPath string
-	DaemonPort   int
 	Ports        map[string]int
 	Warnings     []string
 }
@@ -57,7 +55,6 @@ type RemoveResult struct {
 	Name             string
 	BaseName         string
 	StackRoot        string
-	DaemonPID        int
 	RemovedWorktrees []string
 	PortsReleased    bool
 	Deregistered     bool
@@ -68,7 +65,7 @@ type RemoveResult struct {
 type StackInfo struct {
 	Name     string
 	BaseName string
-	Port     int
+	BasePort int
 	Status   string
 	Ports    map[string]int
 }
@@ -183,12 +180,6 @@ func Create(in CreateInput) (*CreateResult, error) {
 	}
 	res.ManifestPath = manifestPath
 
-	daemonPort, err := allocateDaemonPort()
-	if err != nil {
-		return nil, fmt.Errorf("failed to allocate stack daemon port: %w", err)
-	}
-	res.DaemonPort = daemonPort
-
 	var keys []string
 	for _, s := range overlay {
 		svc := baseRW.Services[s]
@@ -219,15 +210,14 @@ func Create(in CreateInput) (*CreateResult, error) {
 	overlayNames := make([]string, len(overlay))
 	copy(overlayNames, overlay)
 	if err := upsertStack(Record{
-		Name:       in.Name,
-		Base:       base.Name,
-		Root:       stackRoot,
-		Branch:     branch,
-		Overlay:    overlayNames,
-		Worktrees:  worktrees,
-		Ports:      res.Ports,
-		DaemonPort: daemonPort,
-		CreatedAt:  time.Now(),
+		Name:      in.Name,
+		Base:      base.Name,
+		Root:      stackRoot,
+		Branch:    branch,
+		Overlay:   overlayNames,
+		Worktrees: worktrees,
+		Ports:     res.Ports,
+		CreatedAt: time.Now(),
 	}); err != nil {
 		return nil, fmt.Errorf("failed to record stack: %w", err)
 	}
@@ -250,12 +240,6 @@ func Remove(base *workspace.Workspace, name string, force bool) (*RemoveResult, 
 	}
 
 	res := &RemoveResult{Name: rec.FullName(), BaseName: rec.Base, StackRoot: rec.Root}
-
-	pid, err := stopStackDaemon(rec)
-	if err != nil {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("could not stop stack daemon: %v", err))
-	}
-	res.DaemonPID = pid
 
 	if rw, err := config.ResolveWorkspace(rec.Root); err == nil {
 		svcNames := make([]string, 0, len(rw.Services))
@@ -303,6 +287,10 @@ func List(workspaceName string) ([]StackInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load stacks store: %w", err)
 	}
+	basePort := 0
+	if base, err := workspace.FindByName(workspaceName); err == nil {
+		basePort = base.TiltPort
+	}
 	var stacks []StackInfo
 	for _, rec := range recs {
 		ports, _ := workspace.LoadPorts(rec.RuntimeKey())
@@ -312,7 +300,7 @@ func List(workspaceName string) ([]StackInfo, error) {
 		stacks = append(stacks, StackInfo{
 			Name:     rec.FullName(),
 			BaseName: rec.Base,
-			Port:     rec.DaemonPort,
+			BasePort: basePort,
 			Status:   stackStatus(rec),
 			Ports:    ports,
 		})
@@ -373,62 +361,15 @@ func Resolve(workspaceName, name string) (*Record, error) {
 	return FindStack(workspaceName, name)
 }
 
-// stopStackDaemon stops a stack's dev daemon: disable its services, kill the
-// process, remove the PID file, and close the session. A stack has no infra or
-// collector of its own, so this is the whole teardown for its daemon. Returns the
-// stopped PID, or 0 when no daemon was running.
-func stopStackDaemon(rec *Record) (int, error) {
-	pidFile := workspace.PIDFile(rec.RuntimeKey())
-	pidData, err := os.ReadFile(pidFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, nil
-		}
-		return 0, err
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
-	if err != nil {
-		return 0, fmt.Errorf("invalid PID in %s: %w", pidFile, err)
-	}
-
-	tiltClient := tilt.NewClient("localhost", rec.DaemonPort)
-	if view, err := tiltClient.GetView(); err == nil {
-		for _, r := range view.UiResources {
-			if r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
-				continue
-			}
-			tiltClient.RunCLI("disable", r.Metadata.Name) //nolint:errcheck
-		}
-	}
-	if proc, err := os.FindProcess(pid); err == nil {
-		proc.Kill()
-	}
-	if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
-		return pid, fmt.Errorf("failed to remove PID file: %w", err)
-	}
-
-	key := rec.RuntimeKey()
-	ports := []int{rec.DaemonPort}
-	if session, err := workspace.LoadSession(key); err == nil && len(session.ActivePorts) > 0 {
-		ports = session.ActivePorts
-	}
-	residue := workspace.DetectResidue(pid, ports)
-	if err := workspace.CloseSession(key, residue); err != nil {
-		return pid, fmt.Errorf("failed to close session: %w", err)
-	}
-	return pid, nil
-}
-
+// stackStatus reports whether a stack's overlay services are folded into the base
+// workspace's Tiltfile. An active stack's resources are present (and run in base's
+// one daemon); an inactive stack's are not. Per-resource running state is read from
+// the base daemon by the caller, not here.
 func stackStatus(rec Record) string {
-	if daemonReachable(rec.DaemonPort) {
-		return "running"
+	if rec.Active {
+		return "active"
 	}
-	if data, err := os.ReadFile(workspace.PIDFile(rec.RuntimeKey())); err == nil {
-		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && processAlive(pid) {
-			return "starting"
-		}
-	}
-	return "stopped"
+	return "inactive"
 }
 
 // DaemonReachable reports whether a stack's own dev daemon is serving its API on
@@ -452,11 +393,6 @@ func daemonReachable(port int) bool {
 	}
 	resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
-}
-
-func processAlive(pid int) bool {
-	_, err := os.Stat(fmt.Sprintf("/proc/%d/status", pid))
-	return err == nil
 }
 
 func stringSet(items []string) map[string]bool {

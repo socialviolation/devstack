@@ -266,7 +266,7 @@ func otherStacksFooter(ws *workspace.Workspace) string {
 	}
 	parts := make([]string, 0, len(stacks))
 	for _, s := range stacks {
-		parts = append(parts, fmt.Sprintf("%s(%s :%d)", s.Name, s.Status, s.Port))
+		parts = append(parts, fmt.Sprintf("%s(%s, base :%d)", s.Name, s.Status, s.BasePort))
 	}
 	return fmt.Sprintf("\nfeature stacks of %s: %s\n", ws.Name, strings.Join(parts, ", "))
 }

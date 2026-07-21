@@ -111,8 +111,8 @@ func stacksSummary(ws *workspace.Workspace) string {
 	}
 	parts := make([]string, 0, len(stacks))
 	for _, s := range stacks {
-		if s.Status == "running" {
-			parts = append(parts, fmt.Sprintf("%s (running :%d)", s.Name, s.Port))
+		if s.Status == "active" {
+			parts = append(parts, fmt.Sprintf("%s (active, base :%d)", s.Name, s.BasePort))
 		} else {
 			parts = append(parts, fmt.Sprintf("%s (%s)", s.Name, s.Status))
 		}

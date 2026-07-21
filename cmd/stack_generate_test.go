@@ -110,27 +110,47 @@ calls:
 	return rec, port
 }
 
-func TestRegenerateTiltfileStackUsesAllocatedPortsAndBaseOtel(t *testing.T) {
+func TestRegenerateTiltfileFoldsActiveStack(t *testing.T) {
 	rec, port := buildStackScenario(t)
-
-	path, err := regenerateStackTiltfile(rec)
+	base, err := workspace.FindByName("navexa")
 	if err != nil {
-		t.Fatalf("regenerateStackTiltfile: %v", err)
+		t.Fatalf("find base: %v", err)
+	}
+
+	path, err := regenerateTiltfile(base)
+	if err != nil {
+		t.Fatalf("regenerateTiltfile (inactive): %v", err)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read Tiltfile: %v", err)
 	}
+	if strings.Contains(string(data), "backend:feat") {
+		t.Fatalf("inactive stack leaked into base Tiltfile:\n%s", data)
+	}
+
+	if err := stack.SetActive(base.Name, rec.Name, true); err != nil {
+		t.Fatalf("SetActive: %v", err)
+	}
+
+	path, err = regenerateTiltfile(base)
+	if err != nil {
+		t.Fatalf("regenerateTiltfile (active): %v", err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read Tiltfile: %v", err)
+	}
 	out := string(data)
 
-	if !strings.Contains(out, fmt.Sprintf("http://localhost:%d", port)) {
-		t.Fatalf("Tiltfile does not reference the allocated backend port %d:\n%s", port, out)
+	if !strings.Contains(out, "backend:feat") {
+		t.Fatalf("active stack not folded into base Tiltfile as a namespaced resource:\n%s", out)
 	}
-	if strings.Contains(out, "8080") {
-		t.Fatalf("Tiltfile still references base's pinned port 8080 — overlay allocation did not win:\n%s", out)
+	if !strings.Contains(out, fmt.Sprintf("http://localhost:%d", port)) {
+		t.Fatalf("base Tiltfile does not reference the stack's allocated backend port %d:\n%s", port, out)
 	}
 	if !strings.Contains(out, `"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317"`) {
-		t.Fatalf("Tiltfile does not point OTEL at base's collector (http://localhost:4317):\n%s", out)
+		t.Fatalf("stack overlay does not point OTEL at base's collector (http://localhost:4317):\n%s", out)
 	}
 }
 

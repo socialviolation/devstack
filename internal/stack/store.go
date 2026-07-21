@@ -3,7 +3,6 @@ package stack
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,18 +14,20 @@ import (
 // Record is one feature stack owned by a base workspace. It is the source of
 // truth for a stack's existence and everything that makes it visible: the base
 // it overlays, where it lives on disk, its overlay service set and worktrees, the
-// ports it was allocated, and its own dev daemon port. A stack is NOT a registry
-// workspace — these records live in the base workspace's per-workspace store, so
-// an agent bound to the base can see every in-flight stack.
+// ports it was allocated, and whether it is active (folded into the base
+// workspace's one Tiltfile). A stack is NOT a registry workspace — these records
+// live in the base workspace's per-workspace store, so an agent bound to the base
+// can see every in-flight stack.
 type Record struct {
-	Name       string            `json:"name"`        // short feature name (e.g. "import-review")
-	Base       string            `json:"base"`        // owning base workspace name
-	Root       string            `json:"root"`        // synthesised stack root dir (sibling of base)
-	Branch     string            `json:"branch"`      // branch the changed repos' worktrees are on
-	Overlay    []string          `json:"overlay"`     // overlay service names, sorted
-	Worktrees  map[string]string `json:"worktrees"`   // service -> worktree path
-	Ports      map[string]int    `json:"ports"`       // service/portKey -> allocated port
-	DaemonPort int               `json:"daemon_port"` // this stack's Tilt daemon port
+	Name       string            `json:"name"`                  // short feature name (e.g. "import-review")
+	Base       string            `json:"base"`                  // owning base workspace name
+	Root       string            `json:"root"`                  // synthesised stack root dir (sibling of base)
+	Branch     string            `json:"branch"`                // branch the changed repos' worktrees are on
+	Overlay    []string          `json:"overlay"`               // overlay service names, sorted
+	Worktrees  map[string]string `json:"worktrees"`             // service -> worktree path
+	Ports      map[string]int    `json:"ports"`                 // service/portKey -> allocated port
+	Active     bool              `json:"active,omitempty"`      // folded into the base Tiltfile as namespaced resources
+	DaemonPort int               `json:"daemon_port,omitempty"` // legacy per-stack daemon port; unused, kept so old records still parse
 	CreatedAt  time.Time         `json:"created_at"`
 }
 
@@ -95,6 +96,23 @@ func FindStack(workspaceName, name string) (*Record, error) {
 	return nil, fmt.Errorf("stack %q not found in workspace %q", name, workspaceName)
 }
 
+// SetActive marks a base workspace's stack active or inactive and persists it. An
+// active stack's overlay services are folded into the base workspace's Tiltfile as
+// namespaced resources; an inactive one is left out. Errors if the stack is unknown.
+func SetActive(base, name string, active bool) error {
+	recs, err := LoadStore(base)
+	if err != nil {
+		return err
+	}
+	for i := range recs {
+		if strings.EqualFold(recs[i].Name, name) {
+			recs[i].Active = active
+			return saveStore(base, recs)
+		}
+	}
+	return fmt.Errorf("stack %q not found in workspace %q", name, base)
+}
+
 // upsertStack inserts or replaces a record in its base workspace's store.
 func upsertStack(rec Record) error {
 	recs, err := LoadStore(rec.Base)
@@ -124,58 +142,6 @@ func deleteStack(workspaceName, name string) (bool, error) {
 		}
 	}
 	return false, nil
-}
-
-// allocateDaemonPort returns a free Tilt daemon port for a new stack: max+1 over
-// every registered workspace's TiltPort and every existing stack's daemon port
-// (minimum 10350), skipping any candidate already listening. A stack's daemon
-// port is not a registry entry, so this is the allocator that keeps stacks and
-// base workspaces off each other's ports.
-func allocateDaemonPort() (int, error) {
-	used := map[int]bool{}
-	max := 10349
-
-	all, err := workspace.All()
-	if err != nil {
-		return 0, err
-	}
-	for _, w := range all {
-		if w.TiltPort != 0 {
-			used[w.TiltPort] = true
-			if w.TiltPort > max {
-				max = w.TiltPort
-			}
-		}
-		recs, err := LoadStore(w.Name)
-		if err != nil {
-			return 0, err
-		}
-		for _, r := range recs {
-			if r.DaemonPort != 0 {
-				used[r.DaemonPort] = true
-				if r.DaemonPort > max {
-					max = r.DaemonPort
-				}
-			}
-		}
-	}
-
-	for c := max + 1; c < max+1+1000; c++ {
-		if used[c] || portListening(c) {
-			continue
-		}
-		return c, nil
-	}
-	return 0, fmt.Errorf("no free daemon port found in range %d-%d", max+1, max+1000)
-}
-
-func portListening(port int) bool {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
-	if err != nil {
-		return false
-	}
-	conn.Close()
-	return true
 }
 
 // DetectFromCwd resolves the (base workspace, stack) that owns the current

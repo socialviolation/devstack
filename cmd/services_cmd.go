@@ -256,12 +256,12 @@ func printStackSection(wsName string) {
 	color.New(color.Bold).Printf("Feature stacks of %s (%d in flight):\n", wsName, len(stacks))
 	for _, s := range stacks {
 		statusClr := color.New(color.Faint)
-		if s.Status == "running" {
+		if s.Status == "active" {
 			statusClr = color.New(color.FgGreen)
 		}
 		fmt.Printf("  %-22s ", s.Name)
 		statusClr.Printf("%-9s", s.Status)
-		fmt.Printf("  daemon :%d", s.Port)
+		fmt.Printf("  base :%d", s.BasePort)
 		links := make([]string, 0, len(s.Ports))
 		for _, k := range sortedKeys(s.Ports) {
 			links = append(links, fmt.Sprintf("%s→:%d", k, s.Ports[k]))

@@ -101,7 +101,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 
 func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_list",
-		mcp.WithDescription("List the feature stacks of THIS workspace with their base, daemon port, status (running/starting/stopped), and allocated service links."),
+		mcp.WithDescription("List the feature stacks of THIS workspace with their base, status (active/inactive), the base daemon port their services run in when active, and allocated service links."),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -116,7 +116,7 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			return mcp.NewToolResultText(fmt.Sprintf("No stacks in workspace %q.", ws.Name)), nil
 		}
 		var sb strings.Builder
-		fmt.Fprintf(&sb, "%-24s %-14s %-6s %-9s %s\n", "STACK", "BASE", "PORT", "STATUS", "LINKS")
+		fmt.Fprintf(&sb, "%-24s %-14s %-9s %-9s %s\n", "STACK", "BASE", "STATUS", "RUNS ON", "LINKS")
 		for _, s := range stacks {
 			links := make([]string, 0, len(s.Ports))
 			for _, k := range sortedPortKeys(s.Ports) {
@@ -126,7 +126,7 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			if len(links) > 0 {
 				linkStr = strings.Join(links, " ")
 			}
-			fmt.Fprintf(&sb, "%-24s %-14s %-6d %-9s %s\n", s.Name, s.BaseName, s.Port, s.Status, linkStr)
+			fmt.Fprintf(&sb, "%-24s %-14s %-9s :%-8d %s\n", s.Name, s.BaseName, s.Status, s.BasePort, linkStr)
 		}
 		return mcp.NewToolResultText(sb.String()), nil
 	})
@@ -156,9 +156,6 @@ func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		var sb strings.Builder
 		if res != nil {
 			fmt.Fprintf(&sb, "Removing stack %q (base %s)\n", res.Name, res.BaseName)
-			if res.DaemonPID > 0 {
-				fmt.Fprintf(&sb, "  stopped daemon (pid %d)\n", res.DaemonPID)
-			}
 			for _, p := range res.RemovedWorktrees {
 				fmt.Fprintf(&sb, "  removed worktree %s\n", p)
 			}
