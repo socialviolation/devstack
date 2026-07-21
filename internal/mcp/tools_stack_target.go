@@ -84,7 +84,7 @@ func resolveLocalTarget(ws *workspace.Workspace, base localTarget, stackName str
 	if err != nil {
 		return localTarget{}, err
 	}
-	if !stack.DaemonReachable(ws.TiltPort) || !rec.Active {
+	if !stack.DaemonReachable(workspace.HostTiltPort) || !rec.Active {
 		return localTarget{}, fmt.Errorf("stack %q is not up — run: devstack stack up %s", stackName, rec.Name)
 	}
 	cfg, _ := config.Load(rec.Root)
@@ -101,28 +101,43 @@ func resolveLocalTarget(ws *workspace.Workspace, base localTarget, stackName str
 		cfg:         cfg,
 		defaultSvc:  "",
 		namespace:   rec.Name,
-		label:       fmt.Sprintf("stack %q (base :%d)", rec.Name, ws.TiltPort),
+		label:       fmt.Sprintf("stack %q (host :%d)", rec.Name, workspace.HostTiltPort),
 	}, nil
 }
 
-// resourceName is the base-daemon resource name for a service in a namespace: the
-// bare service name for the base workspace (empty namespace), or <service>:<stack>
-// for a feature stack folded into the base Tiltfile.
-func resourceName(svc, namespace string) string {
+// resourceName is the host-daemon resource name for a service, matching tiltgen's
+// hostName scheme: <workspace>:<service> for a base-workspace service, or
+// <workspace>:<service>:<stack> for a feature stack folded into the host Tiltfile.
+func resourceName(wsName, svc, namespace string) string {
 	if namespace == "" {
-		return svc
+		return wsName + ":" + svc
 	}
-	return svc + ":" + namespace
+	return wsName + ":" + svc + ":" + namespace
 }
 
-// stackResourceNames returns the resource names in view that belong to the given
-// namespace. An empty namespace (the base workspace) returns every resource name,
-// so callers stay byte-identical to today.
-func stackResourceNames(view *tilt.TiltView, namespace string) []string {
+// splitHostResource decomposes a host-daemon resource name under prefix
+// (<workspace>:) into its bare service and stack namespace. ok is false when the
+// name belongs to a different workspace. A base-workspace resource yields an empty
+// stack namespace.
+func splitHostResource(name, prefix string) (svc, stackNS string, ok bool) {
+	if !strings.HasPrefix(name, prefix) {
+		return "", "", false
+	}
+	rest := name[len(prefix):]
+	if i := strings.IndexByte(rest, ':'); i >= 0 {
+		return rest[:i], rest[i+1:], true
+	}
+	return rest, "", true
+}
+
+// stackResourceNames returns the full resource names in view that belong to the
+// given workspace and namespace: <ws>:<svc> for the base (empty namespace), or
+// <ws>:<svc>:<stack> for a stack. Other workspaces' resources are excluded.
+func stackResourceNames(view *tilt.TiltView, wsName, namespace string) []string {
+	prefix := wsName + ":"
 	names := make([]string, 0, len(view.UiResources))
-	suffix := ":" + namespace
 	for _, r := range view.UiResources {
-		if namespace == "" || strings.HasSuffix(r.Metadata.Name, suffix) {
+		if _, ns, ok := splitHostResource(r.Metadata.Name, prefix); ok && ns == namespace {
 			names = append(names, r.Metadata.Name)
 		}
 	}

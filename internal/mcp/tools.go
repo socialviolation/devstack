@@ -206,15 +206,13 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 		fmt.Fprintf(&sb, "%-24s %-10s %-14s %-40s %-16s %s\n", "SERVICE", "STATUS", "PORT(S)", "PATH", "GROUP", "ERROR")
 		fmt.Fprintf(&sb, "%s\n", strings.Repeat("-", 116))
 
-		suffix := ":" + t.namespace
+		prefix := ws.Name + ":"
 		for _, r := range view.UiResources {
-			name := r.Metadata.Name
-			if t.namespace != "" {
-				if !strings.HasSuffix(name, suffix) {
-					continue
-				}
-				name = strings.TrimSuffix(name, suffix)
+			svc, stackNS, ok := splitHostResource(r.Metadata.Name, prefix)
+			if !ok || stackNS != t.namespace {
+				continue
 			}
+			name := svc
 			status := mcpServiceStatus(r)
 			svcStatus[name] = status
 			ports := mcpExtractPorts(r.Status.EndpointLinks)
@@ -225,7 +223,7 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			if len(lastError) > 50 {
 				lastError = lastError[:47] + "..."
 			}
-			path := shortenPath(serviceDirs[r.Metadata.Name])
+			path := shortenPath(serviceDirs[svc])
 			group := serviceGroup(name, cfg)
 			fmt.Fprintf(&sb, "%-24s %-10s %-14s %-40s %-16s %s\n", name, status, ports, path, group, lastError)
 		}
@@ -340,7 +338,7 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 				wg.Add(1)
 				go func(idx int, svcName string) {
 					defer wg.Done()
-					target := resourceName(svcName, t.namespace)
+					target := resourceName(ws.Name, svcName, t.namespace)
 					// Enable if disabled.
 					for _, r := range view.UiResources {
 						if r.Metadata.Name == target && r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
@@ -379,7 +377,7 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 			return mcp.NewToolResultError("no service specified and no default service configured for this repo"), nil
 		}
 
-		resolved, err := tilt.ResolveService(resourceName(name, t.namespace), view)
+		resolved, err := tilt.ResolveService(resourceName(ws.Name, name, t.namespace), view)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -452,7 +450,7 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg 
 				wg.Add(1)
 				go func(idx int, svcName string) {
 					defer wg.Done()
-					out, err := tiltClient.RunCLI("disable", resourceName(svcName, t.namespace))
+					out, err := tiltClient.RunCLI("disable", resourceName(ws.Name, svcName, t.namespace))
 					results[idx] = stopResult{svc: svcName, out: out, err: err}
 				}(i, svc)
 			}
@@ -477,7 +475,7 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg 
 
 		// Single service stop.
 		if name != "" {
-			resolved, err := tilt.ResolveService(resourceName(name, t.namespace), view)
+			resolved, err := tilt.ResolveService(resourceName(ws.Name, name, t.namespace), view)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -489,7 +487,7 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg 
 		}
 
 		// Stop all (scoped to the stack's resources when a stack is targeted).
-		targets := stackResourceNames(view, t.namespace)
+		targets := stackResourceNames(view, ws.Name, t.namespace)
 		var sb strings.Builder
 		var failures []string
 		for _, name := range targets {
@@ -670,7 +668,7 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 				wg.Add(1)
 				go func(idx int, svcName string) {
 					defer wg.Done()
-					raw, err := tiltClient.RunCLI(buildLogArgs(resourceName(svcName, t.namespace))...)
+					raw, err := tiltClient.RunCLI(buildLogArgs(resourceName(ws.Name, svcName, t.namespace))...)
 					results[idx] = logResult{svc: svcName, out: processOutput(raw), err: err}
 				}(i, svc)
 			}
@@ -695,7 +693,7 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		}
 
 		if name != "" {
-			resolved, err := tilt.ResolveService(resourceName(name, t.namespace), view)
+			resolved, err := tilt.ResolveService(resourceName(ws.Name, name, t.namespace), view)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -716,7 +714,7 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			out  string
 			err  error
 		}
-		services := stackResourceNames(view, t.namespace)
+		services := stackResourceNames(view, ws.Name, t.namespace)
 		results := make([]result, len(services))
 		var wg sync.WaitGroup
 		for i, svc := range services {

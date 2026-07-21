@@ -167,8 +167,8 @@ func runStatusAll() error {
 				}
 			}
 
-			// Probe Tilt HTTP API
-			apiURL := fmt.Sprintf("http://localhost:%d/api/view", w.TiltPort)
+			// Probe the one host daemon; every workspace's resources live there.
+			apiURL := fmt.Sprintf("http://localhost:%d/api/view", workspace.HostTiltPort)
 			client := &http.Client{Timeout: 2 * time.Second}
 			resp, err := client.Get(apiURL)
 			if err != nil || resp.StatusCode != http.StatusOK {
@@ -183,8 +183,7 @@ func runStatusAll() error {
 			}
 			defer resp.Body.Close()
 
-			// Tilt is reachable — parse service counts
-			tiltClient := tilt.NewClient("localhost", w.TiltPort)
+			tiltClient := tilt.NewClient("localhost", workspace.HostTiltPort)
 			view, err := tiltClient.GetView()
 			if err != nil {
 				r.status = "running"
@@ -193,17 +192,23 @@ func runStatusAll() error {
 				return
 			}
 
-			r.status = "running"
-			total := len(view.UiResources)
+			prefix := w.Name + ":"
+			total := 0
 			active := 0
 			for _, res := range view.UiResources {
+				if !strings.HasPrefix(res.Metadata.Name, prefix) {
+					continue
+				}
+				total++
 				if res.Status.RuntimeStatus == "ok" {
 					active++
 				}
 			}
 			if total == 0 {
+				r.status = "inactive"
 				r.services = "0 services"
 			} else {
+				r.status = "running"
 				r.services = fmt.Sprintf("%d services (%d active)", total, active)
 			}
 			results[idx] = r
@@ -212,6 +217,7 @@ func runStatusAll() error {
 
 	wg.Wait()
 
+	fmt.Printf("All workspaces and their stacks run in one host daemon on :%d, addressable as <workspace>:<service>[:<stack>].\n\n", workspace.HostTiltPort)
 	fmt.Printf("%-16s %-36s %-8s %-12s %s\n", "WORKSPACE", "PATH", "PORT", "STATUS", "SERVICES")
 	fmt.Println(strings.Repeat("-", 88))
 	for _, r := range results {
@@ -222,7 +228,7 @@ func runStatusAll() error {
 		fmt.Printf("%-16s %-36s %-8d %-12s %s\n",
 			r.ws.Name,
 			path,
-			r.ws.TiltPort,
+			workspace.HostTiltPort,
 			r.status,
 			r.services,
 		)

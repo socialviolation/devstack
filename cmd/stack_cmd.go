@@ -327,15 +327,14 @@ func runStackDown(cmd *cobra.Command, args []string) error {
 }
 
 // resolveStackTarget maps a --stack flag to the daemon and namespace a command
-// acts on. A stack's services run in the base workspace's one daemon as resources
-// named <service>:<stack>, so the returned port is always base's daemon port and
-// the namespace selects the stack's resources. An empty stackName targets the base
-// itself: base port, empty namespace, base root. A stack is operable only when
-// base's daemon is up and the stack is active (its resources are in base's
-// Tiltfile).
+// acts on. Every workspace and stack runs in the one host daemon on HostTiltPort,
+// so the returned port is always HostTiltPort and the namespace selects the stack's
+// resources. An empty stackName targets the base itself: empty namespace, base
+// root. A stack is operable only when the host daemon is up and the stack is active
+// (its resources are in the host Tiltfile).
 func resolveStackTarget(base *workspace.Workspace, stackName string) (port int, namespace string, root string, label string, err error) {
 	if stackName == "" {
-		return base.TiltPort, "", base.Path, "", nil
+		return workspace.HostTiltPort, "", base.Path, "", nil
 	}
 	rec, err := stack.Resolve(base.Name, stackName)
 	if err != nil {
@@ -348,21 +347,21 @@ func resolveStackTarget(base *workspace.Workspace, stackName string) (port int, 
 		}
 		return 0, "", "", "", err
 	}
-	baseUp := isTiltReachable(fmt.Sprintf("http://localhost:%d/api/view", base.TiltPort))
+	baseUp := isTiltReachable(fmt.Sprintf("http://localhost:%d/api/view", workspace.HostTiltPort))
 	if !baseUp || !rec.Active {
 		return 0, "", "", "", fmt.Errorf("stack %q is not up — run: devstack stack up %s", stackName, rec.Name)
 	}
-	return base.TiltPort, rec.Name, rec.Root, rec.FullName(), nil
+	return workspace.HostTiltPort, rec.Name, rec.Root, rec.FullName(), nil
 }
 
-// resourceName is the base-daemon resource name for a service in a namespace: the
-// bare service name for the base workspace (empty namespace), or <service>:<stack>
-// for a feature stack folded into the base Tiltfile.
-func resourceName(svc, namespace string) string {
+// resourceName is the host-daemon resource name for a service, matching tiltgen's
+// hostName scheme: <workspace>:<service> for a base-workspace service, or
+// <workspace>:<service>:<stack> for a feature stack folded into the host Tiltfile.
+func resourceName(wsName, svc, namespace string) string {
 	if namespace == "" {
-		return svc
+		return wsName + ":" + svc
 	}
-	return svc + ":" + namespace
+	return wsName + ":" + svc + ":" + namespace
 }
 
 func sortedServiceNames(rw *config.ResolvedWorkspace) []string {
