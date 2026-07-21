@@ -153,9 +153,9 @@ func runStackRemove(cmd *cobra.Command, args []string) error {
 	if err := stack.SetActive(base.Name, args[0], false); err != nil {
 		return err
 	}
-	if isTiltReachable(fmt.Sprintf("http://localhost:%d/api/view", base.TiltPort)) {
-		if _, gerr := regenerateTiltfile(base); gerr != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to regenerate base Tiltfile: %v\n", gerr)
+	if isTiltReachable(fmt.Sprintf("http://localhost:%d/api/view", workspace.HostTiltPort)) {
+		if _, gerr := regenerateHostTiltfile(); gerr != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to regenerate host Tiltfile: %v\n", gerr)
 		}
 	}
 
@@ -267,10 +267,11 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runStackUp marks a stack active and folds its services into the base
-// workspace's single Tilt daemon: it regenerates the base Tiltfile (now including
-// the stack's <svc>:<stack> resources) and ensures the base daemon is running, so
-// Tilt hot-reloads the new resources. There is no per-stack daemon.
+// runStackUp marks a stack active and folds its services into the one host Tilt
+// daemon: it marks the base workspace active too (a stack only renders inside its
+// base's block), regenerates the host Tiltfile (now including the stack's
+// <base>:<svc>:<stack> resources), and ensures the host daemon is running, so Tilt
+// hot-reloads the new resources. There is no per-stack daemon.
 func runStackUp(cmd *cobra.Command, args []string) error {
 	base, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
@@ -281,25 +282,21 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if err := workspace.SetWorkspaceActive(base.Name, true); err != nil {
+		return fmt.Errorf("failed to mark base workspace active: %w", err)
+	}
 	if err := stack.SetActive(base.Name, rec.Name, true); err != nil {
 		return err
 	}
 
-	apiURL := fmt.Sprintf("http://localhost:%d/api/view", base.TiltPort)
-	if !isTiltReachable(apiURL) {
-		fmt.Printf("Base %q daemon not running — starting it (its Tiltfile now includes stack %q)...\n", base.Name, rec.Name)
-		if err := runStart(cmd, nil); err != nil {
-			return err
-		}
-	} else {
-		path, err := regenerateTiltfile(base)
-		if err != nil {
-			return fmt.Errorf("failed to regenerate base Tiltfile: %w", err)
-		}
-		fmt.Printf("✓ Regenerated %s — base daemon will hot-reload stack %q's resources.\n", path, rec.Name)
+	if _, err := regenerateHostTiltfile(); err != nil {
+		return fmt.Errorf("failed to regenerate host Tiltfile: %w", err)
+	}
+	if err := ensureHostDaemon(); err != nil {
+		return err
 	}
 
-	fmt.Printf("Stack %q is active in base %q; its services run in the base daemon on :%d as <service>:%s.\n", rec.Name, base.Name, base.TiltPort, rec.Name)
+	fmt.Printf("Stack %q is active in base %q; its services run in the host daemon on :%d as %s:<service>:%s.\n", rec.Name, base.Name, workspace.HostTiltPort, base.Name, rec.Name)
 	for _, k := range sortedKeys(rec.Ports) {
 		fmt.Printf("  %-24s http://localhost:%d\n", k, rec.Ports[k])
 	}
@@ -320,13 +317,10 @@ func runStackDown(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if isTiltReachable(fmt.Sprintf("http://localhost:%d/api/view", base.TiltPort)) {
-		path, err := regenerateTiltfile(base)
-		if err != nil {
-			return fmt.Errorf("failed to regenerate base Tiltfile: %w", err)
-		}
-		fmt.Printf("✓ Regenerated %s — base daemon will drop stack %q's resources.\n", path, rec.Name)
+	if _, err := regenerateHostTiltfile(); err != nil {
+		return fmt.Errorf("failed to regenerate host Tiltfile: %w", err)
 	}
+	fmt.Printf("✓ Regenerated host Tiltfile — host daemon will drop stack %q's resources.\n", rec.Name)
 
 	fmt.Printf("✓ Stack %q is now inactive (worktrees and record kept; remove with: devstack stack rm %s).\n", rec.Name, rec.Name)
 	return nil
