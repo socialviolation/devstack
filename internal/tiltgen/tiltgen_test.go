@@ -1054,6 +1054,187 @@ func TestGenerateCombinedNoStacksMatchesGenerate(t *testing.T) {
 	}
 }
 
+// TestGenerateHostPrefixesDisambiguatesCollisions pins host mode: two workspaces
+// each with a base service named "api" produce two distinct resources ws1:api and
+// ws2:api, so same-named services never collide across workspaces.
+func TestGenerateHostPrefixesDisambiguatesCollisions(t *testing.T) {
+	ws1 := writeAPIWorkspace(t, 8080)
+	ws2 := writeAPIWorkspace(t, 8090)
+
+	out, err := GenerateHost([]WorkspaceGen{
+		{Name: "ws1", Base: ws1},
+		{Name: "ws2", Base: ws2},
+	})
+	if err != nil {
+		t.Fatalf("GenerateHost: %v", err)
+	}
+	t.Log("\n" + out)
+
+	for _, want := range []string{`    "ws1:api",`, `    "ws2:api",`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("host output missing prefixed resource: %s", want)
+		}
+	}
+	if strings.Contains(out, "\n    \"api\",\n") {
+		t.Errorf("host output must not carry a bare, unprefixed api resource; got:\n%s", out)
+	}
+	if strings.Count(out, "local_resource(") != 2 {
+		t.Errorf("expected exactly two resources; got:\n%s", out)
+	}
+}
+
+// TestGenerateHostStackSuffixWithPrefix pins that a workspace's base service and
+// its active stack's service coexist as ws:svc and ws:svc:stack.
+func TestGenerateHostStackSuffixWithPrefix(t *testing.T) {
+	base := writeFEBEWorkspace(t, 4200, 8080)
+	stack := writeFEBEWorkspace(t, 4200, 8080)
+	stackBook := config.PortBook{"frontend": {"http": 14200}, "backend": {"http": 18080}}
+
+	out, err := GenerateHost([]WorkspaceGen{{
+		Name: "ws",
+		Base: base,
+		Stacks: []StackGen{{
+			Workspace: stack,
+			Options:   Options{Book: stackBook},
+			Namespace: "perf",
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("GenerateHost: %v", err)
+	}
+	t.Log("\n" + out)
+
+	for _, want := range []string{
+		`    "ws:frontend",`,
+		`    "ws:backend",`,
+		`    "ws:frontend:perf",`,
+		`    "ws:backend:perf",`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("host output missing resource: %s", want)
+		}
+	}
+}
+
+// TestGenerateHostResourceDepsPrefixedAndSuffixed pins that resource_deps stay
+// inside their workspace and stack: a base service's dep is ws:dep and a stack
+// service's dep is ws:dep:stack, never crossing into base or another workspace.
+func TestGenerateHostResourceDepsPrefixedAndSuffixed(t *testing.T) {
+	base := writeFEBEWorkspace(t, 4200, 8080)
+	stack := writeFEBEWorkspace(t, 4200, 8080)
+	stackBook := config.PortBook{"frontend": {"http": 14200}, "backend": {"http": 18080}}
+
+	out, err := GenerateHost([]WorkspaceGen{{
+		Name: "ws",
+		Base: base,
+		Stacks: []StackGen{{
+			Workspace: stack,
+			Options:   Options{Book: stackBook},
+			Namespace: "perf",
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("GenerateHost: %v", err)
+	}
+
+	_, baseFE, ok := strings.Cut(out, "\n# ws:frontend\n")
+	if !ok {
+		t.Fatalf("no ws:frontend block in output:\n%s", out)
+	}
+	baseFE, _, _ = strings.Cut(baseFE, "\n# ")
+	if !strings.Contains(baseFE, `resource_deps=["ws:backend"]`) {
+		t.Errorf("ws:frontend must depend on ws:backend; got:\n%s", baseFE)
+	}
+
+	_, stackFE, ok := strings.Cut(out, "\n# ws:frontend:perf\n")
+	if !ok {
+		t.Fatalf("no ws:frontend:perf block in output:\n%s", out)
+	}
+	if !strings.Contains(stackFE, `resource_deps=["ws:backend:perf"]`) {
+		t.Errorf("ws:frontend:perf must depend on ws:backend:perf; got:\n%s", stackFE)
+	}
+	if strings.Contains(stackFE, `resource_deps=["ws:backend"]`) {
+		t.Errorf("stack dep must not cross into the base backend; got:\n%s", stackFE)
+	}
+}
+
+// TestGenerateHostLabelsCarryWorkspace pins that every resource carries its
+// workspace name as a label, alongside group and stack labels.
+func TestGenerateHostLabelsCarryWorkspace(t *testing.T) {
+	base := writeFEBEWorkspace(t, 4200, 8080)
+	stack := writeFEBEWorkspace(t, 4200, 8080)
+	stackBook := config.PortBook{"frontend": {"http": 14200}, "backend": {"http": 18080}}
+
+	out, err := GenerateHost([]WorkspaceGen{{
+		Name: "ws",
+		Base: base,
+		Stacks: []StackGen{{
+			Workspace: stack,
+			Options:   Options{Book: stackBook},
+			Namespace: "perf",
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("GenerateHost: %v", err)
+	}
+
+	_, baseFE, _ := strings.Cut(out, "\n# ws:frontend\n")
+	baseFE, _, _ = strings.Cut(baseFE, "\n# ")
+	if !strings.Contains(baseFE, `labels=["web", "ws"]`) {
+		t.Errorf("base resource must carry group + workspace label; got:\n%s", baseFE)
+	}
+
+	_, stackFE, _ := strings.Cut(out, "\n# ws:frontend:perf\n")
+	if !strings.Contains(stackFE, `labels=["web", "perf", "ws"]`) {
+		t.Errorf("stack resource must carry group + stack + workspace label; got:\n%s", stackFE)
+	}
+}
+
+// TestGenerateHostSingleWorkspaceMatchesPrefixedGenerate is the regression guard:
+// GenerateCombined stays prefix-less (no ws: segment), while the same workspace in
+// host mode gains the prefix — proving host mode is the only source of prefixes.
+func TestGenerateHostSingleWorkspaceMatchesPrefixedGenerate(t *testing.T) {
+	rw := writeFEBEWorkspace(t, 4200, 8080)
+
+	combined, err := GenerateCombined(rw, Options{}, nil)
+	if err != nil {
+		t.Fatalf("GenerateCombined: %v", err)
+	}
+	if strings.Contains(combined, `"demo:`) || strings.Contains(combined, `"ws:`) {
+		t.Errorf("prefix-less render must not carry a workspace prefix; got:\n%s", combined)
+	}
+	if !strings.Contains(combined, `    "frontend",`) || !strings.Contains(combined, `    "backend",`) {
+		t.Errorf("prefix-less render must keep bare resource names; got:\n%s", combined)
+	}
+}
+
+// writeAPIWorkspace writes a one-service workspace whose service is named "api"
+// (pinning http:port), used to prove the workspace prefix disambiguates same-named
+// services across workspaces in host mode.
+func writeAPIWorkspace(t *testing.T, port int) *config.ResolvedWorkspace {
+	t.Helper()
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: demo
+  repoDiscovery:
+    mode: explicit
+    repos: [./repos/api]
+`)
+	write(t, filepath.Join(dir, "repos", "api", config.ServiceManifestFileName), `version: 1
+service:
+  name: api
+runtime:
+  run: { command: ./bin/api }
+ports: { http: `+itoa(port)+` }
+`)
+	rw, err := config.ResolveWorkspace(dir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace: %v", err)
+	}
+	return rw
+}
+
 func write(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

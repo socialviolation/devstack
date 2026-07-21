@@ -45,6 +45,15 @@ type StackGen struct {
 	Namespace string
 }
 
+// WorkspaceGen is one workspace folded into the host Tiltfile: its base
+// resolved workspace + options, plus its active stacks.
+type WorkspaceGen struct {
+	Name     string
+	Base     *config.ResolvedWorkspace
+	BaseOpts Options
+	Stacks   []StackGen
+}
+
 // Generate renders a Tiltfile for the resolved workspace.
 func Generate(rw *config.ResolvedWorkspace, opts Options) (string, error) {
 	return GenerateCombined(rw, opts, nil)
@@ -63,15 +72,46 @@ func GenerateCombined(base *config.ResolvedWorkspace, baseOpts Options, stacks [
 	var b strings.Builder
 	b.WriteString(header)
 
-	if err := renderWorkspace(&b, base, baseOpts, ""); err != nil {
+	if err := renderWorkspace(&b, base, baseOpts, "", ""); err != nil {
 		return "", err
 	}
 	for _, s := range stacks {
 		if s.Workspace == nil || s.Workspace.Manifest == nil {
 			return "", fmt.Errorf("stack %q: nil resolved workspace", s.Namespace)
 		}
-		if err := renderWorkspace(&b, s.Workspace, s.Options, s.Namespace); err != nil {
+		if err := renderWorkspace(&b, s.Workspace, s.Options, "", s.Namespace); err != nil {
 			return "", fmt.Errorf("stack %q: %w", s.Namespace, err)
+		}
+	}
+
+	return b.String(), nil
+}
+
+// GenerateHost renders one Tiltfile composing every workspace's base services
+// plus each active stack's overlay services, all as distinct resources. Every
+// resource name is prefixed with its workspace name (<ws>:<svc>, or
+// <ws>:<svc>:<stack> for a stack), so services of the same name in different
+// workspaces never collide, resource_deps rewire within their own workspace and
+// stack, and each resource carries its workspace name as a Tilt label.
+// Workspaces are rendered in the given order.
+func GenerateHost(workspaces []WorkspaceGen) (string, error) {
+	var b strings.Builder
+	b.WriteString(header)
+
+	for _, w := range workspaces {
+		if w.Base == nil || w.Base.Manifest == nil {
+			return "", fmt.Errorf("workspace %q: nil resolved workspace", w.Name)
+		}
+		if err := renderWorkspace(&b, w.Base, w.BaseOpts, w.Name, ""); err != nil {
+			return "", fmt.Errorf("workspace %q: %w", w.Name, err)
+		}
+		for _, s := range w.Stacks {
+			if s.Workspace == nil || s.Workspace.Manifest == nil {
+				return "", fmt.Errorf("workspace %q stack %q: nil resolved workspace", w.Name, s.Namespace)
+			}
+			if err := renderWorkspace(&b, s.Workspace, s.Options, w.Name, s.Namespace); err != nil {
+				return "", fmt.Errorf("workspace %q stack %q: %w", w.Name, s.Namespace, err)
+			}
 		}
 	}
 
@@ -81,7 +121,9 @@ func GenerateCombined(base *config.ResolvedWorkspace, baseOpts Options, stacks [
 // renderWorkspace writes every service block for one workspace into b. A non-empty
 // namespace makes the block a stack overlay: resource names and their
 // resource_deps are suffixed :<namespace> and the namespace is added as a label.
-func renderWorkspace(b *strings.Builder, rw *config.ResolvedWorkspace, opts Options, namespace string) error {
+// A non-empty prefix (host mode) prepends <prefix>: to every resource name and
+// resource_dep and adds the prefix as a label.
+func renderWorkspace(b *strings.Builder, rw *config.ResolvedWorkspace, opts Options, prefix, namespace string) error {
 	groupsOf := map[string][]string{}
 	for group, members := range rw.Manifest.Groups {
 		for _, m := range members {
@@ -108,7 +150,7 @@ func renderWorkspace(b *strings.Builder, rw *config.ResolvedWorkspace, opts Opti
 		if svc.Manifest == nil {
 			return fmt.Errorf("service %q has no manifest (legacy .devstack.json cannot be generated from)", name)
 		}
-		block, err := renderService(svc, rw.Manifest, groupsOf[name], opts, book, namespace)
+		block, err := renderService(svc, rw.Manifest, groupsOf[name], opts, book, prefix, namespace)
 		if err != nil {
 			return fmt.Errorf("service %q: %w", name, err)
 		}
@@ -117,14 +159,23 @@ func renderWorkspace(b *strings.Builder, rw *config.ResolvedWorkspace, opts Opti
 	return nil
 }
 
-func nsName(name, namespace string) string {
-	if namespace == "" {
-		return name
+// hostName joins the non-empty of [prefix, name, suffix] with namespaceDelim.
+// With an empty prefix it equals the old suffix-only namespacing (name, or
+// name:suffix); host mode supplies the workspace prefix to yield prefix:name or
+// prefix:name:suffix.
+func hostName(prefix, name, suffix string) string {
+	parts := make([]string, 0, 3)
+	if prefix != "" {
+		parts = append(parts, prefix)
 	}
-	return name + namespaceDelim + namespace
+	parts = append(parts, name)
+	if suffix != "" {
+		parts = append(parts, suffix)
+	}
+	return strings.Join(parts, namespaceDelim)
 }
 
-func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, groups []string, opts Options, book config.PortBook, namespace string) (string, error) {
+func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, groups []string, opts Options, book config.PortBook, prefix, namespace string) (string, error) {
 	m := svc.Manifest
 	if m.Runtime.Run.Command == "" {
 		return "", fmt.Errorf("runtime.run.command is required")
@@ -138,9 +189,9 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	serveDir := svc.EnvDir()
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n# %s\n", nsName(svc.Name, namespace))
+	fmt.Fprintf(&b, "\n# %s\n", hostName(prefix, svc.Name, namespace))
 	b.WriteString("local_resource(\n")
-	fmt.Fprintf(&b, "    %s,\n", starStr(nsName(svc.Name, namespace)))
+	fmt.Fprintf(&b, "    %s,\n", starStr(hostName(prefix, svc.Name, namespace)))
 
 	if m.Runtime.Prep.Command != "" {
 		prep, err := config.ResolveRefs(m.Runtime.Prep.Command, svc.Name, book)
@@ -174,9 +225,12 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	fmt.Fprintf(&b, "    trigger_mode=%s,\n", triggerMode(m.Runtime.TriggerMode))
 	fmt.Fprintf(&b, "    auto_init=%s,\n", pyBool(m.Runtime.AutoStart))
 
-	labels := groups
+	labels := append([]string{}, groups...)
 	if namespace != "" {
-		labels = append(append([]string{}, groups...), namespace)
+		labels = append(labels, namespace)
+	}
+	if prefix != "" {
+		labels = append(labels, prefix)
 	}
 	if len(labels) > 0 {
 		fmt.Fprintf(&b, "    labels=[%s],\n", starList(labels))
@@ -184,7 +238,7 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	if deps := ws.ResourceDeps(svc.Name); len(deps) > 0 {
 		nsDeps := make([]string, len(deps))
 		for i, d := range deps {
-			nsDeps[i] = nsName(d, namespace)
+			nsDeps[i] = hostName(prefix, d, namespace)
 		}
 		fmt.Fprintf(&b, "    resource_deps=[%s],\n", starList(nsDeps))
 	}
