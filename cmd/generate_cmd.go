@@ -101,6 +101,56 @@ func regenerateTiltfile(ws *workspace.Workspace) (string, error) {
 	return path, nil
 }
 
+// regenerateHostTiltfile renders the one host Tiltfile composing every active
+// workspace's base services plus each active stack's overlay services, all as
+// distinct resources prefixed <ws>:<svc>, and writes it to the host Tilt dir. A
+// running host daemon hot-reloads it. With no active workspaces it still writes a
+// valid header-only Tiltfile so a running daemon drains to empty. Returns the path.
+func regenerateHostTiltfile() (string, error) {
+	active, err := workspace.ActiveWorkspaces()
+	if err != nil {
+		return "", err
+	}
+
+	var gens []tiltgen.WorkspaceGen
+	for i := range active {
+		ws := active[i]
+		rw, err := config.ResolveWorkspace(ws.Path)
+		if err != nil {
+			return "", fmt.Errorf("workspace %q: failed to resolve manifests: %w", ws.Name, err)
+		}
+		names := make([]string, 0, len(rw.Services))
+		for name := range rw.Services {
+			names = append(names, name)
+		}
+		stackGens, err := activeStackGens(&ws)
+		if err != nil {
+			return "", err
+		}
+		gens = append(gens, tiltgen.WorkspaceGen{
+			Name:     ws.Name,
+			Base:     rw,
+			BaseOpts: tiltgen.Options{ManagedEnv: workspace.ManagedEnv(&ws, names)},
+			Stacks:   stackGens,
+		})
+	}
+
+	out, err := tiltgen.GenerateHost(gens)
+	if err != nil {
+		return "", err
+	}
+
+	dir := workspace.HostTiltDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create host tilt dir: %w", err)
+	}
+	path := filepath.Join(dir, "Tiltfile")
+	if err := os.WriteFile(path, []byte(out), 0644); err != nil {
+		return "", fmt.Errorf("failed to write host Tiltfile: %w", err)
+	}
+	return path, nil
+}
+
 // activeStackGens builds a tiltgen.StackGen for every active feature stack of the
 // base workspace: its resolved worktree checkout, its overlay-first options, and
 // its short name as the namespace. Returns nil when no stack is active.

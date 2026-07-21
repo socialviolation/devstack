@@ -44,72 +44,27 @@ func runDown(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	pidFile := workspace.PIDFile(ws.Name)
-
-	// 2. Read PID from PID file
-	pidData, pidErr := os.ReadFile(pidFile)
-	if pidErr != nil {
-		// No PID file — check if daemon is reachable anyway
-		apiURL := fmt.Sprintf("http://localhost:%d/api/view", ws.TiltPort)
-		if !isTiltReachable(apiURL) {
-			fmt.Printf("Dev daemon is not running for '%s'\n", ws.Name)
-			return nil
-		}
-		fmt.Fprintf(os.Stderr, "Warning: no PID file found but daemon is reachable — it may have been started outside devstack\n")
-		fmt.Printf("  ✓ Dev daemon stopped\n")
-		return nil
+	if err := workspace.SetWorkspaceActive(ws.Name, false); err != nil {
+		return fmt.Errorf("failed to mark workspace inactive: %w", err)
+	}
+	if _, err := regenerateHostTiltfile(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to regenerate host Tiltfile: %v\n", err)
 	}
 
-	pid, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
+	anyActive, err := workspace.AnyWorkspaceActive()
 	if err != nil {
-		return fmt.Errorf("invalid PID in file %s: %w", pidFile, err)
+		return err
 	}
 
-	fmt.Printf("Stopping %s (pid %d)...\n", ws.Name, pid)
-
-	// 3. Disable all running services before killing the daemon
-	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
-	if view, err := tiltClient.GetView(); err == nil {
-		for _, r := range view.UiResources {
-			if r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
-				continue
-			}
-			tiltClient.RunCLI("disable", r.Metadata.Name) //nolint:errcheck
-		}
-		fmt.Printf("  ✓ Services stopped\n")
-	}
-
-	// 4. Kill the process
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not find process %d: %v\n", pid, err)
+	var hostErr error
+	if anyActive {
+		fmt.Printf("Removed '%s' from the host daemon — other workspaces still active, leaving it running.\n", ws.Name)
 	} else {
-		if killErr := proc.Kill(); killErr != nil {
-			if isProcessAlive(pid) {
-				fmt.Fprintf(os.Stderr, "Warning: failed to kill process %d: %v\n", pid, killErr)
-			}
-			// Process may have already exited — not fatal
-		}
+		fmt.Printf("No workspaces active — stopping host daemon.\n")
+		hostErr = stopHostDaemon()
 	}
 
-	// 5. Remove PID file
-	if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Warning: failed to remove PID file: %v\n", err)
-	}
-
-	time.Sleep(500 * time.Millisecond)
-	ports := []int{ws.TiltPort}
-	if session, err := workspace.LoadSession(ws.Name); err == nil && len(session.ActivePorts) > 0 {
-		ports = session.ActivePorts
-	}
-	residue := workspace.DetectResidue(pid, ports)
-	if err := workspace.CloseSession(ws.Name, residue); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to update session state: %v\n", err)
-	}
-
-	fmt.Printf("  ✓ Dev daemon stopped\n")
-
-	// 6. Stop observability stack
+	// Stop observability stack
 	if isOtelRunning(ws) {
 		localEnv, _ := ws.ResolveEnvironment("local")
 		plugin := activePlugin(ws, localEnv)
@@ -132,10 +87,69 @@ func runDown(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if len(residue) > 0 {
-		return fmt.Errorf("workspace down left residue: %s", strings.Join(residue, ", "))
+	return hostErr
+}
+
+// stopHostDaemon gracefully shuts down the one host Tilt daemon: it disables every
+// resource, kills the tracked PID, removes the PID file, and closes the host
+// session. It is a no-op (not an error) when the daemon is already stopped.
+func stopHostDaemon() error {
+	pidFile := workspace.HostPIDFile()
+	pidData, pidErr := os.ReadFile(pidFile)
+	if pidErr != nil {
+		apiURL := fmt.Sprintf("http://localhost:%d/api/view", workspace.HostTiltPort)
+		if !isTiltReachable(apiURL) {
+			fmt.Printf("  Host daemon is not running\n")
+			return nil
+		}
+		fmt.Fprintf(os.Stderr, "Warning: no host PID file but daemon is reachable — it may have been started outside devstack\n")
+		return nil
 	}
 
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
+	if err != nil {
+		return fmt.Errorf("invalid PID in host PID file %s: %w", pidFile, err)
+	}
+
+	fmt.Printf("Stopping host daemon (pid %d)...\n", pid)
+
+	tiltClient := tilt.NewClient("localhost", workspace.HostTiltPort)
+	if view, err := tiltClient.GetView(); err == nil {
+		for _, r := range view.UiResources {
+			if r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
+				continue
+			}
+			tiltClient.RunCLI("disable", r.Metadata.Name) //nolint:errcheck
+		}
+		fmt.Printf("  ✓ Services stopped\n")
+	}
+
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not find process %d: %v\n", pid, err)
+	} else if killErr := proc.Kill(); killErr != nil && isProcessAlive(pid) {
+		fmt.Fprintf(os.Stderr, "Warning: failed to kill process %d: %v\n", pid, killErr)
+	}
+
+	if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Warning: failed to remove host PID file: %v\n", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+	ports := []int{workspace.HostTiltPort}
+	hostName := workspace.HostWorkspace().Name
+	if session, err := workspace.LoadSession(hostName); err == nil && len(session.ActivePorts) > 0 {
+		ports = session.ActivePorts
+	}
+	residue := workspace.DetectResidue(pid, ports)
+	if err := workspace.CloseSession(hostName, residue); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to update host session state: %v\n", err)
+	}
+
+	fmt.Printf("  ✓ Host daemon stopped\n")
+	if len(residue) > 0 {
+		return fmt.Errorf("host daemon down left residue: %s", strings.Join(residue, ", "))
+	}
 	return nil
 }
 
@@ -145,41 +159,29 @@ func runDownAll() error {
 		return err
 	}
 
-	anyRunning := false
-	for _, ws := range workspaces {
-		pidFile := workspace.PIDFile(ws.Name)
-		pidData, err := os.ReadFile(pidFile)
-		if err != nil {
-			continue // no pid file = not managed by devstack
+	for i := range workspaces {
+		if err := workspace.SetWorkspaceActive(workspaces[i].Name, false); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to mark %s inactive: %v\n", workspaces[i].Name, err)
 		}
-		pid, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
-		if err != nil || !isProcessAlive(pid) {
-			continue
-		}
+	}
+	if _, err := regenerateHostTiltfile(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to regenerate host Tiltfile: %v\n", err)
+	}
 
-		anyRunning = true
-		fmt.Printf("Stopping %s (pid %d)...\n", ws.Name, pid)
+	hostErr := stopHostDaemon()
 
-		proc, err := os.FindProcess(pid)
-		if err == nil {
-			proc.Kill()
-		}
-		os.Remove(pidFile)
-		fmt.Printf("  ✓ Dev daemon stopped\n")
-
+	for i := range workspaces {
+		ws := workspaces[i]
 		if isOtelRunning(&ws) {
 			localEnv, _ := ws.ResolveEnvironment("local")
 			plugin := activePlugin(&ws, localEnv)
 			if err := stopOtelStack(&ws, plugin); err != nil {
-				fmt.Fprintf(os.Stderr, "  warning: OTEL stop failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "  warning: OTEL stop failed for %s: %v\n", ws.Name, err)
 			} else {
-				fmt.Printf("  ✓ OTEL stopped\n")
+				fmt.Printf("  ✓ OTEL stopped (%s)\n", ws.Name)
 			}
 		}
 	}
 
-	if !anyRunning {
-		fmt.Println("No workspaces running.")
-	}
-	return nil
+	return hostErr
 }

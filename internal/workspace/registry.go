@@ -63,6 +63,10 @@ type Workspace struct {
 	// they live in the per-user registry rather than the committed project config.
 	TunnelHost string `json:"tunnel_host,omitempty"`
 	TunnelUser string `json:"tunnel_user,omitempty"`
+
+	// Active reports whether this workspace's services are folded into the one
+	// host Tilt daemon. `devstack workspace up` sets it, `down` clears it.
+	Active bool `json:"active,omitempty"`
 }
 
 // OverlayProjectConfig reads the workspace's .devstack.json and overlays any OTEL
@@ -139,6 +143,31 @@ func LogFile(name string) string {
 		home = os.Getenv("HOME")
 	}
 	return filepath.Join(home, ".local", "share", "devstack", name, "tilt.log")
+}
+
+// hostKey is the reserved runtime key the single host Tilt daemon files its
+// data, PID, log, session, and Tiltfile under. It is not a registry workspace,
+// so it never collides with a real workspace name.
+const hostKey = "_devstack-host"
+
+// HostTiltPort is the fixed API port the one host Tilt daemon listens on. It is
+// distinct from the per-workspace TiltPort range (10350+).
+const HostTiltPort = 10300
+
+// HostPIDFile returns the PID file path for the host Tilt daemon.
+func HostPIDFile() string { return PIDFile(hostKey) }
+
+// HostLogFile returns the log file path for the host Tilt daemon.
+func HostLogFile() string { return LogFile(hostKey) }
+
+// HostTiltDir returns the host Tilt daemon's working directory, where its
+// generated Tiltfile lives.
+func HostTiltDir() string { return DataDir(hostKey) }
+
+// HostWorkspace returns the synthetic workspace the host daemon's session state
+// is keyed to (its runtime key and fixed port). It is never registered.
+func HostWorkspace() *Workspace {
+	return &Workspace{Name: hostKey, TiltPort: HostTiltPort}
 }
 
 // Load reads and parses the registry JSON file.
@@ -441,6 +470,55 @@ func UpdatePort(name string, port int) error {
 		}
 	}
 	return fmt.Errorf("workspace %q not found", name)
+}
+
+// SetWorkspaceActive marks a workspace active or inactive and persists it. An
+// active workspace's services are folded into the one host Tilt daemon. Errors
+// if the workspace is unknown.
+func SetWorkspaceActive(name string, active bool) error {
+	return withRegistryLock(func() error {
+		workspaces, err := Load()
+		if err != nil {
+			return err
+		}
+		lower := strings.ToLower(name)
+		for i := range workspaces {
+			if strings.ToLower(workspaces[i].Name) == lower {
+				workspaces[i].Active = active
+				return Save(workspaces)
+			}
+		}
+		return fmt.Errorf("workspace %q not found", name)
+	})
+}
+
+// ActiveWorkspaces returns the registered workspaces marked active, in registry order.
+func ActiveWorkspaces() ([]Workspace, error) {
+	workspaces, err := Load()
+	if err != nil {
+		return nil, err
+	}
+	var active []Workspace
+	for _, ws := range workspaces {
+		if ws.Active {
+			active = append(active, ws)
+		}
+	}
+	return active, nil
+}
+
+// AnyWorkspaceActive reports whether any registered workspace is active.
+func AnyWorkspaceActive() (bool, error) {
+	workspaces, err := Load()
+	if err != nil {
+		return false, err
+	}
+	for _, ws := range workspaces {
+		if ws.Active {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ResolveEnvironment returns the named environment config.
