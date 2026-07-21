@@ -200,7 +200,7 @@ func runStackList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Println("Active stacks' services run in the base workspace's daemon (RUNS ON), namespaced <service>:<stack>.")
+	fmt.Println("Active stacks' services run in the one host daemon (RUNS ON), namespaced <workspace>:<service>:<stack>.")
 	fmt.Printf("%-24s %-14s %-9s %-9s %s\n", "STACK", "BASE", "STATUS", "RUNS ON", "LINKS")
 	fmt.Println(strings.Repeat("-", 90))
 	for _, s := range stacks {

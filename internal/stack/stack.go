@@ -286,10 +286,7 @@ func List(workspaceName string) ([]StackInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load stacks store: %w", err)
 	}
-	basePort := 0
-	if base, err := workspace.FindByName(workspaceName); err == nil {
-		basePort = base.TiltPort
-	}
+	basePort := workspace.HostTiltPort
 	var stacks []StackInfo
 	for _, rec := range recs {
 		ports, _ := workspace.LoadPorts(rec.RuntimeKey())
