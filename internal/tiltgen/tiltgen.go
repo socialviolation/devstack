@@ -82,6 +82,11 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 		return "", fmt.Errorf("runtime.run.command is required")
 	}
 
+	runCmd, err := config.ResolveRefs(m.Runtime.Run.Command, svc.Name, book)
+	if err != nil {
+		return "", err
+	}
+
 	serveDir := svc.EnvDir()
 
 	var b strings.Builder
@@ -89,11 +94,15 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	b.WriteString("local_resource(\n")
 	fmt.Fprintf(&b, "    %s,\n", starStr(svc.Name))
 
-	if prep := m.Runtime.Prep.Command; prep != "" {
+	if m.Runtime.Prep.Command != "" {
+		prep, err := config.ResolveRefs(m.Runtime.Prep.Command, svc.Name, book)
+		if err != nil {
+			return "", err
+		}
 		fmt.Fprintf(&b, "    cmd=%s,\n", starStr(prep))
 	}
 
-	fmt.Fprintf(&b, "    serve_cmd=%s,\n", starStr(m.Runtime.Run.Command))
+	fmt.Fprintf(&b, "    serve_cmd=%s,\n", starStr(runCmd))
 	fmt.Fprintf(&b, "    serve_dir=%s,\n", starStr(serveDir))
 
 	layers, err := config.EnvLadder(serveDir, ws, m, opts.ManagedEnv[svc.Name])
@@ -126,7 +135,15 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	if len(m.Runtime.Watch) > 0 {
 		fmt.Fprintf(&b, "    deps=[%s],\n", starList(m.Runtime.Watch))
 	}
-	if probe := renderProbe(m.Runtime.Healthcheck); probe != "" {
+	healthcheck := m.Runtime.Healthcheck
+	if healthcheck.Command != "" {
+		resolved, err := config.ResolveRefs(healthcheck.Command, svc.Name, book)
+		if err != nil {
+			return "", err
+		}
+		healthcheck.Command = resolved
+	}
+	if probe := renderProbe(healthcheck); probe != "" {
 		fmt.Fprintf(&b, "    readiness_probe=%s,\n", probe)
 	}
 	links, err := buildLinks(svc.Name, m, book)

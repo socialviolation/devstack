@@ -835,6 +835,95 @@ env:
 	}
 }
 
+// TestCommandRefsResolveUnderBook: ${self.port.http} in run, prep, and
+// healthcheck commands resolves to the injected book's allocated port, not the
+// manifest's pinned port.
+func TestCommandRefsResolveUnderBook(t *testing.T) {
+	out := generateWithBook(t, config.PortBook{"svc": {"http": 20001}})
+	for _, want := range []string{
+		`serve_cmd="dotnet run --urls http://localhost:20001"`,
+		`cmd="fuser -k 20001/tcp"`,
+		`readiness_probe=probe(exec=exec_action(["bash", "-c", "curl -sf http://localhost:20001/health"])`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("command ref should resolve to the allocated port;\nwant substring: %s\ngot:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "63290") {
+		t.Errorf("manifest-pinned port must not survive under an injected book; got:\n%s", out)
+	}
+	if strings.Contains(out, "${") {
+		t.Errorf("unresolved reference leaked into the Tiltfile; got:\n%s", out)
+	}
+}
+
+// TestCommandRefsResolveWithoutBook: with no injected book, command refs resolve
+// to the manifest's pinned port.
+func TestCommandRefsResolveWithoutBook(t *testing.T) {
+	out := generateWithBook(t, nil)
+	for _, want := range []string{
+		`serve_cmd="dotnet run --urls http://localhost:63290"`,
+		`cmd="fuser -k 63290/tcp"`,
+		`readiness_probe=probe(exec=exec_action(["bash", "-c", "curl -sf http://localhost:63290/health"])`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("command ref should resolve to the pinned port with no book;\nwant substring: %s\ngot:\n%s", want, out)
+		}
+	}
+}
+
+// TestCommandRefUnresolvableFails: an unknown ref in a command fails generation
+// and no ${ reaches the output.
+func TestCommandRefUnresolvableFails(t *testing.T) {
+	out, err := generateOne(t, `version: 1
+service:
+  name: svc
+runtime:
+  run: { command: "./bin/svc ${nope.url}" }
+ports: { http: 8080 }
+`, "")
+	if err == nil {
+		t.Fatalf("an unknown ref in a command must fail generation; got:\n%s", out)
+	}
+	if strings.Contains(out, "${") {
+		t.Errorf("output must not contain an unresolved reference; got:\n%s", out)
+	}
+}
+
+// generateWithBook writes a service whose run/prep/healthcheck commands all
+// reference ${self.port.http} (pinned to 63290) and generates it under the given
+// book (nil means fall back to the manifest port).
+func generateWithBook(t *testing.T, book config.PortBook) string {
+	t.Helper()
+	dir := t.TempDir()
+	svcDir := filepath.Join(dir, "repos", "svc")
+	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: demo
+  repoDiscovery:
+    mode: explicit
+    repos: [./repos/svc]
+`)
+	write(t, filepath.Join(svcDir, config.ServiceManifestFileName), `version: 1
+service:
+  name: svc
+runtime:
+  run: { command: "dotnet run --urls http://localhost:${self.port.http}" }
+  prep: { command: "fuser -k ${self.port.http}/tcp" }
+  healthcheck: { type: exec, command: "curl -sf http://localhost:${self.port.http}/health" }
+ports: { http: 63290 }
+`)
+	rw, err := config.ResolveWorkspace(dir)
+	if err != nil {
+		t.Fatalf("ResolveWorkspace: %v", err)
+	}
+	out, err := Generate(rw, Options{Book: book})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	return out
+}
+
 func write(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
