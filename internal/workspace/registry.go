@@ -63,14 +63,6 @@ type Workspace struct {
 	// they live in the per-user registry rather than the committed project config.
 	TunnelHost string `json:"tunnel_host,omitempty"`
 	TunnelUser string `json:"tunnel_user,omitempty"`
-
-	// BaseName names the base workspace a feature stack overlays. Empty for a base workspace.
-	BaseName string `json:"base_name,omitempty"`
-}
-
-// IsStack reports whether the workspace is a feature stack overlaying a base.
-func (ws *Workspace) IsStack() bool {
-	return ws.BaseName != ""
 }
 
 // OverlayProjectConfig reads the workspace's .devstack.json and overlays any OTEL

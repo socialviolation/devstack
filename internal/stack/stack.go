@@ -77,8 +77,8 @@ func Create(in CreateInput) (*CreateResult, error) {
 	if base == nil {
 		return nil, fmt.Errorf("no base workspace resolved")
 	}
-	if base.IsStack() {
-		return nil, fmt.Errorf("%q is itself a stack; create a stack from a base workspace", base.Name)
+	if _, err := FindStack(base.Name, in.Name); err == nil {
+		return nil, fmt.Errorf("stack %q already exists in workspace %q", in.Name, base.Name)
 	}
 	changed := in.Repos
 	if len(changed) == 0 {
@@ -177,14 +177,11 @@ func Create(in CreateInput) (*CreateResult, error) {
 	}
 	res.ManifestPath = manifestPath
 
-	if err := workspace.Register(workspace.Workspace{Name: stackName, Path: stackRoot, BaseName: base.Name}); err != nil {
-		return nil, fmt.Errorf("failed to register stack: %w", err)
-	}
-	reg, err := workspace.FindByName(stackName)
+	daemonPort, err := allocateDaemonPort()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to allocate stack daemon port: %w", err)
 	}
-	res.DaemonPort = reg.TiltPort
+	res.DaemonPort = daemonPort
 
 	var keys []string
 	for _, s := range overlay {
@@ -209,6 +206,26 @@ func Create(in CreateInput) (*CreateResult, error) {
 		res.Ports = allocated
 	}
 
+	worktrees := map[string]string{}
+	for s, p := range worktreePaths {
+		worktrees[s] = p
+	}
+	overlayNames := make([]string, len(overlay))
+	copy(overlayNames, overlay)
+	if err := upsertStack(Record{
+		Name:       in.Name,
+		Base:       base.Name,
+		Root:       stackRoot,
+		Branch:     branch,
+		Overlay:    overlayNames,
+		Worktrees:  worktrees,
+		Ports:      res.Ports,
+		DaemonPort: daemonPort,
+		CreatedAt:  time.Now(),
+	}); err != nil {
+		return nil, fmt.Errorf("failed to record stack: %w", err)
+	}
+
 	if !daemonReachable(base.TiltPort) {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("base %q daemon is not reachable on port %d. A stack reuses base's running services — start base first: (cd %s && devstack up)",
 			base.Name, base.TiltPort, base.Path))
@@ -217,21 +234,24 @@ func Create(in CreateInput) (*CreateResult, error) {
 	return res, nil
 }
 
-func Remove(name string, force bool) (*RemoveResult, error) {
-	ws, err := resolveStack(name)
+func Remove(base *workspace.Workspace, name string, force bool) (*RemoveResult, error) {
+	if base == nil {
+		return nil, fmt.Errorf("no base workspace resolved")
+	}
+	rec, err := FindStack(base.Name, name)
 	if err != nil {
 		return nil, err
 	}
 
-	res := &RemoveResult{Name: ws.Name, BaseName: ws.BaseName, StackRoot: ws.Path}
+	res := &RemoveResult{Name: rec.FullName(), BaseName: rec.Base, StackRoot: rec.Root}
 
-	pid, err := stopStackDaemon(ws)
+	pid, err := stopStackDaemon(rec)
 	if err != nil {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("could not stop stack daemon: %v", err))
 	}
 	res.DaemonPID = pid
 
-	if rw, err := config.ResolveWorkspace(ws.Path); err == nil {
+	if rw, err := config.ResolveWorkspace(rec.Root); err == nil {
 		svcNames := make([]string, 0, len(rw.Services))
 		for n := range rw.Services {
 			svcNames = append(svcNames, n)
@@ -248,22 +268,22 @@ func Remove(name string, force bool) (*RemoveResult, error) {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("could not resolve stack manifest to list worktrees: %v", err))
 	}
 
-	if err := workspace.ReleasePorts(ws.Name); err != nil {
+	if err := workspace.ReleasePorts(rec.RuntimeKey()); err != nil {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("failed to release ports: %v", err))
 	} else {
 		res.PortsReleased = true
 	}
 
-	if _, err := deregister(ws.Name); err != nil {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("failed to deregister: %v", err))
-	} else {
+	if ok, err := deleteStack(rec.Base, rec.Name); err != nil {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("failed to remove stack record: %v", err))
+	} else if ok {
 		res.Deregistered = true
 	}
 
-	if err := os.RemoveAll(workspace.DataDir(ws.Name)); err != nil {
+	if err := os.RemoveAll(workspace.DataDir(rec.RuntimeKey())); err != nil {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("failed to remove data dir: %v", err))
 	}
-	if err := os.RemoveAll(ws.Path); err != nil {
+	if err := os.RemoveAll(rec.Root); err != nil {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("failed to remove stack root: %v", err))
 	} else {
 		res.RootRemoved = true
@@ -272,22 +292,22 @@ func Remove(name string, force bool) (*RemoveResult, error) {
 	return res, nil
 }
 
-func List() ([]StackInfo, error) {
-	all, err := workspace.All()
+func List(workspaceName string) ([]StackInfo, error) {
+	recs, err := LoadStore(workspaceName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load workspace registry: %w", err)
+		return nil, fmt.Errorf("failed to load stacks store: %w", err)
 	}
 	var stacks []StackInfo
-	for _, ws := range all {
-		if !ws.IsStack() {
-			continue
+	for _, rec := range recs {
+		ports, _ := workspace.LoadPorts(rec.RuntimeKey())
+		if len(ports) == 0 {
+			ports = rec.Ports
 		}
-		ports, _ := workspace.LoadPorts(ws.Name)
 		stacks = append(stacks, StackInfo{
-			Name:     ws.Name,
-			BaseName: ws.BaseName,
-			Port:     ws.TiltPort,
-			Status:   stackStatus(ws),
+			Name:     rec.FullName(),
+			BaseName: rec.Base,
+			Port:     rec.DaemonPort,
+			Status:   stackStatus(rec),
 			Ports:    ports,
 		})
 	}
@@ -310,17 +330,17 @@ func splitPortKey(qualified string) (service, key string, ok bool) {
 // overlay-first merged PortBook (base's pinned ports with the stack's allocated
 // ports layered over its overlay services) and the OTEL export env pointed at the
 // base's collector, since a stack never runs its own.
-func GenerateOptions(ws *workspace.Workspace, names []string) (tiltgen.Options, error) {
-	base, err := workspace.FindByName(ws.BaseName)
+func GenerateOptions(rec *Record, names []string) (tiltgen.Options, error) {
+	base, err := workspace.FindByName(rec.Base)
 	if err != nil {
-		return tiltgen.Options{}, fmt.Errorf("stack %q base workspace %q not found in registry: %w", ws.Name, ws.BaseName, err)
+		return tiltgen.Options{}, fmt.Errorf("stack %q base workspace %q not found in registry: %w", rec.FullName(), rec.Base, err)
 	}
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
 		return tiltgen.Options{}, fmt.Errorf("failed to resolve base workspace %q at %s: %w", base.Name, base.Path, err)
 	}
 
-	allocated, err := workspace.LoadPorts(ws.Name)
+	allocated, err := workspace.LoadPorts(rec.RuntimeKey())
 	if err != nil {
 		return tiltgen.Options{}, err
 	}
@@ -342,43 +362,17 @@ func GenerateOptions(ws *workspace.Workspace, names []string) (tiltgen.Options, 
 	}, nil
 }
 
-// resolveStack finds a registered stack by its full name (base--feature) or by
-// its short feature name when that is unambiguous across registered stacks.
-func resolveStack(name string) (*workspace.Workspace, error) {
-	all, err := workspace.All()
-	if err != nil {
-		return nil, err
-	}
-	var matches []workspace.Workspace
-	for _, ws := range all {
-		if !ws.IsStack() {
-			continue
-		}
-		if strings.EqualFold(ws.Name, name) || strings.HasSuffix(strings.ToLower(ws.Name), "--"+strings.ToLower(name)) {
-			matches = append(matches, ws)
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return nil, fmt.Errorf("stack %q not found", name)
-	case 1:
-		w := matches[0]
-		return &w, nil
-	default:
-		names := make([]string, len(matches))
-		for i, m := range matches {
-			names[i] = m.Name
-		}
-		return nil, fmt.Errorf("stack %q is ambiguous; use the full name: %s", name, strings.Join(names, ", "))
-	}
+// Resolve returns a base workspace's stack by short feature name.
+func Resolve(workspaceName, name string) (*Record, error) {
+	return FindStack(workspaceName, name)
 }
 
 // stopStackDaemon stops a stack's dev daemon: disable its services, kill the
 // process, remove the PID file, and close the session. A stack has no infra or
 // collector of its own, so this is the whole teardown for its daemon. Returns the
 // stopped PID, or 0 when no daemon was running.
-func stopStackDaemon(ws *workspace.Workspace) (int, error) {
-	pidFile := workspace.PIDFile(ws.Name)
+func stopStackDaemon(rec *Record) (int, error) {
+	pidFile := workspace.PIDFile(rec.RuntimeKey())
 	pidData, err := os.ReadFile(pidFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -391,7 +385,7 @@ func stopStackDaemon(ws *workspace.Workspace) (int, error) {
 		return 0, fmt.Errorf("invalid PID in %s: %w", pidFile, err)
 	}
 
-	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
+	tiltClient := tilt.NewClient("localhost", rec.DaemonPort)
 	if view, err := tiltClient.GetView(); err == nil {
 		for _, r := range view.UiResources {
 			if r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
@@ -407,50 +401,28 @@ func stopStackDaemon(ws *workspace.Workspace) (int, error) {
 		return pid, fmt.Errorf("failed to remove PID file: %w", err)
 	}
 
-	ports := []int{ws.TiltPort}
-	if session, err := workspace.LoadSession(ws.Name); err == nil && len(session.ActivePorts) > 0 {
+	key := rec.RuntimeKey()
+	ports := []int{rec.DaemonPort}
+	if session, err := workspace.LoadSession(key); err == nil && len(session.ActivePorts) > 0 {
 		ports = session.ActivePorts
 	}
 	residue := workspace.DetectResidue(pid, ports)
-	if err := workspace.CloseSession(ws.Name, residue); err != nil {
+	if err := workspace.CloseSession(key, residue); err != nil {
 		return pid, fmt.Errorf("failed to close session: %w", err)
 	}
 	return pid, nil
 }
 
-func stackStatus(ws workspace.Workspace) string {
-	if daemonReachable(ws.TiltPort) {
+func stackStatus(rec Record) string {
+	if daemonReachable(rec.DaemonPort) {
 		return "running"
 	}
-	if data, err := os.ReadFile(workspace.PIDFile(ws.Name)); err == nil {
+	if data, err := os.ReadFile(workspace.PIDFile(rec.RuntimeKey())); err == nil {
 		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && processAlive(pid) {
 			return "starting"
 		}
 	}
 	return "stopped"
-}
-
-func deregister(name string) (workspace.Workspace, error) {
-	workspaces, err := workspace.Load()
-	if err != nil {
-		return workspace.Workspace{}, fmt.Errorf("failed to load workspace registry: %w", err)
-	}
-	idx := -1
-	for i, ws := range workspaces {
-		if strings.EqualFold(ws.Name, name) {
-			idx = i
-			break
-		}
-	}
-	if idx == -1 {
-		return workspace.Workspace{}, fmt.Errorf("workspace %q not found", name)
-	}
-	removed := workspaces[idx]
-	workspaces = append(workspaces[:idx], workspaces[idx+1:]...)
-	if err := workspace.Save(workspaces); err != nil {
-		return workspace.Workspace{}, fmt.Errorf("failed to save workspace registry: %w", err)
-	}
-	return removed, nil
 }
 
 func daemonReachable(port int) bool {

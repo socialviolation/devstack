@@ -19,6 +19,7 @@ import (
 	"github.com/socialviolation/devstack/internal/observability"
 	_ "github.com/socialviolation/devstack/internal/observability/signoz" // register signoz backend
 	"github.com/socialviolation/devstack/internal/otel"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/tunnel"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -45,7 +46,7 @@ func RegisterTools(
 ) {
 	// The environment orientation tool is always available — it tells the agent
 	// which of the capability-gated tools below actually exist for this context.
-	registerEnvironmentTool(mcpServer, activeEnvName, activeEnv, allEnvs, workspaceName, workspacePath)
+	registerEnvironmentTool(mcpServer, activeEnvName, activeEnv, allEnvs, workspaceName, workspacePath, ws)
 
 	if activeEnv.Type == workspace.EnvironmentTypeLocal {
 		// Local-only tools: full service control
@@ -58,7 +59,7 @@ func RegisterTools(
 				ServicePaths: map[string]string{},
 			}
 		}
-		registerStatusTool(mcpServer, tiltClient, serviceDirs, cfg)
+		registerStatusTool(mcpServer, tiltClient, serviceDirs, cfg, ws)
 		registerRestartTool(mcpServer, tiltClient, defaultService, cfg)
 		registerStopTool(mcpServer, tiltClient, cfg)
 		registerConfigureTool(mcpServer, tiltClient)
@@ -174,7 +175,7 @@ func availableGroups(cfg *config.WorkspaceConfig) string {
 	return strings.Join(keys, ", ")
 }
 
-func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, serviceDirs map[string]string, cfg *config.WorkspaceConfig) {
+func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, serviceDirs map[string]string, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
 	tool := mcp.NewTool("status",
 		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack. Status reflects the current state of locally running dev services, not production. Returns SERVICE, STATUS (idle/starting/running/building/error/disabled), PORT(S), PATH (source directory), GROUP, and last error. Also shows a groups summary. 'idle' means the service is known but not currently running (not started yet, or was stopped). 'running' means the process is up. 'disabled' means it was explicitly stopped."),
 	)
@@ -234,8 +235,30 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			}
 		}
 
+		if footer := otherStacksFooter(ws); footer != "" {
+			sb.WriteString(footer)
+		}
+
 		return mcp.NewToolResultText(sb.String()), nil
 	})
+}
+
+// otherStacksFooter notes the workspace's in-flight feature stacks so an agent
+// working on the base sees that other versions exist. Empty when the workspace
+// has no stacks.
+func otherStacksFooter(ws *workspace.Workspace) string {
+	if ws == nil {
+		return ""
+	}
+	stacks, err := stack.List(ws.Name)
+	if err != nil || len(stacks) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(stacks))
+	for _, s := range stacks {
+		parts = append(parts, fmt.Sprintf("%s(%s :%d)", s.Name, s.Status, s.Port))
+	}
+	return fmt.Sprintf("\nfeature stacks of %s: %s\n", ws.Name, strings.Join(parts, ", "))
 }
 
 // shortenPath replaces the home directory prefix with ~ for readability.

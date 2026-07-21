@@ -15,8 +15,8 @@ import (
 
 func registerStackTools(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	registerStackCreateTool(mcpServer, ws)
-	registerStackListTool(mcpServer)
-	registerStackRemoveTool(mcpServer)
+	registerStackListTool(mcpServer, ws)
+	registerStackRemoveTool(mcpServer, ws)
 }
 
 func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
@@ -33,9 +33,6 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if ws == nil {
 			return mcp.NewToolResultError("no base workspace resolved for stacks"), nil
-		}
-		if ws.IsStack() {
-			return mcp.NewToolResultError(fmt.Sprintf("%q is itself a stack; a stack can't be the base for another stack", ws.Name)), nil
 		}
 		name := strings.TrimSpace(request.GetString("name", ""))
 		if name == "" {
@@ -102,18 +99,21 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 	})
 }
 
-func registerStackListTool(mcpServer *server.MCPServer) {
+func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_list",
-		mcp.WithDescription("List registered feature stacks with their base workspace, daemon port, status (running/starting/stopped), and allocated service links."),
+		mcp.WithDescription("List the feature stacks of THIS workspace with their base, daemon port, status (running/starting/stopped), and allocated service links."),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		stacks, err := stack.List()
+		if ws == nil {
+			return mcp.NewToolResultError("no workspace resolved for stacks"), nil
+		}
+		stacks, err := stack.List(ws.Name)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		if len(stacks) == 0 {
-			return mcp.NewToolResultText("No stacks registered."), nil
+			return mcp.NewToolResultText(fmt.Sprintf("No stacks in workspace %q.", ws.Name)), nil
 		}
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "%-24s %-14s %-6s %-9s %s\n", "STACK", "BASE", "PORT", "STATUS", "LINKS")
@@ -132,23 +132,26 @@ func registerStackListTool(mcpServer *server.MCPServer) {
 	})
 }
 
-func registerStackRemoveTool(mcpServer *server.MCPServer) {
+func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_rm",
-		mcp.WithDescription("Tear down a feature stack: stop its daemon, remove its worktrees, release its ports, deregister it, and delete its stack root. Refuses a worktree with uncommitted changes unless force is set."),
+		mcp.WithDescription("Tear down a feature stack of THIS workspace: stop its daemon, remove its worktrees, release its ports, delete its record, and delete its stack root. Refuses a worktree with uncommitted changes unless force is set."),
 		mcp.WithString("name", mcp.Required(),
-			mcp.Description("Stack name — the short feature name or the full '<base>--<name>' identity.")),
+			mcp.Description("Stack name — the short feature name (e.g. 'import-review').")),
 		mcp.WithBoolean("force",
 			mcp.Description("Remove worktrees even if they have uncommitted changes. Destroys uncommitted work. Defaults to false.")),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if ws == nil {
+			return mcp.NewToolResultError("no workspace resolved for stacks"), nil
+		}
 		name := strings.TrimSpace(request.GetString("name", ""))
 		if name == "" {
 			return mcp.NewToolResultError("name must not be empty"), nil
 		}
 		force := request.GetBool("force", false)
 
-		res, err := stack.Remove(name, force)
+		res, err := stack.Remove(ws, name, force)
 
 		var sb strings.Builder
 		if res != nil {
@@ -163,7 +166,7 @@ func registerStackRemoveTool(mcpServer *server.MCPServer) {
 				sb.WriteString("  released allocated ports\n")
 			}
 			if res.Deregistered {
-				fmt.Fprintf(&sb, "  deregistered %q\n", res.Name)
+				fmt.Fprintf(&sb, "  removed record for %q\n", res.Name)
 			}
 			if res.RootRemoved {
 				fmt.Fprintf(&sb, "  removed stack root %s\n", res.StackRoot)

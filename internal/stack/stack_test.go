@@ -153,7 +153,7 @@ func TestCreateOverlayWorktreesAndPorts(t *testing.T) {
 		t.Errorf("expected a base-not-running warning in result data, got %v", res.Warnings)
 	}
 
-	stacks, err := List()
+	stacks, err := List(base.Name)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestCreateOverlayWorktreesAndPorts(t *testing.T) {
 		t.Errorf("stack base = %q, want navexa", stacks[0].BaseName)
 	}
 
-	rmRes, err := Remove("feat", false)
+	rmRes, err := Remove(base, "feat", false)
 	if err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestCreateOverlayWorktreesAndPorts(t *testing.T) {
 		t.Errorf("stack root %s not removed", res.StackRoot)
 	}
 
-	stacks, err = List()
+	stacks, err = List(base.Name)
 	if err != nil {
 		t.Fatalf("List after rm: %v", err)
 	}
@@ -187,17 +187,32 @@ func TestCreateOverlayWorktreesAndPorts(t *testing.T) {
 	}
 }
 
-func TestCreateRejectsStackAsBase(t *testing.T) {
+// The core re-key: a created stack must NOT become a top-level workspace, but it
+// MUST be visible in the workspace's stack list. This fails if Create still
+// registered the stack as a workspace.
+func TestCreatedStackIsNotAWorkspace(t *testing.T) {
 	base := newBase(t)
 	if _, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"backend"}}); err != nil {
-		t.Fatalf("first Create: %v", err)
+		t.Fatalf("Create: %v", err)
 	}
-	stackWS, err := workspace.FindByName("navexa--feat")
+
+	if _, err := workspace.FindByName("navexa--feat"); err == nil {
+		t.Fatal("stack registered as a top-level workspace; it must live in the workspace's stacks store instead")
+	}
+	all, err := workspace.All()
 	if err != nil {
-		t.Fatalf("find stack: %v", err)
+		t.Fatalf("All: %v", err)
 	}
-	if _, err := Create(CreateInput{Base: stackWS, Name: "nested", Repos: []string{"backend"}}); err == nil {
-		t.Fatal("expected Create to reject a stack as base, got nil error")
+	if len(all) != 1 || all[0].Name != "navexa" {
+		t.Fatalf("registry = %+v, want only the base workspace navexa", all)
+	}
+
+	stacks, err := List(base.Name)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(stacks) != 1 || stacks[0].Name != "navexa--feat" {
+		t.Fatalf("List = %+v, want the feat stack visible in the store", stacks)
 	}
 }
 

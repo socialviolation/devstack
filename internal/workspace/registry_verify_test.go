@@ -333,14 +333,22 @@ func TestDetectFromCwdLongestMatch(t *testing.T) {
 	}
 }
 
-func TestWorkspaceBaseNameRoundTrip(t *testing.T) {
+// A legacy registry file that still carries the removed base_name field must
+// load without error — a stack is no longer a workspace, but old files that
+// recorded one as a workspace must not break the registry.
+func TestLegacyBaseNameFieldStillLoads(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
-	stack := Workspace{Name: "navexa--import", Path: tmpHome + "/dev/stack", TiltPort: 10350, BaseName: "navexa"}
-	plain := Workspace{Name: "navexa", Path: tmpHome + "/dev/navexa", TiltPort: 10351}
-	if err := Save([]Workspace{stack, plain}); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := os.MkdirAll(filepath.Dir(RegistryPath()), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	legacy := `[
+  {"name": "navexa--import", "path": "/home/x/dev/stack", "tilt_port": 10350, "base_name": "navexa"},
+  {"name": "navexa", "path": "/home/x/dev/navexa", "tilt_port": 10351}
+]`
+	if err := os.WriteFile(RegistryPath(), []byte(legacy), 0644); err != nil {
+		t.Fatalf("write legacy registry: %v", err)
 	}
 
 	loaded, err := Load()
@@ -350,17 +358,8 @@ func TestWorkspaceBaseNameRoundTrip(t *testing.T) {
 	if len(loaded) != 2 {
 		t.Fatalf("got %d entries, want 2", len(loaded))
 	}
-	if loaded[0].BaseName != "navexa" {
-		t.Fatalf("BaseName not persisted: %q", loaded[0].BaseName)
-	}
-	if !loaded[0].IsStack() {
-		t.Fatal("IsStack() = false for a stack with BaseName set")
-	}
-	if loaded[1].BaseName != "" {
-		t.Fatalf("BaseName should be empty for plain workspace, got %q", loaded[1].BaseName)
-	}
-	if loaded[1].IsStack() {
-		t.Fatal("IsStack() = true for a plain workspace")
+	if loaded[0].Name != "navexa--import" || loaded[1].Name != "navexa" {
+		t.Fatalf("unexpected names: %q, %q", loaded[0].Name, loaded[1].Name)
 	}
 }
 

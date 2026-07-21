@@ -9,13 +9,14 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 // registerEnvironmentTool registers the "environment" tool which orients agents immediately.
 // This is the MOST IMPORTANT discoverability tool — calling it first reveals what's possible.
 func registerEnvironmentTool(mcpServer *server.MCPServer, activeEnvName string,
-	activeEnv workspace.Environment, allEnvs map[string]workspace.Environment, workspaceName, workspacePath string) {
+	activeEnv workspace.Environment, allEnvs map[string]workspace.Environment, workspaceName, workspacePath string, ws *workspace.Workspace) {
 
 	tool := mcp.NewTool("environment",
 		mcp.WithDescription(
@@ -47,13 +48,16 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, activeEnvName string,
 			fmt.Fprintf(&sb, "env: %s (%s) %s@%s\n", activeEnvName, activeEnv.Type, backend, activeEnv.Observability.URL)
 		}
 		if otelOn {
-			fmt.Fprintf(&sb, "stack: %s + local dev daemon — local dev only, ephemeral data\n", backend)
+			fmt.Fprintf(&sb, "observability: %s + local dev daemon — local dev only, ephemeral data\n", backend)
 		} else {
-			fmt.Fprintf(&sb, "stack: local dev daemon (observability disabled) — local dev only, ephemeral data\n")
+			fmt.Fprintf(&sb, "observability: local dev daemon (disabled) — local dev only, ephemeral data\n")
 		}
 
 		if activeEnv.Type == workspace.EnvironmentTypeLocal {
-			tools := []string{"status", "restart", "stop", "configure", "process_logs", "service_env", "observability"}
+			if line := stacksSummary(ws); line != "" {
+				sb.WriteString(line)
+			}
+			tools := []string{"status", "restart", "stop", "configure", "process_logs", "service_env", "observability", "stack_create", "stack_list", "stack_rm"}
 			if otelOn {
 				tools = append(tools, "investigate")
 			}
@@ -90,4 +94,28 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, activeEnvName string,
 
 		return mcp.NewToolResultText(sb.String()), nil
 	})
+}
+
+// stacksSummary reports the workspace identity and its in-flight feature stacks,
+// so an agent bound to the base immediately sees the other versions in flight.
+func stacksSummary(ws *workspace.Workspace) string {
+	if ws == nil {
+		return ""
+	}
+	stacks, err := stack.List(ws.Name)
+	if err != nil {
+		return ""
+	}
+	if len(stacks) == 0 {
+		return fmt.Sprintf("workspace: %s — base only, no feature stacks in flight\n", ws.Name)
+	}
+	parts := make([]string, 0, len(stacks))
+	for _, s := range stacks {
+		if s.Status == "running" {
+			parts = append(parts, fmt.Sprintf("%s (running :%d)", s.Name, s.Port))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s (%s)", s.Name, s.Status))
+		}
+	}
+	return fmt.Sprintf("workspace: %s — base + %d feature stack(s) in flight: %s\n", ws.Name, len(stacks), strings.Join(parts, ", "))
 }

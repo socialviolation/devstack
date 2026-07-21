@@ -154,9 +154,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// A feature stack never runs its own collector — it attaches to the base's
 	// (generation points its OTEL endpoint there), and two collectors cannot bind
 	// the same host ports anyway.
-	if ws.IsStack() {
-		fmt.Printf("Feature stack — reusing base %q's collector; not starting one.\n", ws.BaseName)
-	} else if !config.ObservabilityEnabled(ws.Path) {
+	if !config.ObservabilityEnabled(ws.Path) {
 		fmt.Printf("Observability disabled for this workspace — skipping collector.\n")
 		fmt.Printf("  Enable it: set observability.enabled: true in %s, then: devstack otel start\n", config.WorkspaceManifestFileName)
 	} else if isOtelRunning(ws) {
