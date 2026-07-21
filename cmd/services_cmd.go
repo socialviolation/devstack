@@ -60,13 +60,62 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		return runWorkspaceStatus(&workspace.Workspace{
-			Name:     rec.FullName(),
-			Path:     rec.Root,
-			TiltPort: rec.DaemonPort,
-		})
+		return runStackStatus(ws, rec)
 	}
 	return runWorkspaceStatus(ws)
+}
+
+// runStackStatus shows a feature stack's services as they run in the base
+// workspace's one daemon: it reads base's view and filters to the stack's
+// <service>:<stack> resources, printing them de-namespaced. A stack is up only
+// when base's daemon is running and the stack is active — otherwise it prints the
+// same "not up" guidance the other --stack commands give, without dialing a dead
+// per-stack port.
+func runStackStatus(base *workspace.Workspace, rec *stack.Record) error {
+	port := base.TiltPort
+	if actual := workspace.ResolvePort(base.Name); actual != 0 {
+		port = actual
+	}
+	if !isTiltReachable(fmt.Sprintf("http://localhost:%d/api/view", port)) || !rec.Active {
+		fmt.Printf("stack %q is not up — run: devstack stack up %s\n", rec.Name, rec.Name)
+		return nil
+	}
+
+	view, err := tilt.NewClient("localhost", port).GetView()
+	if err != nil {
+		return err
+	}
+	resourceMap := make(map[string]tilt.UIResource, len(view.UiResources))
+	for _, r := range view.UiResources {
+		resourceMap[r.Metadata.Name] = r
+	}
+
+	suffix := ":" + rec.Name
+	names := make([]string, 0)
+	for name := range resourceMap {
+		if strings.HasSuffix(name, suffix) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+
+	color.New(color.Bold).Printf("stack %q", rec.Name)
+	color.New(color.Faint).Printf("  (in base %s's daemon :%d)\n\n", base.Name, port)
+
+	if len(names) == 0 {
+		fmt.Printf("  No resources for stack %q in the base daemon yet.\n", rec.Name)
+		return nil
+	}
+	for _, name := range names {
+		svc := strings.TrimSuffix(name, suffix)
+		statusStr, statusClr := svcStatusColor(name, resourceMap)
+		fmt.Printf("  %-22s  ", svc)
+		statusClr.Printf("%-10s", statusStr)
+		fmt.Print("  ")
+		printPorts(svcPortsRaw(name, resourceMap), 14)
+		fmt.Println()
+	}
+	return nil
 }
 
 func runWorkspaceStatus(ws *workspace.Workspace) error {

@@ -206,9 +206,17 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 		fmt.Fprintf(&sb, "%-24s %-10s %-14s %-40s %-16s %s\n", "SERVICE", "STATUS", "PORT(S)", "PATH", "GROUP", "ERROR")
 		fmt.Fprintf(&sb, "%s\n", strings.Repeat("-", 116))
 
+		suffix := ":" + t.namespace
 		for _, r := range view.UiResources {
+			name := r.Metadata.Name
+			if t.namespace != "" {
+				if !strings.HasSuffix(name, suffix) {
+					continue
+				}
+				name = strings.TrimSuffix(name, suffix)
+			}
 			status := mcpServiceStatus(r)
-			svcStatus[r.Metadata.Name] = status
+			svcStatus[name] = status
 			ports := mcpExtractPorts(r.Status.EndpointLinks)
 			lastError := ""
 			if len(r.Status.BuildHistory) > 0 {
@@ -218,8 +226,8 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 				lastError = lastError[:47] + "..."
 			}
 			path := shortenPath(serviceDirs[r.Metadata.Name])
-			group := serviceGroup(r.Metadata.Name, cfg)
-			fmt.Fprintf(&sb, "%-24s %-10s %-14s %-40s %-16s %s\n", r.Metadata.Name, status, ports, path, group, lastError)
+			group := serviceGroup(name, cfg)
+			fmt.Fprintf(&sb, "%-24s %-10s %-14s %-40s %-16s %s\n", name, status, ports, path, group, lastError)
 		}
 
 		// Groups summary section.
@@ -332,14 +340,15 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 				wg.Add(1)
 				go func(idx int, svcName string) {
 					defer wg.Done()
+					target := resourceName(svcName, t.namespace)
 					// Enable if disabled.
 					for _, r := range view.UiResources {
-						if r.Metadata.Name == svcName && r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
-							tiltClient.RunCLI("enable", svcName) //nolint:errcheck
+						if r.Metadata.Name == target && r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
+							tiltClient.RunCLI("enable", target) //nolint:errcheck
 							break
 						}
 					}
-					out, err := tiltClient.RunCLI("trigger", svcName)
+					out, err := tiltClient.RunCLI("trigger", target)
 					results[idx] = restartResult{svc: svcName, out: out, err: err}
 				}(i, svc)
 			}
@@ -370,7 +379,7 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 			return mcp.NewToolResultError("no service specified and no default service configured for this repo"), nil
 		}
 
-		resolved, err := tilt.ResolveService(name, view)
+		resolved, err := tilt.ResolveService(resourceName(name, t.namespace), view)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -443,7 +452,7 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg 
 				wg.Add(1)
 				go func(idx int, svcName string) {
 					defer wg.Done()
-					out, err := tiltClient.RunCLI("disable", svcName)
+					out, err := tiltClient.RunCLI("disable", resourceName(svcName, t.namespace))
 					results[idx] = stopResult{svc: svcName, out: out, err: err}
 				}(i, svc)
 			}
@@ -468,7 +477,7 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg 
 
 		// Single service stop.
 		if name != "" {
-			resolved, err := tilt.ResolveService(name, view)
+			resolved, err := tilt.ResolveService(resourceName(name, t.namespace), view)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -479,22 +488,23 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg 
 			return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("Stopped %q.", resolved))), nil
 		}
 
-		// Stop all
+		// Stop all (scoped to the stack's resources when a stack is targeted).
+		targets := stackResourceNames(view, t.namespace)
 		var sb strings.Builder
 		var failures []string
-		for _, r := range view.UiResources {
-			out, err := tiltClient.RunCLI("disable", r.Metadata.Name)
+		for _, name := range targets {
+			out, err := tiltClient.RunCLI("disable", name)
 			if err != nil {
-				failures = append(failures, r.Metadata.Name)
-				fmt.Fprintf(&sb, "FAILED %s: %v\n%s\n", r.Metadata.Name, err, out)
+				failures = append(failures, name)
+				fmt.Fprintf(&sb, "FAILED %s: %v\n%s\n", name, err, out)
 			} else {
-				fmt.Fprintf(&sb, "Stopped %s\n", r.Metadata.Name)
+				fmt.Fprintf(&sb, "Stopped %s\n", name)
 			}
 		}
 		if len(failures) > 0 {
 			return mcp.NewToolResultError(fmt.Sprintf("Some services failed to stop:\n%s", sb.String())), nil
 		}
-		return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("Stopped %d service(s).", len(view.UiResources))) + "\n" + sb.String()), nil
+		return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("Stopped %d service(s).", len(targets))) + "\n" + sb.String()), nil
 	})
 }
 
@@ -660,7 +670,7 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 				wg.Add(1)
 				go func(idx int, svcName string) {
 					defer wg.Done()
-					raw, err := tiltClient.RunCLI(buildLogArgs(svcName)...)
+					raw, err := tiltClient.RunCLI(buildLogArgs(resourceName(svcName, t.namespace))...)
 					results[idx] = logResult{svc: svcName, out: processOutput(raw), err: err}
 				}(i, svc)
 			}
@@ -685,7 +695,7 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		}
 
 		if name != "" {
-			resolved, err := tilt.ResolveService(name, view)
+			resolved, err := tilt.ResolveService(resourceName(name, t.namespace), view)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -706,10 +716,7 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			out  string
 			err  error
 		}
-		services := make([]string, 0, len(view.UiResources))
-		for _, r := range view.UiResources {
-			services = append(services, r.Metadata.Name)
-		}
+		services := stackResourceNames(view, t.namespace)
 		results := make([]result, len(services))
 		var wg sync.WaitGroup
 		for i, svc := range services {

@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -16,8 +15,8 @@ import (
 // stackParamDesc is the shared description for the optional `stack` parameter the
 // local tools accept. Absent = the base workspace this daemon is bound to.
 const stackParamDesc = "Optional feature stack name to target instead of the base workspace. " +
-	"Absent (default) operates on the base workspace, unchanged. When set, the tool operates the named stack's own " +
-	"instance — its daemon and its worktree config — not base's."
+	"Absent (default) operates on the base workspace, unchanged. When set, the tool operates on the named stack's " +
+	"resources, which run in the base workspace's one daemon namespaced as <service>:<stack>, plus its worktree config."
 
 // resolveStackRecord looks up a feature stack by short name within the bound
 // (base) workspace, returning a clear error that lists the available stack names
@@ -58,21 +57,25 @@ func serviceEnvTarget(ws *workspace.Workspace, basePath, stackName string) (path
 }
 
 // localTarget bundles everything a daemon-facing local tool needs to operate one
-// instance: the Tilt client for its daemon, the service dirs and config for its
-// manifests, its default service, and a label naming it. A zero label means the
-// base workspace, so output stays byte-identical to today.
+// instance: the Tilt client for the base daemon, the service dirs and config for
+// its manifests, its default service, the namespace selecting a stack's resources,
+// and a label naming it. A zero namespace and label mean the base workspace, so
+// output stays byte-identical to today.
 type localTarget struct {
 	client      *tilt.Client
 	serviceDirs map[string]string
 	cfg         *config.WorkspaceConfig
 	defaultSvc  string
+	namespace   string
 	label       string
 }
 
 // resolveLocalTarget picks the instance a daemon-facing tool acts on. Empty
-// stackName returns base unchanged. A named stack returns a target bound to the
-// stack's own daemon, its worktree manifests, and a naming label — or a clear
-// error (never a hang) when the stack is unknown or its daemon isn't running.
+// stackName returns base unchanged. A named stack's services run in the base
+// workspace's one daemon as <service>:<stack> resources, so the returned target
+// keeps base's client and carries the stack's namespace and worktree config — or a
+// clear error (never a hang) when the stack is unknown, base's daemon is down, or
+// the stack is not active.
 func resolveLocalTarget(ws *workspace.Workspace, base localTarget, stackName string) (localTarget, error) {
 	if stackName == "" {
 		return base, nil
@@ -81,8 +84,8 @@ func resolveLocalTarget(ws *workspace.Workspace, base localTarget, stackName str
 	if err != nil {
 		return localTarget{}, err
 	}
-	if !stack.DaemonReachable(rec.DaemonPort) {
-		return localTarget{}, fmt.Errorf("stack %q daemon is not running on :%d — start it with: (cd %s && devstack up)", stackName, rec.DaemonPort, rec.Root)
+	if !stack.DaemonReachable(ws.TiltPort) || !rec.Active {
+		return localTarget{}, fmt.Errorf("stack %q is not up — run: devstack stack up %s", stackName, rec.Name)
 	}
 	cfg, _ := config.Load(rec.Root)
 	if cfg == nil {
@@ -93,12 +96,37 @@ func resolveLocalTarget(ws *workspace.Workspace, base localTarget, stackName str
 		}
 	}
 	return localTarget{
-		client:      rec.DaemonClient(),
-		serviceDirs: tilt.ParseTiltfileServeDirs(filepath.Join(rec.Root, "Tiltfile")),
+		client:      base.client,
+		serviceDirs: base.serviceDirs,
 		cfg:         cfg,
 		defaultSvc:  "",
-		label:       fmt.Sprintf("stack %q (:%d)", rec.Name, rec.DaemonPort),
+		namespace:   rec.Name,
+		label:       fmt.Sprintf("stack %q (base :%d)", rec.Name, ws.TiltPort),
 	}, nil
+}
+
+// resourceName is the base-daemon resource name for a service in a namespace: the
+// bare service name for the base workspace (empty namespace), or <service>:<stack>
+// for a feature stack folded into the base Tiltfile.
+func resourceName(svc, namespace string) string {
+	if namespace == "" {
+		return svc
+	}
+	return svc + ":" + namespace
+}
+
+// stackResourceNames returns the resource names in view that belong to the given
+// namespace. An empty namespace (the base workspace) returns every resource name,
+// so callers stay byte-identical to today.
+func stackResourceNames(view *tilt.TiltView, namespace string) []string {
+	names := make([]string, 0, len(view.UiResources))
+	suffix := ":" + namespace
+	for _, r := range view.UiResources {
+		if namespace == "" || strings.HasSuffix(r.Metadata.Name, suffix) {
+			names = append(names, r.Metadata.Name)
+		}
+	}
+	return names
 }
 
 // targetHeader returns a one-line banner naming the instance a tool acted on, or

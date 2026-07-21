@@ -12,7 +12,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/socialviolation/devstack/internal/config"
-	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/tiltgen"
 	"github.com/socialviolation/devstack/internal/workspace"
 	"github.com/socialviolation/devstack/internal/worktree"
@@ -372,17 +371,11 @@ func stackStatus(rec Record) string {
 	return "inactive"
 }
 
-// DaemonReachable reports whether a stack's own dev daemon is serving its API on
-// the given port. Callers use it to fail fast with a clear message instead of
-// hanging when a stack's daemon isn't running.
+// DaemonReachable reports whether a dev daemon is serving its API on the given
+// port. Callers use it to fail fast with a clear message instead of hanging when
+// the daemon isn't running.
 func DaemonReachable(port int) bool {
 	return daemonReachable(port)
-}
-
-// DaemonClient builds a Tilt client bound to a stack's own dev daemon port, so a
-// caller can operate the stack's instance instead of the base workspace's.
-func (r Record) DaemonClient() *tilt.Client {
-	return tilt.NewClient("localhost", r.DaemonPort)
 }
 
 func daemonReachable(port int) bool {
