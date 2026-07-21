@@ -56,6 +56,13 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 					"Never write a secret to 'manifest' — it would be committed.",
 			),
 		),
+		mcp.WithString("stack",
+			mcp.Description(
+				"Optional feature stack name. Absent (default) reads/writes the BASE workspace's service repos, unchanged. "+
+					"When set, reads/writes the named stack's worktree of the service instead of base — so an agent edits its "+
+					"stack's config, never base's.",
+			),
+		),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -66,8 +73,14 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 		key := req.GetString("key", "")
 		value := req.GetString("value", "")
 		target := req.GetString("target", "")
+		stackName := req.GetString("stack", "")
 
-		cfg, _ := config.Load(workspacePath)
+		targetPath, instance, err := serviceEnvTarget(ws, workspacePath, stackName)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		cfg, _ := config.Load(targetPath)
 		if cfg == nil {
 			cfg = &config.WorkspaceConfig{
 				Deps:         map[string][]string{},
@@ -78,13 +91,17 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 
 		switch action {
 		case "get":
-			return handleServiceEnvGet(ws, workspacePath, cfg, serviceName, groupName, filter)
+			res, err := handleServiceEnvGet(ws, targetPath, cfg, serviceName, groupName, filter)
+			return prependInstanceResult(res, instance), err
 		case "diff":
-			return handleServiceEnvDiff(ws, workspacePath, cfg, serviceName, groupName, filter)
+			res, err := handleServiceEnvDiff(ws, targetPath, cfg, serviceName, groupName, filter)
+			return prependInstanceResult(res, instance), err
 		case "set":
-			return handleServiceEnvSet(ws, workspacePath, serviceName, key, value, target)
+			res, err := handleServiceEnvSet(ws, targetPath, serviceName, key, value, target)
+			return prependInstanceResult(res, instance), err
 		case "check":
-			return handleServiceEnvCheck(ws, workspacePath, cfg, serviceName, groupName)
+			res, err := handleServiceEnvCheck(ws, targetPath, cfg, serviceName, groupName)
+			return prependInstanceResult(res, instance), err
 		default:
 			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — must be one of: get, diff, set, check", action)), nil
 		}

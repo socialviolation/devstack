@@ -12,6 +12,7 @@ import (
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/svcconfig"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 var stackCmd = &cobra.Command{
@@ -236,6 +237,32 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("\n* = overridden by the stack (devstack-computed). Secret values shown as %s.\n", "••••")
 	return nil
+}
+
+// resolveStackTarget maps a --stack flag to the path and daemon port that CLI
+// service commands (status/restart/stop) should act on. Empty name returns the
+// base workspace unchanged. A named stack returns its synthesised root and own
+// daemon port, erroring clearly (never hanging) when the stack is unknown or its
+// daemon isn't running.
+func resolveStackTarget(base *workspace.Workspace, stackName string) (path string, port int, label string, err error) {
+	if stackName == "" {
+		return base.Path, base.TiltPort, "", nil
+	}
+	rec, err := stack.Resolve(base.Name, stackName)
+	if err != nil {
+		if recs, lerr := stack.LoadStore(base.Name); lerr == nil && len(recs) > 0 {
+			avail := make([]string, 0, len(recs))
+			for _, r := range recs {
+				avail = append(avail, r.Name)
+			}
+			return "", 0, "", fmt.Errorf("stack %q not found in workspace %q. Available stacks: %s", stackName, base.Name, strings.Join(avail, ", "))
+		}
+		return "", 0, "", err
+	}
+	if !stack.DaemonReachable(rec.DaemonPort) {
+		return "", 0, "", fmt.Errorf("stack %q daemon is not running on :%d — start it: (cd %s && devstack up)", stackName, rec.DaemonPort, rec.Root)
+	}
+	return rec.Root, rec.DaemonPort, rec.FullName(), nil
 }
 
 func sortedServiceNames(rw *config.ResolvedWorkspace) []string {

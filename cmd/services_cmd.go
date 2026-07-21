@@ -12,6 +12,7 @@ import (
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/infra"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -37,6 +38,7 @@ Service states:
 
 func init() {
 	rootCmd.AddCommand(statusCmd)
+	statusCmd.Flags().String("stack", "", "Show a feature stack's own daemon instead of the base workspace")
 }
 
 // groupPalette cycles through distinct colors for group headers.
@@ -52,6 +54,17 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	ws, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
 		return runStatusAll()
+	}
+	if stackName, _ := cmd.Flags().GetString("stack"); stackName != "" {
+		rec, err := stack.Resolve(ws.Name, stackName)
+		if err != nil {
+			return err
+		}
+		return runWorkspaceStatus(&workspace.Workspace{
+			Name:     rec.FullName(),
+			Path:     rec.Root,
+			TiltPort: rec.DaemonPort,
+		})
 	}
 	return runWorkspaceStatus(ws)
 }

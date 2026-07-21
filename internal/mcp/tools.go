@@ -60,10 +60,10 @@ func RegisterTools(
 			}
 		}
 		registerStatusTool(mcpServer, tiltClient, serviceDirs, cfg, ws)
-		registerRestartTool(mcpServer, tiltClient, defaultService, cfg)
-		registerStopTool(mcpServer, tiltClient, cfg)
-		registerConfigureTool(mcpServer, tiltClient)
-		registerProcessLogsTool(mcpServer, tiltClient, defaultService, cfg)
+		registerRestartTool(mcpServer, tiltClient, defaultService, cfg, ws)
+		registerStopTool(mcpServer, tiltClient, cfg, ws)
+		registerConfigureTool(mcpServer, tiltClient, ws)
+		registerProcessLogsTool(mcpServer, tiltClient, defaultService, cfg, ws)
 		registerServiceEnvTool(mcpServer, ws, workspacePath)
 
 		// Observability control (status/enable/disable/configure) is always
@@ -178,22 +178,30 @@ func availableGroups(cfg *config.WorkspaceConfig) string {
 func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, serviceDirs map[string]string, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
 	tool := mcp.NewTool("status",
 		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack. Status reflects the current state of locally running dev services, not production. Returns SERVICE, STATUS (idle/starting/running/building/error/disabled), PORT(S), PATH (source directory), GROUP, and last error. Also shows a groups summary. 'idle' means the service is known but not currently running (not started yet, or was stopped). 'running' means the process is up. 'disabled' means it was explicitly stopped."),
+		mcp.WithString("stack", mcp.Description(stackParamDesc)),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		view, err := tiltClient.GetView()
+		t, err := resolveLocalTarget(ws, localTarget{client: tiltClient, serviceDirs: serviceDirs, cfg: cfg}, request.GetString("stack", ""))
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		serviceDirs, cfg := t.serviceDirs, t.cfg
+
+		view, err := t.client.GetView()
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
 		if len(view.UiResources) == 0 {
-			return mcp.NewToolResultText("Tilt is running but no services are loaded yet. It may still be starting up."), nil
+			return mcp.NewToolResultText(targetHeader(t.label) + "Tilt is running but no services are loaded yet. It may still be starting up."), nil
 		}
 
 		// Build a map of service name -> status for the groups summary.
 		svcStatus := make(map[string]string, len(view.UiResources))
 
 		var sb strings.Builder
+		sb.WriteString(targetHeader(t.label))
 		sb.WriteString("Tilt is running.\n\n")
 		fmt.Fprintf(&sb, "%-24s %-10s %-14s %-40s %-16s %s\n", "SERVICE", "STATUS", "PORT(S)", "PATH", "GROUP", "ERROR")
 		fmt.Fprintf(&sb, "%s\n", strings.Repeat("-", 116))
@@ -235,8 +243,10 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			}
 		}
 
-		if footer := otherStacksFooter(ws); footer != "" {
-			sb.WriteString(footer)
+		if t.label == "" {
+			if footer := otherStacksFooter(ws); footer != "" {
+				sb.WriteString(footer)
+			}
 		}
 
 		return mcp.NewToolResultText(sb.String()), nil
@@ -273,7 +283,7 @@ func shortenPath(path string) string {
 	return path
 }
 
-func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, cfg *config.WorkspaceConfig) {
+func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
 	tool := mcp.NewTool("restart",
 		mcp.WithDescription("Restart a specific service or all services in a group in the LOCAL dev stack by triggering a rebuild. Operates on local dev services only — service name must be exact. If neither service nor group is given, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
 		mcp.WithString("service",
@@ -282,6 +292,7 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 		mcp.WithString("group",
 			mcp.Description("Group name to restart. All services in the group are restarted in parallel. Cannot be combined with service."),
 		),
+		mcp.WithString("stack", mcp.Description(stackParamDesc)),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -291,6 +302,12 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 		if name != "" && groupName != "" {
 			return mcp.NewToolResultError("specify either service or group, not both"), nil
 		}
+
+		t, err := resolveLocalTarget(ws, localTarget{client: tiltClient, cfg: cfg, defaultSvc: defaultService}, request.GetString("stack", ""))
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		tiltClient, defaultService, cfg := t.client, t.defaultSvc, t.cfg
 
 		view, err := tiltClient.GetView()
 		if err != nil {
@@ -341,8 +358,8 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 				return mcp.NewToolResultError(fmt.Sprintf("restarted %d/%d services in group %q: %s\nfailures: %s",
 					len(successes), len(members), groupName, strings.Join(successes, ", "), strings.Join(failures, "; "))), nil
 			}
-			return mcp.NewToolResultText(fmt.Sprintf("restarted %d services in group %s: %s",
-				len(members), groupName, strings.Join(successes, ", "))), nil
+			return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("restarted %d services in group %s: %s",
+				len(members), groupName, strings.Join(successes, ", ")))), nil
 		}
 
 		// Single service restart.
@@ -373,11 +390,11 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 			return mcp.NewToolResultError(fmt.Sprintf("failed to restart %q: %v\n%s", resolved, err, out)), nil
 		}
 
-		return mcp.NewToolResultText(fmt.Sprintf("Restarted service %q.\n%s", resolved, out)), nil
+		return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("Restarted service %q.", resolved)) + "\n" + out), nil
 	})
 }
 
-func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg *config.WorkspaceConfig) {
+func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stop",
 		mcp.WithDescription("Stop (disable) one service, all services in a group, or all services in the LOCAL dev stack. Operates on local dev services only — service name must be exact. If service is given, stops that service. If group is given, stops all services in the group. If neither is given, stops all services. Cannot specify both service and group."),
 		mcp.WithString("service",
@@ -386,6 +403,7 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg 
 		mcp.WithString("group",
 			mcp.Description("Group name to stop. All services in the group are stopped in parallel. Cannot be combined with service."),
 		),
+		mcp.WithString("stack", mcp.Description(stackParamDesc)),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -395,6 +413,12 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg 
 		if name != "" && groupName != "" {
 			return mcp.NewToolResultError("specify either service or group, not both"), nil
 		}
+
+		t, err := resolveLocalTarget(ws, localTarget{client: tiltClient, cfg: cfg}, request.GetString("stack", ""))
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		tiltClient, cfg := t.client, t.cfg
 
 		view, err := tiltClient.GetView()
 		if err != nil {
@@ -438,8 +462,8 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg 
 				return mcp.NewToolResultError(fmt.Sprintf("stopped %d/%d services in group %q: %s\nfailures: %s",
 					len(successes), len(members), groupName, strings.Join(successes, ", "), strings.Join(failures, "; "))), nil
 			}
-			return mcp.NewToolResultText(fmt.Sprintf("stopped %d services in group %s: %s",
-				len(members), groupName, strings.Join(successes, ", "))), nil
+			return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("stopped %d services in group %s: %s",
+				len(members), groupName, strings.Join(successes, ", ")))), nil
 		}
 
 		// Single service stop.
@@ -452,7 +476,7 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg 
 			if err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("failed to stop %q: %v\n%s", resolved, err, out)), nil
 			}
-			return mcp.NewToolResultText(fmt.Sprintf("Stopped %q.", resolved)), nil
+			return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("Stopped %q.", resolved))), nil
 		}
 
 		// Stop all
@@ -470,7 +494,7 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg 
 		if len(failures) > 0 {
 			return mcp.NewToolResultError(fmt.Sprintf("Some services failed to stop:\n%s", sb.String())), nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("Stopped %d service(s).\n%s", len(view.UiResources), sb.String())), nil
+		return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("Stopped %d service(s).", len(view.UiResources))) + "\n" + sb.String()), nil
 	})
 }
 
@@ -485,7 +509,7 @@ func filterErrorLines(raw string) []string {
 	return matched
 }
 
-func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, cfg *config.WorkspaceConfig) {
+func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
 	tool := mcp.NewTool("process_logs",
 		mcp.WithDescription("Fetch raw stdout/stderr from a locally running dev service process. NOT a log search engine — fetches live process output directly from the dev daemon. Parameters are structured: exact service name, integer line count, boolean flags. Natural language queries are NOT accepted. Example: service='api-service' lines=100 since_restart=true. Use for services not instrumented with OTEL or when you need unstructured process output. If no service is given, uses the default or fetches all services in parallel. Supports grep filtering, paging via offset, and since_restart to isolate post-startup output. When group is given, fetches logs from all services in the group concurrently. Cannot specify both service and group."),
 		mcp.WithString("service",
@@ -512,6 +536,7 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		mcp.WithBoolean("errors_only",
 			mcp.Description("If true, return only lines matching error/exception/panic/fatal/fail. Defaults to false."),
 		),
+		mcp.WithString("stack", mcp.Description(stackParamDesc)),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -521,6 +546,12 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		if name != "" && groupName != "" {
 			return mcp.NewToolResultError("specify either service or group, not both"), nil
 		}
+
+		t, err := resolveLocalTarget(ws, localTarget{client: tiltClient, cfg: cfg, defaultSvc: defaultService}, request.GetString("stack", ""))
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		tiltClient, defaultService, cfg := t.client, t.defaultSvc, t.cfg
 
 		// Only apply defaultService when no group is specified.
 		if name == "" && groupName == "" {
@@ -650,7 +681,7 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 					fmt.Fprintf(&sb, "%s%s\n", prefix, line)
 				}
 			}
-			return mcp.NewToolResultText(sb.String()), nil
+			return mcp.NewToolResultText(targetHeader(t.label) + sb.String()), nil
 		}
 
 		if name != "" {
@@ -664,9 +695,9 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			}
 			out := processOutput(raw)
 			if out == "" {
-				return mcp.NewToolResultText(fmt.Sprintf("No matching output in %s.", resolved)), nil
+				return mcp.NewToolResultText(targetHeader(t.label) + fmt.Sprintf("No matching output in %s.", resolved)), nil
 			}
-			return mcp.NewToolResultText(out), nil
+			return mcp.NewToolResultText(targetHeader(t.label) + out), nil
 		}
 
 		// All services in parallel.
@@ -703,7 +734,7 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 				sb.WriteString("\n\n")
 			}
 		}
-		return mcp.NewToolResultText(sb.String()), nil
+		return mcp.NewToolResultText(targetHeader(t.label) + sb.String()), nil
 	})
 }
 
@@ -779,7 +810,7 @@ func applyGrep(lines []string, re *regexp.Regexp, contextLines int) []string {
 	return out
 }
 
-func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client) {
+func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws *workspace.Workspace) {
 	tool := mcp.NewTool("configure",
 		mcp.WithDescription("Set a dev daemon runtime argument (key=value) that controls how services are configured. Use this to change feature flags, modes, or other runtime config. Affected services will restart automatically."),
 		mcp.WithString("key",
@@ -790,6 +821,7 @@ func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client)
 			mcp.Required(),
 			mcp.Description("The value to set (e.g. 'production', 'true', 'staging')."),
 		),
+		mcp.WithString("stack", mcp.Description(stackParamDesc)),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -799,12 +831,18 @@ func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client)
 			return mcp.NewToolResultError("key must not be empty"), nil
 		}
 
+		t, err := resolveLocalTarget(ws, localTarget{client: tiltClient}, request.GetString("stack", ""))
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		tiltClient := t.client
+
 		out, err := tiltClient.RunCLI("args", "--", fmt.Sprintf("%s=%s", key, value))
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to set %s=%s: %v\n%s", key, value, err, out)), nil
 		}
 
-		return mcp.NewToolResultText(fmt.Sprintf("Set %s=%s. Affected services will restart automatically.", key, value)), nil
+		return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("Set %s=%s. Affected services will restart automatically.", key, value))), nil
 	})
 }
 

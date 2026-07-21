@@ -425,6 +425,19 @@ func stackStatus(rec Record) string {
 	return "stopped"
 }
 
+// DaemonReachable reports whether a stack's own dev daemon is serving its API on
+// the given port. Callers use it to fail fast with a clear message instead of
+// hanging when a stack's daemon isn't running.
+func DaemonReachable(port int) bool {
+	return daemonReachable(port)
+}
+
+// DaemonClient builds a Tilt client bound to a stack's own dev daemon port, so a
+// caller can operate the stack's instance instead of the base workspace's.
+func (r Record) DaemonClient() *tilt.Client {
+	return tilt.NewClient("localhost", r.DaemonPort)
+}
+
 func daemonReachable(port int) bool {
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get(fmt.Sprintf("http://localhost:%d/api/view", port))
