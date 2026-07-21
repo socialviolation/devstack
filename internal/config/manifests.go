@@ -139,9 +139,20 @@ type ServiceManifest struct {
 	Runtime   ServiceRuntime         `yaml:"runtime,omitempty"`
 	Ports     map[string]int         `yaml:"ports,omitempty"`
 	Env       ServiceEnv             `yaml:"env,omitempty"`
+	Config    ServiceConfig          `yaml:"config,omitempty"`
 	Links     []ServiceLink          `yaml:"links,omitempty"`
 	Telemetry ServiceTelemetry       `yaml:"telemetry,omitempty"`
 	Dev       map[string]any         `yaml:"dev,omitempty"`
+}
+
+// ServiceConfig points at the service's own repo files that already declare its
+// config surface. Sources are read in order, later overriding earlier for a
+// shared key. PortEnv names the env var that carries this service's listen port,
+// the one the stack overlay overrides with the allocated port. Paths are relative
+// to the service repo root.
+type ServiceConfig struct {
+	Sources []string `yaml:"sources,omitempty"`
+	PortEnv string   `yaml:"portEnv,omitempty"`
 }
 
 // ServiceLink is a named URL surfaced in the dev daemon UI for a service.
