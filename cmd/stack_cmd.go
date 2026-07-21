@@ -3,8 +3,12 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -12,6 +16,7 @@ import (
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/svcconfig"
+	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -58,12 +63,30 @@ var stackConfigCmd = &cobra.Command{
 	RunE:         runStackConfig,
 }
 
+var stackUpCmd = &cobra.Command{
+	Use:          "up <name>",
+	Short:        "Start a feature stack's daemon (its services on their allocated ports)",
+	Args:         cobra.ExactArgs(1),
+	SilenceUsage: true,
+	RunE:         runStackUp,
+}
+
+var stackDownCmd = &cobra.Command{
+	Use:          "down <name>",
+	Short:        "Stop a feature stack's daemon (leaves its worktrees and record)",
+	Args:         cobra.ExactArgs(1),
+	SilenceUsage: true,
+	RunE:         runStackDown,
+}
+
 func init() {
 	rootCmd.AddCommand(stackCmd)
 	stackCmd.AddCommand(stackCreateCmd)
 	stackCmd.AddCommand(stackRemoveCmd)
 	stackCmd.AddCommand(stackListCmd)
 	stackCmd.AddCommand(stackConfigCmd)
+	stackCmd.AddCommand(stackUpCmd)
+	stackCmd.AddCommand(stackDownCmd)
 
 	stackCreateCmd.Flags().String("repos", "", "Comma-separated service names that this stack changes")
 	stackCreateCmd.Flags().String("branch", "", "Branch for the changed repos (default: the stack name). Attaches if it already exists.")
@@ -117,7 +140,7 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "WARNING: %s\n", w)
 	}
 
-	fmt.Printf("\nStack %q ready. Start it: (cd %s && devstack up)\n", res.StackName, res.StackRoot)
+	fmt.Printf("\nStack %q ready. Start it: devstack stack up %s\n", res.StackName, args[0])
 	return nil
 }
 
@@ -244,6 +267,125 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 // base workspace unchanged. A named stack returns its synthesised root and own
 // daemon port, erroring clearly (never hanging) when the stack is unknown or its
 // daemon isn't running.
+func runStackUp(cmd *cobra.Command, args []string) error {
+	base, err := resolveWorkspace(viper.GetString("workspace"))
+	if err != nil {
+		return err
+	}
+	rec, err := stack.Resolve(base.Name, args[0])
+	if err != nil {
+		return err
+	}
+
+	key := rec.RuntimeKey()
+	pidFile := workspace.PIDFile(key)
+	logFile := workspace.LogFile(key)
+	dataDir := workspace.DataDir(key)
+	apiURL := fmt.Sprintf("http://localhost:%d/api/view", rec.DaemonPort)
+
+	if isTiltReachable(apiURL) {
+		fmt.Printf("Stack %q already running (port %d).\n", rec.Name, rec.DaemonPort)
+		return nil
+	}
+	if data, rerr := os.ReadFile(pidFile); rerr == nil {
+		if pid, perr := strconv.Atoi(strings.TrimSpace(string(data))); perr == nil {
+			if isProcessAlive(pid) {
+				fmt.Printf("Stack %q already running (pid %d, port %d).\n", rec.Name, pid, rec.DaemonPort)
+				return nil
+			}
+			os.Remove(pidFile)
+		}
+	}
+
+	if !stack.DaemonReachable(base.TiltPort) {
+		fmt.Fprintf(os.Stderr, "warning: base %q daemon is not running on :%d — the stack reuses base's services and DB tunnel; start base first.\n", base.Name, base.TiltPort)
+	}
+
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return fmt.Errorf("failed to create data dir %s: %w", dataDir, err)
+	}
+	if _, err := regenerateStackTiltfile(rec); err != nil {
+		return fmt.Errorf("failed to generate stack Tiltfile: %w", err)
+	}
+	lf, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open log file %s: %w", logFile, err)
+	}
+	defer lf.Close()
+
+	tiltCmd := exec.Command("tilt", "up", "--host", "0.0.0.0", "--port", strconv.Itoa(rec.DaemonPort))
+	tiltCmd.Dir = rec.Root
+	tiltCmd.Stdout = lf
+	tiltCmd.Stderr = lf
+	tiltCmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := tiltCmd.Start(); err != nil {
+		return fmt.Errorf("failed to start stack daemon: %w", err)
+	}
+	pid := tiltCmd.Process.Pid
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
+		tiltCmd.Process.Kill()
+		return fmt.Errorf("failed to write PID file: %w", err)
+	}
+
+	fmt.Printf("Starting stack %q daemon (base %q)", rec.Name, base.Name)
+	deadline := time.Now().Add(45 * time.Second)
+	reached := false
+	for time.Now().Before(deadline) {
+		if isTiltReachable(apiURL) {
+			reached = true
+			break
+		}
+		fmt.Print(".")
+		time.Sleep(2 * time.Second)
+	}
+	fmt.Println()
+	if reached {
+		fmt.Printf("✓ Stack %q up (pid %d, daemon :%d)\n", rec.Name, pid, rec.DaemonPort)
+		for _, k := range sortedKeys(rec.Ports) {
+			fmt.Printf("  %-24s http://localhost:%d\n", k, rec.Ports[k])
+		}
+	} else {
+		fmt.Printf("Stack daemon started (pid %d) but not reachable on :%d yet — check logs: %s\n", pid, rec.DaemonPort, logFile)
+	}
+	return nil
+}
+
+func runStackDown(cmd *cobra.Command, args []string) error {
+	base, err := resolveWorkspace(viper.GetString("workspace"))
+	if err != nil {
+		return err
+	}
+	rec, err := stack.Resolve(base.Name, args[0])
+	if err != nil {
+		return err
+	}
+
+	pidFile := workspace.PIDFile(rec.RuntimeKey())
+	data, rerr := os.ReadFile(pidFile)
+	if rerr != nil {
+		fmt.Printf("Stack %q is not running.\n", rec.Name)
+		return nil
+	}
+	pid, perr := strconv.Atoi(strings.TrimSpace(string(data)))
+	if perr != nil {
+		return fmt.Errorf("invalid PID in %s: %w", pidFile, perr)
+	}
+
+	fmt.Printf("Stopping stack %q (pid %d)...\n", rec.Name, pid)
+	client := tilt.NewClient("localhost", rec.DaemonPort)
+	if view, verr := client.GetView(); verr == nil {
+		for _, r := range view.UiResources {
+			client.RunCLI("disable", r.Metadata.Name) //nolint:errcheck
+		}
+	}
+	if proc, ferr := os.FindProcess(pid); ferr == nil {
+		_ = proc.Kill()
+	}
+	os.Remove(pidFile)
+	fmt.Printf("✓ Stack %q stopped (worktrees and record kept; remove with: devstack stack rm %s).\n", rec.Name, rec.Name)
+	return nil
+}
+
 func resolveStackTarget(base *workspace.Workspace, stackName string) (path string, port int, label string, err error) {
 	if stackName == "" {
 		return base.Path, base.TiltPort, "", nil
@@ -260,7 +402,7 @@ func resolveStackTarget(base *workspace.Workspace, stackName string) (path strin
 		return "", 0, "", err
 	}
 	if !stack.DaemonReachable(rec.DaemonPort) {
-		return "", 0, "", fmt.Errorf("stack %q daemon is not running on :%d — start it: (cd %s && devstack up)", stackName, rec.DaemonPort, rec.Root)
+		return "", 0, "", fmt.Errorf("stack %q daemon is not running on :%d — start it: devstack stack up %s", stackName, rec.DaemonPort, rec.Name)
 	}
 	return rec.Root, rec.DaemonPort, rec.FullName(), nil
 }
