@@ -4,10 +4,87 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/socialviolation/devstack/internal/workspace"
 )
+
+func TestWriteAgentsMDIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeAgentsMD("api", dir, "/home/dev/navexa"); err != nil {
+		t.Fatalf("writeAgentsMD first: %v", err)
+	}
+	first, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err := writeAgentsMD("api", dir, "/home/dev/navexa"); err != nil {
+		t.Fatalf("writeAgentsMD second: %v", err)
+	}
+	second, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if string(first) != string(second) {
+		t.Fatalf("not byte-identical on second run:\n--- first ---\n%q\n--- second ---\n%q", first, second)
+	}
+	if n := strings.Count(string(second), agentsSentinelBegin); n != 1 {
+		t.Fatalf("expected exactly one begin sentinel, got %d", n)
+	}
+	if !strings.HasSuffix(string(second), "\n") || strings.HasSuffix(string(second), "\n\n") {
+		t.Fatalf("expected exactly one trailing newline, got %q", string(second)[len(second)-3:])
+	}
+}
+
+func TestWriteAgentsMDPreservesBeadsAndMigratesLegacy(t *testing.T) {
+	dir := t.TempDir()
+	agentsFile := filepath.Join(dir, "AGENTS.md")
+	seed := "# api\n\nSome preamble.\n\n" +
+		"## Dev Stack (devstack MCP)\n\n" +
+		"stale legacy content referencing devstack workspace doctor\n\n" +
+		"## BEADS\n\n" +
+		"- keep me: bead workflow notes\n"
+	if err := os.WriteFile(agentsFile, []byte(seed), 0644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := writeAgentsMD("api", dir, "/home/dev/navexa"); err != nil {
+		t.Fatalf("writeAgentsMD: %v", err)
+	}
+	got, _ := os.ReadFile(agentsFile)
+	s := string(got)
+
+	if !strings.Contains(s, "## BEADS") || !strings.Contains(s, "keep me: bead workflow notes") {
+		t.Fatalf("BEADS block was clobbered:\n%s", s)
+	}
+	if strings.Count(s, agentsSentinelBegin) != 1 || strings.Count(s, agentsSentinelEnd) != 1 {
+		t.Fatalf("expected exactly one sentinel pair:\n%s", s)
+	}
+	if strings.Count(s, "## Dev Stack (devstack MCP)") != 1 {
+		t.Fatalf("expected exactly one devstack section (legacy not stripped):\n%s", s)
+	}
+	if !strings.Contains(s, "Some preamble.") {
+		t.Fatalf("preamble was lost:\n%s", s)
+	}
+
+	if err := writeAgentsMD("api", dir, "/home/dev/navexa"); err != nil {
+		t.Fatalf("writeAgentsMD second: %v", err)
+	}
+	got2, _ := os.ReadFile(agentsFile)
+	if string(got) != string(got2) {
+		t.Fatalf("migration not idempotent")
+	}
+}
+
+func TestBuildAgentInstructionsContentSanity(t *testing.T) {
+	block := buildAgentInstructions("api", "/home/dev/navexa")
+	if !strings.Contains(block, "<workspace>:<service>") {
+		t.Fatalf("missing instance-naming guidance:\n%s", block)
+	}
+	if strings.Contains(block, "devstack up") {
+		t.Fatalf("generated block references the non-existent `devstack up` (use `devstack workspace up`):\n%s", block)
+	}
+	for _, want := range []string{"devstack workspace doctor", "devstack otel status", "--stacks"} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("generated block missing expected real command %q:\n%s", want, block)
+		}
+	}
+}
 
 func readMCPEnv(t *testing.T, mcpFile string) map[string]string {
 	t.Helper()
