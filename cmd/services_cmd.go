@@ -231,7 +231,7 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 		if isTiltReachable(apiURL) {
 			fmt.Println("  Dev daemon is starting — run 'devstack status' again in a moment.")
 		} else {
-			fmt.Println("  Run: devstack up")
+			fmt.Println("  Run: devstack workspace up")
 		}
 		return nil
 	}

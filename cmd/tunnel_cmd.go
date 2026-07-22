@@ -130,7 +130,7 @@ func tunnelServices(ws *workspace.Workspace) (svcs []tunnel.Service, ok bool) {
 	if err != nil {
 		fmt.Printf("%s  ·  ", color.New(color.Bold).Sprint(ws.Name))
 		color.New(color.FgYellow).Println("dev daemon not running")
-		fmt.Println("  Run: devstack up")
+		fmt.Println("  Run: devstack workspace up")
 		return nil, false
 	}
 	return svcs, true

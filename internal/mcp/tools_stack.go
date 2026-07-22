@@ -94,7 +94,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			}
 		}
 
-		fmt.Fprintf(&sb, "\nStart it: (cd %s && devstack up)\n", res.StackRoot)
+		fmt.Fprintf(&sb, "\nStart it: (cd %s && devstack workspace up)\n", res.StackRoot)
 		return mcp.NewToolResultText(sb.String()), nil
 	})
 }
