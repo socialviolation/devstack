@@ -28,7 +28,7 @@ func registerEnvTools(mcpServer *server.MCPServer, ws *workspace.Workspace, work
 
 func registerEnvUseTool(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	tool := mcp.NewTool("env_use",
-		mcp.WithDescription("Point a scope at one of the workspace's named config-patch environments, so its services run with that environment's config vars. Mirrors 'devstack env use'. Scope precedence is stack > service > workspace: with neither service nor stack the workspace default is set; with 'service' the single service is pointed; with 'stack' that feature stack is pointed. The env name must be one defined in the workspace manifest. Use env_which or status to see where each instance points."),
+		mcp.WithDescription("Point a scope at one of the config-patch environments defined in the BASE workspace manifest, so its services run with that environment's config vars. Mirrors 'devstack env use'. Environments are defined ONCE in the base workspace; feature stacks do NOT define their own — they inherit the base's environments, and 'stack' points a stack at one of them. Scope precedence is stack > service > workspace: with neither service nor stack the workspace default is set; with 'service' the single service is pointed; with 'stack' that feature stack is pointed. The env name must be one defined in the base workspace manifest. Use env_which or status to see where each instance points."),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description("Named environment to select (must be defined in the workspace manifest, e.g. 'staging').")),
 		mcp.WithString("service",
@@ -93,7 +93,7 @@ func registerEnvUseTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 
 func registerEnvWhichTool(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	tool := mcp.NewTool("env_which",
-		mcp.WithDescription("Show which named config-patch environment applies to a service at each scope (workspace/service/stack) and the merged effective config vars it would run with. Mirrors 'devstack env which'. Secret values are masked. If service is omitted it is resolved from the server's working directory."),
+		mcp.WithDescription("Show which base-defined config-patch environment applies to a service at each scope (workspace/service/stack) and the merged effective config vars it would run with. Mirrors 'devstack env which'. Environments are defined once in the base workspace manifest and inherited by feature stacks; the stack scope reflects the base environment a stack was pointed at. Secret values are masked. If service is omitted it is resolved from the server's working directory."),
 		mcp.WithString("service",
 			mcp.Description("Exact service name to resolve. If omitted, resolved from the current working directory.")),
 		mcp.WithString("stack",
@@ -158,7 +158,7 @@ func registerEnvWhichTool(mcpServer *server.MCPServer, ws *workspace.Workspace, 
 
 func registerEnvSetTool(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	tool := mcp.NewTool("env_set",
-		mcp.WithDescription("Set a config-var (key=value) on one of the workspace's named config-patch environments. Mirrors 'devstack env set'. Secret values are masked in the confirmation output. Use env_use to point a scope at the environment."),
+		mcp.WithDescription("Set a config-var (key=value) on one of the config-patch environments defined in the BASE workspace manifest. Mirrors 'devstack env set'. Environments are defined once in the base workspace and inherited by feature stacks. Secret values are masked in the confirmation output. Use env_use to point a scope at the environment."),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description("Named environment to modify (e.g. 'staging').")),
 		mcp.WithString("key", mcp.Required(),

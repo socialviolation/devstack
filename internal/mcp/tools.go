@@ -36,7 +36,6 @@ func RegisterTools(
 	tiltClient *tilt.Client,
 	defaultService string,
 	backend observability.Backend,
-	tiltfilePath string,
 	activeEnvName string,
 	activeEnv workspace.Environment,
 	allEnvs map[string]workspace.Environment,
@@ -50,7 +49,6 @@ func RegisterTools(
 
 	if activeEnv.Type == workspace.EnvironmentTypeLocal {
 		// Local-only tools: full service control
-		serviceDirs := tilt.ParseTiltfileServeDirs(tiltfilePath)
 		cfg, _ := config.Load(workspacePath)
 		if cfg == nil {
 			cfg = &config.WorkspaceConfig{
@@ -59,6 +57,7 @@ func RegisterTools(
 				ServicePaths: map[string]string{},
 			}
 		}
+		serviceDirs := cfg.ServicePaths
 		registerStatusTool(mcpServer, tiltClient, serviceDirs, cfg, ws)
 		registerRestartTool(mcpServer, tiltClient, defaultService, cfg, ws)
 		registerStopTool(mcpServer, tiltClient, cfg, ws)

@@ -59,39 +59,6 @@ type WorkspaceGen struct {
 	Stacks   []StackGen
 }
 
-// Generate renders a Tiltfile for the resolved workspace.
-func Generate(rw *config.ResolvedWorkspace, opts Options) (string, error) {
-	return GenerateCombined(rw, opts, nil)
-}
-
-// GenerateCombined renders one Tiltfile carrying base's services plus every
-// stack's overlay services. Base's resources keep their bare names; each stack's
-// resources are namespaced <service>:<stack> so the two never collide, their
-// resource_deps rewire to the stack's own services, and they carry the stack name
-// as a Tilt label. With no stacks it is byte-identical to Generate(base, opts).
-func GenerateCombined(base *config.ResolvedWorkspace, baseOpts Options, stacks []StackGen) (string, error) {
-	if base == nil || base.Manifest == nil {
-		return "", fmt.Errorf("nil resolved workspace")
-	}
-
-	var b strings.Builder
-	b.WriteString(header)
-
-	if err := renderWorkspace(&b, base, baseOpts, "", ""); err != nil {
-		return "", err
-	}
-	for _, s := range stacks {
-		if s.Workspace == nil || s.Workspace.Manifest == nil {
-			return "", fmt.Errorf("stack %q: nil resolved workspace", s.Namespace)
-		}
-		if err := renderWorkspace(&b, s.Workspace, s.Options, "", s.Namespace); err != nil {
-			return "", fmt.Errorf("stack %q: %w", s.Namespace, err)
-		}
-	}
-
-	return b.String(), nil
-}
-
 // GenerateHost renders one Tiltfile composing every workspace's base services
 // plus each active stack's overlay services, all as distinct resources. Every
 // resource name is prefixed with its workspace name (<ws>:<svc>, or
@@ -213,7 +180,7 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	if err != nil {
 		return "", err
 	}
-	if err := resolveLayerRefs(layers, svc.Name, book); err != nil {
+	if err := ResolveLayerRefs(layers, svc.Name, book); err != nil {
 		return "", err
 	}
 	if err := checkRequiredEnv(layers, m.Env.Required, svc.Name); err != nil {
@@ -277,7 +244,10 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	return b.String(), nil
 }
 
-func resolveLayerRefs(layers []config.EnvLayer, self string, book config.PortBook) error {
+// ResolveLayerRefs resolves ${service.field} references in the workspace/service
+// env.values layers against the port book, in place — the same resolution the
+// generated serve_env receives, so callers can preview it.
+func ResolveLayerRefs(layers []config.EnvLayer, self string, book config.PortBook) error {
 	for i := range layers {
 		if layers[i].Rung != config.RungWorkspaceValues && layers[i].Rung != config.RungServiceValues {
 			continue

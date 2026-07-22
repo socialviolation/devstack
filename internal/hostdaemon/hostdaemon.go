@@ -81,9 +81,10 @@ func ActiveStackGens(ws *workspace.Workspace) ([]tiltgen.StackGen, error) {
 		if !rec.Active {
 			continue
 		}
-		rw, err := config.ResolveWorkspace(rec.Root)
+		rw, err := stack.ResolveWorktree(&rec)
 		if err != nil {
-			return nil, fmt.Errorf("stack %q: failed to resolve manifests: %w", rec.Name, err)
+			fmt.Fprintf(os.Stderr, "warning: stack %q skipped from host generation: %v\n", rec.Name, err)
+			continue
 		}
 		names := make([]string, 0, len(rw.Services))
 		for name := range rw.Services {
@@ -91,7 +92,8 @@ func ActiveStackGens(ws *workspace.Workspace) ([]tiltgen.StackGen, error) {
 		}
 		opts, err := stack.GenerateOptions(&rec, names)
 		if err != nil {
-			return nil, fmt.Errorf("stack %q: %w", rec.Name, err)
+			fmt.Fprintf(os.Stderr, "warning: stack %q skipped from host generation: %v\n", rec.Name, err)
+			continue
 		}
 		gens = append(gens, tiltgen.StackGen{Workspace: rw, Options: opts, Namespace: rec.Name})
 	}

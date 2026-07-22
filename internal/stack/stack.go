@@ -353,6 +353,33 @@ func GenerateOptions(rec *Record, names []string) (tiltgen.Options, error) {
 	}, nil
 }
 
+// ResolveWorktree resolves a stack's worktree workspace and folds in the base
+// workspace's environment definitions and workspace-scope env selection, since a
+// stack inherits — never redefines — base's environments.
+func ResolveWorktree(rec *Record) (*config.ResolvedWorkspace, error) {
+	base, err := workspace.FindByName(rec.Base)
+	if err != nil {
+		return nil, fmt.Errorf("stack %q base workspace %q not found in registry: %w", rec.FullName(), rec.Base, err)
+	}
+	baseRW, err := config.ResolveWorkspace(base.Path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve base workspace %q at %s: %w", base.Name, base.Path, err)
+	}
+	rw, err := config.ResolveWorkspace(rec.Root)
+	if err != nil {
+		return nil, err
+	}
+	inheritBaseEnv(rw.Manifest, baseRW.Manifest)
+	return rw, nil
+}
+
+func inheritBaseEnv(worktree, base *config.WorkspaceManifest) {
+	worktree.Environments = base.Environments
+	if worktree.Workspace.Env == "" {
+		worktree.Workspace.Env = base.Workspace.Env
+	}
+}
+
 // Resolve returns a base workspace's stack by short feature name.
 func Resolve(workspaceName, name string) (*Record, error) {
 	return FindStack(workspaceName, name)

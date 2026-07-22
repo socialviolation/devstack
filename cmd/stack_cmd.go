@@ -12,6 +12,7 @@ import (
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/svcconfig"
+	"github.com/socialviolation/devstack/internal/tiltgen"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -239,7 +240,7 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	rw, err := config.ResolveWorkspace(rec.Root)
+	rw, err := stack.ResolveWorktree(rec)
 	if err != nil {
 		return err
 	}
@@ -253,7 +254,7 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("Effective config for %s in stack %s (read-only: what it WOULD run with)\n\n", service, rec.FullName())
+	fmt.Printf("Effective config for %s in stack %s (read-only: what it WOULD run with)\n", service, rec.FullName())
 	fmt.Printf("  %-42s %-12s %s\n", "KEY", "SOURCE", "VALUE")
 	fmt.Println(strings.Repeat("-", 90))
 	for _, e := range entries {
@@ -264,6 +265,50 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 		fmt.Printf("%s%-42s %-12s %s\n", marker, e.Key, e.Source, e.Value)
 	}
 	fmt.Printf("\n* = overridden by the stack (devstack-computed). Secret values shown as %s.\n", "••••")
+
+	names := make([]string, 0, len(rw.Services))
+	for n := range rw.Services {
+		names = append(names, n)
+	}
+	opts, oerr := stack.GenerateOptions(rec, names)
+	var managed map[string]string
+	if oerr == nil {
+		managed = opts.ManagedEnv[svc.Name]
+	}
+	layers, lerr := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, rec.Env, managed)
+	if lerr != nil {
+		fmt.Printf("\nEnvironment (serve_env ladder): unavailable: %v\n", lerr)
+		return nil
+	}
+	if oerr == nil {
+		if rerr := tiltgen.ResolveLayerRefs(layers, svc.Name, opts.Book); rerr != nil {
+			fmt.Printf("\nEnvironment (serve_env ladder): unavailable: %v\n", rerr)
+			return nil
+		}
+	}
+	merged := config.MergeEnvLadder(layers)
+	source := map[string]config.EnvRung{}
+	for _, l := range layers {
+		for k := range l.Values {
+			source[k] = l.Rung
+		}
+	}
+	keys := make([]string, 0, len(merged))
+	for k := range merged {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	fmt.Printf("\nEnvironment (serve_env ladder — what the process receives):\n")
+	fmt.Printf("  %-42s %-22s %s\n", "KEY", "SOURCE", "VALUE")
+	fmt.Println(strings.Repeat("-", 90))
+	for _, k := range keys {
+		v := merged[k]
+		if svcconfig.IsSecret(k, v) {
+			v = svcconfig.MaskedValue
+		}
+		fmt.Printf("  %-42s %-22s %s\n", k, string(source[k]), v)
+	}
 	return nil
 }
 
