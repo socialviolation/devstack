@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/stack"
@@ -14,14 +13,15 @@ import (
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
-// workspaceGenerateCmd manually refreshes the generated Tiltfile. It normally
+// workspaceGenerateCmd manually refreshes the host daemon's Tiltfile. It normally
 // runs automatically as part of `devstack workspace up`, so this is only for
 // inspecting the artifact without starting the daemon.
 var workspaceGenerateCmd = &cobra.Command{
 	Use:   "generate",
-	Short: "Generate the dev daemon config from devstack manifests",
-	Long: `Regenerate the workspace's Tiltfile from its devstack manifests
-(devstack.workspace.yaml + each service's devstack.service.yaml).
+	Short: "Regenerate the host daemon's Tiltfile from devstack manifests",
+	Long: `Regenerate the host daemon's Tiltfile — the single file the running Tilt
+daemon reads — composing every active workspace's base services plus each
+active feature stack's overlay services.
 
 The Tiltfile is a build artifact — edit the manifests, not the Tiltfile.
 Runs automatically as part of 'devstack workspace up'.`,
@@ -31,37 +31,10 @@ Runs automatically as part of 'devstack workspace up'.`,
 
 func init() {
 	workspaceCmd.AddCommand(workspaceGenerateCmd)
-	workspaceGenerateCmd.Flags().String("stack", "", "Generate for a named feature stack of the resolved workspace instead of the base")
 }
 
 func runGenerate(cmd *cobra.Command, args []string) error {
-	stackName, _ := cmd.Flags().GetString("stack")
-	if stackName != "" {
-		base, err := resolveWorkspace(viper.GetString("workspace"))
-		if err != nil {
-			return err
-		}
-		if _, err := stack.Resolve(base.Name, stackName); err != nil {
-			return err
-		}
-		return generateBase(base)
-	}
-	if base, _, err := stack.DetectFromCwd(); err == nil {
-		return generateBase(base)
-	}
-
-	ws, err := resolveWorkspace(viper.GetString("workspace"))
-	if err != nil {
-		return err
-	}
-	if !config.HasWorkspaceManifest(ws.Path) {
-		return fmt.Errorf("no %s in %s — this workspace isn't manifest-based yet", config.WorkspaceManifestFileName, ws.Path)
-	}
-	return generateBase(ws)
-}
-
-func generateBase(ws *workspace.Workspace) error {
-	path, err := regenerateTiltfile(ws)
+	path, err := regenerateHostTiltfile()
 	if err != nil {
 		return err
 	}

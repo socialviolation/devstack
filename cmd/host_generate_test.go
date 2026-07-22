@@ -65,6 +65,29 @@ func TestRegenerateHostTiltfilePrefixesActiveWorkspaceAndStack(t *testing.T) {
 	}
 }
 
+func TestRunGenerateWritesHostTiltfile(t *testing.T) {
+	buildStackScenario(t)
+
+	if err := workspace.SetWorkspaceActive("navexa", true); err != nil {
+		t.Fatalf("activate workspace: %v", err)
+	}
+
+	hostPath := filepath.Join(workspace.HostTiltDir(), "Tiltfile")
+	_ = os.Remove(hostPath)
+
+	if err := runGenerate(nil, nil); err != nil {
+		t.Fatalf("runGenerate: %v", err)
+	}
+
+	data, err := os.ReadFile(hostPath)
+	if err != nil {
+		t.Fatalf("runGenerate did not write host Tiltfile at %s: %v", hostPath, err)
+	}
+	if !strings.Contains(string(data), `"navexa:backend"`) {
+		t.Fatalf("host Tiltfile missing workspace-prefixed resource navexa:backend:\n%s", data)
+	}
+}
+
 func TestRegenerateHostTiltfileExcludesInactiveWorkspace(t *testing.T) {
 	buildStackScenario(t)
 
