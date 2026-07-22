@@ -33,7 +33,17 @@ type WorkspaceManifest struct {
 	Env           WorkspaceManifestEnv            `yaml:"env,omitempty"`
 	Groups        map[string][]string             `yaml:"groups,omitempty"`
 	Dependencies  map[string][]string             `yaml:"dependencies,omitempty"`
+	Calls         map[string][]string             `yaml:"calls,omitempty"`
+	StartsAfter   map[string][]string             `yaml:"startsAfter,omitempty"`
 	Environments  map[string]WorkspaceEnvironment `yaml:"environments,omitempty"`
+}
+
+// ResourceDeps returns the effective startup ordering for svc: the deduped,
+// sorted union of the legacy dependencies alias, startsAfter, and calls. A
+// called service must be running before its caller, so calls fold into the
+// ordering set that drives Tilt's resource_deps.
+func (m *WorkspaceManifest) ResourceDeps(svc string) []string {
+	return unionSorted(m.Dependencies[svc], m.StartsAfter[svc], m.Calls[svc])
 }
 
 // WorkspaceManifestEnv holds environment defaults that trickle down to every
@@ -45,6 +55,7 @@ type WorkspaceManifestEnv struct {
 
 type WorkspaceManifestWorkspace struct {
 	Name          string                         `yaml:"name"`
+	Env           string                         `yaml:"env,omitempty"`
 	RepoDiscovery WorkspaceManifestRepoDiscovery `yaml:"repoDiscovery,omitempty"`
 }
 
@@ -115,12 +126,14 @@ type WorkspaceManifestObservabilityDefaults struct {
 type WorkspaceEnvironment struct {
 	Type          string                            `yaml:"type,omitempty"`
 	Observability WorkspaceEnvironmentObservability `yaml:"observability,omitempty"`
+	Values        map[string]string                 `yaml:"values,omitempty"`
 }
 
 type WorkspaceEnvironmentObservability struct {
 	Backend      string `yaml:"backend,omitempty"`
 	URL          string `yaml:"url,omitempty"`
 	OTLPEndpoint string `yaml:"otlpEndpoint,omitempty"`
+	APIKey       string `yaml:"apiKey,omitempty"`
 }
 
 type ServiceManifest struct {
@@ -129,9 +142,20 @@ type ServiceManifest struct {
 	Runtime   ServiceRuntime         `yaml:"runtime,omitempty"`
 	Ports     map[string]int         `yaml:"ports,omitempty"`
 	Env       ServiceEnv             `yaml:"env,omitempty"`
+	Config    ServiceConfig          `yaml:"config,omitempty"`
 	Links     []ServiceLink          `yaml:"links,omitempty"`
 	Telemetry ServiceTelemetry       `yaml:"telemetry,omitempty"`
 	Dev       map[string]any         `yaml:"dev,omitempty"`
+}
+
+// ServiceConfig points at the service's own repo files that already declare its
+// config surface. Sources are read in order, later overriding earlier for a
+// shared key. PortEnv names the env var that carries this service's listen port,
+// the one the stack overlay overrides with the allocated port. Paths are relative
+// to the service repo root.
+type ServiceConfig struct {
+	Sources []string `yaml:"sources,omitempty"`
+	PortEnv string   `yaml:"portEnv,omitempty"`
 }
 
 // ServiceLink is a named URL surfaced in the dev daemon UI for a service.
@@ -142,6 +166,7 @@ type ServiceLink struct {
 
 type ServiceManifestService struct {
 	Name    string   `yaml:"name"`
+	Env     string   `yaml:"env,omitempty"`
 	Aliases []string `yaml:"aliases,omitempty"`
 }
 
@@ -588,6 +613,22 @@ func resolveRelative(basePath, value string) string {
 		return filepath.Clean(value)
 	}
 	return filepath.Clean(filepath.Join(basePath, value))
+}
+
+func unionSorted(lists ...[]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, list := range lists {
+		for _, v := range list {
+			if v == "" || seen[v] {
+				continue
+			}
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func cloneStringSlicesMap(in map[string][]string) map[string][]string {

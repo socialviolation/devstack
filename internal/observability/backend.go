@@ -10,6 +10,7 @@ type TraceQuery struct {
 	TraceID   string        // If set, fetch this specific trace (all other fields ignored)
 	SpanID    string        // If set, find the trace containing this span (TraceID takes precedence)
 	Service   string        // Optional service filter
+	Stack     string        // Optional devstack.stack resource-attribute filter ("base" for base workspace)
 	Attribute string        // Optional attribute key (paired with Value)
 	Value     string        // Optional attribute value to match
 	Since     time.Duration // Lookback window (default: 5 minutes)

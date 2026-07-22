@@ -273,7 +273,9 @@ func runOtelStop(cmd *cobra.Command, args []string) error {
 	localEnv, _ := ws.ResolveEnvironment("local")
 	plugin := activePlugin(ws, localEnv)
 
-	if !isOtelRunning(ws) {
+	collectorUp := otel.CollectorRunning(ws)
+	companionUp := plugin != nil && plugin.CompanionRunning(ws)
+	if !collectorUp && !companionUp {
 		fmt.Printf("OTEL stack is not running for '%s'\n", ws.Name)
 		return nil
 	}

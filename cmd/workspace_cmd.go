@@ -227,11 +227,21 @@ func runWorkspaceAdd(cmd *cobra.Command, args []string) error {
 }
 
 func runWorkspaceRemove(cmd *cobra.Command, args []string) error {
-	name := args[0]
+	removed, err := deregisterWorkspace(args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Printf("✓ Removed workspace '%s' (%s)\n", removed.Name, removed.Path)
+	return nil
+}
 
+// deregisterWorkspace drops the registry row for the named workspace (no file
+// cleanup) and returns the removed entry. Shared by `workspace remove` and
+// `stack rm`.
+func deregisterWorkspace(name string) (workspace.Workspace, error) {
 	workspaces, err := workspace.Load()
 	if err != nil {
-		return fmt.Errorf("failed to load workspace registry: %w", err)
+		return workspace.Workspace{}, fmt.Errorf("failed to load workspace registry: %w", err)
 	}
 
 	idx := -1
@@ -241,18 +251,15 @@ func runWorkspaceRemove(cmd *cobra.Command, args []string) error {
 			break
 		}
 	}
-
 	if idx == -1 {
-		return fmt.Errorf("workspace %q not found", name)
+		return workspace.Workspace{}, fmt.Errorf("workspace %q not found", name)
 	}
 
 	removed := workspaces[idx]
 	workspaces = append(workspaces[:idx], workspaces[idx+1:]...)
 
 	if err := workspace.Save(workspaces); err != nil {
-		return fmt.Errorf("failed to save workspace registry: %w", err)
+		return workspace.Workspace{}, fmt.Errorf("failed to save workspace registry: %w", err)
 	}
-
-	fmt.Printf("✓ Removed workspace '%s' (%s)\n", removed.Name, removed.Path)
-	return nil
+	return removed, nil
 }

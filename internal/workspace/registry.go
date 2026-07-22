@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/socialviolation/devstack/internal/config"
 )
@@ -54,14 +55,14 @@ type Workspace struct {
 	// OtelPluginConfig holds plugin-specific configuration key-value pairs.
 	OtelPluginConfig map[string]string `json:"otel_plugin_config,omitempty"`
 
-	// Environments is an optional map of named environments (local, staging, prod, etc).
-	// When absent, the MCP server synthesizes a "local" environment from the legacy flat fields above.
-	Environments map[string]Environment `json:"environments,omitempty"`
-
 	// Tunnel remote defaults for `devstack tunnel push/pull`. Machine-specific, so
 	// they live in the per-user registry rather than the committed project config.
 	TunnelHost string `json:"tunnel_host,omitempty"`
 	TunnelUser string `json:"tunnel_user,omitempty"`
+
+	// Active reports whether this workspace's services are folded into the one
+	// host Tilt daemon. `devstack workspace up` sets it, `down` clears it.
+	Active bool `json:"active,omitempty"`
 }
 
 // OverlayProjectConfig reads the workspace's .devstack.json and overlays any OTEL
@@ -108,13 +109,18 @@ func RegistryPath() string {
 	return filepath.Join(home, ".config", "devstack", "workspaces.json")
 }
 
-// DataDir returns the runtime data directory for a named workspace.
-func DataDir(name string) string {
+// DataRoot returns the directory holding every workspace's runtime data.
+func DataRoot() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = os.Getenv("HOME")
 	}
-	return filepath.Join(home, ".local", "share", "devstack", name) + "/"
+	return filepath.Join(home, ".local", "share", "devstack")
+}
+
+// DataDir returns the runtime data directory for a named workspace.
+func DataDir(name string) string {
+	return filepath.Join(DataRoot(), name) + "/"
 }
 
 // PIDFile returns the path to the Tilt PID file for a named workspace.
@@ -133,6 +139,31 @@ func LogFile(name string) string {
 		home = os.Getenv("HOME")
 	}
 	return filepath.Join(home, ".local", "share", "devstack", name, "tilt.log")
+}
+
+// hostKey is the reserved runtime key the single host Tilt daemon files its
+// data, PID, log, session, and Tiltfile under. It is not a registry workspace,
+// so it never collides with a real workspace name.
+const hostKey = "_devstack-host"
+
+// HostTiltPort is the fixed API port the one host Tilt daemon listens on. It is
+// distinct from the per-workspace TiltPort range (10350+).
+const HostTiltPort = 10300
+
+// HostPIDFile returns the PID file path for the host Tilt daemon.
+func HostPIDFile() string { return PIDFile(hostKey) }
+
+// HostLogFile returns the log file path for the host Tilt daemon.
+func HostLogFile() string { return LogFile(hostKey) }
+
+// HostTiltDir returns the host Tilt daemon's working directory, where its
+// generated Tiltfile lives.
+func HostTiltDir() string { return DataDir(hostKey) }
+
+// HostWorkspace returns the synthetic workspace the host daemon's session state
+// is keyed to (its runtime key and fixed port). It is never registered.
+func HostWorkspace() *Workspace {
+	return &Workspace{Name: hostKey, TiltPort: HostTiltPort}
 }
 
 // Load reads and parses the registry JSON file.
@@ -184,37 +215,64 @@ func expandPath(path string) string {
 	return home + path[1:]
 }
 
-// Register adds or updates a workspace in the registry.
-// If a workspace with the same path already exists, it is updated in place.
-// If TiltPort is 0, a port is auto-assigned starting from 10350.
+// Register adds a workspace, or updates the existing entry at the same path.
+// A name that collides case-insensitively with an entry at a different path is
+// rejected. If TiltPort is 0, a port is auto-assigned starting from 10350.
 func Register(ws Workspace) error {
 	ws.Path = filepath.Clean(expandPath(ws.Path))
 
-	workspaces, err := Load()
-	if err != nil {
-		return err
-	}
-
-	// Auto-assign port if not specified
-	if ws.TiltPort == 0 {
-		port, err := NextPort()
+	return withRegistryLock(func() error {
+		workspaces, err := Load()
 		if err != nil {
 			return err
 		}
-		ws.TiltPort = port
-	}
 
-	// Check for duplicate by path — update if exists
-	for i, existing := range workspaces {
-		if existing.Path == ws.Path {
-			workspaces[i] = ws
-			return Save(workspaces)
+		if ws.TiltPort == 0 {
+			port, err := nextPortFrom(workspaces)
+			if err != nil {
+				return err
+			}
+			ws.TiltPort = port
 		}
-	}
 
-	// Append new workspace
-	workspaces = append(workspaces, ws)
-	return Save(workspaces)
+		lowerName := strings.ToLower(ws.Name)
+		for _, existing := range workspaces {
+			if existing.Path != ws.Path && strings.ToLower(existing.Name) == lowerName {
+				return fmt.Errorf("workspace name %q already registered at %s", ws.Name, existing.Path)
+			}
+		}
+
+		for i, existing := range workspaces {
+			if existing.Path == ws.Path {
+				workspaces[i] = ws
+				return Save(workspaces)
+			}
+		}
+
+		workspaces = append(workspaces, ws)
+		return Save(workspaces)
+	})
+}
+
+// withRegistryLock runs fn while holding an exclusive advisory lock on a
+// dedicated lockfile beside the registry, serialising concurrent read-compute-write
+// sequences (allocate a port, then Save) across processes and goroutines. The
+// registry file itself is not locked because Save rewrites it.
+func withRegistryLock(fn func() error) error {
+	lockPath := RegistryPath() + ".lock"
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
+		return fmt.Errorf("failed to create registry directory: %w", err)
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open registry lock: %w", err)
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("failed to lock registry: %w", err)
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return fn()
 }
 
 // All returns all registered workspaces.
@@ -254,14 +312,15 @@ func FindByPath(path string) (*Workspace, error) {
 	return nil, fmt.Errorf("no workspace registered at path %q", path)
 }
 
-// DetectFromCwd detects the workspace that contains the current working directory.
-// Returns an error if the cwd is not inside any registered workspace.
+// DetectFromCwd returns the registered workspace whose path is the longest prefix
+// of the current working directory, so a nested worktree resolves to itself rather
+// than to an ancestor workspace. Returns an error if the cwd is not inside any
+// registered workspace.
 func DetectFromCwd() (*Workspace, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current directory: %w", err)
 	}
-	// Resolve symlinks so $PWD-based logical paths match the stored canonical path.
 	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 		cwd = resolved
 	}
@@ -271,15 +330,23 @@ func DetectFromCwd() (*Workspace, error) {
 		return nil, err
 	}
 
-	for _, ws := range workspaces {
-		wsPath := ws.Path
+	best := -1
+	bestLen := -1
+	for i := range workspaces {
+		wsPath := workspaces[i].Path
 		if resolved, err := filepath.EvalSymlinks(wsPath); err == nil {
 			wsPath = resolved
 		}
 		if cwd == wsPath || strings.HasPrefix(cwd, wsPath+"/") {
-			w := ws
-			return &w, nil
+			if len(wsPath) > bestLen {
+				bestLen = len(wsPath)
+				best = i
+			}
 		}
+	}
+	if best >= 0 {
+		w := workspaces[best]
+		return &w, nil
 	}
 	return nil, fmt.Errorf("not inside a registered devstack workspace. Run: devstack register")
 }
@@ -401,16 +468,57 @@ func UpdatePort(name string, port int) error {
 	return fmt.Errorf("workspace %q not found", name)
 }
 
-// ResolveEnvironment returns the named environment config.
-// If Environments is nil or the name is not found, synthesizes a "local" environment
-// from the workspace's legacy flat OTEL fields (backward compatible).
-func (ws *Workspace) ResolveEnvironment(name string) (Environment, bool) {
-	if ws.Environments != nil {
-		if env, ok := ws.Environments[name]; ok {
-			return env, true
+// SetWorkspaceActive marks a workspace active or inactive and persists it. An
+// active workspace's services are folded into the one host Tilt daemon. Errors
+// if the workspace is unknown.
+func SetWorkspaceActive(name string, active bool) error {
+	return withRegistryLock(func() error {
+		workspaces, err := Load()
+		if err != nil {
+			return err
+		}
+		lower := strings.ToLower(name)
+		for i := range workspaces {
+			if strings.ToLower(workspaces[i].Name) == lower {
+				workspaces[i].Active = active
+				return Save(workspaces)
+			}
+		}
+		return fmt.Errorf("workspace %q not found", name)
+	})
+}
+
+// ActiveWorkspaces returns the registered workspaces marked active, in registry order.
+func ActiveWorkspaces() ([]Workspace, error) {
+	workspaces, err := Load()
+	if err != nil {
+		return nil, err
+	}
+	var active []Workspace
+	for _, ws := range workspaces {
+		if ws.Active {
+			active = append(active, ws)
 		}
 	}
-	// Synthesize local from legacy fields
+	return active, nil
+}
+
+// AnyWorkspaceActive reports whether any registered workspace is active.
+func AnyWorkspaceActive() (bool, error) {
+	workspaces, err := Load()
+	if err != nil {
+		return false, err
+	}
+	for _, ws := range workspaces {
+		if ws.Active {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// ResolveEnvironment returns the named environment config.
+func (ws *Workspace) ResolveEnvironment(name string) (Environment, bool) {
 	if name == "local" || name == "" {
 		return Environment{
 			Type: EnvironmentTypeLocal,
@@ -423,75 +531,44 @@ func (ws *Workspace) ResolveEnvironment(name string) (Environment, bool) {
 	return Environment{}, false
 }
 
-// AllEnvironments returns all configured environments, always including a synthetic "local"
-// entry derived from legacy fields if no explicit local environment is configured.
-func (ws *Workspace) AllEnvironments() map[string]Environment {
-	result := map[string]Environment{}
-	// Start with synthetic local
-	localEnv, _ := ws.ResolveEnvironment("local")
-	result["local"] = localEnv
-	// Overlay explicit environments
-	for name, env := range ws.Environments {
-		result[name] = env
-	}
-	return result
-}
+const minPort = 10350
+const portScanLimit = 1000
 
-// AddEnvironment adds or replaces a named environment in the workspace.
-func AddEnvironment(workspaceName, envName string, env Environment) error {
-	workspaces, err := Load()
-	if err != nil {
-		return err
-	}
-	for i, ws := range workspaces {
-		if strings.ToLower(ws.Name) == strings.ToLower(workspaceName) {
-			if workspaces[i].Environments == nil {
-				workspaces[i].Environments = map[string]Environment{}
-			}
-			workspaces[i].Environments[envName] = env
-			return Save(workspaces)
-		}
-	}
-	return fmt.Errorf("workspace %q not found", workspaceName)
-}
+// portInUse reports whether a port is already listening on localhost. It aliases
+// the session dial-probe so the allocator and the residue detector share one
+// implementation; tests override it to exercise the exhaustion path.
+var portInUse = portListening
 
-// RemoveEnvironment removes a named environment from the workspace.
-// Returns an error if trying to remove "local" (it's synthesized and cannot be removed).
-func RemoveEnvironment(workspaceName, envName string) error {
-	if envName == "local" {
-		return fmt.Errorf("cannot remove built-in %q environment", envName)
-	}
-	workspaces, err := Load()
-	if err != nil {
-		return err
-	}
-	for i, ws := range workspaces {
-		if strings.ToLower(ws.Name) == strings.ToLower(workspaceName) {
-			delete(workspaces[i].Environments, envName)
-			return Save(workspaces)
-		}
-	}
-	return fmt.Errorf("workspace %q not found", workspaceName)
-}
-
-// NextPort returns the next available Tilt port (max existing port + 1, minimum 10350).
-// If no workspaces are registered, returns 10350.
+// NextPort returns the next free Tilt port, starting from max-registered-port+1
+// (minimum 10350) and skipping any candidate that is already a registered
+// TiltPort or currently listening on localhost. Not race-safe on its own; the
+// atomic allocate-and-register path goes through Register.
 func NextPort() (int, error) {
 	workspaces, err := Load()
 	if err != nil {
 		return 0, err
 	}
+	return nextPortFrom(workspaces)
+}
 
-	const minPort = 10350
+// nextPortFrom computes the next free port against an already-loaded registry,
+// so a caller holding the registry lock reserves without a second Load.
+func nextPortFrom(workspaces []Workspace) (int, error) {
+	used := make(map[int]bool, len(workspaces))
 	max := minPort - 1
 	for _, ws := range workspaces {
+		used[ws.TiltPort] = true
 		if ws.TiltPort > max {
 			max = ws.TiltPort
 		}
 	}
 
-	if max < minPort {
-		return minPort, nil
+	start := max + 1
+	for candidate := start; candidate < start+portScanLimit; candidate++ {
+		if used[candidate] || portInUse(candidate) {
+			continue
+		}
+		return candidate, nil
 	}
-	return max + 1, nil
+	return 0, fmt.Errorf("no free port found in range %d-%d", start, start+portScanLimit-1)
 }

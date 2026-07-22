@@ -14,7 +14,7 @@ var openCmd = &cobra.Command{
 	Short: "Open the dev daemon dashboard in the browser",
 	Long: `Open the dev daemon UI for the current workspace in the browser.
 The dashboard shows all running services, their build logs, and status.`,
-	RunE:  runOpen,
+	RunE: runOpen,
 }
 
 func init() {
@@ -36,7 +36,7 @@ func runOpen(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("could not resolve workspace: %w\nTry: devstack open --workspace=<name>", err)
 	}
 
-	url := fmt.Sprintf("http://localhost:%d", ws.TiltPort)
+	url := fmt.Sprintf("http://localhost:%d", workspace.HostTiltPort)
 	fmt.Printf("Opening dashboard for '%s': %s\n", ws.Name, url)
 	return exec.Command("xdg-open", url).Start()
 }

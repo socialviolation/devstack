@@ -36,6 +36,7 @@ func init() {
 		svcStartCmd.Flags().String("group", "", "Start a named group of services (hidden alias: pass group name as positional arg instead)")
 	}
 	svcStartCmd.Flags().MarkHidden("group")
+	svcStartCmd.Flags().String("stack", "", "Target a feature stack's service instances (<ws>:<svc>:<stack>) instead of base")
 }
 
 func runEnable(cmd *cobra.Command, args []string) error {
@@ -47,7 +48,13 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	cfg, err := config.Load(ws.Path)
+	stackName, _ := cmd.Flags().GetString("stack")
+	tiltPort, namespace, wsPath, label, err := resolveStackTarget(ws, stackName)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(wsPath)
 	if err != nil {
 		return err
 	}
@@ -61,7 +68,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 	}
 
 	// Resolve target to a list of services (service or group)
-	services, err := resolveTarget(ws.Path, targetName, cfg)
+	services, err := resolveTarget(wsPath, targetName, cfg)
 	if err != nil {
 		return err
 	}
@@ -87,10 +94,16 @@ func runEnable(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Starting: %s\n", strings.Join(toTrigger, ", "))
+	if label != "" {
+		fmt.Printf("Target: %s (:%d)\n", label, tiltPort)
+	}
 
-	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
+	tiltClient := tilt.NewClient("localhost", tiltPort)
 	view, err := tiltClient.GetView()
 	if err != nil {
+		if stackName != "" {
+			return fmt.Errorf("dev daemon not reachable on :%d — start the stack first with: devstack stack up %s\n(%w)", tiltPort, stackName, err)
+		}
 		// Daemon not running — bring it up automatically, then retry. runStart is
 		// idempotent and self-resolves the workspace, so this is a no-op if it's
 		// already up by the time we get here.
@@ -104,29 +117,36 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Build a set of disabled resources for quick lookup
+	// Build sets of disabled and present resources for quick lookup
 	disabled := map[string]bool{}
+	present := map[string]bool{}
 	for _, r := range view.UiResources {
+		present[r.Metadata.Name] = true
 		if r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
 			disabled[r.Metadata.Name] = true
 		}
 	}
 
 	for _, svc := range toTrigger {
-		if disabled[svc] {
-			if out, err := tiltClient.RunCLI("enable", svc); err != nil {
+		rn := resourceName(ws.Name, svc, namespace)
+		if stackName != "" && !present[rn] {
+			fmt.Printf("  (dep %s runs in base — not started here)\n", svc)
+			continue
+		}
+		if disabled[rn] {
+			if out, err := tiltClient.RunCLI("enable", rn); err != nil {
 				if out != "" {
 					fmt.Print(out)
 				}
-				return fmt.Errorf("enable %s failed: %w", svc, err)
+				return fmt.Errorf("enable %s failed: %w", rn, err)
 			}
 		}
-		out, err := tiltClient.RunCLI("trigger", svc)
+		out, err := tiltClient.RunCLI("trigger", rn)
 		if err != nil {
 			if out != "" {
 				fmt.Print(out)
 			}
-			return fmt.Errorf("trigger %s failed: %w", svc, err)
+			return fmt.Errorf("trigger %s failed: %w", rn, err)
 		}
 		if out != "" {
 			fmt.Print(out)

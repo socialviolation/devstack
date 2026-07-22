@@ -13,6 +13,7 @@ import (
 
 	"github.com/fatih/color"
 
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -77,7 +78,7 @@ func buildGroupTree(members []string, deps map[string][]string) []*treeNode {
 // renderStatusNodes renders a slice of treeNodes as a status tree at the given indent level.
 // memberSet is the set of all services in the current group; cross-group deps show as arrows.
 // serviceDirs maps service name → source directory (may be empty map).
-func renderStatusNodes(nodes []*treeNode, indent string, resourceMap map[string]tilt.UIResource, deps map[string][]string, memberSet map[string]bool, svcGroupColor map[string]*color.Color, serviceDirs map[string]string) {
+func renderStatusNodes(nodes []*treeNode, indent string, resourceMap map[string]tilt.UIResource, deps map[string][]string, memberSet map[string]bool, svcGroupColor map[string]*color.Color, serviceDirs map[string]string, svcEnvNames map[string]string) {
 	for i, node := range nodes {
 		isLast := i == len(nodes)-1
 		branch := "├── "
@@ -96,6 +97,7 @@ func renderStatusNodes(nodes []*treeNode, indent string, resourceMap map[string]
 		statusClr.Printf("%-10s", statusStr)
 		fmt.Print("  ")
 		printPorts(portsRaw, 14)
+		printEnv(svc, svcEnvNames)
 
 		var crossDeps []string
 		for _, dep := range deps[svc] {
@@ -124,11 +126,10 @@ func renderStatusNodes(nodes []*treeNode, indent string, resourceMap map[string]
 		}
 
 		if len(node.children) > 0 {
-			renderStatusNodes(node.children, indent+childIndent, resourceMap, deps, memberSet, svcGroupColor, serviceDirs)
+			renderStatusNodes(node.children, indent+childIndent, resourceMap, deps, memberSet, svcGroupColor, serviceDirs, svcEnvNames)
 		}
 	}
 }
-
 
 // runStatusAll shows a summary table of all registered workspaces.
 func runStatusAll() error {
@@ -167,8 +168,8 @@ func runStatusAll() error {
 				}
 			}
 
-			// Probe Tilt HTTP API
-			apiURL := fmt.Sprintf("http://localhost:%d/api/view", w.TiltPort)
+			// Probe the one host daemon; every workspace's resources live there.
+			apiURL := fmt.Sprintf("http://localhost:%d/api/view", workspace.HostTiltPort)
 			client := &http.Client{Timeout: 2 * time.Second}
 			resp, err := client.Get(apiURL)
 			if err != nil || resp.StatusCode != http.StatusOK {
@@ -183,8 +184,7 @@ func runStatusAll() error {
 			}
 			defer resp.Body.Close()
 
-			// Tilt is reachable — parse service counts
-			tiltClient := tilt.NewClient("localhost", w.TiltPort)
+			tiltClient := tilt.NewClient("localhost", workspace.HostTiltPort)
 			view, err := tiltClient.GetView()
 			if err != nil {
 				r.status = "running"
@@ -193,17 +193,23 @@ func runStatusAll() error {
 				return
 			}
 
-			r.status = "running"
-			total := len(view.UiResources)
+			prefix := w.Name + ":"
+			total := 0
 			active := 0
 			for _, res := range view.UiResources {
+				if !strings.HasPrefix(res.Metadata.Name, prefix) {
+					continue
+				}
+				total++
 				if res.Status.RuntimeStatus == "ok" {
 					active++
 				}
 			}
 			if total == 0 {
+				r.status = "inactive"
 				r.services = "0 services"
 			} else {
+				r.status = "running"
 				r.services = fmt.Sprintf("%d services (%d active)", total, active)
 			}
 			results[idx] = r
@@ -212,6 +218,7 @@ func runStatusAll() error {
 
 	wg.Wait()
 
+	fmt.Printf("All workspaces and their stacks run in one host daemon on :%d, addressable as <workspace>:<service>[:<stack>].\n\n", workspace.HostTiltPort)
 	fmt.Printf("%-16s %-36s %-8s %-12s %s\n", "WORKSPACE", "PATH", "PORT", "STATUS", "SERVICES")
 	fmt.Println(strings.Repeat("-", 88))
 	for _, r := range results {
@@ -222,10 +229,15 @@ func runStatusAll() error {
 		fmt.Printf("%-16s %-36s %-8d %-12s %s\n",
 			r.ws.Name,
 			path,
-			r.ws.TiltPort,
+			workspace.HostTiltPort,
 			r.status,
 			r.services,
 		)
+		if stacks, serr := stack.List(r.ws.Name); serr == nil {
+			for _, s := range stacks {
+				fmt.Printf("  └ %-14s %-36s %-8d %s\n", s.Name, "", s.BasePort, s.Status)
+			}
+		}
 	}
 
 	return nil
@@ -307,4 +319,3 @@ func shortDir(path string) string {
 	}
 	return path
 }
-

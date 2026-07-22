@@ -14,7 +14,7 @@ const workspaceManifestTemplate = `# devstack workspace manifest — the SINGLE 
 #
 # The dev daemon's Tiltfile is GENERATED from this file + each service's
 # devstack.service.yaml. Never edit the Tiltfile by hand — edit these manifests
-# and run 'devstack up' (or 'devstack generate') to regenerate it.
+# and run 'devstack workspace up' (or 'devstack workspace generate') to regenerate it.
 version: 1
 
 workspace:

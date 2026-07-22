@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -86,10 +87,18 @@ func StartCollector(ws *workspace.Workspace, plugin Plugin) error {
 		return fmt.Errorf("failed to create data dir: %w", err)
 	}
 
-	// Spawn otelcol-contrib as background process
+	// Detached background process, logging to a file — never inherit the caller's
+	// stdout/stderr, which would keep its pipe open and block the caller.
+	logFile, err := os.OpenFile(filepath.Join(filepath.Dir(pidPath), "collector.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open collector log: %w", err)
+	}
+	defer logFile.Close()
+
 	cmd := exec.Command(bin, "--config="+cfgPath)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start otelcol-contrib: %w", err)
 	}

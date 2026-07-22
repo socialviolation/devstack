@@ -9,19 +9,20 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 // registerEnvironmentTool registers the "environment" tool which orients agents immediately.
 // This is the MOST IMPORTANT discoverability tool — calling it first reveals what's possible.
 func registerEnvironmentTool(mcpServer *server.MCPServer, activeEnvName string,
-	activeEnv workspace.Environment, allEnvs map[string]workspace.Environment, workspaceName, workspacePath string) {
+	activeEnv workspace.Environment, allEnvs map[string]workspace.Environment, workspaceName, workspacePath string, ws *workspace.Workspace) {
 
 	tool := mcp.NewTool("environment",
 		mcp.WithDescription(
 			"Show the active environment and available tools. "+
 				"Call this first to understand what you can and cannot do in the current context. "+
-				"Environments: local (full control) vs remote (observability-only, no service restart/stop). "+
+				"'env' means two distinct things here: (1) the INFRA environment — local (full control) vs remote (observability-only, no service restart/stop) — which sets your capabilities and is switched with DEVSTACK_ENVIRONMENT; and (2) the CONFIG-PATCH environment — a named set of config vars (e.g. 'staging') that a workspace, service, or stack instance is pointed at via env_use (CLI: devstack env use). status and env_which show which config-patch env each instance currently points at. "+
 				"devstack is a LOCAL development environment. Data is ephemeral and local — not production. "+
 				"The available tools depend on this workspace's configuration: trace/telemetry tools appear only when observability is enabled, tunnel tools only when tailscale is installed. "+
 				"Call this tool first to understand the context before using other tools.",
@@ -47,13 +48,16 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, activeEnvName string,
 			fmt.Fprintf(&sb, "env: %s (%s) %s@%s\n", activeEnvName, activeEnv.Type, backend, activeEnv.Observability.URL)
 		}
 		if otelOn {
-			fmt.Fprintf(&sb, "stack: %s + local dev daemon — local dev only, ephemeral data\n", backend)
+			fmt.Fprintf(&sb, "observability: %s + local dev daemon — local dev only, ephemeral data\n", backend)
 		} else {
-			fmt.Fprintf(&sb, "stack: local dev daemon (observability disabled) — local dev only, ephemeral data\n")
+			fmt.Fprintf(&sb, "observability: local dev daemon (disabled) — local dev only, ephemeral data\n")
 		}
 
 		if activeEnv.Type == workspace.EnvironmentTypeLocal {
-			tools := []string{"status", "restart", "stop", "configure", "process_logs", "service_env", "observability"}
+			if line := stacksSummary(ws); line != "" {
+				sb.WriteString(line)
+			}
+			tools := []string{"status", "restart", "stop", "configure", "process_logs", "service_env", "observability", "stack_create", "stack_list", "stack_up", "stack_down", "stack_rm", "env_use", "env_which", "env_set"}
 			if otelOn {
 				tools = append(tools, "investigate")
 			}
@@ -85,9 +89,36 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, activeEnvName string,
 			}
 			envList = append(envList, entry)
 		}
-		fmt.Fprintf(&sb, "envs: %s\n", strings.Join(envList, ", "))
-		fmt.Fprintf(&sb, "switch: DEVSTACK_ENVIRONMENT=<name>\n")
+		fmt.Fprintf(&sb, "infra envs: %s\n", strings.Join(envList, ", "))
+		fmt.Fprintf(&sb, "switch infra env: DEVSTACK_ENVIRONMENT=<name>\n")
+		if activeEnv.Type == workspace.EnvironmentTypeLocal {
+			fmt.Fprintf(&sb, "config-patch env: services/workspace/stack are pointed at a named config env via env_use (devstack env use); status and env_which show where each instance points.\n")
+		}
 
 		return mcp.NewToolResultText(sb.String()), nil
 	})
+}
+
+// stacksSummary reports the workspace identity and its in-flight feature stacks,
+// so an agent bound to the base immediately sees the other versions in flight.
+func stacksSummary(ws *workspace.Workspace) string {
+	if ws == nil {
+		return ""
+	}
+	stacks, err := stack.List(ws.Name)
+	if err != nil {
+		return ""
+	}
+	if len(stacks) == 0 {
+		return fmt.Sprintf("workspace: %s — base only, no feature stacks in flight\n", ws.Name)
+	}
+	parts := make([]string, 0, len(stacks))
+	for _, s := range stacks {
+		if s.Status == "active" {
+			parts = append(parts, fmt.Sprintf("%s (active, base :%d)", s.Name, s.BasePort))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s (%s)", s.Name, s.Status))
+		}
+	}
+	return fmt.Sprintf("workspace: %s — base + %d feature stack(s) in flight: %s\n", ws.Name, len(stacks), strings.Join(parts, ", "))
 }

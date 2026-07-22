@@ -14,20 +14,25 @@ import (
 // formatting survives the round-trip.
 func editWorkspaceManifest(workspacePath string, mutate func(root *yaml.Node) error) error {
 	if !HasWorkspaceManifest(workspacePath) {
-		return fmt.Errorf("no %s in %s — observability config lives in the workspace manifest", WorkspaceManifestFileName, workspacePath)
+		return fmt.Errorf("no %s in %s — config lives in the workspace manifest", WorkspaceManifestFileName, workspacePath)
 	}
-	path := WorkspaceManifestPath(workspacePath)
+	return editManifest(WorkspaceManifestPath(workspacePath), mutate)
+}
+
+// editManifest applies mutate to the manifest's root mapping node at path and
+// writes the result back.
+func editManifest(path string, mutate func(root *yaml.Node) error) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("failed to read workspace manifest %s: %w", path, err)
+		return fmt.Errorf("failed to read manifest %s: %w", path, err)
 	}
 
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return fmt.Errorf("failed to parse workspace manifest %s: %w", path, err)
+		return fmt.Errorf("failed to parse manifest %s: %w", path, err)
 	}
 	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
-		return fmt.Errorf("workspace manifest %s is not a mapping", path)
+		return fmt.Errorf("manifest %s is not a mapping", path)
 	}
 
 	if err := mutate(doc.Content[0]); err != nil {
@@ -38,14 +43,98 @@ func editWorkspaceManifest(workspacePath string, mutate func(root *yaml.Node) er
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
 	if err := enc.Encode(&doc); err != nil {
-		return fmt.Errorf("failed to encode workspace manifest: %w", err)
+		return fmt.Errorf("failed to encode manifest %s: %w", path, err)
 	}
 	enc.Close()
 
 	if err := os.WriteFile(path, buf.Bytes(), 0644); err != nil {
-		return fmt.Errorf("failed to write workspace manifest %s: %w", path, err)
+		return fmt.Errorf("failed to write manifest %s: %w", path, err)
 	}
 	return nil
+}
+
+// SetServiceEnvValue writes key=value into the service manifest's env.values at
+// repoPath, creating the env.values block if absent. It preserves comments and
+// unrelated fields.
+//
+// env.values is committed to git: callers must not route secrets here.
+func SetServiceEnvValue(repoPath, key, value string) error {
+	if !HasServiceManifest(repoPath) {
+		return fmt.Errorf("no %s in %s", ServiceManifestFileName, repoPath)
+	}
+	return editManifest(ServiceManifestPath(repoPath), func(root *yaml.Node) error {
+		values := mappingChild(mappingChild(root, "env"), "values")
+		if values.Kind != yaml.MappingNode {
+			return fmt.Errorf("env.values in %s is not a mapping", ServiceManifestPath(repoPath))
+		}
+		setScalar(values, key, value, "!!str")
+		return nil
+	})
+}
+
+// SetEnvValue writes environments.<envName>.values.<key>=value into the
+// workspace manifest, creating the environments, env, and values mappings as
+// needed. It preserves comments and unrelated fields.
+func SetEnvValue(workspacePath, envName, key, value string) error {
+	return editWorkspaceManifest(workspacePath, func(root *yaml.Node) error {
+		values := mappingChild(mappingChild(mappingChild(root, "environments"), envName), "values")
+		if values.Kind != yaml.MappingNode {
+			return fmt.Errorf("environments.%s.values is not a mapping", envName)
+		}
+		setScalar(values, key, value, "!!str")
+		return nil
+	})
+}
+
+// SetEnvironment writes environments.<envName>.type and its observability
+// backend/url/otlpEndpoint into the workspace manifest, creating the blocks as
+// needed and preserving any existing environments.<envName>.values. Empty
+// observability fields are cleared so a re-add can drop a previously set value.
+// It does not touch values — that is SetEnvValue's job.
+func SetEnvironment(workspacePath, envName string, env WorkspaceEnvironment) error {
+	return editWorkspaceManifest(workspacePath, func(root *yaml.Node) error {
+		envNode := mappingChild(mappingChild(root, "environments"), envName)
+		setScalar(envNode, "type", env.Type, "!!str")
+		obs := mappingChild(envNode, "observability")
+		setOrClear(obs, "backend", env.Observability.Backend)
+		setOrClear(obs, "url", env.Observability.URL)
+		setOrClear(obs, "otlpEndpoint", env.Observability.OTLPEndpoint)
+		setOrClear(obs, "apiKey", env.Observability.APIKey)
+		return nil
+	})
+}
+
+// RemoveEnvironment deletes environments.<envName> from the workspace manifest.
+func RemoveEnvironment(workspacePath, envName string) error {
+	return editWorkspaceManifest(workspacePath, func(root *yaml.Node) error {
+		envs := mapValue(root, "environments")
+		if envs == nil || envs.Kind != yaml.MappingNode {
+			return fmt.Errorf("environment %q is not defined in %s", envName, WorkspaceManifestFileName)
+		}
+		deleteKey(envs, envName)
+		return nil
+	})
+}
+
+// SetWorkspaceEnv sets workspace.env to envName in the workspace manifest,
+// selecting the active env at the workspace scope.
+func SetWorkspaceEnv(workspacePath, envName string) error {
+	return editWorkspaceManifest(workspacePath, func(root *yaml.Node) error {
+		setScalar(mappingChild(root, "workspace"), "env", envName, "!!str")
+		return nil
+	})
+}
+
+// SetServiceEnv sets service.env to envName in the service manifest at repoPath,
+// selecting the active env at the service scope.
+func SetServiceEnv(repoPath, envName string) error {
+	if !HasServiceManifest(repoPath) {
+		return fmt.Errorf("no %s in %s", ServiceManifestFileName, repoPath)
+	}
+	return editManifest(ServiceManifestPath(repoPath), func(root *yaml.Node) error {
+		setScalar(mappingChild(root, "service"), "env", envName, "!!str")
+		return nil
+	})
 }
 
 // SetObservabilityEnabled writes observability.enabled into the workspace
@@ -104,6 +193,12 @@ func AddServiceRepo(workspacePath, repoRelPath string) error {
 // empty mapping (and the key) when it does not yet exist.
 func mappingChild(parent *yaml.Node, key string) *yaml.Node {
 	if v := mapValue(parent, key); v != nil {
+		// A bare "key:" parses as a null scalar; appending to it would emit garbage.
+		if v.Kind == yaml.ScalarNode && v.Tag == "!!null" {
+			v.Kind = yaml.MappingNode
+			v.Tag = "!!map"
+			v.Value = ""
+		}
 		return v
 	}
 	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}
@@ -134,6 +229,16 @@ func setScalar(m *yaml.Node, key, value, tag string) {
 	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}
 	valNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: value}
 	m.Content = append(m.Content, keyNode, valNode)
+}
+
+// setOrClear sets key to a string scalar when value is non-empty, otherwise
+// removes the key so an empty field is not serialised.
+func setOrClear(m *yaml.Node, key, value string) {
+	if value == "" {
+		deleteKey(m, key)
+		return
+	}
+	setScalar(m, key, value, "!!str")
 }
 
 // deleteKey removes key (and its value) from a mapping node if present.

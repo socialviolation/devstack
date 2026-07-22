@@ -78,15 +78,26 @@ func CheckConnectivity(user, host string) error {
 	return nil
 }
 
-// Discover returns the services and ports to forward from a Tilt view.
-// If filter is non-empty, only services whose name is in the set are returned.
+// Discover returns the services and ports to forward from a Tilt view, scoped to
+// one workspace. The host daemon's view namespaces resources as "<ws>:<svc>"
+// (base) or "<ws>:<svc>:<stack>" (a feature stack's overlay); only resources
+// belonging to wsName are considered, and stack resources are included only when
+// includeStacks is true. If filter is non-empty, only services whose bare name
+// (<svc>) is in the set are returned, so callers keep passing "api,frontend".
 // Each distinct port is returned once (the first service that exposes it wins).
-func Discover(view *tilt.TiltView, filter map[string]bool) []Service {
+func Discover(view *tilt.TiltView, filter map[string]bool, wsName string, includeStacks bool) []Service {
 	var out []Service
 	seen := make(map[int]bool)
 	for _, r := range view.UiResources {
-		name := r.Metadata.Name
-		if len(filter) > 0 && !filter[name] {
+		svc, name, ok := splitNamespaced(r.Metadata.Name, wsName)
+		if !ok {
+			continue
+		}
+		isStack := svc != name
+		if isStack && !includeStacks {
+			continue
+		}
+		if len(filter) > 0 && !filter[svc] {
 			continue
 		}
 		for _, link := range r.Status.EndpointLinks {
@@ -99,6 +110,23 @@ func Discover(view *tilt.TiltView, filter map[string]bool) []Service {
 		}
 	}
 	return out
+}
+
+// splitNamespaced parses a host-daemon resource name "<wsName>:<svc>[:<stack>]".
+// It returns the bare service name, the workspace-relative name (<svc> for a base
+// resource, <svc>:<stack> for a stack overlay), and whether the resource belongs
+// to wsName at all.
+func splitNamespaced(resourceName, wsName string) (svc, name string, ok bool) {
+	prefix := wsName + ":"
+	if !strings.HasPrefix(resourceName, prefix) {
+		return "", "", false
+	}
+	name = resourceName[len(prefix):]
+	svc = name
+	if i := strings.Index(name, ":"); i >= 0 {
+		svc = name[:i]
+	}
+	return svc, name, true
 }
 
 // Listening reports whether a TCP port is accepting connections on localhost —
@@ -242,19 +270,56 @@ func KillPort(wsName string, port int) {
 	}
 }
 
-// strayForwards scans /proc for ssh processes forwarding the given port
-// (matching either "-L <fwd>" or "-R <fwd>"), regardless of PID-file tracking.
+// trackedForwards returns every PID recorded in any workspace's tunnel PID
+// files. It reads the data root rather than the registry so that an
+// unregistered workspace's forwards still count as owned.
+func trackedForwards() map[int]bool {
+	owned := map[int]bool{}
+	names, err := os.ReadDir(workspace.DataRoot())
+	if err != nil {
+		return owned
+	}
+	for _, n := range names {
+		if !n.IsDir() {
+			continue
+		}
+		dir := Dir(n.Name())
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if !strings.HasSuffix(f.Name(), ".pid") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(dir, f.Name()))
+			if err != nil {
+				continue
+			}
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
+				owned[pid] = true
+			}
+		}
+	}
+	return owned
+}
+
+// strayForwards scans /proc for ssh processes forwarding the given port that no
+// workspace claims. A forward another workspace tracks is never stray: killing
+// it would sabotage that stack, so the clash surfaces via ExitOnForwardFailure
+// instead.
 func strayForwards(port int) []int {
 	fwd := fmt.Sprintf("%d:localhost:%d", port, port)
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil
 	}
+	owned := trackedForwards()
 	self := os.Getpid()
 	var pids []int
 	for _, e := range entries {
 		pid, err := strconv.Atoi(e.Name())
-		if err != nil || pid == self {
+		if err != nil || pid == self || owned[pid] {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
@@ -275,8 +340,10 @@ func strayForwards(port int) []int {
 	return pids
 }
 
-// ReclaimRemote frees the given ports on the remote host before a push, killing
-// whatever is bound there so the reverse forwards can bind. Best-effort.
+// ReclaimRemote frees the given ports on the remote host, killing whatever is
+// bound there so a reverse forward can bind. Best-effort, and indiscriminate:
+// it cannot tell a stale forward of ours from a live one another stack owns, so
+// callers must keep it opt-in.
 func ReclaimRemote(user, host string, ports []int) {
 	if len(ports) == 0 {
 		return

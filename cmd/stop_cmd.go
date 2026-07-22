@@ -26,6 +26,7 @@ Accepts a service name or group name. Run 'devstack groups' to see available gro
 
 func init() {
 	rootCmd.AddCommand(stopCmd)
+	stopCmd.Flags().String("stack", "", "Target a feature stack's service instances (<ws>:<svc>:<stack>) instead of base")
 }
 
 func runStop(cmd *cobra.Command, args []string) error {
@@ -37,7 +38,13 @@ func runStop(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	cfg, err := config.Load(ws.Path)
+	stackName, _ := cmd.Flags().GetString("stack")
+	tiltPort, namespace, wsPath, label, err := resolveStackTarget(ws, stackName)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(wsPath)
 	if err != nil {
 		return err
 	}
@@ -48,7 +55,7 @@ func runStop(cmd *cobra.Command, args []string) error {
 		targetName = args[0]
 	}
 
-	services, err := resolveTarget(ws.Path, targetName, cfg)
+	services, err := resolveTarget(wsPath, targetName, cfg)
 	if err != nil {
 		return err
 	}
@@ -56,8 +63,11 @@ func runStop(cmd *cobra.Command, args []string) error {
 	if targetName == "" {
 		fmt.Printf("Auto-detected service: %s\n", strings.Join(services, ", "))
 	}
+	if label != "" {
+		fmt.Printf("Target: %s (:%d)\n", label, tiltPort)
+	}
 
-	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
+	tiltClient := tilt.NewClient("localhost", tiltPort)
 	view, err := tiltClient.GetView()
 	if err != nil {
 		return fmt.Errorf("dev daemon is not running — start it first with: devstack workspace up\n(%w)", err)
@@ -65,7 +75,7 @@ func runStop(cmd *cobra.Command, args []string) error {
 
 	var stopped []string
 	for _, svc := range services {
-		resolved, err := tilt.ResolveService(svc, view)
+		resolved, err := tilt.ResolveService(resourceName(ws.Name, svc, namespace), view)
 		if err != nil {
 			return fmt.Errorf("could not resolve service %q: %w", svc, err)
 		}

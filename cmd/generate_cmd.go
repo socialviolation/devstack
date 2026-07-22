@@ -6,21 +6,22 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/tiltgen"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
-// workspaceGenerateCmd manually refreshes the generated Tiltfile. It normally
+// workspaceGenerateCmd manually refreshes the host daemon's Tiltfile. It normally
 // runs automatically as part of `devstack workspace up`, so this is only for
 // inspecting the artifact without starting the daemon.
 var workspaceGenerateCmd = &cobra.Command{
 	Use:   "generate",
-	Short: "Generate the dev daemon config from devstack manifests",
-	Long: `Regenerate the workspace's Tiltfile from its devstack manifests
-(devstack.workspace.yaml + each service's devstack.service.yaml).
+	Short: "Regenerate the host daemon's Tiltfile from devstack manifests",
+	Long: `Regenerate the host daemon's Tiltfile — the single file the running Tilt
+daemon reads — composing every active workspace's base services plus each
+active feature stack's overlay services.
 
 The Tiltfile is a build artifact — edit the manifests, not the Tiltfile.
 Runs automatically as part of 'devstack workspace up'.`,
@@ -33,14 +34,7 @@ func init() {
 }
 
 func runGenerate(cmd *cobra.Command, args []string) error {
-	ws, err := resolveWorkspace(viper.GetString("workspace"))
-	if err != nil {
-		return err
-	}
-	if !config.HasWorkspaceManifest(ws.Path) {
-		return fmt.Errorf("no %s in %s — this workspace isn't manifest-based yet", config.WorkspaceManifestFileName, ws.Path)
-	}
-	path, err := regenerateTiltfile(ws)
+	path, err := regenerateHostTiltfile()
 	if err != nil {
 		return err
 	}
@@ -48,25 +42,27 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// regenerateTiltfile renders the workspace's Tiltfile from its manifests and
-// writes it to <ws.Path>/Tiltfile. Returns the written path.
+// regenerateTiltfile renders a base workspace's Tiltfile from its manifests plus
+// every active feature stack's overlay services (namespaced <svc>:<stack>) and
+// writes it to <ws.Path>/Tiltfile. With no active stacks the output is
+// byte-identical to base-only generation. Returns the written path.
 func regenerateTiltfile(ws *workspace.Workspace) (string, error) {
 	rw, err := config.ResolveWorkspace(ws.Path)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve workspace manifests: %w", err)
 	}
 
-	managed := map[string]string{}
-	// Only push OTEL export env down to services when the workspace opts into
-	// observability. Otherwise services are left un-instrumented by default.
-	if config.ObservabilityEnabled(ws.Path) {
-		if ep := workspace.OtelOTLPEndpoint(ws); ep != "" {
-			managed["OTEL_EXPORTER_OTLP_ENDPOINT"] = ep
-			managed["OTEL_EXPORTER_OTLP_PROTOCOL"] = "grpc"
-		}
+	names := make([]string, 0, len(rw.Services))
+	for name := range rw.Services {
+		names = append(names, name)
 	}
 
-	out, err := tiltgen.Generate(rw, tiltgen.Options{ManagedEnv: managed})
+	stackGens, err := hostdaemon.ActiveStackGens(ws)
+	if err != nil {
+		return "", err
+	}
+
+	out, err := tiltgen.GenerateCombined(rw, tiltgen.Options{ManagedEnv: workspace.ManagedEnv(ws, names)}, stackGens)
 	if err != nil {
 		return "", err
 	}
@@ -76,4 +72,10 @@ func regenerateTiltfile(ws *workspace.Workspace) (string, error) {
 		return "", fmt.Errorf("failed to write Tiltfile: %w", err)
 	}
 	return path, nil
+}
+
+// regenerateHostTiltfile delegates to hostdaemon.Regenerate, kept as a package
+// alias for the many cmd call sites.
+func regenerateHostTiltfile() (string, error) {
+	return hostdaemon.Regenerate()
 }

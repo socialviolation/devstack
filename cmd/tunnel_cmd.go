@@ -33,12 +33,19 @@ invocations can omit them:
 
 Filter to specific services with --services:
 
-  devstack tunnel push my-box.ts.net --services api,frontend`,
+  devstack tunnel push my-box.ts.net --services api,frontend
+
+By default only this workspace's base service ports are forwarded. Add --stacks
+to also forward the ports of its active feature stacks:
+
+  devstack tunnel push my-box.ts.net --stacks`,
 }
 
 var (
 	tunnelUserFlag     string
 	tunnelServicesFlag string
+	tunnelReclaimFlag  bool
+	tunnelStacksFlag   bool
 )
 
 func init() {
@@ -86,6 +93,12 @@ func init() {
 	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd} {
 		c.Flags().StringVar(&tunnelServicesFlag, "services", "", "Comma-separated service names to forward (default: all)")
 	}
+	for _, c := range []*cobra.Command{pushCmd, restartCmd} {
+		c.Flags().BoolVar(&tunnelReclaimFlag, "reclaim", false,
+			"Kill whatever already holds these ports on the remote before forwarding (destructive: will tear down other stacks' forwards)")
+		c.Flags().BoolVar(&tunnelStacksFlag, "stacks", false,
+			"Also forward this workspace's active feature-stack service ports")
+	}
 	restartCmd.Flags().String("mode", string(tunnel.ModePush), "Direction to re-establish: push or pull")
 	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, tunnelStopCmd, tunnelStatusCmd, listCmd} {
 		// Runtime failures (daemon down, unreachable remote) shouldn't dump the
@@ -105,9 +118,7 @@ func tunnelContext() (*workspace.Workspace, error) {
 	if err := requireLocalEnv(envName, env); err != nil {
 		return nil, err
 	}
-	if actual := workspace.ResolvePort(ws.Name); actual != 0 {
-		ws.TiltPort = actual
-	}
+	ws.TiltPort = workspace.HostTiltPort
 	return ws, nil
 }
 
@@ -119,7 +130,7 @@ func tunnelServices(ws *workspace.Workspace) (svcs []tunnel.Service, ok bool) {
 	if err != nil {
 		fmt.Printf("%s  ·  ", color.New(color.Bold).Sprint(ws.Name))
 		color.New(color.FgYellow).Println("dev daemon not running")
-		fmt.Println("  Run: devstack up")
+		fmt.Println("  Run: devstack workspace up")
 		return nil, false
 	}
 	return svcs, true
@@ -138,7 +149,7 @@ func discoverTunnelServices(ws *workspace.Workspace) ([]tunnel.Service, error) {
 			filter[s] = true
 		}
 	}
-	svcs := tunnel.Discover(view, filter)
+	svcs := tunnel.Discover(view, filter, ws.Name, tunnelStacksFlag)
 	sort.Slice(svcs, func(i, j int) bool { return svcs[i].Port < svcs[j].Port })
 	return svcs, nil
 }
@@ -251,7 +262,7 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 
 	fmt.Printf("%s tunnels → %s@%s\n", strings.ToUpper(string(mode)), sshUser, host)
 
-	if mode == tunnel.ModePush {
+	if mode == tunnel.ModePush && tunnelReclaimFlag {
 		ports := make([]int, len(svcs))
 		for i, s := range svcs {
 			ports[i] = s.Port
@@ -260,13 +271,20 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 		tunnel.ReclaimRemote(sshUser, host, ports)
 	}
 
+	var clashed bool
 	for _, s := range svcs {
 		pid, err := tunnel.Launch(ws.Name, mode, sshUser, host, s.Port)
 		if err != nil {
+			clashed = true
 			color.New(color.FgRed).Printf("  [FAILED]  %-30s :%d  (%v)\n", s.Name, s.Port, err)
 			continue
 		}
 		fmt.Printf("  [started] %-30s :%d  (pid %d)\n", s.Name, s.Port, pid)
+	}
+	if clashed && mode == tunnel.ModePush && !tunnelReclaimFlag {
+		fmt.Printf("\n  A forward fails when something already holds the port on %s — often a stale\n"+
+			"  forward of your own, but it may belong to another stack. Check the remote, or\n"+
+			"  re-run with --reclaim to kill whatever holds these ports there.\n", host)
 	}
 	return nil
 }

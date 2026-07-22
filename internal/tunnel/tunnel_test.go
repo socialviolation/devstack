@@ -1,10 +1,14 @@
 package tunnel
 
 import (
+	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -13,32 +17,66 @@ import (
 
 func TestDiscover(t *testing.T) {
 	view := &tilt.TiltView{UiResources: []tilt.UIResource{
-		res("api", "ok", "http://localhost:8080"),
-		res("frontend", "ok", "http://localhost:4200", "http://localhost:4200/health"), // dup port
-		res("worker", "pending"),                                                       // no endpoints
-		res("db", "ok", "http://localhost:5432"),
+		res("navexa:api", "ok", "http://localhost:8080"),
+		res("navexa:frontend", "ok", "http://localhost:4200", "http://localhost:4200/health"), // dup port
+		res("navexa:api:perf", "ok", "http://localhost:8090"),
+		res("other:api", "ok", "http://localhost:9090"),
 	}}
 
-	t.Run("all", func(t *testing.T) {
-		got := Discover(view, nil)
-		if len(got) != 3 {
-			t.Fatalf("want 3 services (deduped), got %d: %+v", len(got), got)
+	names := func(svcs []Service) map[string]int {
+		m := map[string]int{}
+		for _, s := range svcs {
+			m[s.Name] = s.Port
 		}
-		ports := map[int]bool{}
-		for _, s := range got {
-			ports[s.Port] = true
+		return m
+	}
+
+	t.Run("base only, own workspace", func(t *testing.T) {
+		got := names(Discover(view, nil, "navexa", false))
+		want := map[string]int{"api": 8080, "frontend": 4200}
+		if len(got) != len(want) {
+			t.Fatalf("want %v, got %v", want, got)
 		}
-		for _, want := range []int{8080, 4200, 5432} {
-			if !ports[want] {
-				t.Errorf("missing port %d", want)
+		for n, p := range want {
+			if got[n] != p {
+				t.Errorf("want %s:%d, got %d", n, p, got[n])
 			}
 		}
 	})
 
-	t.Run("filter", func(t *testing.T) {
-		got := Discover(view, map[string]bool{"api": true})
-		if len(got) != 1 || got[0].Port != 8080 {
-			t.Fatalf("want only api:8080, got %+v", got)
+	t.Run("includeStacks adds stack resources", func(t *testing.T) {
+		got := names(Discover(view, nil, "navexa", true))
+		want := map[string]int{"api": 8080, "frontend": 4200, "api:perf": 8090}
+		if len(got) != len(want) {
+			t.Fatalf("want %v, got %v", want, got)
+		}
+		for n, p := range want {
+			if got[n] != p {
+				t.Errorf("want %s:%d, got %d", n, p, got[n])
+			}
+		}
+	})
+
+	t.Run("other workspace never included", func(t *testing.T) {
+		for _, includeStacks := range []bool{false, true} {
+			for _, s := range Discover(view, nil, "navexa", includeStacks) {
+				if s.Port == 9090 {
+					t.Fatalf("other:api leaked (includeStacks=%v): %+v", includeStacks, s)
+				}
+			}
+		}
+	})
+
+	t.Run("filter matches bare service name across base and stack", func(t *testing.T) {
+		got := names(Discover(view, map[string]bool{"api": true}, "navexa", true))
+		want := map[string]int{"api": 8080, "api:perf": 8090}
+		if len(got) != len(want) {
+			t.Fatalf("want %v, got %v", want, got)
+		}
+		for n, p := range want {
+			if got[n] != p {
+				t.Errorf("want %s:%d, got %d", n, p, got[n])
+			}
 		}
 	})
 }
@@ -108,6 +146,98 @@ func mustWrite(t *testing.T, path, body string) {
 	if err := os.WriteFile(path, []byte(body), 0755); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestSleepHelper is inert unless re-executed by fakeForward.
+func TestSleepHelper(t *testing.T) {
+	if os.Getenv("DEVSTACK_TEST_SLEEP") != "1" {
+		t.Skip("helper process only")
+	}
+	time.Sleep(30 * time.Second)
+}
+
+// fakeForward spawns a live process whose /proc cmdline reads as
+// `ssh ... -L p:localhost:p`, which is what strayForwards matches on. Args[0]
+// is set independently of Path so the test binary presents as ssh, and the ssh
+// flags sit behind -- so the binary's own flag parser ignores them.
+func fakeForward(t *testing.T, port int) int {
+	t.Helper()
+	fwd := fmt.Sprintf("%d:localhost:%d", port, port)
+	cmd := exec.Command(os.Args[0])
+	cmd.Path = os.Args[0]
+	cmd.Args = []string{"ssh", "-test.run=TestSleepHelper", "--", "-N", "-L", fwd, "user@host"}
+	cmd.Env = append(os.Environ(), "DEVSTACK_TEST_SLEEP=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("spawn fake forward: %v", err)
+	}
+	pid := cmd.Process.Pid
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+	return pid
+}
+
+func writePID(t *testing.T, wsName string, port, pid int) {
+	t.Helper()
+	if err := os.MkdirAll(Dir(wsName), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pidFile(wsName, port), []byte(strconv.Itoa(pid)), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTrackedForwardsSpansWorkspaces(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	writePID(t, "ws-a", 5432, 111)
+	writePID(t, "ws-b", 6379, 222)
+
+	owned := trackedForwards()
+	for _, pid := range []int{111, 222} {
+		if !owned[pid] {
+			t.Errorf("pid %d from another workspace should be tracked; got %v", pid, owned)
+		}
+	}
+}
+
+func TestStrayForwardsSparesOtherWorkspaces(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const port = 59322
+
+	pid := fakeForward(t, port)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && !matchesFwd(pid, port) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !matchesFwd(pid, port) {
+		t.Fatalf("fake forward %d never presented an ssh cmdline", pid)
+	}
+
+	if got := strayForwards(port); !contains(got, pid) {
+		t.Fatalf("untracked forward %d should be stray; got %v", pid, got)
+	}
+
+	writePID(t, "ws-other", port, pid)
+	if got := strayForwards(port); contains(got, pid) {
+		t.Fatalf("forward %d tracked by ws-other must not be stray; got %v", pid, got)
+	}
+
+	KillPort("ws-mine", port)
+	if !Alive(pid) {
+		t.Fatal("KillPort from ws-mine killed a forward owned by ws-other")
+	}
+}
+
+func matchesFwd(pid, port int) bool {
+	return contains(strayForwards(port), pid) || trackedForwards()[pid]
+}
+
+func contains(pids []int, want int) bool {
+	for _, p := range pids {
+		if p == want {
+			return true
+		}
+	}
+	return false
 }
 
 // TestLaunchLifecycle verifies Launch spawns a tracked, detached process and

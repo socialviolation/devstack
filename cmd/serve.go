@@ -92,11 +92,11 @@ func serveStdio() error {
 	if envName == "" {
 		envName = "local"
 	}
-	activeEnv, ok := ws.ResolveEnvironment(envName)
+	activeEnv, ok := resolveActiveEnv(ws, envName)
 	if !ok {
 		log.Fatalf("environment %q not found in workspace %q. Run: devstack env list", envName, ws.Name)
 	}
-	allEnvs := ws.AllEnvironments()
+	allEnvs := allEnvironments(ws)
 
 	// Create observability backend
 	backend, err := observability.NewBackend(
@@ -111,12 +111,8 @@ func serveStdio() error {
 	// Only create Tilt client for local environments
 	var tiltClient *tilt.Client
 	if activeEnv.Type == workspace.EnvironmentTypeLocal {
-		resolvedName := ws.Name // capture resolved name, not raw wsName flag
 		tiltClient = tilt.NewDynamicClient(host, func() int {
-			if port := workspace.ResolvePort(resolvedName); port != 0 {
-				return port
-			}
-			return ws.TiltPort // fall back to registry value, not viper (which may be 0)
+			return workspace.HostTiltPort
 		})
 	}
 
@@ -136,7 +132,7 @@ func serveStdio() error {
 		ws,
 	)
 
-	log.Printf("Starting devstack MCP server (workspace: %s, env: %s/%s, tilt-port: %d)", ws.Name, envName, activeEnv.Type, ws.TiltPort)
+	log.Printf("Starting devstack MCP server (workspace: %s, env: %s/%s, tilt-port: %d)", ws.Name, envName, activeEnv.Type, workspace.HostTiltPort)
 
 	return server.ServeStdio(mcpServer)
 }

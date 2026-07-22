@@ -12,6 +12,7 @@ import (
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/infra"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -37,6 +38,7 @@ Service states:
 
 func init() {
 	rootCmd.AddCommand(statusCmd)
+	statusCmd.Flags().String("stack", "", "Show a feature stack's service instances (<ws>:<svc>:<stack>) instead of base")
 }
 
 // groupPalette cycles through distinct colors for group headers.
@@ -53,13 +55,91 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return runStatusAll()
 	}
+	if stackName, _ := cmd.Flags().GetString("stack"); stackName != "" {
+		rec, err := stack.Resolve(ws.Name, stackName)
+		if err != nil {
+			return err
+		}
+		return runStackStatus(ws, rec)
+	}
 	return runWorkspaceStatus(ws)
 }
 
-func runWorkspaceStatus(ws *workspace.Workspace) error {
-	if actual := workspace.ResolvePort(ws.Name); actual != 0 && actual != ws.TiltPort {
-		ws.TiltPort = actual
+// runStackStatus shows a feature stack's services as they run in the one host
+// daemon: it reads the host view and filters to the stack's
+// <base>:<service>:<stack> resources, printing them de-namespaced. A stack is up
+// only when the host daemon is running and the stack is active — otherwise it
+// prints the same "not up" guidance the other --stack commands give, without
+// dialing a dead port.
+func runStackStatus(base *workspace.Workspace, rec *stack.Record) error {
+	port := workspace.HostTiltPort
+	if !isTiltReachable(fmt.Sprintf("http://localhost:%d/api/view", port)) || !rec.Active {
+		fmt.Printf("stack %q is not up — run: devstack stack up %s\n", rec.Name, rec.Name)
+		return nil
 	}
+
+	view, err := tilt.NewClient("localhost", port).GetView()
+	if err != nil {
+		return err
+	}
+	resourceMap := make(map[string]tilt.UIResource, len(view.UiResources))
+	for _, r := range view.UiResources {
+		resourceMap[r.Metadata.Name] = r
+	}
+
+	prefix := base.Name + ":"
+	suffix := ":" + rec.Name
+	names := make([]string, 0)
+	for name := range resourceMap {
+		if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, suffix) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+
+	color.New(color.Bold).Printf("stack %q", rec.Name)
+	color.New(color.Faint).Printf("  (in the host daemon :%d as %s<service>%s)\n\n", port, prefix, suffix)
+
+	if len(names) == 0 {
+		fmt.Printf("  No resources for stack %q in the host daemon yet.\n", rec.Name)
+		return nil
+	}
+
+	baseRW, _ := config.ResolveWorkspace(base.Path)
+	stackRW, _ := config.ResolveWorkspace(rec.Root)
+	wsEnv := ""
+	if baseRW != nil {
+		wsEnv = baseRW.Manifest.Workspace.Env
+	}
+	envs := map[string]string{}
+	for _, name := range names {
+		svc := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+		svcEnv := ""
+		if stackRW != nil {
+			if rs, ok := stackRW.Services[svc]; ok && rs.Manifest != nil {
+				svcEnv = rs.Manifest.Service.Env
+			}
+		}
+		if env := config.ActiveEnvName(wsEnv, svcEnv, rec.Env); env != "" {
+			envs[svc] = env
+		}
+	}
+
+	for _, name := range names {
+		svc := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+		statusStr, statusClr := svcStatusColor(name, resourceMap)
+		fmt.Printf("  %-22s  ", svc)
+		statusClr.Printf("%-10s", statusStr)
+		fmt.Print("  ")
+		printPorts(svcPortsRaw(name, resourceMap), 14)
+		printEnv(svc, envs)
+		fmt.Println()
+	}
+	return nil
+}
+
+func runWorkspaceStatus(ws *workspace.Workspace) error {
+	ws.TiltPort = workspace.HostTiltPort
 
 	cfg, _ := config.Load(ws.Path)
 	serviceDirs := tilt.ParseTiltfileServeDirs(filepath.Join(ws.Path, "Tiltfile"))
@@ -69,8 +149,13 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 
 	resourceMap := make(map[string]tilt.UIResource)
 	if tiltErr == nil {
+		prefix := ws.Name + ":"
 		for _, r := range view.UiResources {
-			resourceMap[r.Metadata.Name] = r
+			bare, ok := strings.CutPrefix(r.Metadata.Name, prefix)
+			if !ok || strings.Contains(bare, ":") {
+				continue
+			}
+			resourceMap[bare] = r
 		}
 	}
 
@@ -90,6 +175,9 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 			allServices[d] = true
 		}
 	}
+
+	rw, _ := config.ResolveWorkspace(ws.Path)
+	svcEnvNames := resolveActiveEnvs(rw, allServices, "")
 
 	// Count running
 	running := 0
@@ -116,12 +204,20 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 	if tiltErr != nil {
 		infraParts = append(infraParts, color.New(color.FgRed).Sprint("daemon stopped"))
 	} else {
-		infraParts = append(infraParts, fmt.Sprintf("daemon :%d", ws.TiltPort))
+		infraParts = append(infraParts, fmt.Sprintf("host daemon :%d", ws.TiltPort))
 	}
 	if isOtelRunning(ws) {
 		infraParts = append(infraParts,
 			fmt.Sprintf("otel ui:%d otlp:%d grpc:%d", ws.UIPort(), ws.HTTPPort(), ws.GRPCPort()),
 		)
+	} else if config.ObservabilityEnabled(ws.Path) {
+		if started, err := ensureCollector(ws); started {
+			infraParts = append(infraParts, color.New(color.FgGreen).Sprint("otel: collector was down — started it"))
+		} else if err != nil {
+			infraParts = append(infraParts, color.New(color.FgRed).Sprintf("otel DOWN (auto-start failed: %v) — run: devstack otel start", err))
+		} else {
+			infraParts = append(infraParts, color.New(color.FgRed).Sprint("otel configured but collector DOWN — run: devstack otel start"))
+		}
 	}
 	if composeSpec, err := infra.ResolveComposeSpec(ws.Path); err == nil && composeSpec != nil {
 		if running, err := infra.RunningServices(composeSpec); err == nil && len(running) > 0 {
@@ -135,7 +231,7 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 		if isTiltReachable(apiURL) {
 			fmt.Println("  Dev daemon is starting — run 'devstack status' again in a moment.")
 		} else {
-			fmt.Println("  Run: devstack up")
+			fmt.Println("  Run: devstack workspace up")
 		}
 		return nil
 	}
@@ -187,7 +283,7 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 			memberSet[m] = true
 		}
 		roots := buildGroupTree(members, cfg.Deps)
-		renderStatusNodes(roots, "  ", resourceMap, cfg.Deps, memberSet, svcGroupColor, serviceDirs)
+		renderStatusNodes(roots, "  ", resourceMap, cfg.Deps, memberSet, svcGroupColor, serviceDirs, svcEnvNames)
 		fmt.Println()
 	}
 
@@ -215,6 +311,7 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 			statusClr.Printf("%-10s", statusStr)
 			fmt.Print("  ")
 			printPorts(portsRaw, 14)
+			printEnv(svc, svcEnvNames)
 			fmt.Println()
 			if dir := serviceDirs[svc]; dir != "" {
 				color.New(color.Faint).Printf("      %s\n", shortDir(dir))
@@ -223,9 +320,42 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 		fmt.Println()
 	}
 
+	printStackSection(ws.Name)
+
 	color.New(color.Faint).Printf("  devstack start <service>   ·   devstack start --group=<group>\n")
 
 	return nil
+}
+
+// printStackSection lists the workspace's in-flight feature stacks under the base
+// service tree, so a status check surfaces the other running versions. It prints
+// nothing for a workspace with no stacks (or when the target is itself a stack,
+// whose name has no store of its own).
+func printStackSection(wsName string) {
+	stacks, err := stack.List(wsName)
+	if err != nil || len(stacks) == 0 {
+		return
+	}
+	fmt.Println()
+	color.New(color.Bold).Printf("Feature stacks of %s (%d in flight):\n", wsName, len(stacks))
+	for _, s := range stacks {
+		statusClr := color.New(color.Faint)
+		if s.Status == "active" {
+			statusClr = color.New(color.FgGreen)
+		}
+		fmt.Printf("  %-22s ", s.Name)
+		statusClr.Printf("%-9s", s.Status)
+		fmt.Printf("  base :%d", s.BasePort)
+		links := make([]string, 0, len(s.Ports))
+		for _, k := range sortedKeys(s.Ports) {
+			links = append(links, fmt.Sprintf("%s→:%d", k, s.Ports[k]))
+		}
+		if len(links) > 0 {
+			color.New(color.Faint).Printf("   %s", strings.Join(links, " "))
+		}
+		fmt.Println()
+	}
+	color.New(color.Faint).Printf("  devstack stack up <name>   ·   devstack stack config <svc> --stack <name>\n")
 }
 
 func svcStatusColor(svc string, resourceMap map[string]tilt.UIResource) (string, *color.Color) {
@@ -257,6 +387,33 @@ func svcPortsRaw(svc string, resourceMap map[string]tilt.UIResource) string {
 		return "<event-driven>"
 	}
 	return ports
+}
+
+// resolveActiveEnvs maps each service to its active env name (stack beats service
+// beats workspace), omitting services whose active env is empty.
+func resolveActiveEnvs(rw *config.ResolvedWorkspace, services map[string]bool, stackEnv string) map[string]string {
+	out := map[string]string{}
+	if rw == nil {
+		return out
+	}
+	wsEnv := rw.Manifest.Workspace.Env
+	for name := range services {
+		svcEnv := ""
+		if rs, ok := rw.Services[name]; ok && rs.Manifest != nil {
+			svcEnv = rs.Manifest.Service.Env
+		}
+		if env := config.ActiveEnvName(wsEnv, svcEnv, stackEnv); env != "" {
+			out[name] = env
+		}
+	}
+	return out
+}
+
+// printEnv prints a faint env tag for a service when it has an active env.
+func printEnv(name string, envs map[string]string) {
+	if env := envs[name]; env != "" {
+		color.New(color.Faint).Printf("  env:%s", env)
+	}
 }
 
 // printPorts prints the port string with consistent visible-width padding.
