@@ -239,7 +239,7 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	rw, err := config.ResolveWorkspace(rec.Root)
+	rw, err := stack.ResolveWorktree(rec)
 	if err != nil {
 		return err
 	}
@@ -253,7 +253,8 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("Effective config for %s in stack %s (read-only: what it WOULD run with)\n\n", service, rec.FullName())
+	fmt.Printf("Effective config for %s in stack %s (read-only: what it WOULD run with)\n", service, rec.FullName())
+	fmt.Printf("env-patch/ladder overrides are not shown here; run `devstack env which --stack %s` to see them.\n\n", rec.Name)
 	fmt.Printf("  %-42s %-12s %s\n", "KEY", "SOURCE", "VALUE")
 	fmt.Println(strings.Repeat("-", 90))
 	for _, e := range entries {
