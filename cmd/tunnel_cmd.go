@@ -33,13 +33,19 @@ invocations can omit them:
 
 Filter to specific services with --services:
 
-  devstack tunnel push my-box.ts.net --services api,frontend`,
+  devstack tunnel push my-box.ts.net --services api,frontend
+
+By default only this workspace's base service ports are forwarded. Add --stacks
+to also forward the ports of its active feature stacks:
+
+  devstack tunnel push my-box.ts.net --stacks`,
 }
 
 var (
 	tunnelUserFlag     string
 	tunnelServicesFlag string
 	tunnelReclaimFlag  bool
+	tunnelStacksFlag   bool
 )
 
 func init() {
@@ -90,6 +96,8 @@ func init() {
 	for _, c := range []*cobra.Command{pushCmd, restartCmd} {
 		c.Flags().BoolVar(&tunnelReclaimFlag, "reclaim", false,
 			"Kill whatever already holds these ports on the remote before forwarding (destructive: will tear down other stacks' forwards)")
+		c.Flags().BoolVar(&tunnelStacksFlag, "stacks", false,
+			"Also forward this workspace's active feature-stack service ports")
 	}
 	restartCmd.Flags().String("mode", string(tunnel.ModePush), "Direction to re-establish: push or pull")
 	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, tunnelStopCmd, tunnelStatusCmd, listCmd} {
@@ -141,7 +149,7 @@ func discoverTunnelServices(ws *workspace.Workspace) ([]tunnel.Service, error) {
 			filter[s] = true
 		}
 	}
-	svcs := tunnel.Discover(view, filter)
+	svcs := tunnel.Discover(view, filter, ws.Name, tunnelStacksFlag)
 	sort.Slice(svcs, func(i, j int) bool { return svcs[i].Port < svcs[j].Port })
 	return svcs, nil
 }

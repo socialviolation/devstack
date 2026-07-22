@@ -78,15 +78,26 @@ func CheckConnectivity(user, host string) error {
 	return nil
 }
 
-// Discover returns the services and ports to forward from a Tilt view.
-// If filter is non-empty, only services whose name is in the set are returned.
+// Discover returns the services and ports to forward from a Tilt view, scoped to
+// one workspace. The host daemon's view namespaces resources as "<ws>:<svc>"
+// (base) or "<ws>:<svc>:<stack>" (a feature stack's overlay); only resources
+// belonging to wsName are considered, and stack resources are included only when
+// includeStacks is true. If filter is non-empty, only services whose bare name
+// (<svc>) is in the set are returned, so callers keep passing "api,frontend".
 // Each distinct port is returned once (the first service that exposes it wins).
-func Discover(view *tilt.TiltView, filter map[string]bool) []Service {
+func Discover(view *tilt.TiltView, filter map[string]bool, wsName string, includeStacks bool) []Service {
 	var out []Service
 	seen := make(map[int]bool)
 	for _, r := range view.UiResources {
-		name := r.Metadata.Name
-		if len(filter) > 0 && !filter[name] {
+		svc, name, ok := splitNamespaced(r.Metadata.Name, wsName)
+		if !ok {
+			continue
+		}
+		isStack := svc != name
+		if isStack && !includeStacks {
+			continue
+		}
+		if len(filter) > 0 && !filter[svc] {
 			continue
 		}
 		for _, link := range r.Status.EndpointLinks {
@@ -99,6 +110,23 @@ func Discover(view *tilt.TiltView, filter map[string]bool) []Service {
 		}
 	}
 	return out
+}
+
+// splitNamespaced parses a host-daemon resource name "<wsName>:<svc>[:<stack>]".
+// It returns the bare service name, the workspace-relative name (<svc> for a base
+// resource, <svc>:<stack> for a stack overlay), and whether the resource belongs
+// to wsName at all.
+func splitNamespaced(resourceName, wsName string) (svc, name string, ok bool) {
+	prefix := wsName + ":"
+	if !strings.HasPrefix(resourceName, prefix) {
+		return "", "", false
+	}
+	name = resourceName[len(prefix):]
+	svc = name
+	if i := strings.Index(name, ":"); i >= 0 {
+		svc = name[:i]
+	}
+	return svc, name, true
 }
 
 // Listening reports whether a TCP port is accepting connections on localhost —
