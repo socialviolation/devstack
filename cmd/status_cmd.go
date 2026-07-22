@@ -78,7 +78,7 @@ func buildGroupTree(members []string, deps map[string][]string) []*treeNode {
 // renderStatusNodes renders a slice of treeNodes as a status tree at the given indent level.
 // memberSet is the set of all services in the current group; cross-group deps show as arrows.
 // serviceDirs maps service name → source directory (may be empty map).
-func renderStatusNodes(nodes []*treeNode, indent string, resourceMap map[string]tilt.UIResource, deps map[string][]string, memberSet map[string]bool, svcGroupColor map[string]*color.Color, serviceDirs map[string]string) {
+func renderStatusNodes(nodes []*treeNode, indent string, resourceMap map[string]tilt.UIResource, deps map[string][]string, memberSet map[string]bool, svcGroupColor map[string]*color.Color, serviceDirs map[string]string, svcEnvNames map[string]string) {
 	for i, node := range nodes {
 		isLast := i == len(nodes)-1
 		branch := "├── "
@@ -97,6 +97,7 @@ func renderStatusNodes(nodes []*treeNode, indent string, resourceMap map[string]
 		statusClr.Printf("%-10s", statusStr)
 		fmt.Print("  ")
 		printPorts(portsRaw, 14)
+		printEnv(svc, svcEnvNames)
 
 		var crossDeps []string
 		for _, dep := range deps[svc] {
@@ -125,7 +126,7 @@ func renderStatusNodes(nodes []*treeNode, indent string, resourceMap map[string]
 		}
 
 		if len(node.children) > 0 {
-			renderStatusNodes(node.children, indent+childIndent, resourceMap, deps, memberSet, svcGroupColor, serviceDirs)
+			renderStatusNodes(node.children, indent+childIndent, resourceMap, deps, memberSet, svcGroupColor, serviceDirs, svcEnvNames)
 		}
 	}
 }

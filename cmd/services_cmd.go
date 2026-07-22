@@ -104,6 +104,27 @@ func runStackStatus(base *workspace.Workspace, rec *stack.Record) error {
 		fmt.Printf("  No resources for stack %q in the host daemon yet.\n", rec.Name)
 		return nil
 	}
+
+	baseRW, _ := config.ResolveWorkspace(base.Path)
+	stackRW, _ := config.ResolveWorkspace(rec.Root)
+	wsEnv := ""
+	if baseRW != nil {
+		wsEnv = baseRW.Manifest.Workspace.Env
+	}
+	envs := map[string]string{}
+	for _, name := range names {
+		svc := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
+		svcEnv := ""
+		if stackRW != nil {
+			if rs, ok := stackRW.Services[svc]; ok && rs.Manifest != nil {
+				svcEnv = rs.Manifest.Service.Env
+			}
+		}
+		if env := config.ActiveEnvName(wsEnv, svcEnv, rec.Env); env != "" {
+			envs[svc] = env
+		}
+	}
+
 	for _, name := range names {
 		svc := strings.TrimSuffix(strings.TrimPrefix(name, prefix), suffix)
 		statusStr, statusClr := svcStatusColor(name, resourceMap)
@@ -111,6 +132,7 @@ func runStackStatus(base *workspace.Workspace, rec *stack.Record) error {
 		statusClr.Printf("%-10s", statusStr)
 		fmt.Print("  ")
 		printPorts(svcPortsRaw(name, resourceMap), 14)
+		printEnv(svc, envs)
 		fmt.Println()
 	}
 	return nil
@@ -153,6 +175,9 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 			allServices[d] = true
 		}
 	}
+
+	rw, _ := config.ResolveWorkspace(ws.Path)
+	svcEnvNames := resolveActiveEnvs(rw, allServices, "")
 
 	// Count running
 	running := 0
@@ -250,7 +275,7 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 			memberSet[m] = true
 		}
 		roots := buildGroupTree(members, cfg.Deps)
-		renderStatusNodes(roots, "  ", resourceMap, cfg.Deps, memberSet, svcGroupColor, serviceDirs)
+		renderStatusNodes(roots, "  ", resourceMap, cfg.Deps, memberSet, svcGroupColor, serviceDirs, svcEnvNames)
 		fmt.Println()
 	}
 
@@ -278,6 +303,7 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 			statusClr.Printf("%-10s", statusStr)
 			fmt.Print("  ")
 			printPorts(portsRaw, 14)
+			printEnv(svc, svcEnvNames)
 			fmt.Println()
 			if dir := serviceDirs[svc]; dir != "" {
 				color.New(color.Faint).Printf("      %s\n", shortDir(dir))
@@ -353,6 +379,33 @@ func svcPortsRaw(svc string, resourceMap map[string]tilt.UIResource) string {
 		return "<event-driven>"
 	}
 	return ports
+}
+
+// resolveActiveEnvs maps each service to its active env name (stack beats service
+// beats workspace), omitting services whose active env is empty.
+func resolveActiveEnvs(rw *config.ResolvedWorkspace, services map[string]bool, stackEnv string) map[string]string {
+	out := map[string]string{}
+	if rw == nil {
+		return out
+	}
+	wsEnv := rw.Manifest.Workspace.Env
+	for name := range services {
+		svcEnv := ""
+		if rs, ok := rw.Services[name]; ok && rs.Manifest != nil {
+			svcEnv = rs.Manifest.Service.Env
+		}
+		if env := config.ActiveEnvName(wsEnv, svcEnv, stackEnv); env != "" {
+			out[name] = env
+		}
+	}
+	return out
+}
+
+// printEnv prints a faint env tag for a service when it has an active env.
+func printEnv(name string, envs map[string]string) {
+	if env := envs[name]; env != "" {
+		color.New(color.Faint).Printf("  env:%s", env)
+	}
 }
 
 // printPorts prints the port string with consistent visible-width padding.
