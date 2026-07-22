@@ -92,11 +92,11 @@ func serveStdio() error {
 	if envName == "" {
 		envName = "local"
 	}
-	activeEnv, ok := ws.ResolveEnvironment(envName)
+	activeEnv, ok := resolveActiveEnv(ws, envName)
 	if !ok {
 		log.Fatalf("environment %q not found in workspace %q. Run: devstack env list", envName, ws.Name)
 	}
-	allEnvs := ws.AllEnvironments()
+	allEnvs := allEnvironments(ws)
 
 	// Create observability backend
 	backend, err := observability.NewBackend(

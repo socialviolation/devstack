@@ -86,6 +86,35 @@ func SetEnvValue(workspacePath, envName, key, value string) error {
 	})
 }
 
+// SetEnvironment writes environments.<envName>.type and its observability
+// backend/url/otlpEndpoint into the workspace manifest, creating the blocks as
+// needed and preserving any existing environments.<envName>.values. Empty
+// observability fields are cleared so a re-add can drop a previously set value.
+// It does not touch values — that is SetEnvValue's job.
+func SetEnvironment(workspacePath, envName string, env WorkspaceEnvironment) error {
+	return editWorkspaceManifest(workspacePath, func(root *yaml.Node) error {
+		envNode := mappingChild(mappingChild(root, "environments"), envName)
+		setScalar(envNode, "type", env.Type, "!!str")
+		obs := mappingChild(envNode, "observability")
+		setOrClear(obs, "backend", env.Observability.Backend)
+		setOrClear(obs, "url", env.Observability.URL)
+		setOrClear(obs, "otlpEndpoint", env.Observability.OTLPEndpoint)
+		return nil
+	})
+}
+
+// RemoveEnvironment deletes environments.<envName> from the workspace manifest.
+func RemoveEnvironment(workspacePath, envName string) error {
+	return editWorkspaceManifest(workspacePath, func(root *yaml.Node) error {
+		envs := mapValue(root, "environments")
+		if envs == nil || envs.Kind != yaml.MappingNode {
+			return fmt.Errorf("environment %q is not defined in %s", envName, WorkspaceManifestFileName)
+		}
+		deleteKey(envs, envName)
+		return nil
+	})
+}
+
 // SetWorkspaceEnv sets workspace.env to envName in the workspace manifest,
 // selecting the active env at the workspace scope.
 func SetWorkspaceEnv(workspacePath, envName string) error {
@@ -199,6 +228,16 @@ func setScalar(m *yaml.Node, key, value, tag string) {
 	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}
 	valNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: value}
 	m.Content = append(m.Content, keyNode, valNode)
+}
+
+// setOrClear sets key to a string scalar when value is non-empty, otherwise
+// removes the key so an empty field is not serialised.
+func setOrClear(m *yaml.Node, key, value string) {
+	if value == "" {
+		deleteKey(m, key)
+		return
+	}
+	setScalar(m, key, value, "!!str")
 }
 
 // deleteKey removes key (and its value) from a mapping node if present.
