@@ -271,6 +271,10 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			}
 		}
 
+		if config.ObservabilityEnabled(ws.Path) && !otel.CollectorRunning(ws) {
+			sb.WriteString("\n⚠ observability is enabled for this workspace but the collector is NOT running — telemetry is not being captured. Start it: devstack otel start\n")
+		}
+
 		if t.label == "" {
 			if footer := otherStacksFooter(ws); footer != "" {
 				sb.WriteString(footer)
