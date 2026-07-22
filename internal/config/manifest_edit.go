@@ -14,7 +14,7 @@ import (
 // formatting survives the round-trip.
 func editWorkspaceManifest(workspacePath string, mutate func(root *yaml.Node) error) error {
 	if !HasWorkspaceManifest(workspacePath) {
-		return fmt.Errorf("no %s in %s — observability config lives in the workspace manifest", WorkspaceManifestFileName, workspacePath)
+		return fmt.Errorf("no %s in %s — config lives in the workspace manifest", WorkspaceManifestFileName, workspacePath)
 	}
 	return editManifest(WorkspaceManifestPath(workspacePath), mutate)
 }
@@ -99,6 +99,7 @@ func SetEnvironment(workspacePath, envName string, env WorkspaceEnvironment) err
 		setOrClear(obs, "backend", env.Observability.Backend)
 		setOrClear(obs, "url", env.Observability.URL)
 		setOrClear(obs, "otlpEndpoint", env.Observability.OTLPEndpoint)
+		setOrClear(obs, "apiKey", env.Observability.APIKey)
 		return nil
 	})
 }

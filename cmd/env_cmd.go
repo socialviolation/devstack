@@ -52,6 +52,7 @@ func init() {
 	envAddCmd.Flags().String("backend", "signoz", `observability backend (currently only "signoz")`)
 	envAddCmd.Flags().String("url", "", "observability backend URL (required for remote)")
 	envAddCmd.Flags().String("otlp-endpoint", "", "OTLP ingestion URL for the collector (e.g. https://otel.company.com:4318)")
+	envAddCmd.Flags().String("api-key", "", "API key for an authenticated remote collector")
 }
 
 func runEnvList(cmd *cobra.Command, args []string) error {
@@ -112,6 +113,7 @@ func runEnvAdd(cmd *cobra.Command, args []string) error {
 	backend, _ := cmd.Flags().GetString("backend")
 	url, _ := cmd.Flags().GetString("url")
 	otlpEndpoint, _ := cmd.Flags().GetString("otlp-endpoint")
+	apiKey, _ := cmd.Flags().GetString("api-key")
 
 	switch envType {
 	case string(workspace.EnvironmentTypeLocal), string(workspace.EnvironmentTypeRemote):
@@ -129,6 +131,7 @@ func runEnvAdd(cmd *cobra.Command, args []string) error {
 			Backend:      backend,
 			URL:          url,
 			OTLPEndpoint: otlpEndpoint,
+			APIKey:       apiKey,
 		},
 	}
 

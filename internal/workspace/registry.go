@@ -55,10 +55,6 @@ type Workspace struct {
 	// OtelPluginConfig holds plugin-specific configuration key-value pairs.
 	OtelPluginConfig map[string]string `json:"otel_plugin_config,omitempty"`
 
-	// Environments is an optional map of named environments (local, staging, prod, etc).
-	// When absent, the MCP server synthesizes a "local" environment from the legacy flat fields above.
-	Environments map[string]Environment `json:"environments,omitempty"`
-
 	// Tunnel remote defaults for `devstack tunnel push/pull`. Machine-specific, so
 	// they live in the per-user registry rather than the committed project config.
 	TunnelHost string `json:"tunnel_host,omitempty"`
@@ -522,15 +518,7 @@ func AnyWorkspaceActive() (bool, error) {
 }
 
 // ResolveEnvironment returns the named environment config.
-// If Environments is nil or the name is not found, synthesizes a "local" environment
-// from the workspace's legacy flat OTEL fields (backward compatible).
 func (ws *Workspace) ResolveEnvironment(name string) (Environment, bool) {
-	if ws.Environments != nil {
-		if env, ok := ws.Environments[name]; ok {
-			return env, true
-		}
-	}
-	// Synthesize local from legacy fields
 	if name == "local" || name == "" {
 		return Environment{
 			Type: EnvironmentTypeLocal,
@@ -541,57 +529,6 @@ func (ws *Workspace) ResolveEnvironment(name string) (Environment, bool) {
 		}, true
 	}
 	return Environment{}, false
-}
-
-// AllEnvironments returns all configured environments, always including a synthetic "local"
-// entry derived from legacy fields if no explicit local environment is configured.
-func (ws *Workspace) AllEnvironments() map[string]Environment {
-	result := map[string]Environment{}
-	// Start with synthetic local
-	localEnv, _ := ws.ResolveEnvironment("local")
-	result["local"] = localEnv
-	// Overlay explicit environments
-	for name, env := range ws.Environments {
-		result[name] = env
-	}
-	return result
-}
-
-// AddEnvironment adds or replaces a named environment in the workspace.
-func AddEnvironment(workspaceName, envName string, env Environment) error {
-	workspaces, err := Load()
-	if err != nil {
-		return err
-	}
-	for i, ws := range workspaces {
-		if strings.ToLower(ws.Name) == strings.ToLower(workspaceName) {
-			if workspaces[i].Environments == nil {
-				workspaces[i].Environments = map[string]Environment{}
-			}
-			workspaces[i].Environments[envName] = env
-			return Save(workspaces)
-		}
-	}
-	return fmt.Errorf("workspace %q not found", workspaceName)
-}
-
-// RemoveEnvironment removes a named environment from the workspace.
-// Returns an error if trying to remove "local" (it's synthesized and cannot be removed).
-func RemoveEnvironment(workspaceName, envName string) error {
-	if envName == "local" {
-		return fmt.Errorf("cannot remove built-in %q environment", envName)
-	}
-	workspaces, err := Load()
-	if err != nil {
-		return err
-	}
-	for i, ws := range workspaces {
-		if strings.ToLower(ws.Name) == strings.ToLower(workspaceName) {
-			delete(workspaces[i].Environments, envName)
-			return Save(workspaces)
-		}
-	}
-	return fmt.Errorf("workspace %q not found", workspaceName)
 }
 
 const minPort = 10350

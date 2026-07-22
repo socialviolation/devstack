@@ -133,6 +133,7 @@ type WorkspaceEnvironmentObservability struct {
 	Backend      string `yaml:"backend,omitempty"`
 	URL          string `yaml:"url,omitempty"`
 	OTLPEndpoint string `yaml:"otlpEndpoint,omitempty"`
+	APIKey       string `yaml:"apiKey,omitempty"`
 }
 
 type ServiceManifest struct {
