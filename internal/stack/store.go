@@ -114,6 +114,22 @@ func SetActive(base, name string, active bool) error {
 	return fmt.Errorf("stack %q not found in workspace %q", name, base)
 }
 
+// SetEnv sets the active env applied at a base workspace's stack scope and
+// persists it. Errors if the stack is unknown.
+func SetEnv(base, name, envName string) error {
+	recs, err := LoadStore(base)
+	if err != nil {
+		return err
+	}
+	for i := range recs {
+		if strings.EqualFold(recs[i].Name, name) {
+			recs[i].Env = envName
+			return saveStore(base, recs)
+		}
+	}
+	return fmt.Errorf("stack %q not found in workspace %q", name, base)
+}
+
 // upsertStack inserts or replaces a record in its base workspace's store.
 func upsertStack(rec Record) error {
 	recs, err := LoadStore(rec.Base)
