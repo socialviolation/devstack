@@ -211,9 +211,13 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 			fmt.Sprintf("otel ui:%d otlp:%d grpc:%d", ws.UIPort(), ws.HTTPPort(), ws.GRPCPort()),
 		)
 	} else if config.ObservabilityEnabled(ws.Path) {
-		infraParts = append(infraParts,
-			color.New(color.FgRed).Sprint("otel configured but collector DOWN — run: devstack otel start"),
-		)
+		if started, err := ensureCollector(ws); started {
+			infraParts = append(infraParts, color.New(color.FgGreen).Sprint("otel: collector was down — started it"))
+		} else if err != nil {
+			infraParts = append(infraParts, color.New(color.FgRed).Sprintf("otel DOWN (auto-start failed: %v) — run: devstack otel start", err))
+		} else {
+			infraParts = append(infraParts, color.New(color.FgRed).Sprint("otel configured but collector DOWN — run: devstack otel start"))
+		}
 	}
 	if composeSpec, err := infra.ResolveComposeSpec(ws.Path); err == nil && composeSpec != nil {
 		if running, err := infra.RunningServices(composeSpec); err == nil && len(running) > 0 {
