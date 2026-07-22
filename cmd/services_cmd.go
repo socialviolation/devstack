@@ -277,15 +277,22 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 				groupRunning++
 			}
 		}
+		groupEnv := commonEnv(members, svcEnvNames)
+
 		gc.Printf("● %s", groupName)
-		color.New(color.Faint).Printf("  [%d/%d]\n", groupRunning, len(members))
+		color.New(color.Faint).Printf("  [%d/%d]", groupRunning, len(members))
+		if groupEnv != "" {
+			color.New(color.Faint).Printf("   env %s", groupEnv)
+		}
+		fmt.Println()
+		fmt.Println()
 
 		memberSet := make(map[string]bool, len(members))
 		for _, m := range members {
 			memberSet[m] = true
 		}
-		roots := buildGroupTree(members, cfg.Deps)
-		renderStatusNodes(roots, "  ", resourceMap, cfg.Deps, memberSet, svcGroupColor, serviceDirs, svcEnvNames)
+		order := orderGroupServices(members, cfg.Deps)
+		renderServiceRows(order, resourceMap, cfg.Deps, memberSet, svcGroupColor, serviceDirs, svcEnvNames, groupEnv)
 		fmt.Println()
 	}
 
@@ -299,31 +306,18 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 	sort.Strings(ungrouped)
 
 	if len(ungrouped) > 0 {
-		color.New(color.Faint, color.Bold).Printf("● ungrouped\n")
-		for j, svc := range ungrouped {
-			isLast := j == len(ungrouped)-1
-			branch := "  ├── "
-			if isLast {
-				branch = "  └── "
-			}
-			statusStr, statusClr := svcStatusColor(svc, resourceMap)
-			portsRaw := svcPortsRaw(svc, resourceMap)
-			fmt.Print(branch)
-			fmt.Printf("%-22s  ", svc)
-			statusClr.Printf("%-10s", statusStr)
-			fmt.Print("  ")
-			printPorts(portsRaw, 14)
-			printEnv(svc, svcEnvNames)
-			fmt.Println()
-			if dir := serviceDirs[svc]; dir != "" {
-				color.New(color.Faint).Printf("      %s\n", shortDir(dir))
-			}
+		color.New(color.Faint, color.Bold).Printf("● ungrouped\n\n")
+		memberSet := make(map[string]bool, len(ungrouped))
+		for _, m := range ungrouped {
+			memberSet[m] = true
 		}
+		renderServiceRows(orderGroupServices(ungrouped, cfg.Deps), resourceMap, cfg.Deps, memberSet, svcGroupColor, serviceDirs, svcEnvNames, "")
 		fmt.Println()
 	}
 
 	printStackSection(ws.Name)
 
+	color.New(color.Faint).Printf("  top-to-bottom = startup order   ·   blank ENV = group env\n")
 	color.New(color.Faint).Printf("  devstack start <service>   ·   devstack start --group=<group>\n")
 
 	return nil

@@ -75,59 +75,183 @@ func buildGroupTree(members []string, deps map[string][]string) []*treeNode {
 	return roots
 }
 
-// renderStatusNodes renders a slice of treeNodes as a status tree at the given indent level.
-// memberSet is the set of all services in the current group; cross-group deps show as arrows.
-// serviceDirs maps service name → source directory (may be empty map).
-func renderStatusNodes(nodes []*treeNode, indent string, resourceMap map[string]tilt.UIResource, deps map[string][]string, memberSet map[string]bool, svcGroupColor map[string]*color.Color, serviceDirs map[string]string, svcEnvNames map[string]string) {
-	for i, node := range nodes {
-		isLast := i == len(nodes)-1
-		branch := "├── "
-		childIndent := "│   "
-		if isLast {
-			branch = "└── "
-			childIndent = "    "
-		}
+// orderGroupServices returns the group's members in dependency order —
+// every service after the in-group dependencies it waits on.
+func orderGroupServices(members []string, deps map[string][]string) []string {
+	memberSet := make(map[string]bool, len(members))
+	for _, m := range members {
+		memberSet[m] = true
+	}
 
-		svc := node.name
+	ordered := append([]string(nil), members...)
+	sort.Strings(ordered)
+
+	waits := make(map[string][]string, len(ordered))
+	for _, m := range ordered {
+		for _, dep := range deps[m] {
+			if memberSet[dep] && dep != m {
+				waits[m] = append(waits[m], dep)
+			}
+		}
+	}
+
+	out := make([]string, 0, len(ordered))
+	done := make(map[string]bool, len(ordered))
+	for len(out) < len(ordered) {
+		next := ""
+		for _, m := range ordered {
+			if done[m] {
+				continue
+			}
+			ready := true
+			for _, dep := range waits[m] {
+				if !done[dep] {
+					ready = false
+					break
+				}
+			}
+			if ready {
+				next = m
+				break
+			}
+		}
+		if next == "" {
+			for _, m := range ordered {
+				if !done[m] {
+					out = append(out, m)
+					done[m] = true
+				}
+			}
+			break
+		}
+		out = append(out, next)
+		done[next] = true
+	}
+	return out
+}
+
+const (
+	colService    = 22
+	colServiceMax = 34
+	colState      = 10
+	colPorts      = 14
+	colEnv        = 7
+	colNeeds      = 36
+)
+
+// commonEnv returns the env name shared by every member, or "" when they differ
+// or any member has none.
+// commonEnv returns the group's prevailing environment — the one most of its
+// services resolve to. It is shown once on the group header so only the
+// services that differ have to name their own; ties break alphabetically for
+// stable output. Returns "" when no service in the group has an env.
+func commonEnv(members []string, svcEnvNames map[string]string) string {
+	counts := map[string]int{}
+	for _, m := range members {
+		if e := svcEnvNames[m]; e != "" {
+			counts[e]++
+		}
+	}
+	names := make([]string, 0, len(counts))
+	for e := range counts {
+		names = append(names, e)
+	}
+	sort.Strings(names)
+
+	best := ""
+	for _, e := range names {
+		if counts[e] > counts[best] {
+			best = e
+		}
+	}
+	return best
+}
+
+// renderServiceRows prints one row per service in dependency order, listing the
+// deps each service waits on. memberSet is the set of services in the current
+// section; deps outside it keep their own group colour. groupEnv is the env
+// shared by the whole section, which rows omit.
+func renderServiceRows(order []string, resourceMap map[string]tilt.UIResource, deps map[string][]string, memberSet map[string]bool, svcGroupColor map[string]*color.Color, serviceDirs map[string]string, svcEnvNames map[string]string, groupEnv string) {
+	const indent = "  "
+	width := colService
+	for _, svc := range order {
+		if len(svc) > width {
+			width = len(svc)
+		}
+	}
+	if width > colServiceMax {
+		width = colServiceMax
+	}
+	needsIndent := strings.Repeat(" ", len(indent)+width+2+colState+2+colPorts+2+colEnv+2)
+
+	faint := color.New(color.Faint)
+	faint.Printf("%s%-*s  %-*s  %-*s  %-*s  %s\n", indent,
+		width, "SERVICE", colState, "STATE", colPorts, "PORTS", colEnv, "ENV", "NEEDS")
+
+	for _, svc := range order {
 		statusStr, statusClr := svcStatusColor(svc, resourceMap)
-		portsRaw := svcPortsRaw(svc, resourceMap)
 
-		fmt.Print(indent + branch)
-		fmt.Printf("%-22s  ", svc)
-		statusClr.Printf("%-10s", statusStr)
-		fmt.Print("  ")
-		printPorts(portsRaw, 14)
-		printEnv(svc, svcEnvNames)
-
-		var crossDeps []string
-		for _, dep := range deps[svc] {
-			if !memberSet[dep] {
-				crossDeps = append(crossDeps, dep)
-			}
+		env := svcEnvNames[svc]
+		if env == groupEnv {
+			env = ""
 		}
-		if len(crossDeps) > 0 {
-			color.New(color.Faint).Print("  ← ")
-			for k, dep := range crossDeps {
-				if k > 0 {
-					color.New(color.Faint).Print(", ")
-				}
-				if c, ok := svcGroupColor[dep]; ok {
-					c.Print(dep)
-				} else {
-					color.New(color.Faint).Print(dep)
-				}
-			}
+		hasNeeds := len(deps[svc]) > 0
+
+		fmt.Print(indent)
+		fmt.Printf("%-*s  ", width, svc)
+		statusClr.Printf("%-*s", colState, statusStr)
+		fmt.Print("  ")
+		if hasNeeds || env != "" {
+			printPorts(svcPortsRaw(svc, resourceMap), colPorts)
+		} else {
+			printPorts(svcPortsRaw(svc, resourceMap), 0)
+		}
+
+		switch {
+		case hasNeeds:
+			fmt.Print("  ")
+			faint.Printf("%-*s", colEnv, env)
+			fmt.Print("  ")
+			printNeeds(deps[svc], memberSet, svcGroupColor, needsIndent)
+		case env != "":
+			fmt.Print("  ")
+			faint.Print(env)
 		}
 		fmt.Println()
 
-		// Path on its own line, indented to align under the service name (past the branch chars)
 		if dir := serviceDirs[svc]; dir != "" {
-			color.New(color.Faint).Printf("%s    %s\n", indent, shortDir(dir))
+			faint.Printf("%s  %s\n", indent, shortDir(dir))
 		}
+	}
+}
 
-		if len(node.children) > 0 {
-			renderStatusNodes(node.children, indent+childIndent, resourceMap, deps, memberSet, svcGroupColor, serviceDirs, svcEnvNames)
+// printNeeds prints a service's dependencies, wrapping onto continuation lines
+// aligned under the NEEDS column.
+func printNeeds(svcDeps []string, memberSet map[string]bool, svcGroupColor map[string]*color.Color, contIndent string) {
+	names := append([]string(nil), svcDeps...)
+	sort.Strings(names)
+
+	faint := color.New(color.Faint)
+	col, first := 0, true
+	for _, dep := range names {
+		switch {
+		case first:
+		case col+2+len(dep) > colNeeds:
+			faint.Print(",")
+			fmt.Println()
+			fmt.Print(contIndent)
+			col, first = 0, true
+		default:
+			faint.Print(", ")
+			col += 2
 		}
+		if c, ok := svcGroupColor[dep]; ok && !memberSet[dep] {
+			c.Print(dep)
+		} else {
+			faint.Print(dep)
+		}
+		col += len(dep)
+		first = false
 	}
 }
 
@@ -271,13 +395,17 @@ func extractPorts(links []tilt.EndpointLink) string {
 		return "-"
 	}
 	parts := make([]string, 0, len(links))
+	seen := make(map[string]bool, len(links))
 	for _, ep := range links {
-		u, err := url.Parse(ep.URL)
-		if err == nil && u.Port() != "" {
-			parts = append(parts, ":"+u.Port())
-		} else {
-			parts = append(parts, ep.URL)
+		part := ep.URL
+		if u, err := url.Parse(ep.URL); err == nil && u.Port() != "" {
+			part = ":" + u.Port()
 		}
+		if seen[part] {
+			continue
+		}
+		seen[part] = true
+		parts = append(parts, part)
 	}
 	return strings.Join(parts, " ")
 }
