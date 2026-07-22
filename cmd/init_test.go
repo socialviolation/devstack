@@ -72,9 +72,12 @@ func TestWriteAgentsMDPreservesBeadsAndMigratesLegacy(t *testing.T) {
 }
 
 func TestBuildAgentInstructionsContentSanity(t *testing.T) {
-	block := buildAgentInstructions("api", "/home/dev/navexa")
+	block := buildAgentInstructions("api", "/home/dev/navexa/api", "/home/dev/navexa")
 	if !strings.Contains(block, "<workspace>:<service>") {
 		t.Fatalf("missing instance-naming guidance:\n%s", block)
+	}
+	if !strings.Contains(block, "After you edit code") || !strings.Contains(block, "devstack restart") {
+		t.Fatalf("missing hot-reload/restart guidance:\n%s", block)
 	}
 	if strings.Contains(block, "devstack up") {
 		t.Fatalf("generated block references the non-existent `devstack up` (use `devstack workspace up`):\n%s", block)
