@@ -23,6 +23,8 @@ const externalMarker = "<external:secretRef>"
 
 const maskedValue = "••••"
 
+const MaskedValue = maskedValue
+
 type ConfigEntry struct {
 	Key        string
 	Value      string
@@ -58,7 +60,7 @@ func EffectiveConfig(svc config.ResolvedService, stackName string) ([]ConfigEntr
 	entries := map[string]ConfigEntry{}
 	for k, v := range values {
 		val := v
-		secret := isSecret(k, v)
+		secret := IsSecret(k, v)
 		switch {
 		case secret:
 			val = maskedValue
@@ -220,10 +222,10 @@ var secretSubstrings = []string{"connectionstring", "secret", "token", "password
 // credentialRe matches a secret smuggled into a value as `param=<secret>` — an
 // Azure function `?code=`, a Redis/SQL `password=`, a SAS `sig=`, etc. — so the
 // value is redacted in place while the surrounding URL/string stays legible.
-// Key-name masking (isSecret) misses these because the key looks innocent.
+// Key-name masking (IsSecret) misses these because the key looks innocent.
 var credentialRe = regexp.MustCompile(`(?i)(code|sig|passwo?rd|accountkey|sharedaccesskey|secret|token|api[_-]?key)=[^&;\s"']+`)
 
-func isSecret(key, value string) bool {
+func IsSecret(key, value string) bool {
 	if value == externalMarker {
 		return true
 	}

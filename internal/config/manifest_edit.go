@@ -72,6 +72,41 @@ func SetServiceEnvValue(repoPath, key, value string) error {
 	})
 }
 
+// SetEnvValue writes environments.<envName>.values.<key>=value into the
+// workspace manifest, creating the environments, env, and values mappings as
+// needed. It preserves comments and unrelated fields.
+func SetEnvValue(workspacePath, envName, key, value string) error {
+	return editWorkspaceManifest(workspacePath, func(root *yaml.Node) error {
+		values := mappingChild(mappingChild(mappingChild(root, "environments"), envName), "values")
+		if values.Kind != yaml.MappingNode {
+			return fmt.Errorf("environments.%s.values is not a mapping", envName)
+		}
+		setScalar(values, key, value, "!!str")
+		return nil
+	})
+}
+
+// SetWorkspaceEnv sets workspace.env to envName in the workspace manifest,
+// selecting the active env at the workspace scope.
+func SetWorkspaceEnv(workspacePath, envName string) error {
+	return editWorkspaceManifest(workspacePath, func(root *yaml.Node) error {
+		setScalar(mappingChild(root, "workspace"), "env", envName, "!!str")
+		return nil
+	})
+}
+
+// SetServiceEnv sets service.env to envName in the service manifest at repoPath,
+// selecting the active env at the service scope.
+func SetServiceEnv(repoPath, envName string) error {
+	if !HasServiceManifest(repoPath) {
+		return fmt.Errorf("no %s in %s", ServiceManifestFileName, repoPath)
+	}
+	return editManifest(ServiceManifestPath(repoPath), func(root *yaml.Node) error {
+		setScalar(mappingChild(root, "service"), "env", envName, "!!str")
+		return nil
+	})
+}
+
 // SetObservabilityEnabled writes observability.enabled into the workspace
 // manifest, creating the observability block if absent.
 func SetObservabilityEnabled(workspacePath string, enabled bool) error {

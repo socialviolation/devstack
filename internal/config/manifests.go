@@ -59,14 +59,6 @@ type WorkspaceManifestWorkspace struct {
 	RepoDiscovery WorkspaceManifestRepoDiscovery `yaml:"repoDiscovery,omitempty"`
 }
 
-// EnvPatch is a named bundle of KEY=VALUE config from the workspace's env
-// catalog (WorkspaceManifest.Envs). It is applied at a scope by name; the applied
-// patches layer with stack > service > workspace and land just above the
-// manifests' static env.values in the precedence ladder.
-type EnvPatch struct {
-	Values map[string]string `yaml:"values,omitempty"`
-}
-
 type WorkspaceManifestRepoDiscovery struct {
 	Mode  RepoDiscoveryMode `yaml:"mode,omitempty"`
 	Repos []string          `yaml:"repos,omitempty"`
