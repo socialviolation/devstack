@@ -52,7 +52,14 @@ func ResolveEnvFile(dir, name string) (map[string]string, error) {
 	// but does not abort the shell, so without it a broken .envrc yields partial
 	// env and exit 0 — the failure-swallowing bug this replaces.
 	ref := shQuote(sourceRef(name))
-	cmd := exec.Command("sh", "-c", "set -a; . "+ref+" || exit $?; set +a; env -0")
+	// .envrc files commonly use bashisms ([[ ]], arrays); evaluate with bash when
+	// present so they resolve as they do in the developer's shell, falling back to
+	// sh where bash is absent.
+	shell := "sh"
+	if p, err := exec.LookPath("bash"); err == nil {
+		shell = p
+	}
+	cmd := exec.Command(shell, "-c", "set -a; . "+ref+" || exit $?; set +a; env -0")
 	cmd.Dir = dir
 	cmd.Env = baseline
 

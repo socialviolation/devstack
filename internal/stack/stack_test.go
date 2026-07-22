@@ -100,6 +100,10 @@ calls:
 func TestCreateOverlayWorktreesAndPorts(t *testing.T) {
 	base := newBase(t)
 
+	orig := daemonReachable
+	daemonReachable = func(int) bool { return false }
+	defer func() { daemonReachable = orig }()
+
 	res, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"backend"}})
 	if err != nil {
 		t.Fatalf("Create: %v", err)

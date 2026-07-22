@@ -221,9 +221,9 @@ func Create(in CreateInput) (*CreateResult, error) {
 		return nil, fmt.Errorf("failed to record stack: %w", err)
 	}
 
-	if !daemonReachable(base.TiltPort) {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("base %q daemon is not reachable on port %d. A stack reuses base's running services — start base first: (cd %s && devstack up)",
-			base.Name, base.TiltPort, base.Path))
+	if !daemonReachable(workspace.HostTiltPort) {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("host daemon is not reachable on port %d. A stack reuses base's running services — start base first: (cd %s && devstack workspace up)",
+			workspace.HostTiltPort, base.Path))
 	}
 
 	return res, nil
@@ -375,7 +375,7 @@ func DaemonReachable(port int) bool {
 	return daemonReachable(port)
 }
 
-func daemonReachable(port int) bool {
+var daemonReachable = func(port int) bool {
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get(fmt.Sprintf("http://localhost:%d/api/view", port))
 	if err != nil {
