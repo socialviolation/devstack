@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -102,7 +103,7 @@ func runInitRefresh(cmd *cobra.Command) error {
 		return fmt.Errorf("failed to get working directory: %w", err)
 	}
 
-	if err := writeAgentsMD(defaultService, cwd, workspacePath); err != nil {
+	if err := writeAgentsMD(defaultService, cwd, workspacePath, ""); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "✓ AGENTS.md updated for service %q\n", defaultService)
@@ -137,7 +138,7 @@ func runInitAll() error {
 	var errs []string
 	for _, svcName := range services {
 		svcPath := cfg.ServicePaths[svcName]
-		if err := writeAgentsMD(svcName, svcPath, ws.Path); err != nil {
+		if err := writeAgentsMD(svcName, svcPath, ws.Path, ""); err != nil {
 			errs = append(errs, fmt.Sprintf("  %s: %v", svcName, err))
 			fmt.Fprintf(os.Stderr, "✗ %s: %v\n", svcName, err)
 		} else {
@@ -145,10 +146,49 @@ func runInitAll() error {
 		}
 	}
 
+	errs = append(errs, refreshStackAgentsMD(ws.Name, ws.Path)...)
+
 	if len(errs) > 0 {
 		return fmt.Errorf("%d service(s) failed:\n%s", len(errs), strings.Join(errs, "\n"))
 	}
 	return nil
+}
+
+// refreshStackAgentsMD rewrites AGENTS.md in every feature stack's worktree
+// services, which live outside the base workspace's service paths and would
+// otherwise go stale. It returns per-service failure lines rather than aborting,
+// so one broken stack does not stop the rest.
+func refreshStackAgentsMD(workspaceName, workspacePath string) []string {
+	recs, err := stack.LoadStore(workspaceName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not load stacks for workspace %q: %v\n", workspaceName, err)
+		return nil
+	}
+
+	var errs []string
+	for _, rec := range recs {
+		rw, err := stack.ResolveWorktree(&rec)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("  stack %s: %v", rec.Name, err))
+			fmt.Fprintf(os.Stderr, "✗ stack %s: %v\n", rec.Name, err)
+			continue
+		}
+		names := make([]string, 0, len(rw.Services))
+		for name := range rw.Services {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			svc := rw.Services[name]
+			if err := writeAgentsMD(name, svc.RepoPath, workspacePath, rec.Name); err != nil {
+				errs = append(errs, fmt.Sprintf("  %s (stack %s): %v", name, rec.Name, err))
+				fmt.Fprintf(os.Stderr, "✗ %s (stack %s): %v\n", name, rec.Name, err)
+			} else {
+				fmt.Fprintf(os.Stderr, "✓ %s (stack %s)\n", name, rec.Name)
+			}
+		}
+	}
+	return errs
 }
 
 // runInitOnboard registers a new service and wires it up (full onboard).
@@ -233,7 +273,7 @@ func runInitOnboard(cmd *cobra.Command) error {
 	}
 
 	// 4. Write AGENTS.md instructions.
-	if err := writeAgentsMD(name, path, ws.Path); err != nil {
+	if err := writeAgentsMD(name, path, ws.Path, ""); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to write AGENTS.md: %v\n", err)
 	} else {
 		fmt.Fprintf(os.Stderr, "✓ Wrote AGENTS.md\n")
@@ -365,13 +405,13 @@ const (
 // writeAgentsMD writes the managed devstack block into AGENTS.md non-destructively.
 // If a sentinel-wrapped block exists it is replaced in place; otherwise any legacy
 // section is migrated away and a fresh block is appended, preserving all other content.
-func writeAgentsMD(serviceName, servicePath, workspacePath string) error {
+func writeAgentsMD(serviceName, servicePath, workspacePath, stackName string) error {
 	agentsFile := filepath.Join(servicePath, "AGENTS.md")
 	existing, err := os.ReadFile(agentsFile)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to read AGENTS.md: %w", err)
 	}
-	block := agentsSentinelBegin + "\n" + buildAgentInstructions(serviceName, servicePath, workspacePath) + agentsSentinelEnd
+	block := agentsSentinelBegin + "\n" + buildAgentInstructions(serviceName, servicePath, workspacePath, stackName) + agentsSentinelEnd
 	updated := replaceManagedBlock(string(existing), block)
 	return os.WriteFile(agentsFile, []byte(updated), 0644)
 }
@@ -491,7 +531,7 @@ func resolveRunScript(cmd, servicePath string) string {
 // hotReloadInstructions renders the "reload or restart after an edit" guidance:
 // a general rule plus a verdict for this specific service, so an agent knows
 // whether its code edits apply live or need a manual restart.
-func hotReloadInstructions(serviceName, servicePath string) string {
+func hotReloadInstructions(serviceName, servicePath, stackName string) string {
 	general := "### After you edit code — reload or restart\n\n" +
 		"A running service keeps executing its **old** code until it is reloaded. A service reloads automatically only if it **self-watches** — a hot-reload run command such as `dotnet watch run`, `air`, `vite` / `next dev`, or `uvicorn --reload` — or has **`runtime.watch`** set in its `devstack.service.yaml`, which has devstack watch those paths and restart it on change (debounced). " +
 		"If a service has neither, after editing its source you **must** run `devstack restart <service>` (add `--stack <name>` for a stack instance) or your change has no effect. " +
@@ -506,17 +546,21 @@ func hotReloadInstructions(serviceName, servicePath string) string {
 		return general
 	}
 	cmd := m.Runtime.Run.Command
+	restartCmd := fmt.Sprintf("devstack restart %s", serviceName)
+	if stackName != "" {
+		restartCmd += fmt.Sprintf(" --stack %s", stackName)
+	}
 	switch {
 	case looksHotReloading(cmd) || looksHotReloading(resolveRunScript(cmd, servicePath)):
 		return general + fmt.Sprintf("**`%s` hot-reloads** via its run command (`%s`) — your source edits apply automatically; do not restart it for code changes.\n\n", serviceName, cmd)
 	case len(m.Runtime.Watch) > 0:
 		return general + fmt.Sprintf("**`%s` auto-restarts on change** — `runtime.watch` is set, so devstack reloads it after your edits (no manual restart for code changes).\n\n", serviceName)
 	default:
-		return general + fmt.Sprintf("**`%s` does NOT hot-reload** (run command `%s`) — after editing its source you MUST run `devstack restart %s`, or it keeps running the old code. To stop restarting by hand, switch it to a watch command (e.g. `dotnet watch run`, `air`, `uvicorn --reload`) or add `runtime.watch: [<source dirs>]` to its `devstack.service.yaml`.\n\n", serviceName, cmd, serviceName)
+		return general + fmt.Sprintf("**`%s` does NOT hot-reload** (run command `%s`) — after editing its source you MUST run `%s`, or it keeps running the old code. To stop restarting by hand, switch it to a watch command (e.g. `dotnet watch run`, `air`, `uvicorn --reload`) or add `runtime.watch: [<source dirs>]` to its `devstack.service.yaml`.\n\n", serviceName, cmd, restartCmd)
 	}
 }
 
-func buildAgentInstructions(defaultService, servicePath, workspacePath string) string {
+func buildAgentInstructions(defaultService, servicePath, workspacePath, stackName string) string {
 	contextLine := ""
 	if workspacePath != "" {
 		contextLine += fmt.Sprintf("Workspace: `%s`", workspacePath)
@@ -536,6 +580,11 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath string) s
 		svc = defaultService
 	}
 
+	stackLine := ""
+	if stackName != "" {
+		stackLine = fmt.Sprintf("**You are in feature stack `%s`'s worktree.** Edits here stay on this stack's branch, not base. Target this instance with `--stack %s` (e.g. `devstack restart %s --stack %s`); without it, commands act on base.\n\n", stackName, stackName, svc, stackName)
+	}
+
 	observabilityBlock := "**Observability:** Not enabled for this workspace — services are not assumed to be OTEL-instrumented and no collector runs. " +
 		"Turn it on with `devstack otel enable`, then `devstack otel start`.\n\n"
 	if config.ObservabilityEnabled(workspacePath) {
@@ -551,6 +600,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath string) s
 		"It runs services on top of [Tilt](https://tilt.dev), handling lifecycle, dependency ordering, and observability. " +
 		"Local dev only — never point devstack at staging or production.\n\n" +
 		contextLine +
+		stackLine +
 		"### One host daemon\n\n" +
 		"devstack runs a single Tilt daemon for the whole machine (port 10300). " +
 		"Every active workspace's services run inside that one daemon, alongside the services of every active feature stack. " +
@@ -560,7 +610,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath string) s
 		"- Base service: `<workspace>:<service>` (e.g. `" + wsBaseName(workspacePath) + ":" + svc + "`).\n" +
 		"- A feature stack's copy of that service: `<workspace>:<service>:<stack>`.\n\n" +
 		"The base instance and each stack's instance listen on **different ports**, and every command names which instance it acted on (a `target:` line naming the stack, blank for base) — so ports plus that target line tell you which running copy you are inspecting or controlling.\n\n" +
-		hotReloadInstructions(defaultService, servicePath) +
+		hotReloadInstructions(defaultService, servicePath, stackName) +
 		"### Feature stacks\n\n" +
 		"A feature stack is a parallel version of one or more services, run from a git worktree on a feature branch, " +
 		"on its own dynamically-allocated port, beside the base — reusing the base stack for every service it does not change. " +

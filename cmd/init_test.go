@@ -12,11 +12,11 @@ import (
 
 func TestWriteAgentsMDIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
-	if err := writeAgentsMD("api", dir, "/home/dev/navexa"); err != nil {
+	if err := writeAgentsMD("api", dir, "/home/dev/navexa", ""); err != nil {
 		t.Fatalf("writeAgentsMD first: %v", err)
 	}
 	first, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
-	if err := writeAgentsMD("api", dir, "/home/dev/navexa"); err != nil {
+	if err := writeAgentsMD("api", dir, "/home/dev/navexa", ""); err != nil {
 		t.Fatalf("writeAgentsMD second: %v", err)
 	}
 	second, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
@@ -43,7 +43,7 @@ func TestWriteAgentsMDPreservesBeadsAndMigratesLegacy(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	if err := writeAgentsMD("api", dir, "/home/dev/navexa"); err != nil {
+	if err := writeAgentsMD("api", dir, "/home/dev/navexa", ""); err != nil {
 		t.Fatalf("writeAgentsMD: %v", err)
 	}
 	got, _ := os.ReadFile(agentsFile)
@@ -62,7 +62,7 @@ func TestWriteAgentsMDPreservesBeadsAndMigratesLegacy(t *testing.T) {
 		t.Fatalf("preamble was lost:\n%s", s)
 	}
 
-	if err := writeAgentsMD("api", dir, "/home/dev/navexa"); err != nil {
+	if err := writeAgentsMD("api", dir, "/home/dev/navexa", ""); err != nil {
 		t.Fatalf("writeAgentsMD second: %v", err)
 	}
 	got2, _ := os.ReadFile(agentsFile)
@@ -72,7 +72,7 @@ func TestWriteAgentsMDPreservesBeadsAndMigratesLegacy(t *testing.T) {
 }
 
 func TestBuildAgentInstructionsContentSanity(t *testing.T) {
-	block := buildAgentInstructions("api", "/home/dev/navexa/api", "/home/dev/navexa")
+	block := buildAgentInstructions("api", "/home/dev/navexa/api", "/home/dev/navexa", "")
 	if !strings.Contains(block, "<workspace>:<service>") {
 		t.Fatalf("missing instance-naming guidance:\n%s", block)
 	}
