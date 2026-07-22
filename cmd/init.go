@@ -452,6 +452,42 @@ func looksHotReloading(cmd string) bool {
 	return false
 }
 
+// resolveRunScript expands a `npm run <s>` / `yarn <s>` / `pnpm run <s>` /
+// `bun run <s>` invocation to the underlying script from the service's
+// package.json, so hot-reload detection sees the real command (e.g. an "start"
+// script that runs `ng serve`). Anything else is returned unchanged.
+func resolveRunScript(cmd, servicePath string) string {
+	fields := strings.Fields(cmd)
+	var script string
+	switch {
+	case len(fields) >= 3 && fields[0] == "npm" && fields[1] == "run":
+		script = fields[2]
+	case len(fields) >= 3 && (fields[0] == "pnpm" || fields[0] == "bun" || fields[0] == "yarn") && fields[1] == "run":
+		script = fields[2]
+	case len(fields) >= 2 && (fields[0] == "yarn" || fields[0] == "pnpm") && fields[1] != "run":
+		script = fields[1]
+	default:
+		return cmd
+	}
+	if script == "" {
+		return cmd
+	}
+	data, err := os.ReadFile(filepath.Join(servicePath, "package.json"))
+	if err != nil {
+		return cmd
+	}
+	var pkg struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if json.Unmarshal(data, &pkg) != nil {
+		return cmd
+	}
+	if s, ok := pkg.Scripts[script]; ok && strings.TrimSpace(s) != "" {
+		return s
+	}
+	return cmd
+}
+
 // hotReloadInstructions renders the "reload or restart after an edit" guidance:
 // a general rule plus a verdict for this specific service, so an agent knows
 // whether its code edits apply live or need a manual restart.
@@ -471,7 +507,7 @@ func hotReloadInstructions(serviceName, servicePath string) string {
 	}
 	cmd := m.Runtime.Run.Command
 	switch {
-	case looksHotReloading(cmd):
+	case looksHotReloading(cmd) || looksHotReloading(resolveRunScript(cmd, servicePath)):
 		return general + fmt.Sprintf("**`%s` hot-reloads** via its run command (`%s`) — your source edits apply automatically; do not restart it for code changes.\n\n", serviceName, cmd)
 	case len(m.Runtime.Watch) > 0:
 		return general + fmt.Sprintf("**`%s` auto-restarts on change** — `runtime.watch` is set, so devstack reloads it after your edits (no manual restart for code changes).\n\n", serviceName)

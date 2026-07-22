@@ -1,6 +1,30 @@
 package cmd
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestResolveRunScriptExpandsNpmScript(t *testing.T) {
+	dir := t.TempDir()
+	pkg := `{"scripts":{"start":"npm run prebuild && ng serve --configuration=development","build":"ng build"}}`
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkg), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveRunScript("npm run start", dir); !looksHotReloading(got) {
+		t.Errorf("resolveRunScript(npm run start) = %q, expected it to resolve to a hot-reloading script", got)
+	}
+	if got := resolveRunScript("npm run build", dir); looksHotReloading(got) {
+		t.Errorf("resolveRunScript(npm run build) = %q, should not be hot-reloading", got)
+	}
+	if got := resolveRunScript("dotnet run", dir); got != "dotnet run" {
+		t.Errorf("resolveRunScript(dotnet run) = %q, want unchanged", got)
+	}
+	if got := resolveRunScript("npm run start", t.TempDir()); got != "npm run start" {
+		t.Errorf("resolveRunScript with no package.json = %q, want unchanged", got)
+	}
+}
 
 func TestLooksHotReloading(t *testing.T) {
 	reloading := []string{
