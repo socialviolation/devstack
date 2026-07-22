@@ -513,10 +513,11 @@ func buildAgentInstructions(defaultService string, workspacePath string) string 
 		"An **environment** (`environments:` in the workspace manifest) is a named bundle of config-var patches — DB URLs, feature flags, external endpoints — that repoints services without code changes. It applies at three scopes, most-specific winning: a **stack**'s env beats a **service**'s env beats the **workspace** default. So base can run against `local` while one stack runs against `prod`. `devstack status` shows each instance's active env (the ENV column / `env:<name>`), so you can see where every running copy is pointed. Set values with `devstack env set`, point a scope with `devstack env use`. Do NOT `env set` real secrets — those values land in the committed manifest; keep secrets in `env.required` + `.envrc` and let envs carry only non-secret pointing config.\n\n" +
 		"### MCP tools\n\n" +
 		"The `.mcp.json` in this repo wires up the devstack MCP server — the agent interface. Tools include " +
-		"`status`, `restart`, `stop`, `configure`, `process_logs`, `investigate`, and `environment`, plus stack tools " +
-		"(`stack_create`, `stack_list`, `stack_rm`). The service-control tools (`status`, `restart`, `stop`, `process_logs`, `configure`) " +
-		"take an optional `stack` parameter to target a stack's instance rather than base (omit it, or pass `\"base\"`, for base); " +
-		"`investigate` also takes `stack` but as a telemetry filter. Treat them as discovery helpers, not hidden sources of truth.\n\n" +
+		"`status`, `restart`, `stop`, `configure`, `process_logs`, `investigate`, and `environment`; stack tools " +
+		"`stack_create`, `stack_up`, `stack_down`, `stack_list`, `stack_rm`; and env tools `env_use`, `env_which`, `env_set` — " +
+		"so a stack or env can be driven entirely over MCP, no shell needed. The service-control tools (`status`, `restart`, `stop`, `process_logs`, `configure`) " +
+		"take an optional `stack` parameter to target a stack's instance rather than base (omit it, or pass `\"base\"`, for base). " +
+		"`investigate` takes `stack` as a telemetry filter: absent means the base instance only, a name means that stack, `\"all\"` means every instance. Treat them as discovery helpers, not hidden sources of truth.\n\n" +
 		"Rules:\n" +
 		"1. Check `topology` before making dependency claims.\n" +
 		"2. Prefer process logs and telemetry evidence over guessing about runtime state.\n" +

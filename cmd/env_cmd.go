@@ -16,10 +16,12 @@ import (
 var envCmd = &cobra.Command{
 	Use:   "env",
 	Short: "Manage devstack environments",
-	Long: `List, add, and remove named environments for your workspace.
+	Long: `Named environments for your workspace, defined in the workspace manifest.
 
-Environments let you point devstack at different infrastructure (local dev, staging, prod).
-Local environments have full service control. Remote environments are observability-only.`,
+An environment carries both an infrastructure target (local vs remote, observability
+backend) and config-var patches (DB URLs, feature flags, endpoints). Define them with
+add/list/remove and set; apply them with use (at workspace, service, or stack scope,
+most-specific winning); inspect with show/which. status shows where each instance points.`,
 }
 
 var envListCmd = &cobra.Command{
