@@ -254,7 +254,6 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Effective config for %s in stack %s (read-only: what it WOULD run with)\n", service, rec.FullName())
-	fmt.Printf("env-patch/ladder overrides are not shown here; run `devstack env which --stack %s` to see them.\n\n", rec.Name)
 	fmt.Printf("  %-42s %-12s %s\n", "KEY", "SOURCE", "VALUE")
 	fmt.Println(strings.Repeat("-", 90))
 	for _, e := range entries {
@@ -265,6 +264,39 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 		fmt.Printf("%s%-42s %-12s %s\n", marker, e.Key, e.Source, e.Value)
 	}
 	fmt.Printf("\n* = overridden by the stack (devstack-computed). Secret values shown as %s.\n", "••••")
+
+	var managed map[string]string
+	if base, berr := workspace.FindByName(rec.Base); berr == nil {
+		managed = workspace.ManagedEnvFor(base, []string{svc.Name}, rec.Name)[svc.Name]
+	}
+	layers, lerr := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, rec.Env, managed)
+	if lerr != nil {
+		fmt.Printf("\nEnvironment (serve_env ladder): unavailable: %v\n", lerr)
+		return nil
+	}
+	merged := config.MergeEnvLadder(layers)
+	source := map[string]config.EnvRung{}
+	for _, l := range layers {
+		for k := range l.Values {
+			source[k] = l.Rung
+		}
+	}
+	keys := make([]string, 0, len(merged))
+	for k := range merged {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	fmt.Printf("\nEnvironment (serve_env ladder — what the process receives):\n")
+	fmt.Printf("  %-42s %-22s %s\n", "KEY", "SOURCE", "VALUE")
+	fmt.Println(strings.Repeat("-", 90))
+	for _, k := range keys {
+		v := merged[k]
+		if svcconfig.IsSecret(k, v) {
+			v = svcconfig.MaskedValue
+		}
+		fmt.Printf("  %-42s %-22s %s\n", k, string(source[k]), v)
+	}
 	return nil
 }
 
