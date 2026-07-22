@@ -371,7 +371,7 @@ func writeAgentsMD(serviceName, servicePath, workspacePath string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to read AGENTS.md: %w", err)
 	}
-	block := agentsSentinelBegin + "\n" + buildAgentInstructions(serviceName, workspacePath) + agentsSentinelEnd
+	block := agentsSentinelBegin + "\n" + buildAgentInstructions(serviceName, servicePath, workspacePath) + agentsSentinelEnd
 	updated := replaceManagedBlock(string(existing), block)
 	return os.WriteFile(agentsFile, []byte(updated), 0644)
 }
@@ -428,7 +428,95 @@ func assembleAgents(before, block, after string) string {
 	return sb.String()
 }
 
-func buildAgentInstructions(defaultService string, workspacePath string) string {
+// looksHotReloading reports whether a run command self-watches its source and
+// reloads on change. It is deliberately conservative: a false positive would
+// tell an agent not to restart a process that is actually running stale code,
+// so unknown commands are treated as non-reloading.
+func looksHotReloading(cmd string) bool {
+	c := " " + strings.ToLower(cmd) + " "
+	for _, s := range []string{
+		"dotnet watch", "--watch", "--reload", "--hot", "nodemon", "next dev",
+		"vite", "ng serve", "webpack serve", "webpack-dev-server", "watchexec",
+		"cargo watch", "livereload", "npm run dev", "yarn dev", "pnpm dev",
+		"bun dev", "bun run dev",
+	} {
+		if strings.Contains(c, s) {
+			return true
+		}
+	}
+	for _, w := range []string{"air", "reflex", "wgo", "gow", "modd", "watchman"} {
+		if strings.Contains(c, " "+w+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveRunScript expands a `npm run <s>` / `yarn <s>` / `pnpm run <s>` /
+// `bun run <s>` invocation to the underlying script from the service's
+// package.json, so hot-reload detection sees the real command (e.g. an "start"
+// script that runs `ng serve`). Anything else is returned unchanged.
+func resolveRunScript(cmd, servicePath string) string {
+	fields := strings.Fields(cmd)
+	var script string
+	switch {
+	case len(fields) >= 3 && fields[0] == "npm" && fields[1] == "run":
+		script = fields[2]
+	case len(fields) >= 3 && (fields[0] == "pnpm" || fields[0] == "bun" || fields[0] == "yarn") && fields[1] == "run":
+		script = fields[2]
+	case len(fields) >= 2 && (fields[0] == "yarn" || fields[0] == "pnpm") && fields[1] != "run":
+		script = fields[1]
+	default:
+		return cmd
+	}
+	if script == "" {
+		return cmd
+	}
+	data, err := os.ReadFile(filepath.Join(servicePath, "package.json"))
+	if err != nil {
+		return cmd
+	}
+	var pkg struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if json.Unmarshal(data, &pkg) != nil {
+		return cmd
+	}
+	if s, ok := pkg.Scripts[script]; ok && strings.TrimSpace(s) != "" {
+		return s
+	}
+	return cmd
+}
+
+// hotReloadInstructions renders the "reload or restart after an edit" guidance:
+// a general rule plus a verdict for this specific service, so an agent knows
+// whether its code edits apply live or need a manual restart.
+func hotReloadInstructions(serviceName, servicePath string) string {
+	general := "### After you edit code — reload or restart\n\n" +
+		"A running service keeps executing its **old** code until it is reloaded. A service reloads automatically only if it **self-watches** — a hot-reload run command such as `dotnet watch run`, `air`, `vite` / `next dev`, or `uvicorn --reload` — or has **`runtime.watch`** set in its `devstack.service.yaml`, which has devstack watch those paths and restart it on change (debounced). " +
+		"If a service has neither, after editing its source you **must** run `devstack restart <service>` (add `--stack <name>` for a stack instance) or your change has no effect. " +
+		"Prefer hot-reloading run commands; when a service can't self-reload, add `runtime.watch: [<source dirs>]` so devstack reloads it for you. " +
+		"Config/env changes (`devstack env set` / `env use`) always need a restart, even for a self-reloading service — they change the launch environment, not the watched source.\n\n"
+
+	if serviceName == "" {
+		return general
+	}
+	m, err := config.LoadServiceManifest(servicePath)
+	if err != nil || m == nil || strings.TrimSpace(m.Runtime.Run.Command) == "" {
+		return general
+	}
+	cmd := m.Runtime.Run.Command
+	switch {
+	case looksHotReloading(cmd) || looksHotReloading(resolveRunScript(cmd, servicePath)):
+		return general + fmt.Sprintf("**`%s` hot-reloads** via its run command (`%s`) — your source edits apply automatically; do not restart it for code changes.\n\n", serviceName, cmd)
+	case len(m.Runtime.Watch) > 0:
+		return general + fmt.Sprintf("**`%s` auto-restarts on change** — `runtime.watch` is set, so devstack reloads it after your edits (no manual restart for code changes).\n\n", serviceName)
+	default:
+		return general + fmt.Sprintf("**`%s` does NOT hot-reload** (run command `%s`) — after editing its source you MUST run `devstack restart %s`, or it keeps running the old code. To stop restarting by hand, switch it to a watch command (e.g. `dotnet watch run`, `air`, `uvicorn --reload`) or add `runtime.watch: [<source dirs>]` to its `devstack.service.yaml`.\n\n", serviceName, cmd, serviceName)
+	}
+}
+
+func buildAgentInstructions(defaultService, servicePath, workspacePath string) string {
 	contextLine := ""
 	if workspacePath != "" {
 		contextLine += fmt.Sprintf("Workspace: `%s`", workspacePath)
@@ -472,6 +560,7 @@ func buildAgentInstructions(defaultService string, workspacePath string) string 
 		"- Base service: `<workspace>:<service>` (e.g. `" + wsBaseName(workspacePath) + ":" + svc + "`).\n" +
 		"- A feature stack's copy of that service: `<workspace>:<service>:<stack>`.\n\n" +
 		"The base instance and each stack's instance listen on **different ports**, and every command names which instance it acted on (a `target:` line naming the stack, blank for base) — so ports plus that target line tell you which running copy you are inspecting or controlling.\n\n" +
+		hotReloadInstructions(defaultService, servicePath) +
 		"### Feature stacks\n\n" +
 		"A feature stack is a parallel version of one or more services, run from a git worktree on a feature branch, " +
 		"on its own dynamically-allocated port, beside the base — reusing the base stack for every service it does not change. " +
