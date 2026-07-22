@@ -9,6 +9,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -17,6 +18,8 @@ func registerStackTools(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	registerStackCreateTool(mcpServer, ws)
 	registerStackListTool(mcpServer, ws)
 	registerStackRemoveTool(mcpServer, ws)
+	registerStackUpTool(mcpServer, ws)
+	registerStackDownTool(mcpServer, ws)
 }
 
 func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
@@ -180,6 +183,86 @@ func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		}
 		fmt.Fprintf(&sb, "Stack %q removed.", res.Name)
 		return mcp.NewToolResultText(sb.String()), nil
+	})
+}
+
+func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
+	tool := mcp.NewTool("stack_up",
+		mcp.WithDescription("Bring a feature stack up: mark it (and its base workspace) active, fold its <base>:<service>:<stack> resources into the one host Tilt daemon, and ensure that daemon is running so it hot-reloads them. Mirrors 'devstack stack up'. There is no per-stack daemon — its services run on their own ports inside the host daemon. Returns the stack's allocated service links and the daemon status."),
+		mcp.WithString("name", mcp.Required(),
+			mcp.Description("Stack name — the short feature name (e.g. 'import-review').")),
+	)
+
+	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if ws == nil {
+			return mcp.NewToolResultError("no base workspace resolved for stacks"), nil
+		}
+		name := strings.TrimSpace(request.GetString("name", ""))
+		if name == "" {
+			return mcp.NewToolResultError("name must not be empty"), nil
+		}
+		rec, err := stack.Resolve(ws.Name, name)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		if err := workspace.SetWorkspaceActive(ws.Name, true); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to mark base workspace active: %v", err)), nil
+		}
+		if err := stack.SetActive(ws.Name, rec.Name, true); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if _, err := hostdaemon.Regenerate(); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to regenerate host Tiltfile: %v", err)), nil
+		}
+		daemonMsg, err := hostdaemon.EnsureDaemon()
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Stack %q is active in base %q; its services run in the host daemon on :%d as %s:<service>:%s.\n",
+			rec.Name, ws.Name, workspace.HostTiltPort, ws.Name, rec.Name)
+		if daemonMsg != "" {
+			fmt.Fprintf(&sb, "%s\n", daemonMsg)
+		}
+		for _, k := range sortedPortKeys(rec.Ports) {
+			fmt.Fprintf(&sb, "  %-24s http://localhost:%d\n", k, rec.Ports[k])
+		}
+		return mcp.NewToolResultText(sb.String()), nil
+	})
+}
+
+func registerStackDownTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
+	tool := mcp.NewTool("stack_down",
+		mcp.WithDescription("Stop a feature stack's services in the host daemon: mark it inactive and regenerate the host Tiltfile so the running daemon drops its <base>:<service>:<stack> resources. Mirrors 'devstack stack down'. Leaves the stack's worktrees and record intact (remove them with stack_rm)."),
+		mcp.WithString("name", mcp.Required(),
+			mcp.Description("Stack name — the short feature name (e.g. 'import-review').")),
+	)
+
+	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if ws == nil {
+			return mcp.NewToolResultError("no base workspace resolved for stacks"), nil
+		}
+		name := strings.TrimSpace(request.GetString("name", ""))
+		if name == "" {
+			return mcp.NewToolResultError("name must not be empty"), nil
+		}
+		rec, err := stack.Resolve(ws.Name, name)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		if err := stack.SetActive(ws.Name, rec.Name, false); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if _, err := hostdaemon.Regenerate(); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to regenerate host Tiltfile: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(fmt.Sprintf(
+			"Stack %q is now inactive; the host daemon will drop its resources. Worktrees and record kept (remove with stack_rm %s).",
+			rec.Name, rec.Name)), nil
 	})
 }
 

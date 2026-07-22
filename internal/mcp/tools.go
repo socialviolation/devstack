@@ -84,6 +84,9 @@ func RegisterTools(
 
 		// Feature stacks overlay this workspace as their base.
 		registerStackTools(mcpServer, ws)
+
+		// Config-patch environments: point scopes at named envs and inspect them.
+		registerEnvTools(mcpServer, ws, workspacePath)
 	} else {
 		// Remote environments are inherently observability-backed — investigate is
 		// the primary diagnostic tool there.
@@ -1029,6 +1032,22 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 	})
 }
 
+// resolveInvestigateStack maps the investigate tool's raw stack param to a
+// TraceQuery.Stack value. An absent/empty param defaults to "base" — an
+// unqualified query means the base instance, not every instance co-mingled.
+// "all" (or "*") clears the filter to query every instance. Any other value is
+// the stack's short name, passed through unchanged.
+func resolveInvestigateStack(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return "base"
+	case "all", "*":
+		return ""
+	default:
+		return raw
+	}
+}
+
 func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, backend observability.Backend, activeEnvName string, activeEnv workspace.Environment, workspacePath string, ws *workspace.Workspace) {
 	// Determine the local plugin query endpoint (if any)
 	var localQueryEndpoint string
@@ -1091,7 +1110,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			mcp.Description("Exact service name as registered in SignOz (e.g. 'api-service'). NOT a description or partial match. Only applied in mode 3 (no trace_id or attribute given); attribute searches and trace lookups span all services."),
 		),
 		mcp.WithString("stack",
-			mcp.Description("Isolate results to one stack's telemetry via the devstack.stack resource attribute. Pass a stack's short name (e.g. 'perf'), or 'base' to select base-workspace services. Combine with 'service' to pin a single stack's service. Applied in mode 2 (attribute search) and mode 3 (recent executions)."),
+			mcp.Description("Which instance's telemetry to query, via the devstack.stack resource attribute. ABSENT/empty = base only (the base-workspace services — the default an unqualified query means). A stack's short name (e.g. 'perf') = that stack only. 'all' (or '*') = every instance co-mingled (base + all stacks). Combine with 'service' to pin a single instance's service. Applied in mode 2 (attribute search) and mode 3 (recent executions)."),
 		),
 		mcp.WithString("attribute",
 			mcp.Description("Exact attribute key to search by (e.g. 'portfolio.id', 'user.id', 'process.id'). NOT natural language. Requires value parameter."),
@@ -1126,7 +1145,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		traceID := request.GetString("trace_id", "")
 		spanID := request.GetString("span_id", "")
 		service := request.GetString("service", "")
-		stack := request.GetString("stack", "")
+		stack := resolveInvestigateStack(request.GetString("stack", ""))
 		attribute := request.GetString("attribute", "")
 		value := request.GetString("value", "")
 		sinceMinutes := int(request.GetFloat("since_minutes", 5))
