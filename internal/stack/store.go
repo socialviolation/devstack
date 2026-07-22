@@ -114,6 +114,45 @@ func SetActive(base, name string, active bool) error {
 	return fmt.Errorf("stack %q not found in workspace %q", name, base)
 }
 
+// AnyActive reports whether a base workspace has any stack marked active.
+func AnyActive(base string) (bool, error) {
+	recs, err := LoadStore(base)
+	if err != nil {
+		return false, err
+	}
+	for i := range recs {
+		if recs[i].Active {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// DeactivateAll marks every active stack of a base workspace inactive and
+// persists the change, returning the short names of the stacks it deactivated.
+// Bringing a base down calls it so no stack record lingers marked active once
+// the daemon that ran it is gone.
+func DeactivateAll(base string) ([]string, error) {
+	recs, err := LoadStore(base)
+	if err != nil {
+		return nil, err
+	}
+	var deactivated []string
+	for i := range recs {
+		if recs[i].Active {
+			recs[i].Active = false
+			deactivated = append(deactivated, recs[i].Name)
+		}
+	}
+	if len(deactivated) == 0 {
+		return nil, nil
+	}
+	if err := saveStore(base, recs); err != nil {
+		return nil, err
+	}
+	return deactivated, nil
+}
+
 // SetEnv sets the active env applied at a base workspace's stack scope and
 // persists it. Errors if the stack is unknown.
 func SetEnv(base, name, envName string) error {
