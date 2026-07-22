@@ -870,6 +870,8 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			mcp.Description("Comma-separated exact service names to limit to. Optional; default is all serving services.")),
 		mcp.WithBoolean("reclaim",
 			mcp.Description("Push only. Kill whatever already holds these ports on the remote before forwarding. Destructive: it tears down forwards belonging to other stacks, so leave it off unless a push failed to bind and you know the port is yours.")),
+		mcp.WithBoolean("stacks",
+			mcp.Description("Also forward this workspace's active feature-stack service ports. Default false — only the workspace's base services are forwarded.")),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -890,7 +892,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 				filter[s] = true
 			}
 		}
-		svcs := tunnel.Discover(view, filter)
+		svcs := tunnel.Discover(view, filter, ws.Name, request.GetBool("stacks", false))
 		sort.Slice(svcs, func(i, j int) bool { return svcs[i].Port < svcs[j].Port })
 
 		switch action {

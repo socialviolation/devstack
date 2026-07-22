@@ -17,32 +17,66 @@ import (
 
 func TestDiscover(t *testing.T) {
 	view := &tilt.TiltView{UiResources: []tilt.UIResource{
-		res("api", "ok", "http://localhost:8080"),
-		res("frontend", "ok", "http://localhost:4200", "http://localhost:4200/health"), // dup port
-		res("worker", "pending"),                                                       // no endpoints
-		res("db", "ok", "http://localhost:5432"),
+		res("navexa:api", "ok", "http://localhost:8080"),
+		res("navexa:frontend", "ok", "http://localhost:4200", "http://localhost:4200/health"), // dup port
+		res("navexa:api:perf", "ok", "http://localhost:8090"),
+		res("other:api", "ok", "http://localhost:9090"),
 	}}
 
-	t.Run("all", func(t *testing.T) {
-		got := Discover(view, nil)
-		if len(got) != 3 {
-			t.Fatalf("want 3 services (deduped), got %d: %+v", len(got), got)
+	names := func(svcs []Service) map[string]int {
+		m := map[string]int{}
+		for _, s := range svcs {
+			m[s.Name] = s.Port
 		}
-		ports := map[int]bool{}
-		for _, s := range got {
-			ports[s.Port] = true
+		return m
+	}
+
+	t.Run("base only, own workspace", func(t *testing.T) {
+		got := names(Discover(view, nil, "navexa", false))
+		want := map[string]int{"api": 8080, "frontend": 4200}
+		if len(got) != len(want) {
+			t.Fatalf("want %v, got %v", want, got)
 		}
-		for _, want := range []int{8080, 4200, 5432} {
-			if !ports[want] {
-				t.Errorf("missing port %d", want)
+		for n, p := range want {
+			if got[n] != p {
+				t.Errorf("want %s:%d, got %d", n, p, got[n])
 			}
 		}
 	})
 
-	t.Run("filter", func(t *testing.T) {
-		got := Discover(view, map[string]bool{"api": true})
-		if len(got) != 1 || got[0].Port != 8080 {
-			t.Fatalf("want only api:8080, got %+v", got)
+	t.Run("includeStacks adds stack resources", func(t *testing.T) {
+		got := names(Discover(view, nil, "navexa", true))
+		want := map[string]int{"api": 8080, "frontend": 4200, "api:perf": 8090}
+		if len(got) != len(want) {
+			t.Fatalf("want %v, got %v", want, got)
+		}
+		for n, p := range want {
+			if got[n] != p {
+				t.Errorf("want %s:%d, got %d", n, p, got[n])
+			}
+		}
+	})
+
+	t.Run("other workspace never included", func(t *testing.T) {
+		for _, includeStacks := range []bool{false, true} {
+			for _, s := range Discover(view, nil, "navexa", includeStacks) {
+				if s.Port == 9090 {
+					t.Fatalf("other:api leaked (includeStacks=%v): %+v", includeStacks, s)
+				}
+			}
+		}
+	})
+
+	t.Run("filter matches bare service name across base and stack", func(t *testing.T) {
+		got := names(Discover(view, map[string]bool{"api": true}, "navexa", true))
+		want := map[string]int{"api": 8080, "api:perf": 8090}
+		if len(got) != len(want) {
+			t.Fatalf("want %v, got %v", want, got)
+		}
+		for n, p := range want {
+			if got[n] != p {
+				t.Errorf("want %s:%d, got %d", n, p, got[n])
+			}
 		}
 	})
 }
