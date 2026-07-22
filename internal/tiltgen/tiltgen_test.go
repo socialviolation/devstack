@@ -10,6 +10,14 @@ import (
 	"github.com/socialviolation/devstack/internal/config"
 )
 
+func generate(rw *config.ResolvedWorkspace, opts Options) (string, error) {
+	return GenerateHost([]WorkspaceGen{{Base: rw, BaseOpts: opts}})
+}
+
+func generateCombined(base *config.ResolvedWorkspace, opts Options, stacks []StackGen) (string, error) {
+	return GenerateHost([]WorkspaceGen{{Base: base, BaseOpts: opts, Stacks: stacks}})
+}
+
 func TestGenerate(t *testing.T) {
 	dir := t.TempDir()
 	apiDir := filepath.Join(dir, "repos", "api")
@@ -60,7 +68,7 @@ ports: { http: 4200 }
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
 
-	out, err := Generate(rw, Options{ManagedEnv: map[string]map[string]string{
+	out, err := generate(rw, Options{ManagedEnv: map[string]map[string]string{
 		"api": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317"},
 	}})
 	if err != nil {
@@ -122,7 +130,7 @@ runtime:
 	if err != nil {
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
-	out, err := Generate(rw, Options{})
+	out, err := generate(rw, Options{})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -189,7 +197,7 @@ runtime:
 	if has(6) {
 		opts.ManagedEnv = map[string]map[string]string{"svc": {"LADDER": "managed"}}
 	}
-	out, err := Generate(rw, opts)
+	out, err := generate(rw, opts)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -243,7 +251,7 @@ runtime:
 	if err != nil {
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
-	out, err := Generate(rw, Options{ManagedEnv: map[string]map[string]string{
+	out, err := generate(rw, Options{ManagedEnv: map[string]map[string]string{
 		"svc": {"BACKEND_URL": "http://localhost:8080"},
 	}})
 	if err != nil {
@@ -297,7 +305,7 @@ runtime:
 	if err != nil {
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
-	out, err := Generate(rw, Options{ManagedEnv: map[string]map[string]string{
+	out, err := generate(rw, Options{ManagedEnv: map[string]map[string]string{
 		"a": {"PEER_URL": "http://localhost:1111"},
 		"b": {"PEER_URL": "http://localhost:2222"},
 	}})
@@ -344,7 +352,7 @@ runtime:
 	if err != nil {
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
-	out, err := Generate(rw, Options{})
+	out, err := generate(rw, Options{})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -382,7 +390,7 @@ runtime:
 	if err != nil {
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
-	out, err := Generate(rw, Options{})
+	out, err := generate(rw, Options{})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -419,7 +427,7 @@ runtime:
 	if err != nil {
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
-	out, err := Generate(rw, Options{})
+	out, err := generate(rw, Options{})
 	if err == nil {
 		t.Fatalf("a broken .envrc must fail generation; got:\n%s", out)
 	}
@@ -451,7 +459,7 @@ workspace:
 	if err != nil {
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
-	out, err := Generate(rw, Options{})
+	out, err := generate(rw, Options{})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -512,7 +520,7 @@ workspace:
 	if err != nil {
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
-	return Generate(rw, Options{})
+	return generate(rw, Options{})
 }
 
 // TestSelfPortResolves: a service reads its own listen port via ${self.port.http}.
@@ -566,7 +574,7 @@ env:
 	if err != nil {
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
-	out, err := Generate(rw, Options{})
+	out, err := generate(rw, Options{})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -697,7 +705,7 @@ links:
 	if err != nil {
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
-	out, err := Generate(rw, Options{})
+	out, err := generate(rw, Options{})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -746,7 +754,7 @@ links:
 	if err != nil {
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
-	out, err := Generate(rw, Options{Book: config.PortBook{"svc": {"http": 20001}}})
+	out, err := generate(rw, Options{Book: config.PortBook{"svc": {"http": 20001}}})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -782,7 +790,7 @@ ports: { http: 8080 }
 	if err != nil {
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
-	out, err := Generate(rw, Options{Book: config.PortBook{"svc": {"http": 20001}}})
+	out, err := generate(rw, Options{Book: config.PortBook{"svc": {"http": 20001}}})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -820,11 +828,11 @@ env:
 	if err != nil {
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
-	nilBook, err := Generate(rw, Options{})
+	nilBook, err := generate(rw, Options{})
 	if err != nil {
 		t.Fatalf("Generate(nil book): %v", err)
 	}
-	explicit, err := Generate(rw, Options{Book: config.BuildPortBook(rw)})
+	explicit, err := generate(rw, Options{Book: config.BuildPortBook(rw)})
 	if err != nil {
 		t.Fatalf("Generate(explicit book): %v", err)
 	}
@@ -918,7 +926,7 @@ ports: { http: 63290 }
 	if err != nil {
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
-	out, err := Generate(rw, Options{Book: book})
+	out, err := generate(rw, Options{Book: book})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -974,7 +982,7 @@ func TestGenerateCombinedNamespacesStack(t *testing.T) {
 	stackRW := writeFEBEWorkspace(t, 4200, 8080)
 	stackBook := config.PortBook{"frontend": {"http": 14200}, "backend": {"http": 18080}}
 
-	out, err := GenerateCombined(baseRW, Options{}, []StackGen{{
+	out, err := generateCombined(baseRW, Options{}, []StackGen{{
 		Workspace: stackRW,
 		Options:   Options{Book: stackBook},
 		Namespace: "perf",
@@ -1028,29 +1036,12 @@ func TestGenerateCombinedNamespacesStack(t *testing.T) {
 
 	// 5. the base portion is byte-identical to a standalone Generate(baseRW): the
 	// combined file is base's file with the stack blocks appended.
-	standalone, err := Generate(baseRW, Options{})
+	standalone, err := generate(baseRW, Options{})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
 	if !strings.HasPrefix(out, standalone) {
 		t.Errorf("combined output must start with the standalone base Tiltfile;\nstandalone:\n%q\ncombined:\n%q", standalone, out)
-	}
-}
-
-// TestGenerateCombinedNoStacksMatchesGenerate pins that GenerateCombined with no
-// stacks is byte-identical to Generate — single-workspace generation is untouched.
-func TestGenerateCombinedNoStacksMatchesGenerate(t *testing.T) {
-	rw := writeFEBEWorkspace(t, 4200, 8080)
-	gen, err := Generate(rw, Options{})
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-	combined, err := GenerateCombined(rw, Options{}, nil)
-	if err != nil {
-		t.Fatalf("GenerateCombined: %v", err)
-	}
-	if gen != combined {
-		t.Errorf("GenerateCombined with no stacks must equal Generate;\nGenerate:\n%q\nCombined:\n%q", gen, combined)
 	}
 }
 
@@ -1196,7 +1187,7 @@ func TestGenerateHostLabelsCarryWorkspace(t *testing.T) {
 func TestGenerateHostSingleWorkspaceMatchesPrefixedGenerate(t *testing.T) {
 	rw := writeFEBEWorkspace(t, 4200, 8080)
 
-	combined, err := GenerateCombined(rw, Options{}, nil)
+	combined, err := generateCombined(rw, Options{}, nil)
 	if err != nil {
 		t.Fatalf("GenerateCombined: %v", err)
 	}
