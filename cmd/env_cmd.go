@@ -48,9 +48,8 @@ func init() {
 
 	envAddCmd.Flags().String("type", "remote", `environment type: "local" or "remote"`)
 	envAddCmd.Flags().String("backend", "signoz", `observability backend (currently only "signoz")`)
-	envAddCmd.Flags().String("url", "", "observability backend URL (required)")
+	envAddCmd.Flags().String("url", "", "observability backend URL (required for remote)")
 	envAddCmd.Flags().String("otlp-endpoint", "", "OTLP ingestion URL for the collector (e.g. https://otel.company.com:4318)")
-	_ = envAddCmd.MarkFlagRequired("url")
 }
 
 func runEnvList(cmd *cobra.Command, args []string) error {
@@ -116,6 +115,10 @@ func runEnvAdd(cmd *cobra.Command, args []string) error {
 	case string(workspace.EnvironmentTypeLocal), string(workspace.EnvironmentTypeRemote):
 	default:
 		return fmt.Errorf("invalid type %q: must be \"local\" or \"remote\"", envType)
+	}
+
+	if envType == string(workspace.EnvironmentTypeRemote) && url == "" {
+		return fmt.Errorf("--url is required for a remote environment")
 	}
 
 	env := config.WorkspaceEnvironment{
