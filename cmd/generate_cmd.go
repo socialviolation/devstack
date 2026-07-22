@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/socialviolation/devstack/internal/config"
-	"github.com/socialviolation/devstack/internal/stack"
+	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/tiltgen"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -57,7 +57,7 @@ func regenerateTiltfile(ws *workspace.Workspace) (string, error) {
 		names = append(names, name)
 	}
 
-	stackGens, err := activeStackGens(ws)
+	stackGens, err := hostdaemon.ActiveStackGens(ws)
 	if err != nil {
 		return "", err
 	}
@@ -74,83 +74,8 @@ func regenerateTiltfile(ws *workspace.Workspace) (string, error) {
 	return path, nil
 }
 
-// regenerateHostTiltfile renders the one host Tiltfile composing every active
-// workspace's base services plus each active stack's overlay services, all as
-// distinct resources prefixed <ws>:<svc>, and writes it to the host Tilt dir. A
-// running host daemon hot-reloads it. With no active workspaces it still writes a
-// valid header-only Tiltfile so a running daemon drains to empty. Returns the path.
+// regenerateHostTiltfile delegates to hostdaemon.Regenerate, kept as a package
+// alias for the many cmd call sites.
 func regenerateHostTiltfile() (string, error) {
-	active, err := workspace.ActiveWorkspaces()
-	if err != nil {
-		return "", err
-	}
-
-	var gens []tiltgen.WorkspaceGen
-	for i := range active {
-		ws := active[i]
-		rw, err := config.ResolveWorkspace(ws.Path)
-		if err != nil {
-			return "", fmt.Errorf("workspace %q: failed to resolve manifests: %w", ws.Name, err)
-		}
-		names := make([]string, 0, len(rw.Services))
-		for name := range rw.Services {
-			names = append(names, name)
-		}
-		stackGens, err := activeStackGens(&ws)
-		if err != nil {
-			return "", err
-		}
-		gens = append(gens, tiltgen.WorkspaceGen{
-			Name:     ws.Name,
-			Base:     rw,
-			BaseOpts: tiltgen.Options{ManagedEnv: workspace.ManagedEnv(&ws, names)},
-			Stacks:   stackGens,
-		})
-	}
-
-	out, err := tiltgen.GenerateHost(gens)
-	if err != nil {
-		return "", err
-	}
-
-	dir := workspace.HostTiltDir()
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create host tilt dir: %w", err)
-	}
-	path := filepath.Join(dir, "Tiltfile")
-	if err := os.WriteFile(path, []byte(out), 0644); err != nil {
-		return "", fmt.Errorf("failed to write host Tiltfile: %w", err)
-	}
-	return path, nil
-}
-
-// activeStackGens builds a tiltgen.StackGen for every active feature stack of the
-// base workspace: its resolved worktree checkout, its overlay-first options, and
-// its short name as the namespace. Returns nil when no stack is active.
-func activeStackGens(ws *workspace.Workspace) ([]tiltgen.StackGen, error) {
-	recs, err := stack.LoadStore(ws.Name)
-	if err != nil {
-		return nil, err
-	}
-	var gens []tiltgen.StackGen
-	for i := range recs {
-		rec := recs[i]
-		if !rec.Active {
-			continue
-		}
-		rw, err := config.ResolveWorkspace(rec.Root)
-		if err != nil {
-			return nil, fmt.Errorf("stack %q: failed to resolve manifests: %w", rec.Name, err)
-		}
-		names := make([]string, 0, len(rw.Services))
-		for name := range rw.Services {
-			names = append(names, name)
-		}
-		opts, err := stack.GenerateOptions(&rec, names)
-		if err != nil {
-			return nil, fmt.Errorf("stack %q: %w", rec.Name, err)
-		}
-		gens = append(gens, tiltgen.StackGen{Workspace: rw, Options: opts, Namespace: rec.Name})
-	}
-	return gens, nil
+	return hostdaemon.Regenerate()
 }

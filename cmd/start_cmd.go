@@ -2,17 +2,12 @@ package cmd
 
 import (
 	"fmt"
-	"net/http"
 	"os"
-	"os/exec"
-	"strconv"
-	"strings"
-	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/infra"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -124,72 +119,15 @@ func runStart(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// ensureHostDaemon starts the one host Tilt daemon if it is not already running.
-// If it is reachable or its PID is alive, it is left as-is (a running daemon
-// hot-reloads the host Tiltfile the caller just regenerated). Otherwise it starts
-// `tilt up` in the host Tilt dir on the fixed host port, tracks its PID and
-// session, and polls until reachable.
+// ensureHostDaemon starts the one host Tilt daemon if it is not already running,
+// printing the status line hostdaemon.EnsureDaemon reports.
 func ensureHostDaemon() error {
-	apiURL := fmt.Sprintf("http://localhost:%d/api/view", workspace.HostTiltPort)
-	if isTiltReachable(apiURL) {
-		fmt.Printf("Host daemon already running on :%d — it will hot-reload the updated Tiltfile.\n", workspace.HostTiltPort)
-		return nil
-	}
-
-	pidFile := workspace.HostPIDFile()
-	if pidData, err := os.ReadFile(pidFile); err == nil {
-		if pid, perr := strconv.Atoi(strings.TrimSpace(string(pidData))); perr == nil && isProcessAlive(pid) {
-			fmt.Printf("Host daemon already running (pid %d, port %d).\n", pid, workspace.HostTiltPort)
-			return nil
-		}
-		os.Remove(pidFile)
-	}
-
-	dir := workspace.HostTiltDir()
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create host data directory %s: %w", dir, err)
-	}
-
-	logFile := workspace.HostLogFile()
-	lf, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	msg, err := hostdaemon.EnsureDaemon()
 	if err != nil {
-		return fmt.Errorf("failed to open host log file %s: %w", logFile, err)
+		return err
 	}
-	defer lf.Close()
-
-	tiltCmd := exec.Command("tilt", "up", "--host", "0.0.0.0", "--port", strconv.Itoa(workspace.HostTiltPort))
-	tiltCmd.Dir = dir
-	tiltCmd.Stdout = lf
-	tiltCmd.Stderr = lf
-	tiltCmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := tiltCmd.Start(); err != nil {
-		return fmt.Errorf("failed to start host daemon: %w", err)
-	}
-
-	pid := tiltCmd.Process.Pid
-	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
-		tiltCmd.Process.Kill()
-		return fmt.Errorf("failed to write host PID file: %w", err)
-	}
-	_, _ = workspace.OpenSession(workspace.HostWorkspace(), pid, []int{workspace.HostTiltPort})
-
-	fmt.Printf("Starting host daemon")
-	deadline := time.Now().Add(45 * time.Second)
-	reached := false
-	for time.Now().Before(deadline) {
-		if isTiltReachable(apiURL) {
-			reached = true
-			break
-		}
-		fmt.Print(".")
-		time.Sleep(2 * time.Second)
-	}
-	fmt.Println()
-
-	if reached {
-		fmt.Printf("✓ Host daemon started (pid %d, port %d, logs: %s)\n", pid, workspace.HostTiltPort, logFile)
-	} else {
-		fmt.Printf("Host daemon started but not yet reachable — logs: %s\n", logFile)
+	if msg != "" {
+		fmt.Println(msg)
 	}
 	return nil
 }
@@ -216,18 +154,10 @@ func resolveWorkspace(flag string) (*workspace.Workspace, error) {
 
 // isTiltReachable returns true if the Tilt API is responding at the given URL.
 func isTiltReachable(url string) bool {
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return false
-	}
-	resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	return hostdaemon.TiltReachable(url)
 }
 
 // isProcessAlive returns true if a process with the given PID exists and is running.
 func isProcessAlive(pid int) bool {
-	statusPath := fmt.Sprintf("/proc/%d/status", pid)
-	_, err := os.Stat(statusPath)
-	return err == nil
+	return hostdaemon.ProcessAlive(pid)
 }

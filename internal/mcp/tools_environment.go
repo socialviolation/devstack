@@ -22,7 +22,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, activeEnvName string,
 		mcp.WithDescription(
 			"Show the active environment and available tools. "+
 				"Call this first to understand what you can and cannot do in the current context. "+
-				"Environments: local (full control) vs remote (observability-only, no service restart/stop). "+
+				"'env' means two distinct things here: (1) the INFRA environment — local (full control) vs remote (observability-only, no service restart/stop) — which sets your capabilities and is switched with DEVSTACK_ENVIRONMENT; and (2) the CONFIG-PATCH environment — a named set of config vars (e.g. 'staging') that a workspace, service, or stack instance is pointed at via env_use (CLI: devstack env use). status and env_which show which config-patch env each instance currently points at. "+
 				"devstack is a LOCAL development environment. Data is ephemeral and local — not production. "+
 				"The available tools depend on this workspace's configuration: trace/telemetry tools appear only when observability is enabled, tunnel tools only when tailscale is installed. "+
 				"Call this tool first to understand the context before using other tools.",
@@ -57,7 +57,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, activeEnvName string,
 			if line := stacksSummary(ws); line != "" {
 				sb.WriteString(line)
 			}
-			tools := []string{"status", "restart", "stop", "configure", "process_logs", "service_env", "observability", "stack_create", "stack_list", "stack_rm"}
+			tools := []string{"status", "restart", "stop", "configure", "process_logs", "service_env", "observability", "stack_create", "stack_list", "stack_up", "stack_down", "stack_rm", "env_use", "env_which", "env_set"}
 			if otelOn {
 				tools = append(tools, "investigate")
 			}
@@ -89,8 +89,11 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, activeEnvName string,
 			}
 			envList = append(envList, entry)
 		}
-		fmt.Fprintf(&sb, "envs: %s\n", strings.Join(envList, ", "))
-		fmt.Fprintf(&sb, "switch: DEVSTACK_ENVIRONMENT=<name>\n")
+		fmt.Fprintf(&sb, "infra envs: %s\n", strings.Join(envList, ", "))
+		fmt.Fprintf(&sb, "switch infra env: DEVSTACK_ENVIRONMENT=<name>\n")
+		if activeEnv.Type == workspace.EnvironmentTypeLocal {
+			fmt.Fprintf(&sb, "config-patch env: services/workspace/stack are pointed at a named config env via env_use (devstack env use); status and env_which show where each instance points.\n")
+		}
 
 		return mcp.NewToolResultText(sb.String()), nil
 	})
