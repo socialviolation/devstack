@@ -29,3 +29,15 @@ func ResolveEnvPatch(ws *WorkspaceManifest, m *ServiceManifest, stackEnv string)
 	}
 	return merged, nil
 }
+
+// ActiveEnvName returns the name of the effective environment for an instance:
+// the most-specific non-empty scope, stack beating service beating workspace.
+func ActiveEnvName(wsEnv, svcEnv, stackEnv string) string {
+	if stackEnv != "" {
+		return stackEnv
+	}
+	if svcEnv != "" {
+		return svcEnv
+	}
+	return wsEnv
+}

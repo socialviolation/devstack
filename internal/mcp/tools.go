@@ -200,11 +200,23 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 		// Build a map of service name -> status for the groups summary.
 		svcStatus := make(map[string]string, len(view.UiResources))
 
+		rw, _ := config.ResolveWorkspace(ws.Path)
+		wsEnv := ""
+		if rw != nil {
+			wsEnv = rw.Manifest.Workspace.Env
+		}
+		stackEnv := ""
+		if t.namespace != "" {
+			if rec, err := stack.FindStack(ws.Name, t.namespace); err == nil && rec != nil {
+				stackEnv = rec.Env
+			}
+		}
+
 		var sb strings.Builder
 		sb.WriteString(targetHeader(t.label))
 		sb.WriteString("Tilt is running.\n\n")
-		fmt.Fprintf(&sb, "%-24s %-10s %-14s %-40s %-16s %s\n", "SERVICE", "STATUS", "PORT(S)", "PATH", "GROUP", "ERROR")
-		fmt.Fprintf(&sb, "%s\n", strings.Repeat("-", 116))
+		fmt.Fprintf(&sb, "%-24s %-10s %-14s %-40s %-16s %-12s %s\n", "SERVICE", "STATUS", "PORT(S)", "PATH", "GROUP", "ENV", "ERROR")
+		fmt.Fprintf(&sb, "%s\n", strings.Repeat("-", 129))
 
 		prefix := ws.Name + ":"
 		for _, r := range view.UiResources {
@@ -225,7 +237,17 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			}
 			path := shortenPath(serviceDirs[svc])
 			group := serviceGroup(name, cfg)
-			fmt.Fprintf(&sb, "%-24s %-10s %-14s %-40s %-16s %s\n", name, status, ports, path, group, lastError)
+			svcEnv := ""
+			if rw != nil {
+				if rs, ok := rw.Services[svc]; ok && rs.Manifest != nil {
+					svcEnv = rs.Manifest.Service.Env
+				}
+			}
+			env := config.ActiveEnvName(wsEnv, svcEnv, stackEnv)
+			if env == "" {
+				env = "-"
+			}
+			fmt.Fprintf(&sb, "%-24s %-10s %-14s %-40s %-16s %-12s %s\n", name, status, ports, path, group, env, lastError)
 		}
 
 		// Groups summary section.
