@@ -3,18 +3,20 @@
 Run more than one feature live at once, without standing up a full replica of
 the world for each.
 
-> **Build status (as of this revision):** steps 0-6 and 7a/7b/7f-1/7f-3a/7f-3b
-> are implemented, verified, and committed — `devstack stack create/rm/list`
-> works end-to-end (worktrees, overlay computation, generated infra-less
-> manifest, dynamic service ports, overlay-first Tiltfile, base-collector
-> reuse). Remaining: 7f-4 (MCP `stack_*` tools) in progress; then the user
-> confirms the UX defaults below and runs the live multi-stack **serving**
-> test (real Tilt + services), which was not verifiable from the build harness.
-> `workspace doctor` reconciliation for hand-deleted worktrees is not yet built.
-
-> Revision 2. Revised after three independent reviews. Revision 1 claimed "no
-> re-keying of the registry is required" — that was false and is corrected in
-> §Identity. Line references verified against HEAD.
+> **Status: SHIPPED** (merged to `main`). Feature stacks are live end-to-end —
+> `devstack stack create/up/down/list/rm/config` and `stack_*` MCP tools, with
+> `--stack` addressing across the service commands. See the README for current
+> usage.
+>
+> **This document is the original design record.** Two things evolved past it
+> since it was written, so read it as history where they conflict:
+> 1. **One Tilt daemon per *host*, not per stack/workspace.** A stack is now an
+>    `Active` flag that folds its services into the single host daemon (`:10300`)
+>    as namespaced `<workspace>:<service>:<stack>` resources — not a separate
+>    daemon. The reuse/overlay/worktree/port design below is unchanged; only the
+>    daemon topology differs.
+> 2. **Named environments** carry config-var patches applied at workspace/
+>    service/stack scope (`env set/use`), which post-dates this spec entirely.
 
 ## Concept
 
