@@ -504,8 +504,13 @@ func buildAgentInstructions(defaultService string, workspacePath string) string 
 		"devstack stack list                          # registered stacks and their ports\n" +
 		"devstack stack config " + svc + " --stack <name>    # effective config a stack's service runs with\n" +
 		"devstack tunnel push [--stacks]              # forward local service ports over SSH (--stacks includes stack instances)\n" +
+		"devstack env set <name> KEY=VALUE            # define an environment's config-patch values\n" +
+		"devstack env use <name> [--service|--stack]  # point base, a service, or a stack at env <name>\n" +
+		"devstack env which [--service|--stack]        # which env an instance resolves to, and its values\n" +
 		"```\n\n" +
 		"`--stack <name>` targets that stack's instance instead of base; without it commands operate on the base workspace.\n\n" +
+		"### Environments (where a service points)\n\n" +
+		"An **environment** (`environments:` in the workspace manifest) is a named bundle of config-var patches — DB URLs, feature flags, external endpoints — that repoints services without code changes. It applies at three scopes, most-specific winning: a **stack**'s env beats a **service**'s env beats the **workspace** default. So base can run against `local` while one stack runs against `prod`. `devstack status` shows each instance's active env (the ENV column / `env:<name>`), so you can see where every running copy is pointed. Set values with `devstack env set`, point a scope with `devstack env use`. Do NOT `env set` real secrets — those values land in the committed manifest; keep secrets in `env.required` + `.envrc` and let envs carry only non-secret pointing config.\n\n" +
 		"### MCP tools\n\n" +
 		"The `.mcp.json` in this repo wires up the devstack MCP server — the agent interface. Tools include " +
 		"`status`, `restart`, `stop`, `configure`, `process_logs`, `investigate`, and `environment`, plus stack tools " +
