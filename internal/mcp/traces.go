@@ -109,7 +109,7 @@ type traceSpan struct {
 	ParentSpanID string
 	Service      string
 	Operation    string
-	StartNs      int64  // Unix nanoseconds
+	StartNs      int64 // Unix nanoseconds
 	DurationNs   int64
 	StatusCode   string // "ok", "error", "unset"
 	StatusMsg    string
@@ -593,7 +593,7 @@ func fetchRootTraces(queryURL, service string, limit int, sinceMinutes int) ([]t
 // --- Log types and queries ---
 
 type logEntry struct {
-	Timestamp int64  // Unix nanoseconds
+	Timestamp int64 // Unix nanoseconds
 	Body      string
 	Service   string
 	Severity  string

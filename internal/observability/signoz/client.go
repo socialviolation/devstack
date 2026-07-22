@@ -99,9 +99,9 @@ type queryRangeRequest struct {
 }
 
 type compositeQuery struct {
-	QueryType      string                   `json:"queryType"`
-	PanelType      string                   `json:"panelType"`
-	BuilderQueries map[string]builderQuery  `json:"builderQueries"`
+	QueryType      string                  `json:"queryType"`
+	PanelType      string                  `json:"panelType"`
+	BuilderQueries map[string]builderQuery `json:"builderQueries"`
 }
 
 type builderQuery struct {
@@ -141,8 +141,8 @@ type orderBy struct {
 }
 
 type queryRangeResponse struct {
-	Status string           `json:"status"`
-	Data   queryRangeData   `json:"data"`
+	Status string         `json:"status"`
+	Data   queryRangeData `json:"data"`
 }
 
 type queryRangeData struct {
@@ -151,9 +151,9 @@ type queryRangeData struct {
 }
 
 type queryResult struct {
-	QueryName string    `json:"queryName"`
+	QueryName string      `json:"queryName"`
 	Series    interface{} `json:"series"`
-	List      []listRow `json:"list"`
+	List      []listRow   `json:"list"`
 }
 
 type listRow struct {

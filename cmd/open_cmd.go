@@ -14,7 +14,7 @@ var openCmd = &cobra.Command{
 	Short: "Open the dev daemon dashboard in the browser",
 	Long: `Open the dev daemon UI for the current workspace in the browser.
 The dashboard shows all running services, their build logs, and status.`,
-	RunE:  runOpen,
+	RunE: runOpen,
 }
 
 func init() {
