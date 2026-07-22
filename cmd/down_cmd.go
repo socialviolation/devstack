@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/socialviolation/devstack/internal/infra"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -42,6 +43,14 @@ func runDown(cmd *cobra.Command, args []string) error {
 	}
 	if err := requireLocalEnv(envName, env); err != nil {
 		return err
+	}
+
+	deactivated, err := stack.DeactivateAll(ws.Name)
+	if err != nil {
+		return fmt.Errorf("failed to deactivate stacks for %s: %w", ws.Name, err)
+	}
+	if len(deactivated) > 0 {
+		fmt.Printf("Brought down %d active stack(s) of '%s': %s\n", len(deactivated), ws.Name, strings.Join(deactivated, ", "))
 	}
 
 	if err := workspace.SetWorkspaceActive(ws.Name, false); err != nil {
@@ -160,6 +169,11 @@ func runDownAll() error {
 	}
 
 	for i := range workspaces {
+		if deactivated, err := stack.DeactivateAll(workspaces[i].Name); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to deactivate stacks for %s: %v\n", workspaces[i].Name, err)
+		} else if len(deactivated) > 0 {
+			fmt.Printf("Brought down %d active stack(s) of '%s': %s\n", len(deactivated), workspaces[i].Name, strings.Join(deactivated, ", "))
+		}
 		if err := workspace.SetWorkspaceActive(workspaces[i].Name, false); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to mark %s inactive: %v\n", workspaces[i].Name, err)
 		}
