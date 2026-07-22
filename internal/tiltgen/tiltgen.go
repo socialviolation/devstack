@@ -213,7 +213,7 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	if err != nil {
 		return "", err
 	}
-	if err := resolveLayerRefs(layers, svc.Name, book); err != nil {
+	if err := ResolveLayerRefs(layers, svc.Name, book); err != nil {
 		return "", err
 	}
 	if err := checkRequiredEnv(layers, m.Env.Required, svc.Name); err != nil {
@@ -277,7 +277,10 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	return b.String(), nil
 }
 
-func resolveLayerRefs(layers []config.EnvLayer, self string, book config.PortBook) error {
+// ResolveLayerRefs resolves ${service.field} references in the workspace/service
+// env.values layers against the port book, in place — the same resolution the
+// generated serve_env receives, so callers can preview it.
+func ResolveLayerRefs(layers []config.EnvLayer, self string, book config.PortBook) error {
 	for i := range layers {
 		if layers[i].Rung != config.RungWorkspaceValues && layers[i].Rung != config.RungServiceValues {
 			continue

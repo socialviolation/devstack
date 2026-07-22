@@ -12,6 +12,7 @@ import (
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/svcconfig"
+	"github.com/socialviolation/devstack/internal/tiltgen"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -265,14 +266,25 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("\n* = overridden by the stack (devstack-computed). Secret values shown as %s.\n", "••••")
 
+	names := make([]string, 0, len(rw.Services))
+	for n := range rw.Services {
+		names = append(names, n)
+	}
+	opts, oerr := stack.GenerateOptions(rec, names)
 	var managed map[string]string
-	if base, berr := workspace.FindByName(rec.Base); berr == nil {
-		managed = workspace.ManagedEnvFor(base, []string{svc.Name}, rec.Name)[svc.Name]
+	if oerr == nil {
+		managed = opts.ManagedEnv[svc.Name]
 	}
 	layers, lerr := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, rec.Env, managed)
 	if lerr != nil {
 		fmt.Printf("\nEnvironment (serve_env ladder): unavailable: %v\n", lerr)
 		return nil
+	}
+	if oerr == nil {
+		if rerr := tiltgen.ResolveLayerRefs(layers, svc.Name, opts.Book); rerr != nil {
+			fmt.Printf("\nEnvironment (serve_env ladder): unavailable: %v\n", rerr)
+			return nil
+		}
 	}
 	merged := config.MergeEnvLadder(layers)
 	source := map[string]config.EnvRung{}
