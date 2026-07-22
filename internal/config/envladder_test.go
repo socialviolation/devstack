@@ -32,12 +32,12 @@ func TestEnvLadderPrecedenceOrder(t *testing.T) {
 		Values: map[string]string{"K": "svc_values"},
 	}}
 
-	layers, err := EnvLadder(dir, ws, m, map[string]string{"K": "managed"})
+	layers, err := EnvLadder(dir, ws, m, "", map[string]string{"K": "managed"})
 	if err != nil {
 		t.Fatalf("EnvLadder: %v", err)
 	}
 
-	wantRungs := []EnvRung{RungEnvrc, RungWorkspaceFiles, RungServiceFiles, RungWorkspaceValues, RungServiceValues, RungManaged}
+	wantRungs := []EnvRung{RungEnvrc, RungWorkspaceFiles, RungServiceFiles, RungWorkspaceValues, RungServiceValues, RungActiveEnv, RungManaged}
 	if len(layers) != len(wantRungs) {
 		t.Fatalf("got %d layers, want %d", len(layers), len(wantRungs))
 	}
@@ -96,7 +96,7 @@ func TestEnvLadderEachRungBeatsTheOneBelow(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			layers, err := EnvLadder(dir, tc.ws, tc.m, nil)
+			layers, err := EnvLadder(dir, tc.ws, tc.m, "", nil)
 			if err != nil {
 				t.Fatalf("EnvLadder: %v", err)
 			}
@@ -104,6 +104,117 @@ func TestEnvLadderEachRungBeatsTheOneBelow(t *testing.T) {
 				t.Errorf("K = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestResolveEnvPatch(t *testing.T) {
+	catalog := map[string]EnvPatch{
+		"base":  {Values: map[string]string{"K": "base", "ONLY_WS": "w"}},
+		"svc":   {Values: map[string]string{"K": "svc"}},
+		"stack": {Values: map[string]string{"K": "stack"}},
+	}
+
+	cases := []struct {
+		name     string
+		wsEnv    string
+		svcEnv   string
+		stackEnv string
+		want     map[string]string
+		wantErr  string
+	}{
+		{
+			name:  "workspace-only env applies",
+			wsEnv: "base",
+			want:  map[string]string{"K": "base", "ONLY_WS": "w"},
+		},
+		{
+			name:   "service env overrides workspace for a shared key",
+			wsEnv:  "base",
+			svcEnv: "svc",
+			want:   map[string]string{"K": "svc", "ONLY_WS": "w"},
+		},
+		{
+			name:     "stack env overrides service",
+			wsEnv:    "base",
+			svcEnv:   "svc",
+			stackEnv: "stack",
+			want:     map[string]string{"K": "stack", "ONLY_WS": "w"},
+		},
+		{
+			name: "no env active yields empty map",
+			want: map[string]string{},
+		},
+		{
+			name:    "unknown workspace env errors",
+			wsEnv:   "nope",
+			wantErr: `env "nope" applied at workspace scope is not defined in workspace envs`,
+		},
+		{
+			name:    "unknown service env errors",
+			svcEnv:  "nope",
+			wantErr: `env "nope" applied at service scope is not defined in workspace envs`,
+		},
+		{
+			name:     "unknown stack env errors",
+			stackEnv: "nope",
+			wantErr:  `env "nope" applied at stack scope is not defined in workspace envs`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := &WorkspaceManifest{Envs: catalog}
+			ws.Workspace.Env = tc.wsEnv
+			m := &ServiceManifest{}
+			m.Service.Env = tc.svcEnv
+
+			got, err := ResolveEnvPatch(ws, m, tc.stackEnv)
+			if tc.wantErr != "" {
+				if err == nil || err.Error() != tc.wantErr {
+					t.Fatalf("err = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ResolveEnvPatch: %v", err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for k, want := range tc.want {
+				if got[k] != want {
+					t.Errorf("%s = %q, want %q", k, got[k], want)
+				}
+			}
+		})
+	}
+}
+
+// The active-env rung overrides service env.values but is itself overridden by
+// devstack-computed values, so an env repoints a service without ever clobbering
+// devstack's live facts.
+func TestEnvLadderActiveEnvRung(t *testing.T) {
+	dir := t.TempDir()
+
+	ws := &WorkspaceManifest{
+		Envs: map[string]EnvPatch{
+			"prod": {Values: map[string]string{"K": "env_prod", "PORT": "env_port"}},
+		},
+	}
+	ws.Workspace.Env = "prod"
+	m := &ServiceManifest{Env: ServiceEnv{Values: map[string]string{"K": "svc_values"}}}
+
+	layers, err := EnvLadder(dir, ws, m, "", map[string]string{"PORT": "managed_port"})
+	if err != nil {
+		t.Fatalf("EnvLadder: %v", err)
+	}
+
+	env := MergeEnvLadder(layers)
+	if got := env["K"]; got != "env_prod" {
+		t.Errorf("K = %q, want %q (active env must beat service env.values)", got, "env_prod")
+	}
+	if got := env["PORT"]; got != "managed_port" {
+		t.Errorf("PORT = %q, want %q (devstack-computed must beat active env)", got, "managed_port")
 	}
 }
 
