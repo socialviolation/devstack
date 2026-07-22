@@ -125,7 +125,7 @@ func resolveLadders(ws *workspace.Workspace, workspacePath string, services []st
 		if !ok || svc.Manifest == nil {
 			continue
 		}
-		layers, err := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, managed[name])
+		layers, err := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, "", managed[name])
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve env for %s: %w", name, err)
 		}

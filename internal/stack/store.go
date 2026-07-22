@@ -23,6 +23,7 @@ type Record struct {
 	Base       string            `json:"base"`                  // owning base workspace name
 	Root       string            `json:"root"`                  // synthesised stack root dir (sibling of base)
 	Branch     string            `json:"branch"`                // branch the changed repos' worktrees are on
+	Env        string            `json:"env,omitempty"`         // active env name applied at the stack scope
 	Overlay    []string          `json:"overlay"`               // overlay service names, sorted
 	Worktrees  map[string]string `json:"worktrees"`             // service -> worktree path
 	Ports      map[string]int    `json:"ports"`                 // service/portKey -> allocated port

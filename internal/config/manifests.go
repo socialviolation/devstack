@@ -31,6 +31,7 @@ type WorkspaceManifest struct {
 	Runtime       WorkspaceManifestRuntime        `yaml:"runtime,omitempty"`
 	Observability WorkspaceManifestObservability  `yaml:"observability,omitempty"`
 	Env           WorkspaceManifestEnv            `yaml:"env,omitempty"`
+	Envs          map[string]EnvPatch             `yaml:"envs,omitempty"`
 	Groups        map[string][]string             `yaml:"groups,omitempty"`
 	Dependencies  map[string][]string             `yaml:"dependencies,omitempty"`
 	Calls         map[string][]string             `yaml:"calls,omitempty"`
@@ -55,7 +56,16 @@ type WorkspaceManifestEnv struct {
 
 type WorkspaceManifestWorkspace struct {
 	Name          string                         `yaml:"name"`
+	Env           string                         `yaml:"env,omitempty"`
 	RepoDiscovery WorkspaceManifestRepoDiscovery `yaml:"repoDiscovery,omitempty"`
+}
+
+// EnvPatch is a named bundle of KEY=VALUE config from the workspace's env
+// catalog (WorkspaceManifest.Envs). It is applied at a scope by name; the applied
+// patches layer with stack > service > workspace and land just above the
+// manifests' static env.values in the precedence ladder.
+type EnvPatch struct {
+	Values map[string]string `yaml:"values,omitempty"`
 }
 
 type WorkspaceManifestRepoDiscovery struct {
@@ -163,6 +173,7 @@ type ServiceLink struct {
 
 type ServiceManifestService struct {
 	Name    string   `yaml:"name"`
+	Env     string   `yaml:"env,omitempty"`
 	Aliases []string `yaml:"aliases,omitempty"`
 }
 
