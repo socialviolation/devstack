@@ -18,6 +18,7 @@ import (
 var envSetCmd = &cobra.Command{
 	Use:   "set <name> KEY=VALUE [KEY=VALUE ...]",
 	Short: "Set config-var values on a named environment",
+	Long:  "Set config-var values on one of the base workspace's named environments.\nEnvironments are defined once in the base workspace manifest and inherited by feature stacks.",
 	Args:  cobra.MinimumNArgs(2),
 	RunE:  runEnvSet,
 }
@@ -25,6 +26,7 @@ var envSetCmd = &cobra.Command{
 var envUseCmd = &cobra.Command{
 	Use:   "use <name>",
 	Short: "Point a scope (workspace/service/stack) at a named environment",
+	Long:  "Point a scope at one of the base workspace's named environments.\nEnvironments are defined once in the base workspace manifest; feature stacks don't define their own. --stack points a stack at one of the base's environments (likewise --service for a service, or no flag for the workspace). <name> must be defined in the base workspace.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runEnvUse,
 }
@@ -32,6 +34,7 @@ var envUseCmd = &cobra.Command{
 var envShowCmd = &cobra.Command{
 	Use:   "show <name>",
 	Short: "Show a named environment's config-var values",
+	Long:  "Show a base workspace environment's config-var values (secrets masked).\nEnvironments are defined once in the base workspace manifest.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runEnvShow,
 }
@@ -39,6 +42,7 @@ var envShowCmd = &cobra.Command{
 var envWhichCmd = &cobra.Command{
 	Use:   "which",
 	Short: "Show the active env at each scope and the merged effective values",
+	Long:  "Show which base-defined environment a service resolves to at each scope (workspace/service/stack) and the merged effective values (stack > service > workspace, secrets masked).",
 	Args:  cobra.NoArgs,
 	RunE:  runEnvWhich,
 }

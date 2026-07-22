@@ -162,7 +162,7 @@ Work on a stack by **`cd`-ing into its worktree** (path shown by `stack create`/
 
 ### Environments
 
-An **environment** is a named config bundle in the workspace manifest that repoints services — DB URLs, feature flags, endpoints, and the observability target — without code changes. It applies at three scopes, most-specific winning: **stack > service > workspace**. So base can run against `local` while one stack runs against `prod`.
+An **environment** is a named config bundle in the workspace manifest that repoints services — DB URLs, feature flags, endpoints, and the observability target — without code changes. Environments are defined **once in the base workspace manifest** and inherited by feature stacks — a stack doesn't define its own; `env use --stack <name>` just points a stack at one of the base's environments. It applies at three scopes, most-specific winning: **stack > service > workspace**. So base can run against `local` while one stack runs against `prod`.
 
 ```bash
 devstack env add <name> [--type local|remote] [--url ...] [--api-key ...]   # define an environment
@@ -253,7 +253,7 @@ Parameters: `service` (optional — if omitted, stops everything), `stack` (opti
 Manage [feature stacks](#feature-stacks) over MCP — create a stack's worktrees, bring it up/down in the host daemon, list them, or tear one down. So an agent can spin up a parallel version of a service, work on it, and clean it up without shelling out.
 
 ### `env_use` / `env_which` / `env_set`
-Manage [environments](#environments) over MCP — point a workspace/service/stack at an env (`env_use`), see which env an instance resolves to and its values (`env_which`), or set a config-var patch (`env_set`). Secrets are masked in output.
+Manage [environments](#environments) over MCP — point a workspace/service/stack at an env (`env_use`), see which env an instance resolves to and its values (`env_which`), or set a config-var patch (`env_set`). Environments are defined once in the base workspace manifest and inherited by stacks; `env_use` with `stack` points a stack at one of the base's environments. Secrets are masked in output.
 
 ### `configure`
 Set a Tilt runtime argument (`key=value`). Tilt reloads affected services automatically. Useful for feature flags and environment switching.
