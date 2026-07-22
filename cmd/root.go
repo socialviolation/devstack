@@ -6,6 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 var cfgFile string
@@ -62,7 +64,8 @@ func init() {
 	_ = rootCmd.PersistentFlags().MarkHidden("config")
 
 	// Dev daemon connection
-	rootCmd.PersistentFlags().Int("daemon-port", 10350, "Dev daemon API port")
+	rootCmd.PersistentFlags().Int("daemon-port", workspace.HostTiltPort, "Dev daemon API port")
+	_ = rootCmd.PersistentFlags().MarkHidden("daemon-port")
 	rootCmd.PersistentFlags().String("daemon-host", "localhost", "Dev daemon host")
 	_ = rootCmd.PersistentFlags().MarkHidden("daemon-host")
 

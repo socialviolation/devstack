@@ -38,7 +38,7 @@ Service states:
 
 func init() {
 	rootCmd.AddCommand(statusCmd)
-	statusCmd.Flags().String("stack", "", "Show a feature stack's own daemon instead of the base workspace")
+	statusCmd.Flags().String("stack", "", "Show a feature stack's service instances (<ws>:<svc>:<stack>) instead of base")
 }
 
 // groupPalette cycles through distinct colors for group headers.

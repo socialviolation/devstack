@@ -60,7 +60,7 @@ var stackConfigCmd = &cobra.Command{
 
 var stackUpCmd = &cobra.Command{
 	Use:          "up <name>",
-	Short:        "Start a feature stack's daemon (its services on their allocated ports)",
+	Short:        "Bring a feature stack's services up on their own ports in the one host daemon",
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackUp,
@@ -68,7 +68,7 @@ var stackUpCmd = &cobra.Command{
 
 var stackDownCmd = &cobra.Command{
 	Use:          "down <name>",
-	Short:        "Stop a feature stack's daemon (leaves its worktrees and record)",
+	Short:        "Stop a feature stack's services in the host daemon (leaves its worktrees and record)",
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackDown,
@@ -333,7 +333,7 @@ func runStackDown(cmd *cobra.Command, args []string) error {
 // root. A stack is operable only when the host daemon is up and the stack is active
 // (its resources are in the host Tiltfile).
 func resolveStackTarget(base *workspace.Workspace, stackName string) (port int, namespace string, root string, label string, err error) {
-	if stackName == "" {
+	if stackName == "" || stackName == "base" {
 		return workspace.HostTiltPort, "", base.Path, "", nil
 	}
 	rec, err := stack.Resolve(base.Name, stackName)

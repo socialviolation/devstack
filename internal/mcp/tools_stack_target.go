@@ -14,9 +14,9 @@ import (
 
 // stackParamDesc is the shared description for the optional `stack` parameter the
 // local tools accept. Absent = the base workspace this daemon is bound to.
-const stackParamDesc = "Optional feature stack name to target instead of the base workspace. " +
-	"Absent (default) operates on the base workspace, unchanged. When set, the tool operates on the named stack's " +
-	"resources, which run in the base workspace's one daemon namespaced as <service>:<stack>, plus its worktree config."
+const stackParamDesc = "Optional feature stack name to target instead of base. " +
+	"Absent (or the literal \"base\") operates on the base workspace's service instances. When set to a stack name, the tool " +
+	"operates on that stack's instances, which run in the one host daemon as <workspace>:<service>:<stack> resources, plus its worktree config."
 
 // resolveStackRecord looks up a feature stack by short name within the bound
 // (base) workspace, returning a clear error that lists the available stack names
@@ -46,7 +46,7 @@ func resolveStackRecord(ws *workspace.Workspace, name string) (*stack.Record, er
 // whose generated manifest points at the stack's worktrees, so every read and
 // write lands in the worktree and never in base.
 func serviceEnvTarget(ws *workspace.Workspace, basePath, stackName string) (path, instance string, err error) {
-	if stackName == "" {
+	if stackName == "" || stackName == "base" {
 		return basePath, "", nil
 	}
 	rec, err := resolveStackRecord(ws, stackName)
@@ -77,7 +77,7 @@ type localTarget struct {
 // clear error (never a hang) when the stack is unknown, base's daemon is down, or
 // the stack is not active.
 func resolveLocalTarget(ws *workspace.Workspace, base localTarget, stackName string) (localTarget, error) {
-	if stackName == "" {
+	if stackName == "" || stackName == "base" {
 		return base, nil
 	}
 	rec, err := resolveStackRecord(ws, stackName)

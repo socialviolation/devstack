@@ -471,7 +471,7 @@ func buildAgentInstructions(defaultService string, workspacePath string) string 
 		"Every running service is a Tilt resource whose name tells you which instance you are touching:\n\n" +
 		"- Base service: `<workspace>:<service>` (e.g. `" + wsBaseName(workspacePath) + ":" + svc + "`).\n" +
 		"- A feature stack's copy of that service: `<workspace>:<service>:<stack>`.\n\n" +
-		"The base instance and each stack's instance listen on **different ports**, so the resource name is the only reliable way to know which running copy you are inspecting or controlling.\n\n" +
+		"The base instance and each stack's instance listen on **different ports**, and every command names which instance it acted on (a `target:` line naming the stack, blank for base) — so ports plus that target line tell you which running copy you are inspecting or controlling.\n\n" +
 		"### Feature stacks\n\n" +
 		"A feature stack is a parallel version of one or more services, run from a git worktree on a feature branch, " +
 		"on its own dynamically-allocated port, beside the base — reusing the base stack for every service it does not change. " +
@@ -499,8 +499,9 @@ func buildAgentInstructions(defaultService string, workspacePath string) string 
 		"### MCP tools\n\n" +
 		"The `.mcp.json` in this repo wires up the devstack MCP server — the agent interface. Tools include " +
 		"`status`, `restart`, `stop`, `configure`, `process_logs`, `investigate`, and `environment`, plus stack tools " +
-		"(`stack_create`, `stack_list`, `stack_rm`). Each accepts an optional `stack` parameter to target a stack's instance " +
-		"rather than base. Treat them as discovery helpers, not hidden sources of truth.\n\n" +
+		"(`stack_create`, `stack_list`, `stack_rm`). The service-control tools (`status`, `restart`, `stop`, `process_logs`, `configure`) " +
+		"take an optional `stack` parameter to target a stack's instance rather than base (omit it, or pass `\"base\"`, for base); " +
+		"`investigate` also takes `stack` but as a telemetry filter. Treat them as discovery helpers, not hidden sources of truth.\n\n" +
 		"Rules:\n" +
 		"1. Check `topology` before making dependency claims.\n" +
 		"2. Prefer process logs and telemetry evidence over guessing about runtime state.\n" +

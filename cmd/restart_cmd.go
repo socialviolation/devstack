@@ -26,7 +26,7 @@ Accepts a service name or group name. Run 'devstack groups' to see available gro
 
 func init() {
 	rootCmd.AddCommand(restartCmd)
-	restartCmd.Flags().String("stack", "", "Target a feature stack's daemon instead of the base workspace")
+	restartCmd.Flags().String("stack", "", "Target a feature stack's service instances (<ws>:<svc>:<stack>) instead of base")
 }
 
 func runRestart(cmd *cobra.Command, args []string) error {
