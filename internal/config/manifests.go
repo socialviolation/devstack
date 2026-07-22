@@ -31,7 +31,6 @@ type WorkspaceManifest struct {
 	Runtime       WorkspaceManifestRuntime        `yaml:"runtime,omitempty"`
 	Observability WorkspaceManifestObservability  `yaml:"observability,omitempty"`
 	Env           WorkspaceManifestEnv            `yaml:"env,omitempty"`
-	Envs          map[string]EnvPatch             `yaml:"envs,omitempty"`
 	Groups        map[string][]string             `yaml:"groups,omitempty"`
 	Dependencies  map[string][]string             `yaml:"dependencies,omitempty"`
 	Calls         map[string][]string             `yaml:"calls,omitempty"`
@@ -135,6 +134,7 @@ type WorkspaceManifestObservabilityDefaults struct {
 type WorkspaceEnvironment struct {
 	Type          string                            `yaml:"type,omitempty"`
 	Observability WorkspaceEnvironmentObservability `yaml:"observability,omitempty"`
+	Values        map[string]string                 `yaml:"values,omitempty"`
 }
 
 type WorkspaceEnvironmentObservability struct {

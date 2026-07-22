@@ -108,7 +108,7 @@ func TestEnvLadderEachRungBeatsTheOneBelow(t *testing.T) {
 }
 
 func TestResolveEnvPatch(t *testing.T) {
-	catalog := map[string]EnvPatch{
+	catalog := map[string]WorkspaceEnvironment{
 		"base":  {Values: map[string]string{"K": "base", "ONLY_WS": "w"}},
 		"svc":   {Values: map[string]string{"K": "svc"}},
 		"stack": {Values: map[string]string{"K": "stack"}},
@@ -147,23 +147,23 @@ func TestResolveEnvPatch(t *testing.T) {
 		{
 			name:    "unknown workspace env errors",
 			wsEnv:   "nope",
-			wantErr: `env "nope" applied at workspace scope is not defined in workspace envs`,
+			wantErr: `env "nope" applied at workspace scope is not defined in workspace environments`,
 		},
 		{
 			name:    "unknown service env errors",
 			svcEnv:  "nope",
-			wantErr: `env "nope" applied at service scope is not defined in workspace envs`,
+			wantErr: `env "nope" applied at service scope is not defined in workspace environments`,
 		},
 		{
 			name:     "unknown stack env errors",
 			stackEnv: "nope",
-			wantErr:  `env "nope" applied at stack scope is not defined in workspace envs`,
+			wantErr:  `env "nope" applied at stack scope is not defined in workspace environments`,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ws := &WorkspaceManifest{Envs: catalog}
+			ws := &WorkspaceManifest{Environments: catalog}
 			ws.Workspace.Env = tc.wsEnv
 			m := &ServiceManifest{}
 			m.Service.Env = tc.svcEnv
@@ -190,14 +190,11 @@ func TestResolveEnvPatch(t *testing.T) {
 	}
 }
 
-// The active-env rung overrides service env.values but is itself overridden by
-// devstack-computed values, so an env repoints a service without ever clobbering
-// devstack's live facts.
 func TestEnvLadderActiveEnvRung(t *testing.T) {
 	dir := t.TempDir()
 
 	ws := &WorkspaceManifest{
-		Envs: map[string]EnvPatch{
+		Environments: map[string]WorkspaceEnvironment{
 			"prod": {Values: map[string]string{"K": "env_prod", "PORT": "env_port"}},
 		},
 	}
