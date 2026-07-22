@@ -83,6 +83,9 @@ The devstack MCP server loads automatically from `.mcp.json`. Claude can now sta
 | **Service** | A process defined by a `devstack.service.yaml` manifest — an API, worker, importer, etc. |
 | **Group** | A named set of services you can start/stop together |
 | **Dependency** | A declared ordering constraint: service A won't start until service B is running |
+| **Host daemon** | A single Tilt daemon (`:10300`) for the whole machine. Every active workspace's services and every active stack's overlay run inside it as `<workspace>:<service>[:<stack>]` resources. There is no daemon per workspace. |
+| **Feature stack** | A parallel version of one or more services, run from a git worktree on a feature branch on its own dynamic port, beside base — reusing base for everything it doesn't change. Lets you run several features live at once without cloning the world. |
+| **Environment** | A named config bundle (`environments:` in the workspace manifest) carrying an infra target (local/remote + observability) and config-var patches, applied at workspace / service / stack scope (most-specific wins). "Where a service points." |
 
 ---
 
@@ -103,13 +106,14 @@ devstack workspace down              # Stop the dev daemon and OTEL collector
 ### Services
 
 ```bash
-devstack start [service]             # Start a service and all its dependencies
-devstack start --group=<name>        # Start all services in a group
-devstack stop [service]              # Stop a service
-devstack status                      # Show live service tree: state, ports, deps
+devstack start [service] [--stack <name>]     # Start a service + deps (base, or a stack's instance)
+devstack start --group=<name>                 # Start all services in a group
+devstack restart [service] [--stack <name>]   # Rebuild/restart base, or a stack's instance
+devstack stop [service] [--stack <name>]      # Stop base, or a stack's instance
+devstack status [--stack <name>]              # Live service tree: state, ports, deps, and ENV (where each points)
 ```
 
-`start` and `stop` auto-detect the current service from the working directory when no name is given. If the dev daemon isn't running, `start` boots it automatically — you don't need a separate `workspace up`.
+`start`/`restart`/`stop` auto-detect the current service from the working directory when no name is given. If the dev daemon isn't running, `start` boots it automatically. `--stack <name>` targets that stack's instance instead of base (see [Feature stacks](#feature-stacks)).
 
 ### Service Registration
 
@@ -139,6 +143,38 @@ devstack groups add <group> <service> [service...]
 devstack groups remove <group> <service> [service...]
 ```
 
+### Feature stacks
+
+A **feature stack** runs a parallel version of one or more services beside base, each changed service in its own **git worktree** on a feature branch and its own dynamically-allocated port, all folded into the one host daemon as `<workspace>:<service>:<stack>` resources. It reuses base for everything it doesn't change, so you can run several features live at once without cloning the world.
+
+```bash
+devstack stack create <name> --repos <svc>[,<svc>]  # worktrees for the changed services (+ their callers)
+devstack stack up <name>                             # fold the stack's services into the host daemon
+devstack stack down <name>                           # stop the stack (keeps its worktrees)
+devstack stack list                                  # stacks, their ports, and active state
+devstack stack rm <name>                             # remove worktrees, release ports, delete the record
+devstack stack config <svc> --stack <name>           # effective config the stack's service runs with
+```
+
+Work on a stack by **`cd`-ing into its worktree** (path shown by `stack create`/`stack list`) and editing there — it's already on the stack's branch, so you never `git checkout`. Reload only that instance with `restart --stack <name>`. Base and other stacks are untouched; each edit stays on its own branch.
+
+> **Shared state is not isolated.** Stacks isolate code and ports, not the database, queues, or caches — two stacks on one DB see each other's data. Point a service elsewhere with an [environment](#environments) if you need to.
+
+### Environments
+
+An **environment** is a named config bundle in the workspace manifest that repoints services — DB URLs, feature flags, endpoints, and the observability target — without code changes. It applies at three scopes, most-specific winning: **stack > service > workspace**. So base can run against `local` while one stack runs against `prod`.
+
+```bash
+devstack env add <name> [--type local|remote] [--url ...] [--api-key ...]   # define an environment
+devstack env set <name> KEY=VALUE                    # set a config-var patch (any value, incl. secrets — masked in output)
+devstack env use <name> [--service <svc>] [--stack <name>]   # point base, a service, or a stack at <name>
+devstack env which [--service <svc>] [--stack <name>]        # which env an instance resolves to + its values
+devstack env show <name>                             # an environment's values (secrets masked)
+devstack env list                                    # environments and the active one
+```
+
+`devstack status` shows each instance's active env in the **ENV** column, so you can see where every running copy points. Env values live in the workspace manifest and are masked on display.
+
 ### Observability (OTEL collector)
 
 Observability is **opt-in per workspace** — devstack does not assume your services are OTEL-instrumented. While it's off, no collector runs and nothing is injected into services. Turn it on when you want traces/logs:
@@ -157,7 +193,7 @@ observability:
   backend: signoz        # default when enabled; use "forwarding" for collector-only / BYO backend
 ```
 
-When enabled, `devstack workspace up` starts a local `otelcol-contrib` collector and the OTLP endpoint (`localhost:4317`, gRPC) is pushed down to every service automatically — you never repeat it.
+When enabled, `devstack workspace up` starts a local `otelcol-contrib` collector (detached, logging to its own file) and the OTLP endpoint (`localhost:4317`, gRPC) is pushed down to every service automatically — you never repeat it. If the collector is ever down while enabled, `devstack status` warns and tries to restart it.
 
 > **Prereq:** the collector needs `otelcol-contrib` on `$PATH`. If it's missing, the workspace still comes up but `devstack otel start` fails until you install it — download the matching binary from [opentelemetry-collector-releases](https://github.com/open-telemetry/opentelemetry-collector-releases/releases), or point `OTELCOL_BIN=/path/to/otelcol-contrib`.
 
@@ -198,20 +234,26 @@ This is what `.mcp.json` invokes. You don't run it directly.
 The tool set adapts to the active workspace: trace tools (`investigate`) appear only when observability is enabled, and the `tunnel` tool only when Tailscale is installed. Call `environment` first to see what's actually available.
 
 ### `environment`
-Orientation tool — shows the active environment, backend, and which tools exist in this context. Call this first.
+Orientation tool — shows the active infra environment (local vs remote) and which tools exist in this context, and points at the config-patch [environments](#environments) a service can be aimed at via `env_use`. Call this first.
 
 ### `status`
-Show all services with state (`running` / `building` / `starting` / `idle` / `disabled` / `error`), ports, source path, and last build error.
+Show all services with state (`running` / `building` / `starting` / `idle` / `disabled` / `error`), ports, source path, ENV (the active environment each instance points at), and last build error. Pass `stack` to see a feature stack's instances.
 
 ### `restart`
 Trigger a rebuild/restart for a service. Auto-enables the service first if it was disabled.
 
-Parameters: `service` (optional — uses `DEVSTACK_DEFAULT_SERVICE` if omitted).
+Parameters: `service` (optional — uses `DEVSTACK_DEFAULT_SERVICE` if omitted), `stack` (optional — target a stack's instance).
 
 ### `stop`
 Disable one or all services.
 
-Parameters: `service` (optional — if omitted, stops everything).
+Parameters: `service` (optional — if omitted, stops everything), `stack` (optional — target a stack's instance).
+
+### `stack_create` / `stack_up` / `stack_down` / `stack_list` / `stack_rm`
+Manage [feature stacks](#feature-stacks) over MCP — create a stack's worktrees, bring it up/down in the host daemon, list them, or tear one down. So an agent can spin up a parallel version of a service, work on it, and clean it up without shelling out.
+
+### `env_use` / `env_which` / `env_set`
+Manage [environments](#environments) over MCP — point a workspace/service/stack at an env (`env_use`), see which env an instance resolves to and its values (`env_which`), or set a config-var patch (`env_set`). Secrets are masked in output.
 
 ### `configure`
 Set a Tilt runtime argument (`key=value`). Tilt reloads affected services automatically. Useful for feature flags and environment switching.
@@ -226,7 +268,7 @@ Parameters: `service` (optional), `lines` (default 100), `errors_only` (filter t
 If no service is given and no default is configured, fetches all services in parallel.
 
 ### `service_env`
-Inspect and edit a service's `.envrc` environment (get, diff across services, set, check required keys).
+Inspect and edit a service's resolved env: `get` shows the value each key resolves to **and the rung/env it came from**, `diff` compares across services, `set` writes to the manifest or `.envrc`, `check` audits required keys. Takes an optional `stack` to inspect a stack's instance.
 
 ### `observability`
 Inspect and change the workspace's OTEL config: `status` (enabled, backend, collector, + per-service telemetry evidence), `enable`, `disable`, `configure`. Always available locally, so an agent can discover and turn observability on.
@@ -245,7 +287,7 @@ Three modes:
 | **Attribute search** | `attribute` + `value` given | Find all root spans where e.g. `portfolio.id=57835`, then expand each trace |
 | **Recent executions** | Neither given | Most recent executions (scoped to default service if set) |
 
-Parameters: `trace_id`, `attribute`, `value`, `service`, `since_minutes` (default 5), `limit` (default 3), `errors_only`.
+Parameters: `trace_id`, `attribute`, `value`, `service`, `stack` (absent = base instance only, a name = that stack, `"all"` = every instance), `since_minutes` (default 5), `limit` (default 3), `errors_only`.
 
 Attribute search queries SigNoz with `isRoot=true` so each result is a distinct trace entry point — no matter which service owns the root span.
 
