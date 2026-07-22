@@ -73,7 +73,7 @@ runtime:
 func TestServiceEnvSetManifestTakesEffect(t *testing.T) {
 	ws, root, apiDir := newTestWorkspace(t, false, basicService)
 
-	res, err := handleServiceEnvSet(ws, root, "api", "NAVEXA_API_URL", "http://localhost:8080", "manifest")
+	res, err := handleServiceEnvSet(ws, root, "", "api", "NAVEXA_API_URL", "http://localhost:8080", "manifest")
 	if err != nil {
 		t.Fatalf("set: %v", err)
 	}
@@ -106,7 +106,7 @@ env:
     K: from_manifest
 `)
 
-	res, err := handleServiceEnvSet(ws, root, "api", "K", "from_envrc", "envrc")
+	res, err := handleServiceEnvSet(ws, root, "", "api", "K", "from_envrc", "envrc")
 	if err != nil {
 		t.Fatalf("set: %v", err)
 	}
@@ -136,7 +136,7 @@ env:
 func TestServiceEnvSetManifestOverriddenByComputedNamesRung(t *testing.T) {
 	ws, root, _ := newTestWorkspace(t, true, basicService)
 
-	res, err := handleServiceEnvSet(ws, root, "api", "OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:9999", "manifest")
+	res, err := handleServiceEnvSet(ws, root, "", "api", "OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:9999", "manifest")
 	if err != nil {
 		t.Fatalf("set: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestServiceEnvSetManifestOverriddenByComputedNamesRung(t *testing.T) {
 func TestServiceEnvSetOtelKeyTakesEffectWhenObservabilityOff(t *testing.T) {
 	ws, root, _ := newTestWorkspace(t, false, basicService)
 
-	res, err := handleServiceEnvSet(ws, root, "api", "OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:9999", "manifest")
+	res, err := handleServiceEnvSet(ws, root, "", "api", "OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:9999", "manifest")
 	if err != nil {
 		t.Fatalf("set: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestServiceEnvSetOtelKeyTakesEffectWhenObservabilityOff(t *testing.T) {
 func TestServiceEnvSetRequiresTarget(t *testing.T) {
 	ws, root, apiDir := newTestWorkspace(t, false, basicService)
 
-	res, err := handleServiceEnvSet(ws, root, "api", "AUTH0_CLIENT_SECRET", "shhh", "")
+	res, err := handleServiceEnvSet(ws, root, "", "api", "AUTH0_CLIENT_SECRET", "shhh", "")
 	if err != nil {
 		t.Fatalf("set: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestServiceEnvSetRequiresTarget(t *testing.T) {
 func TestServiceEnvSetRejectsUnknownTarget(t *testing.T) {
 	ws, root, _ := newTestWorkspace(t, false, basicService)
 
-	res, err := handleServiceEnvSet(ws, root, "api", "K", "v", "somewhere")
+	res, err := handleServiceEnvSet(ws, root, "", "api", "K", "v", "somewhere")
 	if err != nil {
 		t.Fatalf("set: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestServiceEnvSetRejectsUnknownTarget(t *testing.T) {
 func TestServiceEnvSetEnvrcDoesNotTouchManifest(t *testing.T) {
 	ws, root, apiDir := newTestWorkspace(t, false, basicService)
 
-	if _, err := handleServiceEnvSet(ws, root, "api", "AUTH0_CLIENT_SECRET", "shhh", "envrc"); err != nil {
+	if _, err := handleServiceEnvSet(ws, root, "", "api", "AUTH0_CLIENT_SECRET", "shhh", "envrc"); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 
@@ -236,7 +236,7 @@ func TestServiceEnvSetNeverEchoesValue(t *testing.T) {
 	for _, target := range []string{"manifest", "envrc"} {
 		t.Run(target, func(t *testing.T) {
 			ws, root, _ := newTestWorkspace(t, false, basicService)
-			res, err := handleServiceEnvSet(ws, root, "api", "K", secret, target)
+			res, err := handleServiceEnvSet(ws, root, "", "api", "K", secret, target)
 			if err != nil {
 				t.Fatalf("set: %v", err)
 			}
@@ -261,7 +261,7 @@ env:
     K: `+existing+`
 `)
 
-	res, err := handleServiceEnvSet(ws, root, "api", "K", "new", "envrc")
+	res, err := handleServiceEnvSet(ws, root, "", "api", "K", "new", "envrc")
 	if err != nil {
 		t.Fatalf("set: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestServiceEnvSetEnvrcQuotesValue(t *testing.T) {
 	ws, root, _ := newTestWorkspace(t, false, basicService)
 
 	const value = `a b "c" $d`
-	if _, err := handleServiceEnvSet(ws, root, "api", "K", value, "envrc"); err != nil {
+	if _, err := handleServiceEnvSet(ws, root, "", "api", "K", value, "envrc"); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 
@@ -307,7 +307,7 @@ runtime:
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	res, err := handleServiceEnvSet(ws, root, "api", "K", "v", "envrc")
+	res, err := handleServiceEnvSet(ws, root, "", "api", "K", "v", "envrc")
 	if err != nil {
 		t.Fatalf("set: %v", err)
 	}
@@ -326,7 +326,7 @@ runtime:
 func TestServiceEnvSetUnknownService(t *testing.T) {
 	ws, root, _ := newTestWorkspace(t, false, basicService)
 
-	res, err := handleServiceEnvSet(ws, root, "nope", "K", "v", "manifest")
+	res, err := handleServiceEnvSet(ws, root, "", "nope", "K", "v", "manifest")
 	if err != nil {
 		t.Fatalf("set: %v", err)
 	}
@@ -372,7 +372,7 @@ func TestServiceEnvCheckCatchesPlaceholder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	res, err := handleServiceEnvCheck(ws, root, cfg, "api,worker", "")
+	res, err := handleServiceEnvCheck(ws, root, "", cfg, "api,worker", "")
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
@@ -394,7 +394,7 @@ func TestServiceEnvCheckMakesNoConsensusClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	res, err := handleServiceEnvCheck(ws, root, cfg, "api,worker", "")
+	res, err := handleServiceEnvCheck(ws, root, "", cfg, "api,worker", "")
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}

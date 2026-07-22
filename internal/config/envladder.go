@@ -90,7 +90,7 @@ func EnvLadder(dir string, ws *WorkspaceManifest, m *ServiceManifest, stackEnv s
 	return append(layers,
 		EnvLayer{Rung: RungWorkspaceValues, Source: WorkspaceManifestFileName, Values: ws.Env.Values},
 		EnvLayer{Rung: RungServiceValues, Source: ServiceManifestFileName, Values: m.Env.Values},
-		EnvLayer{Rung: RungActiveEnv, Values: activeEnv},
+		EnvLayer{Rung: RungActiveEnv, Source: ActiveEnvName(ws.Workspace.Env, m.Service.Env, stackEnv), Values: activeEnv},
 		EnvLayer{Rung: RungManaged, Values: managed},
 	), nil
 }

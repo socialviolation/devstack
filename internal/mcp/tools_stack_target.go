@@ -45,15 +45,15 @@ func resolveStackRecord(ws *workspace.Workspace, name string) (*stack.Record, er
 // byte-for-byte today's behavior. A named stack → the stack's synthesised root,
 // whose generated manifest points at the stack's worktrees, so every read and
 // write lands in the worktree and never in base.
-func serviceEnvTarget(ws *workspace.Workspace, basePath, stackName string) (path, instance string, err error) {
+func serviceEnvTarget(ws *workspace.Workspace, basePath, stackName string) (path, instance, stackEnv string, err error) {
 	if stackName == "" || stackName == "base" {
-		return basePath, "", nil
+		return basePath, "", "", nil
 	}
 	rec, err := resolveStackRecord(ws, stackName)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return rec.Root, fmt.Sprintf("stack %q", rec.Name), nil
+	return rec.Root, fmt.Sprintf("stack %q", rec.Name), rec.Env, nil
 }
 
 // localTarget bundles everything a daemon-facing local tool needs to operate one

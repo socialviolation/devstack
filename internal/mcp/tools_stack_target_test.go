@@ -103,7 +103,7 @@ workspace:
 func TestServiceEnvTargetBaseWhenNoStack(t *testing.T) {
 	ws, basePath, _ := seedStack(t)
 
-	path, instance, err := serviceEnvTarget(ws, basePath, "")
+	path, instance, _, err := serviceEnvTarget(ws, basePath, "")
 	if err != nil {
 		t.Fatalf("serviceEnvTarget: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestServiceEnvTargetResolvesStackRoot(t *testing.T) {
 		t.Fatalf("FindStack: %v", err)
 	}
 
-	path, instance, err := serviceEnvTarget(ws, basePath, "feat")
+	path, instance, _, err := serviceEnvTarget(ws, basePath, "feat")
 	if err != nil {
 		t.Fatalf("serviceEnvTarget: %v", err)
 	}
@@ -155,12 +155,12 @@ func TestResolveStackRecordUnknownNamesAvailable(t *testing.T) {
 func TestServiceEnvSetStackWritesWorktreeNotBase(t *testing.T) {
 	ws, basePath, worktree := seedStack(t)
 
-	stackRoot, _, err := serviceEnvTarget(ws, basePath, "feat")
+	stackRoot, _, _, err := serviceEnvTarget(ws, basePath, "feat")
 	if err != nil {
 		t.Fatalf("serviceEnvTarget: %v", err)
 	}
 
-	res, err := handleServiceEnvSet(ws, stackRoot, "api", "SQL_CONN", "postgres://stack", "manifest")
+	res, err := handleServiceEnvSet(ws, stackRoot, "", "api", "SQL_CONN", "postgres://stack", "manifest")
 	if err != nil {
 		t.Fatalf("set: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestServiceEnvSetStackWritesWorktreeNotBase(t *testing.T) {
 func TestServiceEnvSetBaseWritesBaseRepo(t *testing.T) {
 	ws, basePath, worktree := seedStack(t)
 
-	path, instance, err := serviceEnvTarget(ws, basePath, "")
+	path, instance, _, err := serviceEnvTarget(ws, basePath, "")
 	if err != nil {
 		t.Fatalf("serviceEnvTarget: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestServiceEnvSetBaseWritesBaseRepo(t *testing.T) {
 		t.Fatalf("base target must carry no instance label, got %q", instance)
 	}
 
-	res, err := handleServiceEnvSet(ws, path, "api", "SQL_CONN", "postgres://base", "manifest")
+	res, err := handleServiceEnvSet(ws, path, "", "api", "SQL_CONN", "postgres://base", "manifest")
 	if err != nil {
 		t.Fatalf("set: %v", err)
 	}

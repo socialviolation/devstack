@@ -213,6 +213,16 @@ func TestEnvLadderActiveEnvRung(t *testing.T) {
 	if got := env["PORT"]; got != "managed_port" {
 		t.Errorf("PORT = %q, want %q (devstack-computed must beat active env)", got, "managed_port")
 	}
+
+	var activeRung EnvLayer
+	for _, l := range layers {
+		if l.Rung == RungActiveEnv {
+			activeRung = l
+		}
+	}
+	if activeRung.Source != "prod" {
+		t.Errorf("active env rung Source = %q, want %q (provenance must name which env)", activeRung.Source, "prod")
+	}
 }
 
 func TestOverriderOf(t *testing.T) {

@@ -75,7 +75,7 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 		target := req.GetString("target", "")
 		stackName := req.GetString("stack", "")
 
-		targetPath, instance, err := serviceEnvTarget(ws, workspacePath, stackName)
+		targetPath, instance, stackEnv, err := serviceEnvTarget(ws, workspacePath, stackName)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -91,16 +91,16 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 
 		switch action {
 		case "get":
-			res, err := handleServiceEnvGet(ws, targetPath, cfg, serviceName, groupName, filter)
+			res, err := handleServiceEnvGet(ws, targetPath, stackEnv, cfg, serviceName, groupName, filter)
 			return prependInstanceResult(res, instance), err
 		case "diff":
-			res, err := handleServiceEnvDiff(ws, targetPath, cfg, serviceName, groupName, filter)
+			res, err := handleServiceEnvDiff(ws, targetPath, stackEnv, cfg, serviceName, groupName, filter)
 			return prependInstanceResult(res, instance), err
 		case "set":
-			res, err := handleServiceEnvSet(ws, targetPath, serviceName, key, value, target)
+			res, err := handleServiceEnvSet(ws, targetPath, stackEnv, serviceName, key, value, target)
 			return prependInstanceResult(res, instance), err
 		case "check":
-			res, err := handleServiceEnvCheck(ws, targetPath, cfg, serviceName, groupName)
+			res, err := handleServiceEnvCheck(ws, targetPath, stackEnv, cfg, serviceName, groupName)
 			return prependInstanceResult(res, instance), err
 		default:
 			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — must be one of: get, diff, set, check", action)), nil
@@ -112,7 +112,7 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 // workspace's manifests — the same ladder the generator feeds the service, so
 // what this reports is what the service gets. Services with no service manifest
 // are absent from the result.
-func resolveLadders(ws *workspace.Workspace, workspacePath string, services []string) (map[string][]config.EnvLayer, error) {
+func resolveLadders(ws *workspace.Workspace, workspacePath, stackEnv string, services []string) (map[string][]config.EnvLayer, error) {
 	rw, err := config.ResolveWorkspace(workspacePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve workspace manifests: %w", err)
@@ -125,7 +125,7 @@ func resolveLadders(ws *workspace.Workspace, workspacePath string, services []st
 		if !ok || svc.Manifest == nil {
 			continue
 		}
-		layers, err := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, "", managed[name])
+		layers, err := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, stackEnv, managed[name])
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve env for %s: %w", name, err)
 		}
@@ -135,8 +135,8 @@ func resolveLadders(ws *workspace.Workspace, workspacePath string, services []st
 }
 
 // resolvedEnvs flattens each service's ladder into the env it actually receives.
-func resolvedEnvs(ws *workspace.Workspace, workspacePath string, services []string) (map[string]map[string]string, error) {
-	ladders, err := resolveLadders(ws, workspacePath, services)
+func resolvedEnvs(ws *workspace.Workspace, workspacePath, stackEnv string, services []string) (map[string]map[string]string, error) {
+	ladders, err := resolveLadders(ws, workspacePath, stackEnv, services)
 	if err != nil {
 		return nil, err
 	}
@@ -196,13 +196,13 @@ func resolveServices(cfg *config.WorkspaceConfig, serviceName, groupName string)
 }
 
 // handleServiceEnvGet implements the "get" action.
-func handleServiceEnvGet(ws *workspace.Workspace, workspacePath string, cfg *config.WorkspaceConfig, serviceName, groupName, filter string) (*mcp.CallToolResult, error) {
+func handleServiceEnvGet(ws *workspace.Workspace, workspacePath, stackEnv string, cfg *config.WorkspaceConfig, serviceName, groupName, filter string) (*mcp.CallToolResult, error) {
 	services, err := resolveServices(cfg, serviceName, groupName)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	ladders, err := resolveLadders(ws, workspacePath, services)
+	ladders, err := resolveLadders(ws, workspacePath, stackEnv, services)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -242,7 +242,7 @@ func sortedKeys(m map[string]string) []string {
 }
 
 // handleServiceEnvDiff implements the "diff" action.
-func handleServiceEnvDiff(ws *workspace.Workspace, workspacePath string, cfg *config.WorkspaceConfig, serviceName, groupName, filter string) (*mcp.CallToolResult, error) {
+func handleServiceEnvDiff(ws *workspace.Workspace, workspacePath, stackEnv string, cfg *config.WorkspaceConfig, serviceName, groupName, filter string) (*mcp.CallToolResult, error) {
 	services, err := resolveServices(cfg, serviceName, groupName)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -251,7 +251,7 @@ func handleServiceEnvDiff(ws *workspace.Workspace, workspacePath string, cfg *co
 		return mcp.NewToolResultError("diff requires at least 2 services (use group or comma-separated service list)"), nil
 	}
 
-	resolved, err := resolvedEnvs(ws, workspacePath, services)
+	resolved, err := resolvedEnvs(ws, workspacePath, stackEnv, services)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -346,7 +346,7 @@ func handleServiceEnvDiff(ws *workspace.Workspace, workspacePath string, cfg *co
 // handleServiceEnvSet implements the "set" action. It writes to the rung the
 // caller names, then re-resolves the ladder from disk and reports whether the
 // value can actually reach the service.
-func handleServiceEnvSet(ws *workspace.Workspace, workspacePath, serviceName, key, value, target string) (*mcp.CallToolResult, error) {
+func handleServiceEnvSet(ws *workspace.Workspace, workspacePath, stackEnv, serviceName, key, value, target string) (*mcp.CallToolResult, error) {
 	if serviceName == "" {
 		return mcp.NewToolResultError("service is required for set"), nil
 	}
@@ -393,7 +393,7 @@ func handleServiceEnvSet(ws *workspace.Workspace, workspacePath, serviceName, ke
 		}
 	}
 
-	layers, err := reresolveLadder(ws, workspacePath, serviceName)
+	layers, err := reresolveLadder(ws, workspacePath, stackEnv, serviceName)
 	if err != nil {
 		return mcp.NewToolResultText(fmt.Sprintf(
 			"wrote %s to %s (%s), but the env ladder could not be resolved to confirm it takes effect: %v",
@@ -414,8 +414,8 @@ func handleServiceEnvSet(ws *workspace.Workspace, workspacePath, serviceName, ke
 
 // reresolveLadder re-reads the workspace from disk so the ladder reflects a write
 // that just landed.
-func reresolveLadder(ws *workspace.Workspace, workspacePath, serviceName string) ([]config.EnvLayer, error) {
-	ladders, err := resolveLadders(ws, workspacePath, []string{serviceName})
+func reresolveLadder(ws *workspace.Workspace, workspacePath, stackEnv, serviceName string) ([]config.EnvLayer, error) {
+	ladders, err := resolveLadders(ws, workspacePath, stackEnv, []string{serviceName})
 	if err != nil {
 		return nil, err
 	}
@@ -507,7 +507,7 @@ type checkFinding struct {
 // handleServiceEnvCheck implements the "check" action. It audits the env each
 // service actually resolves to. It deliberately makes no cross-service agreement
 // claims: services agreeing is consensus, not correctness.
-func handleServiceEnvCheck(ws *workspace.Workspace, workspacePath string, cfg *config.WorkspaceConfig, serviceName, groupName string) (*mcp.CallToolResult, error) {
+func handleServiceEnvCheck(ws *workspace.Workspace, workspacePath, stackEnv string, cfg *config.WorkspaceConfig, serviceName, groupName string) (*mcp.CallToolResult, error) {
 	var services []string
 	if groupName != "" || serviceName != "" {
 		var err error
@@ -522,7 +522,7 @@ func handleServiceEnvCheck(ws *workspace.Workspace, workspacePath string, cfg *c
 		sort.Strings(services)
 	}
 
-	svcEnvs, err := resolvedEnvs(ws, workspacePath, services)
+	svcEnvs, err := resolvedEnvs(ws, workspacePath, stackEnv, services)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
