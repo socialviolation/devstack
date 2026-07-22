@@ -73,6 +73,11 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("set %s.%s = %s\n", name, key, mask(key, value))
 	}
+	if _, err := regenerateHostTiltfile(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not regenerate host config: %v\n", err)
+	} else {
+		fmt.Println("Regenerated host config. Restart the affected service to apply: devstack restart <service> [--stack <name>]")
+	}
 	return nil
 }
 
@@ -92,6 +97,7 @@ func runEnvUse(cmd *cobra.Command, args []string) error {
 
 	stackName, _ := cmd.Flags().GetString("stack")
 	svcName, _ := cmd.Flags().GetString("service")
+	var restartHint string
 	switch {
 	case stackName != "":
 		rec, err := stack.Resolve(ws.Name, stackName)
@@ -102,6 +108,7 @@ func runEnvUse(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		fmt.Printf("stack %q now uses env %q\n", rec.Name, name)
+		restartHint = fmt.Sprintf("devstack restart <svc> --stack %s", rec.Name)
 	case svcName != "":
 		rw, err := config.ResolveWorkspace(ws.Path)
 		if err != nil {
@@ -115,11 +122,18 @@ func runEnvUse(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		fmt.Printf("service %q now uses env %q\n", svcName, name)
+		restartHint = fmt.Sprintf("devstack restart %s", svcName)
 	default:
 		if err := config.SetWorkspaceEnv(ws.Path, name); err != nil {
 			return err
 		}
 		fmt.Printf("workspace %q now uses env %q\n", ws.Name, name)
+		restartHint = "devstack restart <service>"
+	}
+	if _, err := regenerateHostTiltfile(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not regenerate host config: %v\n", err)
+	} else {
+		fmt.Printf("Regenerated host config. Restart to apply: %s\n", restartHint)
 	}
 	return nil
 }
@@ -160,7 +174,28 @@ func runEnvWhich(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	stackName, _ := cmd.Flags().GetString("stack")
+	var rec *stack.Record
+	if stackName != "" {
+		rec, err = stack.Resolve(ws.Name, stackName)
+		if err != nil {
+			return err
+		}
+	}
+
 	svcName, _ := cmd.Flags().GetString("service")
+	if svcName == "" && rec != nil {
+		srw, err := stack.ResolveWorktree(rec)
+		if err != nil {
+			return err
+		}
+		if len(srw.Services) != 1 {
+			return fmt.Errorf("stack %q has %d services; pass --service: %s", rec.Name, len(srw.Services), strings.Join(sortedServiceNames(srw), ", "))
+		}
+		for k := range srw.Services {
+			svcName = k
+		}
+	}
 	if svcName == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -181,11 +216,7 @@ func runEnvWhich(cmd *cobra.Command, args []string) error {
 	}
 
 	stackEnv := ""
-	if stackName, _ := cmd.Flags().GetString("stack"); stackName != "" {
-		rec, err := stack.Resolve(ws.Name, stackName)
-		if err != nil {
-			return err
-		}
+	if rec != nil {
 		stackEnv = rec.Env
 	}
 
