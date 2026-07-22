@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -116,14 +115,11 @@ func serveStdio() error {
 		})
 	}
 
-	tiltfilePath := filepath.Join(ws.Path, "Tiltfile")
-
 	nvxmcp.RegisterTools(
 		mcpServer,
 		tiltClient,
 		defaultService,
 		backend,
-		tiltfilePath,
 		envName,
 		activeEnv,
 		allEnvs,

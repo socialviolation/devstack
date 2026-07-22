@@ -240,7 +240,7 @@ func runInitOnboard(cmd *cobra.Command) error {
 	}
 
 	// 5. Regenerate the Tiltfile so the daemon picks up the new service.
-	if _, err := regenerateTiltfile(ws); err != nil {
+	if _, err := regenerateHostTiltfile(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to regenerate Tiltfile: %v\n", err)
 	}
 

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -142,7 +141,10 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 	ws.TiltPort = workspace.HostTiltPort
 
 	cfg, _ := config.Load(ws.Path)
-	serviceDirs := tilt.ParseTiltfileServeDirs(filepath.Join(ws.Path, "Tiltfile"))
+	serviceDirs := map[string]string{}
+	if cfg != nil {
+		serviceDirs = cfg.ServicePaths
+	}
 
 	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
 	view, tiltErr := tiltClient.GetView()
