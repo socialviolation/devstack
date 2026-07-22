@@ -26,12 +26,68 @@ func resolveWorkspaceAndEnv() (*workspace.Workspace, workspace.Environment, stri
 		return nil, workspace.Environment{}, "", err
 	}
 
-	env, ok := ws.ResolveEnvironment(envName)
+	env, ok := resolveActiveEnv(ws, envName)
 	if !ok {
 		return nil, workspace.Environment{}, "", fmt.Errorf("environment %q not found in workspace %q. Run: devstack env list", envName, ws.Name)
 	}
 
 	return ws, env, envName, nil
+}
+
+// resolveActiveEnv resolves envName for ws, preferring the workspace manifest's
+// environments: map. A manifest env maps onto the workspace.Environment shape;
+// the "local" default is synthesised from legacy fields when not defined. When
+// the workspace has no manifest it falls back to the legacy registry lookup.
+func resolveActiveEnv(ws *workspace.Workspace, envName string) (workspace.Environment, bool) {
+	if config.HasWorkspaceManifest(ws.Path) {
+		if m, err := config.LoadWorkspaceManifest(ws.Path); err == nil {
+			if we, ok := m.Environments[envName]; ok {
+				return manifestEnvToWorkspace(we), true
+			}
+			if envName == "local" {
+				return ws.ResolveEnvironment("local")
+			}
+			return workspace.Environment{}, false
+		}
+	}
+	return ws.ResolveEnvironment(envName)
+}
+
+// manifestEnvToWorkspace maps a manifest environment definition onto the
+// workspace.Environment shape the runtime commands consume. An empty type
+// defaults to local. The manifest carries no API key, so APIKey is left unset.
+func manifestEnvToWorkspace(we config.WorkspaceEnvironment) workspace.Environment {
+	t := workspace.EnvironmentType(we.Type)
+	if t == "" {
+		t = workspace.EnvironmentTypeLocal
+	}
+	return workspace.Environment{
+		Type: t,
+		Observability: workspace.ObservabilityConfig{
+			Backend:      we.Observability.Backend,
+			URL:          we.Observability.URL,
+			OTLPEndpoint: we.Observability.OTLPEndpoint,
+		},
+	}
+}
+
+// allEnvironments returns every named environment for ws, preferring the
+// workspace manifest's environments: map (always including a synthesised
+// "local"). Falls back to the legacy registry set when there is no manifest.
+func allEnvironments(ws *workspace.Workspace) map[string]workspace.Environment {
+	if config.HasWorkspaceManifest(ws.Path) {
+		if m, err := config.LoadWorkspaceManifest(ws.Path); err == nil {
+			result := map[string]workspace.Environment{}
+			if local, ok := ws.ResolveEnvironment("local"); ok {
+				result["local"] = local
+			}
+			for name, we := range m.Environments {
+				result[name] = manifestEnvToWorkspace(we)
+			}
+			return result
+		}
+	}
+	return ws.AllEnvironments()
 }
 
 // requireLocalEnv returns an error if the active environment is not local.

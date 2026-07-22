@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -49,26 +50,29 @@ func init() {
 	envAddCmd.Flags().String("backend", "signoz", `observability backend (currently only "signoz")`)
 	envAddCmd.Flags().String("url", "", "observability backend URL (required)")
 	envAddCmd.Flags().String("otlp-endpoint", "", "OTLP ingestion URL for the collector (e.g. https://otel.company.com:4318)")
-	envAddCmd.Flags().String("api-key", "", "API key for remote observability backend")
 	_ = envAddCmd.MarkFlagRequired("url")
 }
 
 func runEnvList(cmd *cobra.Command, args []string) error {
-	wsName := viper.GetString("workspace")
-	ws, err := resolveEnvWorkspace(wsName)
+	ws, err := resolveEnvWorkspace(viper.GetString("workspace"))
+	if err != nil {
+		return err
+	}
+	m, err := config.LoadWorkspaceManifest(ws.Path)
 	if err != nil {
 		return err
 	}
 
-	allEnvs := ws.AllEnvironments()
 	activeEnvName := viper.GetString("environment")
+	if activeEnvName == "" {
+		activeEnvName = m.Workspace.Env
+	}
 	if activeEnvName == "" {
 		activeEnvName = "local"
 	}
 
-	// Sort env names for deterministic output
-	names := make([]string, 0, len(allEnvs))
-	for k := range allEnvs {
+	names := make([]string, 0, len(m.Environments))
+	for k := range m.Environments {
 		names = append(names, k)
 	}
 	sort.Strings(names)
@@ -78,7 +82,7 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	fmt.Fprintln(w, "NAME\tTYPE\tBACKEND\tURL\tOTLP ENDPOINT\t")
 	fmt.Fprintln(w, "----\t----\t-------\t---\t-------------\t")
 	for _, name := range names {
-		env := allEnvs[name]
+		env := m.Environments[name]
 		marker := ""
 		if name == activeEnvName {
 			marker = " <- active"
@@ -98,8 +102,7 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 func runEnvAdd(cmd *cobra.Command, args []string) error {
 	envName := args[0]
 
-	wsName := viper.GetString("workspace")
-	ws, err := resolveEnvWorkspace(wsName)
+	ws, err := resolveEnvWorkspace(viper.GetString("workspace"))
 	if err != nil {
 		return err
 	}
@@ -108,41 +111,32 @@ func runEnvAdd(cmd *cobra.Command, args []string) error {
 	backend, _ := cmd.Flags().GetString("backend")
 	url, _ := cmd.Flags().GetString("url")
 	otlpEndpoint, _ := cmd.Flags().GetString("otlp-endpoint")
-	apiKey, _ := cmd.Flags().GetString("api-key")
 
-	var eType workspace.EnvironmentType
 	switch envType {
-	case "local":
-		eType = workspace.EnvironmentTypeLocal
-	case "remote":
-		eType = workspace.EnvironmentTypeRemote
+	case string(workspace.EnvironmentTypeLocal), string(workspace.EnvironmentTypeRemote):
 	default:
 		return fmt.Errorf("invalid type %q: must be \"local\" or \"remote\"", envType)
 	}
 
-	env := workspace.Environment{
-		Type: eType,
-		Observability: workspace.ObservabilityConfig{
+	env := config.WorkspaceEnvironment{
+		Type: envType,
+		Observability: config.WorkspaceEnvironmentObservability{
 			Backend:      backend,
 			URL:          url,
 			OTLPEndpoint: otlpEndpoint,
-			APIKey:       apiKey,
 		},
 	}
 
-	if err := workspace.AddEnvironment(ws.Name, envName, env); err != nil {
+	if err := config.SetEnvironment(ws.Path, envName, env); err != nil {
 		return fmt.Errorf("failed to add environment: %w", err)
 	}
 
 	fmt.Printf("Added environment %q to workspace %q\n", envName, ws.Name)
-	fmt.Printf("  Type:    %s\n", eType)
+	fmt.Printf("  Type:    %s\n", envType)
 	fmt.Printf("  Backend: %s\n", backend)
 	fmt.Printf("  URL:     %s\n", url)
 	if otlpEndpoint != "" {
 		fmt.Printf("  OTLP:    %s\n", otlpEndpoint)
-	}
-	if apiKey != "" {
-		fmt.Printf("  API Key: (set)\n")
 	}
 	return nil
 }
@@ -150,13 +144,12 @@ func runEnvAdd(cmd *cobra.Command, args []string) error {
 func runEnvRemove(cmd *cobra.Command, args []string) error {
 	envName := args[0]
 
-	wsName := viper.GetString("workspace")
-	ws, err := resolveEnvWorkspace(wsName)
+	ws, err := resolveEnvWorkspace(viper.GetString("workspace"))
 	if err != nil {
 		return err
 	}
 
-	if err := workspace.RemoveEnvironment(ws.Name, envName); err != nil {
+	if err := config.RemoveEnvironment(ws.Path, envName); err != nil {
 		return fmt.Errorf("failed to remove environment: %w", err)
 	}
 
