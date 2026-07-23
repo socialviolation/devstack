@@ -121,7 +121,7 @@ func mcpServiceStatus(r tilt.UIResource) string {
 	if r.Status.UpdateStatus == "error" {
 		return "error"
 	}
-	return "idle"
+	return "stopped"
 }
 
 // mcpExtractPorts returns compact ":PORT" strings from endpoint links.
@@ -179,7 +179,7 @@ func availableGroups(cfg *config.WorkspaceConfig) string {
 
 func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, serviceDirs map[string]string, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
 	tool := mcp.NewTool("status",
-		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack. Status reflects the current state of locally running dev services, not production. Returns SERVICE, STATUS (idle/starting/running/building/error/disabled), PORT(S), PATH (source directory), GROUP, ENV (the active environment/config-patch the instance is pointed at, blank if none), and last error. Also shows a groups summary. 'idle' means the service is known but not currently running (not started yet, or was stopped). 'running' means the process is up. 'disabled' means it was explicitly stopped. Pass stack to see a feature stack's instances."),
+		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack. Status reflects the current state of locally running dev services, not production. Returns SERVICE, STATUS (stopped/starting/running/building/error/disabled), PORT(S), PATH (source directory), GROUP, ENV (the active environment/config-patch the instance is pointed at, blank if none), and last error. Also shows a groups summary. 'stopped' means the service is known but not currently running (not started yet, or was stopped). 'running' means the process is up. 'disabled' means the resource is switched off in the daemon. Pass stack to see a feature stack's instances."),
 		mcp.WithString("stack", mcp.Description(stackParamDesc)),
 	)
 

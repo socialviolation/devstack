@@ -227,14 +227,15 @@ func wrapCommaList(names []string, width int) []string {
 	return append(lines, cur)
 }
 
-// printCondensedSection prints a section with nothing running as one line: its
-// coloured header, a count or state tag, then the member names wrapped under the
-// first name.
+// printCondensedSection prints a section with nothing running as one line: an
+// idle marker, the section's coloured name, a count or state tag, then the
+// member names wrapped under the first name.
 func printCondensedSection(hdrColor *color.Color, label, tag string, names []string) {
-	head := "● " + label
-	suffix := "  " + tag + "  "
-	hdrColor.Print(head)
+	head := statusIndent + "idle  " + label
+	suffix := " " + tag + " "
 	faint := color.New(color.Faint)
+	faint.Print(statusIndent + "idle  ")
+	hdrColor.Print(label)
 	faint.Print(suffix)
 
 	startCol := len(head) + len(suffix)
@@ -253,95 +254,177 @@ func printCondensedSection(hdrColor *color.Color, label, tag string, names []str
 
 const (
 	condenseWidth = 100
+	statusIndent  = "  "
 
 	colService    = 22
 	colServiceMax = 34
+	colGroup      = 12
 	colState      = 10
 	colPorts      = 14
 	colEnv        = 7
 	colNeeds      = 36
+
+	ungroupedLabel = "ungrouped"
 )
 
-// commonEnv returns the group's prevailing environment — the one most of its
-// services resolve to. It is shown once on the group header so only the
-// services that differ have to name their own; ties break alphabetically for
-// stable output. Returns "" when no service in the group has an env.
-func commonEnv(members []string, svcEnvNames map[string]string) string {
-	counts := map[string]int{}
-	for _, m := range members {
-		if e := svcEnvNames[m]; e != "" {
-			counts[e]++
-		}
-	}
-	names := make([]string, 0, len(counts))
-	for e := range counts {
-		names = append(names, e)
-	}
-	sort.Strings(names)
-
-	best := ""
-	for _, e := range names {
-		if counts[e] > counts[best] {
-			best = e
-		}
-	}
-	return best
+// serviceSection is one band of the status table — a group of the base
+// workspace, the ungrouped remainder, or a feature stack's instances — carrying
+// everything needed to render its services without another daemon round-trip.
+type serviceSection struct {
+	label     string
+	members   []string
+	deps      map[string][]string
+	resources map[string]tilt.UIResource
+	envs      map[string]string
+	dirs      map[string]string
+	color     *color.Color
+	running   int
+	tag       string
+	isStack   bool
 }
 
-// renderServiceRows prints one row per service in dependency order, listing the
-// deps each service waits on. memberSet is the set of services in the current
-// section; deps outside it keep their own group colour. groupEnv is the env
-// shared by the whole section, which rows omit.
-func renderServiceRows(order []string, resourceMap map[string]tilt.UIResource, deps map[string][]string, memberSet map[string]bool, svcGroupColor map[string]*color.Color, serviceDirs map[string]string, svcEnvNames map[string]string, groupEnv string) {
-	const indent = "  "
-	width := colService
-	for _, svc := range order {
-		if len(svc) > width {
-			width = len(svc)
+// statusRow is one rendered line of the single status table.
+type statusRow struct {
+	service    string
+	group      string
+	state      string
+	ports      string
+	env        string
+	needs      []string
+	dir        string
+	rowColor   *color.Color
+	stateColor *color.Color
+	memberSet  map[string]bool
+}
+
+func sectionRank(s serviceSection) int {
+	switch {
+	case s.isStack:
+		return 2
+	case s.label == ungroupedLabel:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// sortSections orders the table's bands: base groups alphabetically, then the
+// ungrouped remainder, then feature stacks alphabetically.
+func sortSections(sections []serviceSection) []serviceSection {
+	out := append([]serviceSection(nil), sections...)
+	sort.SliceStable(out, func(i, j int) bool {
+		if ri, rj := sectionRank(out[i]), sectionRank(out[j]); ri != rj {
+			return ri < rj
+		}
+		return out[i].label < out[j].label
+	})
+	return out
+}
+
+// partitionSections splits sections into the ones rendered as table rows and
+// the ones collapsed to a single idle line, preserving table order.
+func partitionSections(sections []serviceSection, expand bool) (table, condensed []serviceSection) {
+	for _, s := range sortSections(sections) {
+		if condenseSection(s.running, expand) {
+			condensed = append(condensed, s)
+		} else {
+			table = append(table, s)
 		}
 	}
-	if width > colServiceMax {
-		width = colServiceMax
+	return table, condensed
+}
+
+// assembleRows flattens sections into table rows, keeping each section's rows
+// contiguous and ordering services within a section so dependencies come first.
+func assembleRows(sections []serviceSection) []statusRow {
+	var rows []statusRow
+	for _, s := range sections {
+		memberSet := make(map[string]bool, len(s.members))
+		for _, m := range s.members {
+			memberSet[m] = true
+		}
+		for _, svc := range orderGroupServices(s.members, s.deps) {
+			state, stateClr := svcStatusColor(svc, s.resources)
+			rows = append(rows, statusRow{
+				service:    svc,
+				group:      s.label,
+				state:      state,
+				ports:      svcPortsRaw(svc, s.resources),
+				env:        s.envs[svc],
+				needs:      s.deps[svc],
+				dir:        s.dirs[svc],
+				rowColor:   s.color,
+				stateColor: stateClr,
+				memberSet:  memberSet,
+			})
+		}
 	}
-	needsIndent := strings.Repeat(" ", len(indent)+width+2+colState+2+colPorts+2+colEnv+2)
+	return rows
+}
+
+// countRunning counts how many of the members are up in the given daemon view.
+func countRunning(members []string, resources map[string]tilt.UIResource) int {
+	n := 0
+	for _, m := range members {
+		if r, ok := resources[m]; ok && serviceStatus(r) == "running" {
+			n++
+		}
+	}
+	return n
+}
+
+// renderStatusTable prints every row of the workspace under one header row,
+// colouring each row by the group it belongs to while the STATE cell keeps its
+// own state colour. Source paths only print when the caller asked for them.
+func renderStatusTable(rows []statusRow, svcGroupColor map[string]*color.Color, showDirs bool) {
+	svcWidth, groupWidth := colService, colGroup
+	for _, r := range rows {
+		if len(r.service) > svcWidth {
+			svcWidth = len(r.service)
+		}
+		if len(r.group) > groupWidth {
+			groupWidth = len(r.group)
+		}
+	}
+	if svcWidth > colServiceMax {
+		svcWidth = colServiceMax
+	}
+	needsIndent := strings.Repeat(" ", len(statusIndent)+svcWidth+2+groupWidth+2+colState+2+colPorts+2+colEnv+2)
 
 	faint := color.New(color.Faint)
-	faint.Printf("%s%-*s  %-*s  %-*s  %-*s  %s\n", indent,
-		width, "SERVICE", colState, "STATE", colPorts, "PORTS", colEnv, "ENV", "NEEDS")
+	faint.Printf("%s%-*s  %-*s  %-*s  %-*s  %-*s  %s\n", statusIndent,
+		svcWidth, "SERVICE", groupWidth, "GROUP", colState, "STATE", colPorts, "PORTS", colEnv, "ENV", "NEEDS")
 
-	for _, svc := range order {
-		statusStr, statusClr := svcStatusColor(svc, resourceMap)
+	for _, r := range rows {
+		hasNeeds := len(r.needs) > 0
 
-		env := svcEnvNames[svc]
-		if env == groupEnv {
-			env = ""
-		}
-		hasNeeds := len(deps[svc]) > 0
-
-		fmt.Print(indent)
-		fmt.Printf("%-*s  ", width, svc)
-		statusClr.Printf("%-*s", colState, statusStr)
+		fmt.Print(statusIndent)
+		r.rowColor.Printf("%-*s", svcWidth, r.service)
 		fmt.Print("  ")
-		if hasNeeds || env != "" {
-			printPorts(svcPortsRaw(svc, resourceMap), colPorts)
+		r.rowColor.Printf("%-*s", groupWidth, r.group)
+		fmt.Print("  ")
+		r.stateColor.Printf("%-*s", colState, r.state)
+		fmt.Print("  ")
+		if hasNeeds || r.env != "" {
+			printPorts(r.ports, colPorts)
 		} else {
-			printPorts(svcPortsRaw(svc, resourceMap), 0)
+			printPorts(r.ports, 0)
 		}
 
 		switch {
 		case hasNeeds:
 			fmt.Print("  ")
-			faint.Printf("%-*s", colEnv, env)
+			faint.Printf("%-*s", colEnv, r.env)
 			fmt.Print("  ")
-			printNeeds(deps[svc], memberSet, svcGroupColor, needsIndent)
-		case env != "":
+			printNeeds(r.needs, r.memberSet, svcGroupColor, needsIndent)
+		case r.env != "":
 			fmt.Print("  ")
-			faint.Print(env)
+			faint.Print(r.env)
 		}
 		fmt.Println()
 
-		if dir := serviceDirs[svc]; dir != "" {
-			faint.Printf("%s  %s\n", indent, shortDir(dir))
+		if showDirs && r.dir != "" {
+			faint.Printf("%s  %s\n", statusIndent, shortDir(r.dir))
 		}
 	}
 }
@@ -519,7 +602,7 @@ func serviceStatus(r tilt.UIResource) string {
 	if r.Status.UpdateStatus == "error" {
 		return "error"
 	}
-	return "idle"
+	return "stopped"
 }
 
 // extractPorts turns endpoint URLs into compact ":PORT" strings.

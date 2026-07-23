@@ -552,7 +552,7 @@ func agentFilesSuffix(files []string) string {
 
 // buildAIInstructionPointer is the short block written into CLAUDE.md and friends:
 // only the facts that stop an agent misreading a multi-instance stack — several
-// copies of a service, idle instances it should start, stale code after an edit —
+// copies of a service, stopped instances it should start, stale code after an edit —
 // then a pointer to AGENTS.md for everything else.
 func buildAIInstructionPointer(serviceName, stackName string) string {
 	svc := "<service>"
@@ -571,13 +571,13 @@ func buildAIInstructionPointer(serviceName, stackName string) string {
 		"**A service can have more than one running copy.** The base workspace and every active *feature stack* each run their own instance, on their own port, named `<workspace>:<service>[:<stack>]`. " +
 		"Before concluding a service is down, broken, or on the wrong port, run `devstack status` — it lists every instance with its port and env. " +
 		"A stack's copy is served from its own git worktree, not this checkout.\n\n" +
-		"**Services are not all running by default.** An instance shown as `idle` is registered but not started — start it yourself with `devstack start " + svc + "` (add `--stack <name>` for a stack's instance). " +
+		"**Services are not all running by default.** An instance shown as `stopped` is registered but not started — start it yourself with `devstack start " + svc + "` (add `--stack <name>` for a stack's instance). " +
 		"Do not report a service as down or broken until you have checked `devstack status` and started it.\n\n" +
 		"**After editing code**, a service only picks up the change if it self-watches (`dotnet watch`, `ng serve`, `vite`, `--reload`) or has `runtime.watch` set in its `devstack.service.yaml`. " +
 		"Otherwise run `devstack restart " + svc + "` or it keeps running the old code.\n\n" +
 		"```bash\n" +
 		fmt.Sprintf("%-39s# every instance, its port and env\n", "devstack status") +
-		fmt.Sprintf("%-39s# start an idle instance (add --stack <name>)\n", "devstack start "+svc) +
+		fmt.Sprintf("%-39s# start a stopped instance (add --stack <name>)\n", "devstack start "+svc) +
 		fmt.Sprintf("%-39s# reload after an edit\n", "devstack restart "+svc) +
 		fmt.Sprintf("%-39s# feature stacks currently in flight\n", "devstack stack list") +
 		"```\n\n" +
