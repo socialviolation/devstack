@@ -572,6 +572,7 @@ func buildAIInstructionPointer(serviceName, stackName string) string {
 		"Before concluding a service is down, broken, or on the wrong port, run `devstack status` — it lists every instance with its port and env. " +
 		"A stack's copy is served from its own git worktree, not this checkout.\n\n" +
 		"**Services are not all running by default.** An instance shown as `stopped` is registered but not started — start it yourself with `devstack start " + svc + "` (add `--stack <name>` for a stack's instance). " +
+		"State is not binary: `running`, `starting`, `building`, `stopped`, `erroring`, `disabled`, `unknown`. " +
 		"Do not report a service as down or broken until you have checked `devstack status` and started it.\n\n" +
 		"**After editing code**, a service only picks up the change if it self-watches (`dotnet watch`, `ng serve`, `vite`, `--reload`) or has `runtime.watch` set in its `devstack.service.yaml`. " +
 		"Otherwise run `devstack restart " + svc + "` or it keeps running the old code.\n\n" +
@@ -741,6 +742,10 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"3. If merging: merge the stack's branch into the base branch, then `git branch -d <branch>` to prune it (`stack rm` does NOT delete the branch).\n" +
 		"4. `devstack stack rm <name>` — stops the stack, removes its worktree(s), releases its ports, and deletes its config/record. It refuses if a worktree has uncommitted changes; commit or discard first (`--force` discards).\n" +
 		"5. Periodically run `devstack stack list` and prune stacks whose work has landed or been abandoned.\n\n" +
+		"### Service states\n\n" +
+		"`devstack status` reports one of: `running` (process up), `starting` (coming up), `building` (daemon is building/updating it), " +
+		"`stopped` (registered but not started), `erroring` (the service or its build failed — check logs), `disabled` (switched off in the daemon), " +
+		"`unknown` (daemon reported no state). It is not a running/stopped binary — read the actual state before concluding anything.\n\n" +
 		"### Commands\n\n" +
 		"```bash\n" +
 		"devstack status                              # live state of every instance (add --stack <name> for one stack)\n" +

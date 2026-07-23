@@ -594,13 +594,13 @@ func serviceStatus(r tilt.UIResource) string {
 	case "pending":
 		return "starting"
 	case "error":
-		return "error"
+		return "erroring"
 	}
 	if r.Status.UpdateStatus == "running" {
 		return "building"
 	}
 	if r.Status.UpdateStatus == "error" {
-		return "error"
+		return "erroring"
 	}
 	return "stopped"
 }

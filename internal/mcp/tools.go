@@ -113,13 +113,13 @@ func mcpServiceStatus(r tilt.UIResource) string {
 	case "pending":
 		return "starting"
 	case "error":
-		return "error"
+		return "erroring"
 	}
 	if r.Status.UpdateStatus == "running" {
 		return "building"
 	}
 	if r.Status.UpdateStatus == "error" {
-		return "error"
+		return "erroring"
 	}
 	return "stopped"
 }
@@ -179,7 +179,7 @@ func availableGroups(cfg *config.WorkspaceConfig) string {
 
 func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, serviceDirs map[string]string, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
 	tool := mcp.NewTool("status",
-		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack. Status reflects the current state of locally running dev services, not production. Returns SERVICE, STATUS (stopped/starting/running/building/error/disabled), PORT(S), PATH (source directory), GROUP, ENV (the active environment/config-patch the instance is pointed at, blank if none), and last error. Also shows a groups summary. 'stopped' means the service is known but not currently running (not started yet, or was stopped). 'running' means the process is up. 'disabled' means the resource is switched off in the daemon. Pass stack to see a feature stack's instances."),
+		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack. Status reflects the current state of locally running dev services, not production. Returns SERVICE, STATUS (one of running/starting/building/stopped/erroring/disabled/unknown), PORT(S), PATH (source directory), GROUP, ENV (the active environment/config-patch the instance is pointed at, blank if none), and last error. Also shows a groups summary. 'running' means the process is up. 'starting' means it is coming up; 'building' means the daemon is building/updating it. 'stopped' means the service is known but not currently running (not started yet, or was stopped). 'erroring' means the service or its build failed — check logs. 'disabled' means the resource is switched off in the daemon. 'unknown' means the daemon reported no state for it. Pass stack to see a feature stack's instances."),
 		mcp.WithString("stack", mcp.Description(stackParamDesc)),
 	)
 
