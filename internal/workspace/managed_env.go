@@ -44,3 +44,14 @@ func ManagedEnvFor(ws *Workspace, serviceNames []string, stack string) map[strin
 	}
 	return managed
 }
+
+// ManagedEnvKeys names the values devstack computes for every service, so a
+// view can show that they exist without resolving a specific service.
+func ManagedEnvKeys() []string {
+	return []string{
+		"OTEL_EXPORTER_OTLP_ENDPOINT",
+		"OTEL_EXPORTER_OTLP_PROTOCOL",
+		"OTEL_RESOURCE_ATTRIBUTES",
+		"OTEL_SERVICE_NAME",
+	}
+}

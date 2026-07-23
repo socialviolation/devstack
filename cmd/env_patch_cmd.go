@@ -176,8 +176,25 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 		fmt.Println("(none)")
 	}
 
-	color.New(color.Faint).Printf("\nThis is only what %q defines. A service also resolves .envrc, manifest\nenv.values and devstack-computed values — see all of it with its source:\n  devstack env which --service <svc> [--stack <name>]\n", name)
+	fmt.Printf("\nAlso in scope for services here, but NOT part of this env:\n\n")
+	ow := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintf(ow, "workspace env.values\t%s\n", orNoneDefined(sortedStrKeys(m.Env.Values)))
+	fmt.Fprintf(ow, "workspace env.files\t%s\n", orNoneDefined(m.Env.Files))
+	fmt.Fprintf(ow, "devstack-computed\t%s\n", strings.Join(workspace.ManagedEnvKeys(), ", "))
+	fmt.Fprintf(ow, "service env.values, .envrc\tper service — see env which\n")
+	ow.Flush()
+
+	color.New(color.Faint).Printf("\nEverything a service actually receives, each value with its source:\n  devstack env which --service <svc> [--stack <name>]\n")
 	return nil
+}
+
+// orNoneDefined renders a key list, making an empty one explicit rather than
+// silent — absence and omission must not look the same.
+func orNoneDefined(keys []string) string {
+	if len(keys) == 0 {
+		return "(none defined)"
+	}
+	return strings.Join(keys, ", ")
 }
 
 func runEnvWhich(cmd *cobra.Command, args []string) error {
