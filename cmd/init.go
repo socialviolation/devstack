@@ -108,6 +108,12 @@ func runInitRefresh(cmd *cobra.Command) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ AGENTS.md updated for service %q\n", defaultService)
 
+	if err := refreshMCPJson(cwd, defaultService); err != nil {
+		fmt.Fprintf(os.Stderr, "✗ %v\n", err)
+	} else {
+		fmt.Fprintf(os.Stderr, "✓ .mcp.json updated\n")
+	}
+
 	files, err := writeAIInstructionPointers(defaultService, cwd, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "✗ %v\n", err)
@@ -140,12 +146,17 @@ func runInitAll() error {
 	}
 	sort.Strings(services)
 
-	fmt.Fprintf(os.Stderr, "Refreshing AGENTS.md for %d services in workspace '%s'\n", len(services), ws.Name)
+	fmt.Fprintf(os.Stderr, "Refreshing AGENTS.md and .mcp.json for %d services in workspace '%s'\n", len(services), ws.Name)
 
 	var errs []string
 	for _, svcName := range services {
 		svcPath := cfg.ServicePaths[svcName]
 		if err := writeAgentsMD(svcName, svcPath, ws.Path, ""); err != nil {
+			errs = append(errs, fmt.Sprintf("  %s: %v", svcName, err))
+			fmt.Fprintf(os.Stderr, "✗ %s: %v\n", svcName, err)
+			continue
+		}
+		if err := refreshMCPJson(svcPath, svcName); err != nil {
 			errs = append(errs, fmt.Sprintf("  %s: %v", svcName, err))
 			fmt.Fprintf(os.Stderr, "✗ %s: %v\n", svcName, err)
 			continue
@@ -156,7 +167,7 @@ func runInitAll() error {
 			fmt.Fprintf(os.Stderr, "✗ %s: %v\n", svcName, err)
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "✓ %s%s\n", svcName, agentFilesSuffix(files))
+		fmt.Fprintf(os.Stderr, "✓ %s%s\n", svcName, agentFilesSuffix(append([]string{".mcp.json"}, files...)))
 	}
 
 	if files, err := writeAIInstructionPointers("", ws.Path, ""); err != nil {
@@ -205,13 +216,18 @@ func refreshStackAgentsMD(workspaceName, workspacePath string) []string {
 				fmt.Fprintf(os.Stderr, "✗ %s (stack %s): %v\n", name, rec.Name, err)
 				continue
 			}
+			if err := refreshMCPJson(svc.RepoPath, name); err != nil {
+				errs = append(errs, fmt.Sprintf("  %s (stack %s): %v", name, rec.Name, err))
+				fmt.Fprintf(os.Stderr, "✗ %s (stack %s): %v\n", name, rec.Name, err)
+				continue
+			}
 			files, err := writeAIInstructionPointers(name, svc.RepoPath, rec.Name)
 			if err != nil {
 				errs = append(errs, fmt.Sprintf("  %s (stack %s): %v", name, rec.Name, err))
 				fmt.Fprintf(os.Stderr, "✗ %s (stack %s): %v\n", name, rec.Name, err)
 				continue
 			}
-			fmt.Fprintf(os.Stderr, "✓ %s (stack %s)%s\n", name, rec.Name, agentFilesSuffix(files))
+			fmt.Fprintf(os.Stderr, "✓ %s (stack %s)%s\n", name, rec.Name, agentFilesSuffix(append([]string{".mcp.json"}, files...)))
 		}
 	}
 	return errs
@@ -391,6 +407,16 @@ func detectLanguage(path string) string {
 		}
 	}
 	return "unknown"
+}
+
+// refreshMCPJson rewrites a service's .mcp.json. The file is wholly generated, so
+// it is overwritten rather than merged — that is what de-bakes older copies that
+// still carry a machine-specific DEVSTACK_WORKSPACE / DEVSTACK_DAEMON_PORT.
+func refreshMCPJson(servicePath, serviceName string) error {
+	if err := writeMCPJson(filepath.Join(servicePath, ".mcp.json"), serviceName); err != nil {
+		return fmt.Errorf("failed to write .mcp.json: %w", err)
+	}
+	return nil
 }
 
 // writeMCPJson creates a .mcp.json file in the service directory.
@@ -770,7 +796,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"```\n\n" +
 		"`--stack <name>` targets that stack's instance instead of base; without it commands operate on the base workspace.\n\n" +
 		"### Environments (where a service points)\n\n" +
-		"An **environment** (`environments:` in the workspace manifest) is a named bundle of config-var patches — DB URLs, feature flags, external endpoints — that repoints services without code changes. It applies at three scopes, most-specific winning: a **stack**'s env beats a **service**'s env beats the **workspace** default. So base can run against `local` while one stack runs against `prod`. `devstack status` shows each instance's active env (the ENV column / `env:<name>`), so you can see where every running copy is pointed. Set values with `devstack env set` (any value, including secrets/API keys — they're stored in the workspace manifest and masked in output), point a scope with `devstack env use`.\n\n" +
+		"An **environment** (`environments:` in the workspace manifest) is a named bundle of config-var patches — DB URLs, feature flags, external endpoints — that repoints services without code changes. It applies at three scopes, most-specific winning: a **stack**'s env beats a **service**'s env beats the **workspace** default. So base can run against `local` while one stack runs against `prod`. `devstack status` shows each instance's active env (the ENV column / `env:<name>`), so you can see where every running copy is pointed. Set values with `devstack env set` — they are written into the workspace manifest in plaintext (masking is display-only), so if that manifest is committed keep real secrets out and declare them in `env.required` instead; point a scope with `devstack env use`.\n\n" +
 		"### MCP tools\n\n" +
 		"The `.mcp.json` in this repo wires up the devstack MCP server — the agent interface. Tools include " +
 		"`status`, `restart`, `stop`, `configure`, `process_logs`, `investigate`, and `environment`; stack tools " +
@@ -782,7 +808,9 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"1. Check `topology` before making dependency claims.\n" +
 		"2. Prefer process logs and telemetry evidence over guessing about runtime state.\n" +
 		"3. When telemetry is partial or inconclusive, fall back to process logs and live status.\n" +
-		"4. Do not use devstack against staging or production.\n\n" +
+		"4. Do not use devstack against staging or production.\n" +
+		"5. Never commit `devstack.service.yaml` or `.devstack.json` — they are machine-local (absolute tool paths, host-specific config); gitignore them.\n" +
+		"6. `devstack env set` writes values into `devstack.workspace.yaml` in plaintext (masking is display-only). If that manifest is committed, keep real secrets out of it — declare them in `env.required` and supply them from `.envrc`. Check with `git check-ignore -v devstack.workspace.yaml`.\n\n" +
 		observabilityBlock
 }
 

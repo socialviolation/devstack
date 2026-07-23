@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -352,5 +354,76 @@ func TestServeWorkspaceOverrideWins(t *testing.T) {
 	}
 	if ws.Name != "navexa" {
 		t.Fatalf("override resolved workspace = %q, want navexa", ws.Name)
+	}
+}
+
+const staleMCPJson = `{
+  "mcpServers": {
+    "devstack": {
+      "type": "stdio",
+      "command": "devstack",
+      "args": ["serve", "--transport=stdio"],
+      "env": {
+        "DEVSTACK_WORKSPACE": "/home/nick/dev/navexa",
+        "DEVSTACK_DAEMON_PORT": "10350",
+        "DEVSTACK_DEFAULT_SERVICE": "api"
+      }
+    }
+  }
+}
+`
+
+// A .mcp.json committed before the machine-specific env was dropped still bakes
+// in an absolute workspace path; a refresh must rewrite it, not leave it stale.
+func TestRunInitAllRefreshesStaleMCPJson(t *testing.T) {
+	baseRoot, _, baseServiceDir := setupBaseAndSiblingStack(t)
+	mcpFile := filepath.Join(baseServiceDir, ".mcp.json")
+	writeFile(t, mcpFile, staleMCPJson)
+
+	t.Chdir(baseRoot)
+	if err := runInitAll(); err != nil {
+		t.Fatalf("runInitAll: %v", err)
+	}
+
+	assertMCPJsonDebaked(t, mcpFile)
+}
+
+func TestRunInitRefreshRefreshesStaleMCPJson(t *testing.T) {
+	_, _, baseServiceDir := setupBaseAndSiblingStack(t)
+	mcpFile := filepath.Join(baseServiceDir, ".mcp.json")
+	writeFile(t, mcpFile, staleMCPJson)
+
+	t.Chdir(baseServiceDir)
+	if err := runInitRefresh(&cobra.Command{}); err != nil {
+		t.Fatalf("runInitRefresh: %v", err)
+	}
+
+	assertMCPJsonDebaked(t, mcpFile)
+}
+
+func assertMCPJsonDebaked(t *testing.T, mcpFile string) {
+	t.Helper()
+	env := readMCPEnv(t, mcpFile)
+	if _, ok := env["DEVSTACK_WORKSPACE"]; ok {
+		t.Fatalf("stale DEVSTACK_WORKSPACE survived the refresh: %#v", env)
+	}
+	if _, ok := env["DEVSTACK_DAEMON_PORT"]; ok {
+		t.Fatalf("stale DEVSTACK_DAEMON_PORT survived the refresh: %#v", env)
+	}
+	if env["DEVSTACK_DEFAULT_SERVICE"] != "api" {
+		t.Fatalf("DEVSTACK_DEFAULT_SERVICE = %q, want %q", env["DEVSTACK_DEFAULT_SERVICE"], "api")
+	}
+}
+
+func TestAgentInstructionsWarnAgainstCommittingMachineLocalFilesAndSecrets(t *testing.T) {
+	out := buildAgentInstructions("api", t.TempDir(), "/home/dev/navexa", "")
+	for _, want := range []string{
+		"Never commit `devstack.service.yaml` or `.devstack.json`",
+		"If that manifest is committed, keep real secrets out of it",
+		"`env.required`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("AGENTS.md block missing do-not-commit guidance %q", want)
+		}
 	}
 }
