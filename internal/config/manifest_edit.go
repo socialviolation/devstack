@@ -189,6 +189,65 @@ func AddServiceRepo(workspacePath, repoRelPath string) error {
 	})
 }
 
+// SetGroupMembers replaces a group's membership. An empty members list removes
+// the group entirely.
+func SetGroupMembers(workspacePath, group string, members []string) error {
+	return editWorkspaceManifest(workspacePath, func(root *yaml.Node) error {
+		return setStringList(root, "groups", group, members)
+	})
+}
+
+// SetServiceDependencies replaces a service's dependency list. An empty list
+// removes the entry.
+func SetServiceDependencies(workspacePath, service string, deps []string) error {
+	return editWorkspaceManifest(workspacePath, func(root *yaml.Node) error {
+		return setStringList(root, "dependencies", service, deps)
+	})
+}
+
+// setStringList sets key to a flow-style sequence of values inside root's
+// section mapping, reusing the existing sequence's style when the key is already
+// present. An empty values list removes the key.
+func setStringList(root *yaml.Node, section, key string, values []string) error {
+	if len(values) == 0 {
+		m := mapValue(root, section)
+		if m == nil || m.Kind != yaml.MappingNode {
+			return nil
+		}
+		deleteKey(m, key)
+		if len(m.Content) == 0 {
+			deleteKey(root, section)
+		}
+		return nil
+	}
+
+	m := mappingChild(root, section)
+	if m.Kind != yaml.MappingNode {
+		return fmt.Errorf("%s is not a mapping", section)
+	}
+	seq := mapValue(m, key)
+	if seq == nil {
+		seq = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: yaml.FlowStyle}
+		m.Content = append(m.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, seq)
+	} else if seq.Kind != yaml.SequenceNode {
+		if seq.Kind != yaml.ScalarNode || seq.Tag != "!!null" {
+			return fmt.Errorf("%s.%s is not a list", section, key)
+		}
+		seq.Kind = yaml.SequenceNode
+		seq.Tag = "!!seq"
+		seq.Value = ""
+		seq.Style = yaml.FlowStyle
+	}
+
+	seq.Content = seq.Content[:0]
+	for _, v := range values {
+		seq.Content = append(seq.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v})
+	}
+	return nil
+}
+
 // mappingChild returns the mapping node stored under key in parent, creating an
 // empty mapping (and the key) when it does not yet exist.
 func mappingChild(parent *yaml.Node, key string) *yaml.Node {
