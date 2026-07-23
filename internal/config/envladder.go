@@ -51,9 +51,11 @@ type envFileRef struct {
 // env.values, and finally devstack's own computed values. Env files are executed
 // rather than line-parsed, so conditionals and ${VAR:-default} resolve as the
 // developer's shell resolves them; dir is both where they are looked up and
-// where the service's command runs. The active-env rung, resolved from the envs
-// applied at the workspace/service/stack scopes (stackEnv names the stack scope),
-// sits just above service env.values and below devstack's computed values.
+// where the service's command runs. The active-env rung sits just above service
+// env.values and below devstack's computed values; it carries one layer per env
+// scope that is set (workspace, service, then stack — stackEnv names the stack
+// scope), each Sourced to its own env name so a key is attributed to the env
+// that actually supplied it.
 func EnvLadder(dir string, ws *WorkspaceManifest, m *ServiceManifest, stackEnv string, managed map[string]string) ([]EnvLayer, error) {
 	envrc, err := ResolveEnvrc(dir)
 	if err != nil {
@@ -82,17 +84,17 @@ func EnvLadder(dir string, ws *WorkspaceManifest, m *ServiceManifest, stackEnv s
 		layers = append(layers, EnvLayer{Rung: ref.rung, Source: ref.name, Values: vals})
 	}
 
-	activeEnv, err := ResolveEnvPatch(ws, m, stackEnv)
+	activeEnv, err := ActiveEnvLayers(ws, m, stackEnv)
 	if err != nil {
 		return nil, err
 	}
 
-	return append(layers,
+	layers = append(layers,
 		EnvLayer{Rung: RungWorkspaceValues, Source: WorkspaceManifestFileName, Values: ws.Env.Values},
 		EnvLayer{Rung: RungServiceValues, Source: ServiceManifestFileName, Values: m.Env.Values},
-		EnvLayer{Rung: RungActiveEnv, Source: ActiveEnvName(ws.Workspace.Env, m.Service.Env, stackEnv), Values: activeEnv},
-		EnvLayer{Rung: RungManaged, Values: managed},
-	), nil
+	)
+	layers = append(layers, activeEnv...)
+	return append(layers, EnvLayer{Rung: RungManaged, Values: managed}), nil
 }
 
 // MergeEnvLadder flattens the ladder into the env a service actually receives.

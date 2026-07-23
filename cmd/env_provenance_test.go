@@ -97,6 +97,33 @@ func TestBuildEnvRowsShadowedMasksSecrets(t *testing.T) {
 	}
 }
 
+// A stack env overriding only some of the workspace env's keys must leave the
+// rest credited to the workspace env, and show the buried one as shadowed by it.
+func TestBuildEnvRowsSeparatesActiveEnvScopes(t *testing.T) {
+	layers := []config.EnvLayer{
+		{Rung: config.RungActiveEnv, Source: "dev", Values: map[string]string{"A": "dev-a", "B": "dev-b"}},
+		{Rung: config.RungActiveEnv, Source: "perf", Values: map[string]string{"B": "perf-b"}},
+	}
+	rows := buildEnvRows(layers)
+
+	a := rowByKey(t, rows, "A")
+	if a.Value != "dev-a" || a.Source != "active env (dev)" {
+		t.Errorf("A = %+v, want it credited to active env (dev)", a)
+	}
+	if len(a.Shadowed) != 0 {
+		t.Errorf("A shadowed = %+v, want none", a.Shadowed)
+	}
+
+	b := rowByKey(t, rows, "B")
+	if b.Value != "perf-b" || b.Source != "active env (perf)" {
+		t.Errorf("B = %+v, want it credited to active env (perf)", b)
+	}
+	want := []envShadow{{Rung: config.RungActiveEnv, Source: "active env (dev)", Value: "dev-b"}}
+	if !reflect.DeepEqual(b.Shadowed, want) {
+		t.Errorf("B shadowed = %+v, want %+v", b.Shadowed, want)
+	}
+}
+
 func TestAnyShadowed(t *testing.T) {
 	if anyShadowed(buildEnvRows([]config.EnvLayer{{Rung: config.RungEnvrc, Values: map[string]string{"A": "1"}}})) {
 		t.Error("anyShadowed = true for a single layer, want false")
