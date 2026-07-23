@@ -209,8 +209,6 @@ func renderPort(key string, port int) string {
 	return strconv.Itoa(port)
 }
 
-var secretSubstrings = []string{"connectionstring", "secret", "token", "password", "key"}
-
 // credentialRe matches a secret smuggled into a value as `param=<secret>` — an
 // Azure function `?code=`, a Redis/SQL `password=`, a SAS `sig=`, etc. — so the
 // value is redacted in place while the surrounding URL/string stays legible.
@@ -221,11 +219,5 @@ func IsSecret(key, value string) bool {
 	if value == externalMarker {
 		return true
 	}
-	lower := strings.ToLower(key)
-	for _, s := range secretSubstrings {
-		if strings.Contains(lower, s) {
-			return true
-		}
-	}
-	return false
+	return config.IsCredentialKey(key)
 }

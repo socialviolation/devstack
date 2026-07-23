@@ -338,7 +338,7 @@ Claude Code reads `.mcp.json` automatically and loads the MCP server when you op
 | `.mcp.json` | service repo | **Yes** | Generated to be machine-agnostic — no workspace path, no daemon port. If an older copy still contains `DEVSTACK_WORKSPACE`, refresh it with `devstack init --all`. |
 | `AGENTS.md` | service repo | **Yes** | Agent instructions. devstack owns only the block between its sentinels; the rest is yours. |
 | `CLAUDE.md` / `GEMINI.md` / `.cursorrules` / `.github/copilot-instructions.md` | service repo | **Yes** | Yours, with a devstack-managed block appended between sentinels. devstack updates these only if they already exist. |
-| `.devstack.json` | workspace root | **No** | Legacy store, still read for otel plugin config (upstream endpoint, api-key header) — machine/org specific. |
+| `.devstack.json` | workspace root | **No** | Retired. devstack no longer reads or writes it; otel plugin config now lives under `observability.settings` in `devstack.workspace.yaml`. Safe to delete once `devstack otel status` shows the settings you expect. |
 | `Tiltfile` | anywhere | **No** | Generated build artifact, never hand-edited. |
 | `~/.config/devstack/workspaces.json` | home | n/a | Machine-local registry of workspaces and their ports. |
 | `~/.local/share/devstack/**` | home | n/a | Host daemon state: pids, logs, `stacks.json`, the generated host Tiltfile. |

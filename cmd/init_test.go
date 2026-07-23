@@ -418,7 +418,7 @@ func assertMCPJsonDebaked(t *testing.T, mcpFile string) {
 func TestAgentInstructionsWarnAgainstCommittingMachineLocalFilesAndSecrets(t *testing.T) {
 	out := buildAgentInstructions("api", t.TempDir(), "/home/dev/navexa", "")
 	for _, want := range []string{
-		"Never commit `devstack.service.yaml` or `.devstack.json`",
+		"Never commit `devstack.service.yaml`",
 		"If that manifest is committed, keep real secrets out of it",
 		"`env.required`",
 	} {

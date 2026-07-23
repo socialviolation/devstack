@@ -809,7 +809,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"2. Prefer process logs and telemetry evidence over guessing about runtime state.\n" +
 		"3. When telemetry is partial or inconclusive, fall back to process logs and live status.\n" +
 		"4. Do not use devstack against staging or production.\n" +
-		"5. Never commit `devstack.service.yaml` or `.devstack.json` — they are machine-local (absolute tool paths, host-specific config); gitignore them.\n" +
+		"5. Never commit `devstack.service.yaml` — it is machine-local (absolute tool paths); gitignore it.\n" +
 		"6. `devstack env set` writes values into `devstack.workspace.yaml` in plaintext (masking is display-only). If that manifest is committed, keep real secrets out of it — declare them in `env.required` and supply them from `.envrc`. Check with `git check-ignore -v devstack.workspace.yaml`.\n\n" +
 		observabilityBlock
 }

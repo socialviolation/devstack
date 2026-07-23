@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -140,6 +142,57 @@ func SetObservabilityBackend(workspacePath string, backend string) error {
 			return nil
 		}
 		setScalar(obs, "backend", backend, "!!str")
+		return nil
+	})
+}
+
+// credentialKeySubstrings mark a config key name as carrying a credential.
+var credentialKeySubstrings = []string{"connectionstring", "secret", "token", "password", "key"}
+
+// IsCredentialKey reports whether a config key name reads as a credential and
+// so must never be written to a committed file.
+func IsCredentialKey(key string) bool {
+	lower := strings.ToLower(key)
+	// A name that only labels a credential is not itself one: api_key_header
+	// carries a header's name, sharedAccessKeyName a policy's name.
+	for _, suffix := range []string{"header", "name"} {
+		if strings.HasSuffix(lower, suffix) {
+			return false
+		}
+	}
+	for _, s := range credentialKeySubstrings {
+		if strings.Contains(lower, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// SetObservabilitySettings merges settings into observability.settings in the
+// workspace manifest, creating the block if absent. Existing keys not named in
+// settings are left alone.
+//
+// The workspace manifest is committed to git, so a credential-named key is
+// refused outright rather than persisted.
+func SetObservabilitySettings(workspacePath string, settings map[string]string) error {
+	keys := make([]string, 0, len(settings))
+	for key := range settings {
+		if IsCredentialKey(key) {
+			return fmt.Errorf("refusing to write %q to %s — it is committed to git; supply the value through the environment (.envrc) or the service's env.required instead", key, WorkspaceManifestFileName)
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	return editWorkspaceManifest(workspacePath, func(root *yaml.Node) error {
+		obs := mappingChild(root, "observability")
+		values := mappingChild(obs, "settings")
+		if values.Kind != yaml.MappingNode {
+			return fmt.Errorf("observability.settings is not a mapping")
+		}
+		for _, key := range keys {
+			setScalar(values, key, settings[key], "!!str")
+		}
 		return nil
 	})
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -75,8 +76,10 @@ var otelConfigureCmd = &cobra.Command{
 	Short: "Configure the active OTEL plugin for the current workspace",
 	Long: `Configure the active OTEL plugin for the current workspace.
 
-The --plugin (backend) is written to the workspace manifest so it persists;
---set values (upstream, api keys, etc.) are stored in per-machine config.
+The --plugin (backend) and --set values are written to observability in the
+workspace manifest so they persist and travel with the project. That file is
+committed, so credential keys (api_key, tokens, passwords) are kept out of it
+and stored in the machine-local registry instead.
 
 Examples:
   devstack otel configure --plugin=signoz
@@ -356,14 +359,9 @@ func runOtelConfigure(cmd *cobra.Command, args []string) error {
 	pluginName, _ := cmd.Flags().GetString("plugin")
 	setFlags, _ := cmd.Flags().GetStringArray("set")
 
-	// Parse --set key=value pairs
-	setConfig := map[string]string{}
-	for _, kv := range setFlags {
-		parts := strings.SplitN(kv, "=", 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("invalid --set value %q (expected key=value)", kv)
-		}
-		setConfig[parts[0]] = parts[1]
+	setConfig, err := parseOtelSetFlags(setFlags)
+	if err != nil {
+		return err
 	}
 
 	if pluginName == "" && len(setConfig) == 0 {
@@ -412,18 +410,34 @@ func runOtelConfigure(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to update workspace config: %w", err)
 	}
 
-	// Persist the backend where it's actually read from. On manifest workspaces
-	// that's the manifest (otherwise the manifest shadows the change on reload);
-	// legacy workspaces keep using .devstack.json.
-	if ws.Path != "" {
-		if config.HasWorkspaceManifest(ws.Path) {
-			if pluginName != "" {
-				if err := config.SetObservabilityBackend(ws.Path, pluginName); err != nil {
-					fmt.Fprintf(os.Stderr, "warning: failed to write backend to manifest: %v\n", err)
-				}
+	// Persist to the manifest, which is where the settings are read back from —
+	// otherwise it shadows the registry write above on the next reload.
+	if ws.Path != "" && config.HasWorkspaceManifest(ws.Path) {
+		if pluginName != "" {
+			if err := config.SetObservabilityBackend(ws.Path, pluginName); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to write backend to manifest: %v\n", err)
 			}
-		} else if err := saveOtelPluginToProject(ws.Path, pluginName, merged); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to save to project config: %v\n", err)
+		}
+		// Credentials stay out of the manifest — it is a committed file. They are
+		// already persisted to the machine-local registry above.
+		manifestSettings := map[string]string{}
+		var heldBack []string
+		for k, v := range setConfig {
+			if config.IsCredentialKey(k) {
+				heldBack = append(heldBack, k)
+				continue
+			}
+			manifestSettings[k] = v
+		}
+		if len(manifestSettings) > 0 {
+			if err := config.SetObservabilitySettings(ws.Path, manifestSettings); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to write settings to manifest: %v\n", err)
+			}
+		}
+		if len(heldBack) > 0 {
+			sort.Strings(heldBack)
+			fmt.Printf("Stored %s in the machine-local registry, not %s — it is committed.\n",
+				strings.Join(heldBack, ", "), config.WorkspaceManifestFileName)
 		}
 	}
 
@@ -437,6 +451,21 @@ func runOtelConfigure(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("\nRun: devstack otel start\n")
 	return nil
+}
+
+// parseOtelSetFlags turns --set key=value pairs into a config map. Credential
+// keys are refused: these settings are persisted to the workspace manifest,
+// which is committed.
+func parseOtelSetFlags(setFlags []string) (map[string]string, error) {
+	setConfig := map[string]string{}
+	for _, kv := range setFlags {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid --set value %q (expected key=value)", kv)
+		}
+		setConfig[parts[0]] = parts[1]
+	}
+	return setConfig, nil
 }
 
 func runOtelEnable(cmd *cobra.Command, args []string) error {
@@ -475,20 +504,6 @@ func runOtelDisable(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Observability disabled for '%s'. No collector will start on 'devstack workspace up'.\n", ws.Name)
 	fmt.Printf("Stop a running collector now with: devstack otel stop\n")
 	return nil
-}
-
-func saveOtelPluginToProject(wsPath, pluginName string, pluginConfig map[string]string) error {
-	cfg, err := config.Load(wsPath)
-	if err != nil {
-		return err
-	}
-	// Only overwrite plugin name when explicitly set; empty preserves the
-	// existing project plugin name.
-	if pluginName != "" {
-		cfg.OtelPlugin = pluginName
-	}
-	cfg.OtelPluginConfig = pluginConfig
-	return config.Save(wsPath, cfg)
 }
 
 func runOtelPlugins(cmd *cobra.Command, args []string) error {

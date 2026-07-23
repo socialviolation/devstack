@@ -3,9 +3,12 @@ package workspace
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/socialviolation/devstack/internal/config"
@@ -44,28 +47,79 @@ type Workspace struct {
 	Active bool `json:"active,omitempty"`
 }
 
-// OverlayProjectConfig reads the workspace's .devstack.json and overlays any OTEL
-// plugin config found there, letting per-project config take precedence over the registry.
+// OverlayProjectConfig overlays the workspace manifest's observability backend
+// and settings onto the registry entry, letting the committed project config
+// take precedence over the per-machine registry.
 func (ws *Workspace) OverlayProjectConfig() {
 	if ws.Path == "" {
 		return
 	}
-	cfg, err := config.Load(ws.Path)
-	if err != nil || cfg == nil {
-		return
+	obs := config.WorkspaceObservability(ws.Path)
+	if backend := obs.ResolvedBackend(); backend != "" {
+		ws.OtelPlugin = backend
 	}
-	if cfg.OtelPlugin != "" {
-		ws.OtelPlugin = cfg.OtelPlugin
-	}
-	if len(cfg.OtelPluginConfig) > 0 {
-		merged := make(map[string]string, len(ws.OtelPluginConfig)+len(cfg.OtelPluginConfig))
+	if len(obs.Settings) > 0 {
+		merged := make(map[string]string, len(ws.OtelPluginConfig)+len(obs.Settings))
 		for k, v := range ws.OtelPluginConfig {
 			merged[k] = v
 		}
-		for k, v := range cfg.OtelPluginConfig {
+		for k, v := range obs.Settings {
 			merged[k] = v
 		}
 		ws.OtelPluginConfig = merged
+	}
+	warnStrandedLegacyOtelConfig(ws.Path, obs)
+}
+
+// legacyOtelWarned tracks the workspace paths already warned about, so a single
+// command run emits the deprecation notice at most once per workspace.
+var legacyOtelWarned sync.Map
+
+var warnWriter io.Writer = os.Stderr
+
+const baseConfigureCmd = "devstack otel configure"
+
+// warnStrandedLegacyOtelConfig reports otel settings left in the retired
+// .devstack.json project store that the manifest does not carry, naming the
+// command that re-applies them. Without this a workspace that kept its upstream
+// there would quietly fall back to the collector's debug mode.
+func warnStrandedLegacyOtelConfig(wsPath string, obs config.WorkspaceManifestObservability) {
+	plugin, settings := config.LegacyOtelSettings(wsPath)
+	var stranded []string
+	for k, v := range settings {
+		if obs.Settings[k] != v {
+			stranded = append(stranded, k)
+		}
+	}
+	sort.Strings(stranded)
+	pluginStranded := plugin != "" && plugin != obs.Backend
+	if !pluginStranded && len(stranded) == 0 {
+		return
+	}
+	if _, loaded := legacyOtelWarned.LoadOrStore(wsPath, true); loaded {
+		return
+	}
+
+	cmd := baseConfigureCmd
+	if pluginStranded {
+		cmd += " --plugin=" + plugin
+	}
+	var secrets []string
+	for _, k := range stranded {
+		if config.IsCredentialKey(k) {
+			secrets = append(secrets, k)
+			continue
+		}
+		cmd += fmt.Sprintf(" --set %s=%s", k, settings[k])
+	}
+
+	fmt.Fprintf(warnWriter, "warning: %s holds otel config devstack no longer reads — it now lives in %s.\n",
+		filepath.Join(wsPath, ".devstack.json"), config.WorkspaceManifestFileName)
+	if cmd != baseConfigureCmd {
+		fmt.Fprintf(warnWriter, "         re-apply it with: %s\n", cmd)
+	}
+	for _, k := range secrets {
+		fmt.Fprintf(warnWriter, "         %q is a credential: supply it through the environment (.envrc), not a committed file.\n", k)
 	}
 }
 
