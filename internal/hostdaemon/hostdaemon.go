@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/stack"
+	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/tiltgen"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -23,6 +25,46 @@ import (
 // host daemon hot-reloads it. With no active workspaces it still writes a valid
 // header-only Tiltfile so a running daemon drains to empty. Returns the path.
 func Regenerate() (string, error) {
+	res, err := Sync()
+	return res.Path, err
+}
+
+// SyncResult reports what Sync did. Wrote is false when the rendered Tiltfile
+// already matched the one on disk, so a caller can stay quiet in the common case.
+type SyncResult struct {
+	Path    string
+	Wrote   bool
+	Changed []string
+}
+
+// Sync renders the host Tiltfile from the manifests and writes it only when it
+// differs from the file on disk, reporting which resources changed. Commands
+// that act on a running service call this first so a manifest edit takes effect
+// without a separate 'devstack workspace generate'.
+func Sync() (SyncResult, error) {
+	out, err := render()
+	if err != nil {
+		return SyncResult{}, err
+	}
+
+	dir := workspace.HostTiltDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return SyncResult{}, fmt.Errorf("failed to create host tilt dir: %w", err)
+	}
+	path := filepath.Join(dir, "Tiltfile")
+
+	existing, readErr := os.ReadFile(path)
+	if readErr == nil && string(existing) == out {
+		return SyncResult{Path: path}, nil
+	}
+
+	if err := os.WriteFile(path, []byte(out), 0644); err != nil {
+		return SyncResult{}, fmt.Errorf("failed to write host Tiltfile: %w", err)
+	}
+	return SyncResult{Path: path, Wrote: true, Changed: changedResources(string(existing), out)}, nil
+}
+
+func render() (string, error) {
 	active, err := workspace.ActiveWorkspaces()
 	if err != nil {
 		return "", err
@@ -51,20 +93,96 @@ func Regenerate() (string, error) {
 		})
 	}
 
-	out, err := tiltgen.GenerateHost(gens)
+	return tiltgen.GenerateHost(gens)
+}
+
+// TiltfileReloadTimeout bounds how long SyncAndReload waits for the running
+// daemon to pick up a Tiltfile it just regenerated.
+const TiltfileReloadTimeout = 20 * time.Second
+
+// SyncAndReload brings the generated Tiltfile back in line with the manifests
+// and waits for a running daemon to load it, so acting on a service applies
+// manifest edits made since the last generate. It returns human-readable notes
+// (empty when nothing changed) rather than printing, because its MCP caller owns
+// stdout. It never fails the caller: a generation error leaves the daemon on its
+// last good Tiltfile, which is still worth acting against, and is reported as a
+// note instead.
+func SyncAndReload(client *tilt.Client) []string {
+	since := time.Now()
+	res, err := Sync()
 	if err != nil {
-		return "", err
+		return []string{fmt.Sprintf("⚠ could not regenerate the Tiltfile — the daemon is still running the previously generated one, so manifest edits are NOT applied: %v", err)}
+	}
+	if !res.Wrote {
+		return nil
 	}
 
-	dir := workspace.HostTiltDir()
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create host tilt dir: %w", err)
+	notes := []string{fmt.Sprintf("↻ Manifests changed — regenerated %s", res.Path)}
+	if len(res.Changed) > 0 {
+		notes = append(notes, "  affected: "+strings.Join(res.Changed, ", "))
 	}
-	path := filepath.Join(dir, "Tiltfile")
-	if err := os.WriteFile(path, []byte(out), 0644); err != nil {
-		return "", fmt.Errorf("failed to write host Tiltfile: %w", err)
+
+	// A daemon that isn't up has nothing to reload; the caller reports that.
+	if client == nil {
+		return notes
 	}
-	return path, nil
+	if _, err := client.GetView(); err != nil {
+		return notes
+	}
+	if err := client.WaitForTiltfileReload(since, TiltfileReloadTimeout); err != nil {
+		notes = append(notes, fmt.Sprintf("  ⚠ %v — the service may still start with the previous config", err))
+	}
+	return notes
+}
+
+// changedResources names the resources whose generated block differs between
+// two renderings, including ones added or removed.
+func changedResources(before, after string) []string {
+	old, new := resourceBlocks(before), resourceBlocks(after)
+	seen := map[string]bool{}
+	var out []string
+	for name, block := range new {
+		if old[name] != block {
+			out = append(out, name)
+		}
+		seen[name] = true
+	}
+	for name := range old {
+		if !seen[name] {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// resourceBlocks splits a generated Tiltfile into its per-resource blocks. The
+// generator emits every service as a "# <resource name>" comment immediately
+// followed by its local_resource( call, so that pair delimits each block and the
+// file's own header comment is skipped.
+func resourceBlocks(content string) map[string]string {
+	lines := strings.Split(content, "\n")
+	blocks := map[string]string{}
+	name := ""
+	var body []string
+	flush := func() {
+		if name != "" {
+			blocks[name] = strings.Join(body, "\n")
+		}
+		name, body = "", nil
+	}
+	for i, line := range lines {
+		if strings.HasPrefix(line, "# ") && i+1 < len(lines) && lines[i+1] == "local_resource(" {
+			flush()
+			name = strings.TrimSpace(strings.TrimPrefix(line, "# "))
+			continue
+		}
+		if name != "" {
+			body = append(body, line)
+		}
+	}
+	flush()
+	return blocks
 }
 
 // ActiveStackGens builds a tiltgen.StackGen for every active feature stack of the

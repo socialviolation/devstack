@@ -14,6 +14,7 @@ import (
 	"github.com/fatih/color"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/gitinfo"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -375,8 +376,20 @@ func countRunning(members []string, resources map[string]tilt.UIResource) int {
 
 // renderStatusTable prints every row of the workspace under one header row,
 // colouring each row by the group it belongs to while the STATE cell keeps its
-// own state colour. Source paths only print when the caller asked for them.
+// own state colour. Source paths, and the git checkout each one is on, only
+// print when the caller asked for them.
 func renderStatusTable(rows []statusRow, svcGroupColor map[string]*color.Color, showDirs bool) {
+	checkouts := map[string]gitinfo.Info{}
+	if showDirs {
+		dirs := map[string]string{}
+		for _, r := range rows {
+			if r.dir != "" {
+				dirs[r.dir] = r.dir
+			}
+		}
+		checkouts = gitinfo.ReadAll(dirs)
+	}
+
 	svcWidth, groupWidth := colService, colGroup
 	for _, r := range rows {
 		if len(r.service) > svcWidth {
@@ -424,7 +437,11 @@ func renderStatusTable(rows []statusRow, svcGroupColor map[string]*color.Color, 
 		fmt.Println()
 
 		if showDirs && r.dir != "" {
-			faint.Printf("%s  %s\n", statusIndent, shortDir(r.dir))
+			if branch := checkouts[r.dir].Label(); branch != "" {
+				faint.Printf("%s  %s  on %s\n", statusIndent, shortDir(r.dir), branch)
+			} else {
+				faint.Printf("%s  %s\n", statusIndent, shortDir(r.dir))
+			}
 		}
 	}
 }

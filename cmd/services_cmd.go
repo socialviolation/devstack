@@ -383,12 +383,24 @@ func stackSections(ws *workspace.Workspace, view *tilt.TiltView, baseDeps map[st
 			tag += " inactive"
 		}
 
+		// A stack runs its own worktree of each service, so its rows must report
+		// that checkout rather than the base repo's.
+		dirs := map[string]string{}
+		if rw != nil {
+			for _, name := range names {
+				if svc, ok := rw.Services[name]; ok {
+					dirs[name] = svc.RepoPath
+				}
+			}
+		}
+
 		out = append(out, serviceSection{
 			label:     "stack: " + rec.Name,
 			members:   names,
 			deps:      deps,
 			resources: resourceMap,
 			envs:      svcEnvNames,
+			dirs:      dirs,
 			color:     groupPalette[(colorOffset+len(out))%len(groupPalette)],
 			running:   stackRunning,
 			tag:       tag,

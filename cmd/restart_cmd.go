@@ -64,6 +64,8 @@ func runRestart(cmd *cobra.Command, args []string) error {
 	}
 
 	tiltClient := tilt.NewClient("localhost", tiltPort)
+	syncHostTiltfile(tiltClient)
+
 	view, err := tiltClient.GetView()
 	if err != nil {
 		return fmt.Errorf("dev daemon is not running — start it first with: devstack workspace up\n(%w)", err)

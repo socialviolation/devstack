@@ -3,12 +3,15 @@ package cmd
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/infra"
+	"github.com/socialviolation/devstack/internal/svcconfig"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 var workspaceDoctorCmd = &cobra.Command{
@@ -49,8 +52,12 @@ func runWorkspaceDoctor(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	drifted := reportConfigDrift(ctx.WorkspaceRoot.Value)
+
 	if len(graph.Issues) == 0 {
-		fmt.Println("status: ok")
+		if drifted == 0 {
+			fmt.Println("status: ok")
+		}
 		return nil
 	}
 
@@ -59,4 +66,49 @@ func runWorkspaceDoctor(cmd *cobra.Command, args []string) error {
 		fmt.Printf("- [%s] %s\n", issue.Severity, issue.Message)
 	}
 	return fmt.Errorf("workspace doctor found %d issue(s)", len(graph.Issues))
+}
+
+// reportConfigDrift prints, for every service that declares config sources, the
+// keys its deployment declares that the local env does not supply. It returns
+// how many services drifted. Drift is reported but does not fail the doctor: a
+// local stack is meant to differ from a deployment in places, and only the
+// developer knows which.
+func reportConfigDrift(workspacePath string) int {
+	rw, err := config.ResolveWorkspace(workspacePath)
+	if err != nil {
+		return 0
+	}
+	ws, err := workspace.FindByPath(workspacePath)
+	if err != nil {
+		return 0
+	}
+
+	names := make([]string, 0, len(rw.Services))
+	for name := range rw.Services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	managed := workspace.ManagedEnv(ws, names)
+
+	drifted := 0
+	for _, name := range names {
+		svc := rw.Services[name]
+		if svc.Manifest == nil || len(svc.Manifest.Config.Sources) == 0 {
+			continue
+		}
+		layers, err := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, "", managed[name])
+		if err != nil {
+			continue
+		}
+		entries, err := svcconfig.Drift(svc, config.MergeEnvLadder(layers))
+		if err != nil || len(entries) == 0 {
+			continue
+		}
+		if drifted == 0 {
+			fmt.Println("\nconfig drift (declared by the service's own config.sources, not supplied locally):")
+		}
+		drifted++
+		fmt.Print(svcconfig.Render(name, entries))
+	}
+	return drifted
 }

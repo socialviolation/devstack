@@ -99,6 +99,8 @@ func runEnable(cmd *cobra.Command, args []string) error {
 	}
 
 	tiltClient := tilt.NewClient("localhost", tiltPort)
+	syncHostTiltfile(tiltClient)
+
 	view, err := tiltClient.GetView()
 	if err != nil {
 		if stackName != "" {

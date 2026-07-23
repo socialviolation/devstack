@@ -13,6 +13,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/svcconfig"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -21,15 +22,19 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 	tool := mcp.NewTool("service_env",
 		mcp.WithDescription(
 			"Inspect and manage environment variables across local services. "+
-				"Supports four actions: "+
+				"Supports five actions: "+
 				"'get' — show the env a service actually resolves to, with the rung each value comes from; "+
 				"'diff' — compare resolved env across multiple services or a group side-by-side; "+
 				"'set' — write a key=value to a service's manifest (env.values) or .envrc, and report if a higher rung overrides it; "+
-				"'check' — audit resolved env for placeholder and asymmetric values.",
+				"'check' — audit resolved env for placeholder and asymmetric values; "+
+				"'drift' — compare the resolved env against what the service's own repo declares it needs (its deployment manifest / appsettings, via config.sources), "+
+				"reporting declared keys that are unset locally, secret-backed keys with no local value, and keys set to a different value. "+
+				"Use 'drift' before trusting a local run of a code path that reads config: a declared key that is unset locally does not error, "+
+				"it silently falls back to the code's default, so the service runs a different configuration than the one it is standing in for.",
 		),
 		mcp.WithString("action",
 			mcp.Required(),
-			mcp.Description("One of: get, diff, set, check"),
+			mcp.Description("One of: get, diff, set, check, drift"),
 		),
 		mcp.WithString("service",
 			mcp.Description("Exact service name. For diff, may be comma-separated list of 2+ services."),
@@ -102,8 +107,11 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 		case "check":
 			res, err := handleServiceEnvCheck(ws, targetPath, stackEnv, cfg, serviceName, groupName)
 			return prependInstanceResult(res, instance), err
+		case "drift":
+			res, err := handleServiceEnvDrift(ws, targetPath, stackEnv, cfg, serviceName, groupName)
+			return prependInstanceResult(res, instance), err
 		default:
-			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — must be one of: get, diff, set, check", action)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — must be one of: get, diff, set, check, drift", action)), nil
 		}
 	})
 }
@@ -603,6 +611,65 @@ func handleServiceEnvCheck(ws *workspace.Workspace, workspacePath, stackEnv stri
 	}
 
 	fmt.Fprintf(&sb, "\nSummary: %d failure(s), %d warning(s), %d passed\n", failures, warnings, passes)
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// handleServiceEnvDrift implements the "drift" action: for each service, compare
+// the env it actually resolves to against the config surface its own repo
+// declares, and report every difference. With no service or group it covers
+// every service that declares config sources.
+func handleServiceEnvDrift(ws *workspace.Workspace, workspacePath, stackEnv string, cfg *config.WorkspaceConfig, serviceName, groupName string) (*mcp.CallToolResult, error) {
+	var services []string
+	if groupName != "" || serviceName != "" {
+		var err error
+		services, err = resolveServices(cfg, serviceName, groupName)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+	} else {
+		for svc := range cfg.ServicePaths {
+			services = append(services, svc)
+		}
+		sort.Strings(services)
+	}
+
+	rw, err := config.ResolveWorkspace(workspacePath)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to resolve workspace manifests: %v", err)), nil
+	}
+	svcEnvs, err := resolvedEnvs(ws, workspacePath, stackEnv, services)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	var sb strings.Builder
+	var undeclared []string
+	total := 0
+	for _, name := range services {
+		svc, ok := rw.Services[name]
+		if !ok || svc.Manifest == nil || len(svc.Manifest.Config.Sources) == 0 {
+			undeclared = append(undeclared, name)
+			continue
+		}
+		entries, err := svcconfig.Drift(svc, svcEnvs[name])
+		if err != nil {
+			fmt.Fprintf(&sb, "%s: could not compare — %v\n\n", name, err)
+			continue
+		}
+		total += len(entries)
+		sb.WriteString(svcconfig.Render(name, entries))
+		sb.WriteString("\n")
+	}
+
+	if len(undeclared) > 0 {
+		fmt.Fprintf(&sb, "not comparable (no config.sources declared in devstack.service.yaml): %s\n", strings.Join(undeclared, ", "))
+		sb.WriteString("Point config.sources at the service's deployment manifest or appsettings file to make it comparable.\n")
+	}
+	if total > 0 {
+		sb.WriteString("\n'missing' is the one to act on: the key is declared with a value where the service is deployed but unset here, so the local process silently uses its code default.\n")
+		sb.WriteString("Fix by setting it with service_env action=set (target=manifest for plain config, target=envrc for anything credential-bearing), then restart the service.\n")
+	}
 
 	return mcp.NewToolResultText(sb.String()), nil
 }

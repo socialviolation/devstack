@@ -16,6 +16,8 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/gitinfo"
+	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/observability"
 	_ "github.com/socialviolation/devstack/internal/observability/signoz" // register signoz backend
 	"github.com/socialviolation/devstack/internal/otel"
@@ -173,7 +175,7 @@ func availableGroups(cfg *config.WorkspaceConfig) string {
 
 func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, serviceDirs map[string]string, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
 	tool := mcp.NewTool("status",
-		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack. Status reflects the current state of locally running dev services, not production. Returns SERVICE, STATUS (one of running/starting/building/stopped/erroring/disabled/unknown), PORT(S), PATH (source directory), GROUP, ENV (the active environment/config-patch the instance is pointed at, blank if none), and last error. Also shows a groups summary. 'running' means the process is up. 'starting' means it is coming up; 'building' means the daemon is building/updating it. 'stopped' means the service is known but not currently running (not started yet, or was stopped). 'erroring' means the service or its build failed — check logs. 'disabled' means the resource is switched off in the daemon. 'unknown' means the daemon reported no state for it. Pass stack to see a feature stack's instances."),
+		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack. Status reflects the current state of locally running dev services, not production. Returns SERVICE, STATUS (one of running/starting/building/stopped/erroring/disabled/unknown), PORT(S), PATH (source directory), BRANCH (the git branch that directory is on, with * for uncommitted changes — this is the code the process is actually running), GROUP, ENV (the active environment/config-patch the instance is pointed at, blank if none), and last error. Also shows a groups summary. 'running' means the process is up. 'starting' means it is coming up; 'building' means the daemon is building/updating it. 'stopped' means the service is known but not currently running (not started yet, or was stopped). 'erroring' means the service or its build failed — check logs. 'disabled' means the resource is switched off in the daemon. 'unknown' means the daemon reported no state for it. Pass stack to see a feature stack's instances."),
 		mcp.WithString("stack", mcp.Description(stackParamDesc)),
 	)
 
@@ -208,12 +210,9 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			}
 		}
 
-		var sb strings.Builder
-		sb.WriteString(targetHeader(t.label))
-		sb.WriteString("Tilt is running.\n\n")
-		fmt.Fprintf(&sb, "%-24s %-10s %-14s %-40s %-16s %-12s %s\n", "SERVICE", "STATUS", "PORT(S)", "PATH", "GROUP", "ENV", "ERROR")
-		fmt.Fprintf(&sb, "%s\n", strings.Repeat("-", 129))
+		checkouts := gitinfo.ReadAll(serviceDirs)
 
+		rows := [][]string{{"SERVICE", "STATUS", "PORT(S)", "PATH", "BRANCH", "GROUP", "ENV", "ERROR"}}
 		prefix := ws.Name + ":"
 		for _, r := range view.UiResources {
 			svc, stackNS, ok := splitHostResource(r.Metadata.Name, prefix)
@@ -243,8 +242,18 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			if env == "" {
 				env = "-"
 			}
-			fmt.Fprintf(&sb, "%-24s %-10s %-14s %-40s %-16s %-12s %s\n", name, status, ports, path, group, env, lastError)
+			branch := checkouts[svc].Label()
+			if branch == "" {
+				branch = "-"
+			}
+			rows = append(rows, []string{name, status, ports, path, branch, group, env, lastError})
 		}
+
+		var sb strings.Builder
+		sb.WriteString(targetHeader(t.label))
+		sb.WriteString("Tilt is running.\n\n")
+		sb.WriteString(renderColumns(rows))
+		sb.WriteString("\nBRANCH is the git checkout each service actually runs from; * marks uncommitted changes.\nA service runs the code on that branch — if it is not the branch you expect, the running process does not contain the work you are looking for.\n")
 
 		// Groups summary section.
 		if len(cfg.Groups) > 0 {
@@ -299,6 +308,54 @@ func otherStacksFooter(ws *workspace.Workspace) string {
 	return fmt.Sprintf("\nfeature stacks of %s: %s\n", ws.Name, strings.Join(parts, ", "))
 }
 
+// maxColWidth caps how wide any one column may grow, so a single verbose cell
+// (a long endpoint URL, say) cannot crowd out the rest of the table.
+const maxColWidth = 40
+
+// renderColumns lays out rows (the first being the header) as a fixed-width
+// table sized to its own content, with a rule under the header. Columns are
+// sized from the widest cell, capped at maxColWidth, so a long path or branch
+// name cannot push the rest of the row out of alignment; the last column is
+// neither padded nor truncated.
+func renderColumns(rows [][]string) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	widths := make([]int, len(rows[0]))
+	for _, row := range rows {
+		for i, cell := range row {
+			if i < len(widths) && len([]rune(cell)) > widths[i] {
+				widths[i] = min(len([]rune(cell)), maxColWidth)
+			}
+		}
+	}
+
+	var sb strings.Builder
+	for r, row := range rows {
+		for i, cell := range row {
+			if i == len(row)-1 {
+				sb.WriteString(cell)
+				continue
+			}
+			runes := []rune(cell)
+			if len(runes) > widths[i] {
+				runes = append(runes[:widths[i]-1:widths[i]-1], '…')
+			}
+			sb.WriteString(string(runes))
+			sb.WriteString(strings.Repeat(" ", widths[i]-len(runes)+2))
+		}
+		sb.WriteString("\n")
+		if r == 0 {
+			total := len(widths) - 1
+			for _, w := range widths {
+				total += w + 2
+			}
+			sb.WriteString(strings.Repeat("-", total) + "\n")
+		}
+	}
+	return sb.String()
+}
+
 // shortenPath replaces the home directory prefix with ~ for readability.
 func shortenPath(path string) string {
 	if path == "" {
@@ -336,6 +393,12 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		tiltClient, defaultService, cfg := t.client, t.defaultSvc, t.cfg
+
+		// Regenerate first so an edit to a manifest is what gets restarted.
+		syncNotes := strings.Join(hostdaemon.SyncAndReload(tiltClient), "\n")
+		if syncNotes != "" {
+			syncNotes += "\n"
+		}
 
 		view, err := tiltClient.GetView()
 		if err != nil {
@@ -387,7 +450,7 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 				return mcp.NewToolResultError(fmt.Sprintf("restarted %d/%d services in group %q: %s\nfailures: %s",
 					len(successes), len(members), groupName, strings.Join(successes, ", "), strings.Join(failures, "; "))), nil
 			}
-			return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("restarted %d services in group %s: %s",
+			return mcp.NewToolResultText(syncNotes + onTarget(t.label, fmt.Sprintf("restarted %d services in group %s: %s",
 				len(members), groupName, strings.Join(successes, ", ")))), nil
 		}
 
@@ -419,7 +482,7 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 			return mcp.NewToolResultError(fmt.Sprintf("failed to restart %q: %v\n%s", resolved, err, out)), nil
 		}
 
-		return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("Restarted service %q.", resolved)) + "\n" + out), nil
+		return mcp.NewToolResultText(syncNotes + onTarget(t.label, fmt.Sprintf("Restarted service %q.", resolved)) + "\n" + out), nil
 	})
 }
 

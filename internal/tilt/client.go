@@ -100,6 +100,26 @@ func isRealService(name string) bool {
 // Returns a descriptive error if the daemon is not running.
 // Pseudo-resources (names starting with "(") are filtered from the result.
 func (c *Client) GetView() (*TiltView, error) {
+	view, err := c.rawView()
+	if err != nil {
+		return nil, err
+	}
+
+	// Filter out pseudo-resources like (Tiltfile)
+	real := view.UiResources[:0]
+	for _, r := range view.UiResources {
+		if isRealService(r.Metadata.Name) {
+			real = append(real, r)
+		}
+	}
+	view.UiResources = real
+
+	return view, nil
+}
+
+// rawView fetches the daemon state including pseudo-resources such as
+// (Tiltfile), which carry the daemon's own reload state.
+func (c *Client) rawView() (*TiltView, error) {
 	url := fmt.Sprintf("http://%s:%d/api/view", c.host, c.currentPort())
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
@@ -113,17 +133,38 @@ func (c *Client) GetView() (*TiltView, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
 		return nil, fmt.Errorf("failed to decode Tilt API response: %w", err)
 	}
-
-	// Filter out pseudo-resources like (Tiltfile)
-	real := view.UiResources[:0]
-	for _, r := range view.UiResources {
-		if isRealService(r.Metadata.Name) {
-			real = append(real, r)
-		}
-	}
-	view.UiResources = real
-
 	return &view, nil
+}
+
+// tiltfileResource is the pseudo-resource Tilt files its own config reloads under.
+const tiltfileResource = "(Tiltfile)"
+
+// WaitForTiltfileReload blocks until the daemon has finished loading a Tiltfile
+// written at or after since, so a caller that just regenerated the file can
+// trigger services knowing they will run the new spec. It returns an error if
+// the reload has not landed within timeout — the daemon is still running, so
+// callers generally warn rather than abort.
+func (c *Client) WaitForTiltfileReload(since time.Time, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		view, err := c.rawView()
+		if err != nil {
+			return err
+		}
+		for _, r := range view.UiResources {
+			if r.Metadata.Name != tiltfileResource || len(r.Status.BuildHistory) == 0 {
+				continue
+			}
+			finish, perr := time.Parse(time.RFC3339Nano, r.Status.BuildHistory[0].FinishTime)
+			if perr == nil && !finish.Before(since) {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("daemon has not reloaded the regenerated Tiltfile within %s", timeout)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 // RunCLI runs a tilt CLI command with a 30-second timeout.

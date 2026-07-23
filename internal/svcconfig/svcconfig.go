@@ -43,18 +43,9 @@ func EffectiveConfig(svc config.ResolvedService, stackName string) ([]ConfigEntr
 	}
 	cfg := svc.Manifest.Config
 
-	values := map[string]string{}
-	provenance := map[string]string{}
-	for _, rel := range cfg.Sources {
-		src, err := readSource(svc.RepoPath, rel)
-		if err != nil {
-			return nil, err
-		}
-		label := sourceLabel(rel)
-		for k, v := range src {
-			values[k] = v
-			provenance[k] = label
-		}
+	values, provenance, err := declared(svc)
+	if err != nil {
+		return nil, err
 	}
 
 	entries := map[string]ConfigEntry{}
@@ -84,6 +75,27 @@ func EffectiveConfig(svc config.ResolvedService, stackName string) ([]ConfigEntr
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out, nil
+}
+
+// declared reads a service's declared config sources in order (later wins) into
+// a flat key map plus, per key, the label of the source that supplied it. This
+// is the config surface the service's own repo says it has — its deployment
+// manifest and appsettings — independent of anything running locally.
+func declared(svc config.ResolvedService) (values, provenance map[string]string, err error) {
+	values = map[string]string{}
+	provenance = map[string]string{}
+	for _, rel := range svc.Manifest.Config.Sources {
+		src, err := readSource(svc.RepoPath, rel)
+		if err != nil {
+			return nil, nil, err
+		}
+		label := sourceLabel(rel)
+		for k, v := range src {
+			values[k] = v
+			provenance[k] = label
+		}
+	}
+	return values, provenance, nil
 }
 
 // readSource reads one declared config source into a flat env-key map. The type
