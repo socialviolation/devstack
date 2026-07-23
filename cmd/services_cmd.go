@@ -31,9 +31,10 @@ Pass --all to table every group and stack, and to show each service's source pat
 
 Service states:
   running   — process is up and healthy
-  starting  — process is starting or building
-  error     — process exited with an error (check logs)
+  starting  — process is coming up
+  building  — the daemon is building/updating the service
   stopped   — service is registered but not currently running
+  erroring  — the service or its build failed (check logs)
   disabled  — service has been explicitly stopped
   unknown   — daemon is not reachable (run: devstack workspace up)`,
 	RunE: runStatus,
@@ -406,7 +407,7 @@ func svcStatusColor(svc string, resourceMap map[string]tilt.UIResource) (string,
 	switch s {
 	case "running":
 		return s, color.New(color.FgGreen)
-	case "error":
+	case "erroring":
 		return s, color.New(color.FgRed, color.Bold)
 	case "building", "starting":
 		return s, color.New(color.FgYellow)

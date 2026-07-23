@@ -237,7 +237,7 @@ The tool set adapts to the active workspace: trace tools (`investigate`) appear 
 Orientation tool — shows the active infra environment (local vs remote) and which tools exist in this context, and points at the config-patch [environments](#environments) a service can be aimed at via `env_use`. Call this first.
 
 ### `status`
-Show all services with state (`running` / `building` / `starting` / `stopped` / `disabled` / `error`), ports, source path, ENV (the active environment each instance points at), and last build error. Pass `stack` to see a feature stack's instances.
+Show all services with state (`running` / `starting` / `building` / `stopped` / `erroring` / `disabled` / `unknown`), ports, source path, ENV (the active environment each instance points at), and last build error. Pass `stack` to see a feature stack's instances.
 
 ### `restart`
 Trigger a rebuild/restart for a service. Auto-enables the service first if it was disabled.

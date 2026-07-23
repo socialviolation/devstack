@@ -212,3 +212,66 @@ func TestCountRunningCountsOnlyRunning(t *testing.T) {
 		t.Fatalf("countRunning = %d, want 1", got)
 	}
 }
+
+func TestServiceStatusMatrix(t *testing.T) {
+	cases := []struct {
+		name     string
+		runtime  string
+		update   string
+		disabled bool
+		want     string
+	}{
+		{name: "runtime ok", runtime: "ok", want: "running"},
+		{name: "runtime pending", runtime: "pending", want: "starting"},
+		{name: "runtime error", runtime: "error", want: "erroring"},
+		{name: "update running", runtime: "none", update: "running", want: "building"},
+		{name: "update error", runtime: "none", update: "error", want: "erroring"},
+		{name: "nothing happening", runtime: "none", update: "none", want: "stopped"},
+		{name: "disabled beats running", runtime: "ok", disabled: true, want: "disabled"},
+		{name: "disabled beats erroring", runtime: "error", disabled: true, want: "disabled"},
+		{name: "disabled beats building", runtime: "none", update: "running", disabled: true, want: "disabled"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var r tilt.UIResource
+			r.Status.RuntimeStatus = tc.runtime
+			r.Status.UpdateStatus = tc.update
+			if tc.disabled {
+				r.Status.DisableStatus = &tilt.DisableStatus{State: "Disabled"}
+			}
+			if got := serviceStatus(r); got != tc.want {
+				t.Fatalf("serviceStatus(runtime=%q update=%q disabled=%v) = %q, want %q", tc.runtime, tc.update, tc.disabled, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSvcStatusColorPerState(t *testing.T) {
+	cases := []struct {
+		name    string
+		runtime string
+		update  string
+		want    string
+		color   *color.Color
+	}{
+		{name: "running is green", runtime: "ok", want: "running", color: color.New(color.FgGreen)},
+		{name: "erroring is bold red", runtime: "error", want: "erroring", color: color.New(color.FgRed, color.Bold)},
+		{name: "starting is yellow", runtime: "pending", want: "starting", color: color.New(color.FgYellow)},
+		{name: "building is yellow", runtime: "none", update: "running", want: "building", color: color.New(color.FgYellow)},
+		{name: "stopped is faint", runtime: "none", update: "none", want: "stopped", color: color.New(color.Faint)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var r tilt.UIResource
+			r.Status.RuntimeStatus = tc.runtime
+			r.Status.UpdateStatus = tc.update
+			state, c := svcStatusColor("api", map[string]tilt.UIResource{"api": r})
+			if state != tc.want {
+				t.Fatalf("svcStatusColor state = %q, want %q", state, tc.want)
+			}
+			if !reflect.DeepEqual(c, tc.color) {
+				t.Fatalf("svcStatusColor(%q) color = %v, want %v", tc.want, c, tc.color)
+			}
+		})
+	}
+}
