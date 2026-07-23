@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"text/tabwriter"
+	"strings"
 
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -65,13 +67,27 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	activeEnvName := viper.GetString("environment")
-	if activeEnvName == "" {
-		activeEnvName = m.Workspace.Env
+	usage := envUsage{
+		WorkspaceEnv: m.Workspace.Env,
+		ServiceEnvs:  map[string]string{},
+		StackEnvs:    map[string]string{},
 	}
-	if activeEnvName == "" {
-		activeEnvName = "local"
+	if os.Getenv("DEVSTACK_ENVIRONMENT") != "" || cmd.Flags().Changed("env") {
+		usage.OverrideEnv = viper.GetString("environment")
 	}
+	if rw, err := config.ResolveWorkspace(ws.Path); err == nil {
+		for name, svc := range rw.Services {
+			if svc.Manifest != nil {
+				usage.ServiceEnvs[name] = svc.Manifest.Service.Env
+			}
+		}
+	}
+	if recs, err := stack.LoadStore(ws.Name); err == nil {
+		for _, r := range recs {
+			usage.StackEnvs[r.Name] = r.Env
+		}
+	}
+	applied := appliedTo(usage)
 
 	names := make([]string, 0, len(m.Environments))
 	for k := range m.Environments {
@@ -79,26 +95,82 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	}
 	sort.Strings(names)
 
+	nameW, typeW, appliedW := len("NAME"), len("TYPE"), len("APPLIED TO")
+	for _, name := range names {
+		nameW = max(nameW, len(name))
+		typeW = max(typeW, len(m.Environments[name].Type))
+		appliedW = max(appliedW, len(appliedLabel(applied[name])))
+	}
+
 	fmt.Printf("Environments for workspace %q:\n\n", ws.Name)
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "NAME\tTYPE\tBACKEND\tURL\tOTLP ENDPOINT\t")
-	fmt.Fprintln(w, "----\t----\t-------\t---\t-------------\t")
+	fmt.Printf("  %-*s   %-*s   %-*s   %s\n", nameW, "NAME", typeW, "TYPE", appliedW, "APPLIED TO", "KEYS")
+	fmt.Printf("  %-*s   %-*s   %-*s   %s\n", nameW, "----", typeW, "----", appliedW, "----------", "----")
 	for _, name := range names {
 		env := m.Environments[name]
-		marker := ""
-		if name == activeEnvName {
-			marker = " <- active"
+		scopes := applied[name]
+		label := fmt.Sprintf("%-*s", appliedW, appliedLabel(scopes))
+		if len(scopes) == 0 {
+			label = color.New(color.Faint).Sprint(label)
+		} else {
+			label = color.New(color.FgCyan).Sprint(label)
 		}
-		backend := env.Observability.Backend
-		if backend == "" {
-			backend = "signoz"
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s%s\n", name, env.Type, backend, env.Observability.URL, env.Observability.OTLPEndpoint, marker)
+		fmt.Printf("  %-*s   %-*s   %s   %s\n", nameW, name, typeW, env.Type, label, formatEnvKeys(env.Values, 6))
 	}
-	w.Flush()
 
-	fmt.Printf("\nTo switch: set DEVSTACK_ENVIRONMENT=<name> or use --env=<name>\n")
+	fmt.Printf("\nDetails (type, backend, url, otlp) and values: devstack env show <name>\n")
+	fmt.Printf("To switch: devstack env use <name> [--service <svc>|--stack <name>]\n")
 	return nil
+}
+
+// envUsage is every place an environment name can be selected from.
+type envUsage struct {
+	WorkspaceEnv string
+	OverrideEnv  string
+	ServiceEnvs  map[string]string
+	StackEnvs    map[string]string
+}
+
+// appliedTo maps each selected env name to the scopes that select it, in plain
+// text: the workspace, each service, each stack, and the process-level override.
+func appliedTo(u envUsage) map[string][]string {
+	out := map[string][]string{}
+	if u.WorkspaceEnv != "" {
+		out[u.WorkspaceEnv] = append(out[u.WorkspaceEnv], "workspace")
+	}
+	for _, name := range sortedStrKeys(u.ServiceEnvs) {
+		if env := u.ServiceEnvs[name]; env != "" {
+			out[env] = append(out[env], "service: "+name)
+		}
+	}
+	for _, name := range sortedStrKeys(u.StackEnvs) {
+		if env := u.StackEnvs[name]; env != "" {
+			out[env] = append(out[env], "stack: "+name)
+		}
+	}
+	if u.OverrideEnv != "" {
+		out[u.OverrideEnv] = append(out[u.OverrideEnv], "override: DEVSTACK_ENVIRONMENT")
+	}
+	return out
+}
+
+func appliedLabel(scopes []string) string {
+	if len(scopes) == 0 {
+		return "unused"
+	}
+	return strings.Join(scopes, ", ")
+}
+
+// formatEnvKeys lists an environment's config-var key names — never values, which
+// can be secrets — truncating to limit with a count of the remainder.
+func formatEnvKeys(values map[string]string, limit int) string {
+	keys := sortedStrKeys(values)
+	if len(keys) == 0 {
+		return "(none)"
+	}
+	if len(keys) <= limit {
+		return strings.Join(keys, ", ")
+	}
+	return fmt.Sprintf("%s, +%d more", strings.Join(keys[:limit], ", "), len(keys)-limit)
 }
 
 func runEnvAdd(cmd *cobra.Command, args []string) error {

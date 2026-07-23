@@ -6,13 +6,17 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"unicode/utf8"
 
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/svcconfig"
+	"github.com/socialviolation/devstack/internal/tiltgen"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 var envSetCmd = &cobra.Command{
@@ -41,8 +45,8 @@ var envShowCmd = &cobra.Command{
 
 var envWhichCmd = &cobra.Command{
 	Use:   "which",
-	Short: "Show the active env at each scope and the merged effective values",
-	Long:  "Show which base-defined environment a service resolves to at each scope (workspace/service/stack) and the merged effective values (stack > service > workspace, secrets masked).",
+	Short: "Show the env a service actually resolves to, and where each value came from",
+	Long:  "Show which base-defined environment a service resolves to at each scope (workspace/service/stack), then the full resolved environment the process receives — every key with the ladder rung it came from (.envrc, env.files, manifest env.values, active env, devstack-computed). Secrets masked.",
 	Args:  cobra.NoArgs,
 	RunE:  runEnvWhich,
 }
@@ -55,6 +59,7 @@ func init() {
 
 	envWhichCmd.Flags().String("service", "", "service to resolve (defaults to the current directory)")
 	envWhichCmd.Flags().String("stack", "", "stack whose env to include")
+	envWhichCmd.Flags().Bool("shadowed", false, "also list the lower-rung values each key overrode")
 }
 
 func runEnvSet(cmd *cobra.Command, args []string) error {
@@ -150,10 +155,19 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 	}
 	env, ok := m.Environments[name]
 	if !ok {
-		return fmt.Errorf("env %q is not defined in workspace %q; available: %s", name, ws.Name, envNames(m))
+		return unknownEnvError(name, ws.Name, m)
 	}
 
-	fmt.Printf("Environment %q values (secrets masked):\n\n", name)
+	fmt.Printf("Environment %q:\n\n", name)
+	fmt.Printf("  type            %s\n", orDash(env.Type))
+	fmt.Printf("  backend         %s\n", orDash(env.Observability.Backend))
+	fmt.Printf("  url             %s\n", orDash(env.Observability.URL))
+	fmt.Printf("  otlp endpoint   %s\n", orDash(env.Observability.OTLPEndpoint))
+	if env.Observability.APIKey != "" {
+		fmt.Printf("  api key         %s\n", svcconfig.MaskedValue)
+	}
+
+	fmt.Printf("\nConfig-var values (secrets masked):\n\n")
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 	fmt.Fprintln(w, "KEY\tVALUE")
 	fmt.Fprintln(w, "---\t-----")
@@ -183,12 +197,16 @@ func runEnvWhich(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	svcName, _ := cmd.Flags().GetString("service")
-	if svcName == "" && rec != nil {
-		srw, err := stack.ResolveWorktree(rec)
+	var srw *config.ResolvedWorkspace
+	if rec != nil {
+		srw, err = stack.ResolveWorktree(rec)
 		if err != nil {
 			return err
 		}
+	}
+
+	svcName, _ := cmd.Flags().GetString("service")
+	if svcName == "" && srw != nil {
 		if len(srw.Services) != 1 {
 			return fmt.Errorf("stack %q has %d services; pass --service: %s", rec.Name, len(srw.Services), strings.Join(sortedServiceNames(srw), ", "))
 		}
@@ -210,35 +228,229 @@ func runEnvWhich(cmd *cobra.Command, args []string) error {
 	if svcName == "" {
 		return fmt.Errorf("no service resolved; pass --service <svc>")
 	}
-	svc, ok := rw.Services[svcName]
+	target := rw
+	if srw != nil {
+		if _, ok := srw.Services[svcName]; ok {
+			target = srw
+		}
+	}
+	svc, ok := target.Services[svcName]
 	if !ok {
 		return fmt.Errorf("service %q not found in workspace %q; services: %s", svcName, ws.Name, strings.Join(sortedServiceNames(rw), ", "))
 	}
 
 	stackEnv := ""
+	scope := "base (no stack)"
 	if rec != nil {
 		stackEnv = rec.Env
-	}
-
-	merged, err := config.ResolveEnvPatch(rw.Manifest, svc.Manifest, stackEnv)
-	if err != nil {
-		return err
+		scope = "stack " + rec.FullName()
 	}
 
 	fmt.Printf("Active env by scope for service %q:\n\n", svcName)
-	fmt.Printf("  workspace.env  %s\n", orDash(rw.Manifest.Workspace.Env))
+	fmt.Printf("  workspace.env  %s\n", orDash(target.Manifest.Workspace.Env))
 	fmt.Printf("  service.env    %s\n", orDash(svc.Manifest.Service.Env))
-	fmt.Printf("  stack.env      %s\n\n", orDash(stackEnv))
+	fmt.Printf("  stack.env      %s\n", orDash(stackEnv))
 
-	fmt.Printf("Merged effective values (stack > service > workspace, secrets masked):\n\n")
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "KEY\tVALUE")
-	fmt.Fprintln(w, "---\t-----")
-	for _, k := range sortedStrKeys(merged) {
-		fmt.Fprintf(w, "%s\t%s\n", k, mask(k, merged[k]))
+	layers, err := resolvedEnvLadder(ws, target, svc, rec)
+	if err != nil {
+		return err
 	}
-	w.Flush()
+	rows := buildEnvRows(layers)
+	shadowed, _ := cmd.Flags().GetBool("shadowed")
+
+	fmt.Printf("\nResolved environment for %s in %s — what the process receives (secrets masked):\n\n", svcName, scope)
+	printEnvRows(rows, shadowed)
+	if !shadowed && anyShadowed(rows) {
+		fmt.Printf("\nSome keys are set at more than one rung; see them with --shadowed.\n")
+	}
 	return nil
+}
+
+// resolvedEnvLadder builds the full env precedence ladder a service's process
+// receives, with ${service.field} refs resolved against the port book the same
+// way the generated serve_env resolves them. rec is nil for a base service.
+func resolvedEnvLadder(ws *workspace.Workspace, rw *config.ResolvedWorkspace, svc config.ResolvedService, rec *stack.Record) ([]config.EnvLayer, error) {
+	names := sortedServiceNames(rw)
+
+	var managed map[string]string
+	var book config.PortBook
+	stackEnv := ""
+	if rec != nil {
+		stackEnv = rec.Env
+		if opts, err := stack.GenerateOptions(rec, names); err == nil {
+			managed = opts.ManagedEnv[svc.Name]
+			book = opts.Book
+		}
+	} else {
+		managed = workspace.ManagedEnv(ws, names)[svc.Name]
+		book = config.BuildPortBook(rw)
+	}
+
+	layers, err := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, stackEnv, managed)
+	if err != nil {
+		return nil, err
+	}
+	if book != nil {
+		if err := tiltgen.ResolveLayerRefs(layers, svc.Name, book); err != nil {
+			return nil, err
+		}
+	}
+	return layers, nil
+}
+
+// envRow is one key of the resolved environment: the value that wins, the layer
+// it came from, and the lower-rung values it buried.
+type envRow struct {
+	Key      string
+	Value    string
+	Rung     config.EnvRung
+	Source   string
+	Shadowed []envShadow
+}
+
+type envShadow struct {
+	Rung   config.EnvRung
+	Source string
+	Value  string
+	By     string
+}
+
+// buildEnvRows attributes every key of a merged ladder to the highest layer that
+// defines it, lowest rung first. Shadowed carries the buried layers in ladder
+// order; By names the layer that immediately buried one, when that is not the
+// winning layer itself.
+func buildEnvRows(layers []config.EnvLayer) []envRow {
+	winner := map[string]int{}
+	for i, l := range layers {
+		for k := range l.Values {
+			winner[k] = i
+		}
+	}
+	keys := make([]string, 0, len(winner))
+	for k := range winner {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	rows := make([]envRow, 0, len(keys))
+	for _, k := range keys {
+		top := layers[winner[k]]
+		row := envRow{Key: k, Value: mask(k, top.Values[k]), Rung: top.Rung, Source: envSourceLabel(top)}
+		for i := 0; i < winner[k]; i++ {
+			v, ok := layers[i].Values[k]
+			if !ok {
+				continue
+			}
+			sh := envShadow{Rung: layers[i].Rung, Source: envSourceLabel(layers[i]), Value: mask(k, v)}
+			if j, ok := nextDefining(layers, i, k); ok && j != winner[k] {
+				sh.By = envSourceLabel(layers[j])
+			}
+			row.Shadowed = append(row.Shadowed, sh)
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func nextDefining(layers []config.EnvLayer, after int, key string) (int, bool) {
+	for i := after + 1; i < len(layers); i++ {
+		if _, ok := layers[i].Values[key]; ok {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// envSourceLabel names a layer in plain text. Colour is decoration only: this
+// string alone must tell the reader where a value came from.
+func envSourceLabel(l config.EnvLayer) string {
+	switch l.Rung {
+	case config.RungActiveEnv:
+		if l.Source == "" {
+			return string(config.RungActiveEnv)
+		}
+		return fmt.Sprintf("active env (%s)", l.Source)
+	case config.RungWorkspaceFiles, config.RungServiceFiles:
+		if l.Source == "" {
+			return string(l.Rung)
+		}
+		return fmt.Sprintf("%s (%s)", l.Rung, l.Source)
+	default:
+		return string(l.Rung)
+	}
+}
+
+func rungColor(r config.EnvRung) *color.Color {
+	switch r {
+	case config.RungManaged:
+		return color.New(color.FgMagenta)
+	case config.RungActiveEnv:
+		return color.New(color.FgCyan)
+	case config.RungServiceValues:
+		return color.New(color.FgGreen)
+	case config.RungWorkspaceValues:
+		return color.New(color.FgYellow)
+	case config.RungServiceFiles:
+		return color.New(color.FgBlue)
+	case config.RungWorkspaceFiles:
+		return color.New(color.FgHiBlue)
+	default:
+		return color.New(color.Faint)
+	}
+}
+
+// pad right-pads to width in printable runes, so masked values (•) and other
+// multi-byte text still line up.
+func pad(s string, width int) string {
+	if n := width - utf8.RuneCountInString(s); n > 0 {
+		return s + strings.Repeat(" ", n)
+	}
+	return s
+}
+
+func anyShadowed(rows []envRow) bool {
+	for _, r := range rows {
+		if len(r.Shadowed) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func printEnvRows(rows []envRow, shadowed bool) {
+	keyW, valW := len("KEY"), len("VALUE")
+	for _, r := range rows {
+		keyW = max(keyW, utf8.RuneCountInString(r.Key))
+		valW = max(valW, utf8.RuneCountInString(r.Value))
+	}
+	keyW = min(keyW, 48)
+	valW = min(valW, 56)
+
+	fmt.Printf("  %s   %s   %s\n", pad("KEY", keyW), pad("VALUE", valW), "SOURCE")
+	fmt.Printf("  %s   %s   %s\n", pad("---", keyW), pad("-----", valW), "------")
+	for _, r := range rows {
+		fmt.Printf("  %s   %s   %s\n", pad(r.Key, keyW), pad(r.Value, valW), rungColor(r.Rung).Sprint(r.Source))
+		if !shadowed {
+			continue
+		}
+		for i := len(r.Shadowed) - 1; i >= 0; i-- {
+			s := r.Shadowed[i]
+			by := ""
+			if s.By != "" {
+				by = " (buried by " + s.By + ")"
+			}
+			fmt.Printf("    ↳ overridden: %s = %s%s\n", rungColor(s.Rung).Sprint(s.Source), s.Value, by)
+		}
+	}
+}
+
+// unknownEnvError explains "base"/"default" — which users type because --stack
+// base is accepted elsewhere — rather than listing envs they did not ask for.
+func unknownEnvError(name, wsName string, m *config.WorkspaceManifest) error {
+	if name == "base" || name == "default" {
+		return fmt.Errorf("%q is not an environment name — it means \"no stack\", the un-stacked instance of a service.\nWorkspace %q defines these environments: %s\nTo see what a base service actually resolves to, run: devstack env which --service <svc>", name, wsName, envNames(m))
+	}
+	return fmt.Errorf("env %q is not defined in workspace %q; available: %s", name, wsName, envNames(m))
 }
 
 func mask(key, value string) string {
