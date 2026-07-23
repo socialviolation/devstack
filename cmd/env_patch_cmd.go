@@ -162,13 +162,27 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 	}
 	reveal, _ := cmd.Flags().GetBool("reveal")
 
-	fmt.Printf("Environment %q:\n\n", name)
-	fmt.Printf("  type            %s\n", orDash(env.Type))
-	fmt.Printf("  backend         %s\n", orDash(env.Observability.Backend))
-	fmt.Printf("  url             %s\n", orDash(env.Observability.URL))
-	fmt.Printf("  otlp endpoint   %s\n", orDash(env.Observability.OTLPEndpoint))
+	fmt.Printf("Environment %q:\n", name)
+
+	infra := [][2]string{
+		{"type", env.Type},
+		{"backend", env.Observability.Backend},
+		{"url", env.Observability.URL},
+		{"otlp endpoint", env.Observability.OTLPEndpoint},
+	}
 	if env.Observability.APIKey != "" {
-		fmt.Printf("  api key         %s\n", mask("apikey", env.Observability.APIKey, reveal))
+		infra = append(infra, [2]string{"api key", mask("apikey", env.Observability.APIKey, reveal)})
+	}
+	shown := 0
+	for _, kv := range infra {
+		if kv[1] == "" {
+			continue
+		}
+		if shown == 0 {
+			fmt.Printf("\nInfrastructure target:\n\n")
+		}
+		fmt.Printf("  %-15s %s\n", kv[0], kv[1])
+		shown++
 	}
 
 	fmt.Printf("\nConfig-var values (%s):\n\n", redactionNote(reveal))
@@ -179,6 +193,11 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(w, "%s\t%s\n", k, mask(k, env.Values[k], reveal))
 	}
 	w.Flush()
+	if len(env.Values) == 0 {
+		fmt.Println("(none)")
+	}
+
+	color.New(color.Faint).Printf("\nThis is only what %q defines. A service also resolves .envrc, manifest\nenv.values and devstack-computed values — see all of it with its source:\n  devstack env which --service <svc> [--stack <name>]\n", name)
 	return nil
 }
 
