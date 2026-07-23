@@ -28,6 +28,34 @@ func TestResolveInvestigateStack(t *testing.T) {
 	}
 }
 
+// Service control is no longer gated on an environment type: RegisterTools must
+// register the full local tool set for any workspace.
+func TestRegisterToolsAlwaysRegistersServiceControl(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s := server.NewMCPServer("test", "0.0.0")
+	ws := &workspace.Workspace{Name: "navexa", Path: t.TempDir()}
+
+	RegisterTools(s, nil, "", nil, ws.Name, ws.Path, ws)
+
+	resp := s.HandleMessage(context.Background(), json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	data, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listing := string(data)
+	want := []string{
+		"environment", "status", "restart", "stop", "configure", "process_logs",
+		"service_env", "observability",
+		"stack_create", "stack_list", "stack_up", "stack_down", "stack_rm",
+		"env_use", "env_which", "env_set",
+	}
+	for _, name := range want {
+		if !strings.Contains(listing, `"`+name+`"`) {
+			t.Errorf("tools/list missing %q; got %s", name, listing)
+		}
+	}
+}
+
 func TestStackAndEnvToolsRegistered(t *testing.T) {
 	s := server.NewMCPServer("test", "0.0.0")
 	ws := &workspace.Workspace{Name: "navexa", Path: t.TempDir()}

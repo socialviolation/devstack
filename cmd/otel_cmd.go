@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/otel"
@@ -76,8 +76,10 @@ var otelConfigureCmd = &cobra.Command{
 	Short: "Configure the active OTEL plugin for the current workspace",
 	Long: `Configure the active OTEL plugin for the current workspace.
 
-The --plugin (backend) is written to the workspace manifest so it persists;
---set values (upstream, api keys, etc.) are stored in per-machine config.
+The --plugin (backend) and --set values are written to observability in the
+workspace manifest so they persist and travel with the project. That file is
+committed, so credential keys (api_key, tokens, passwords) are kept out of it
+and stored in the machine-local registry instead.
 
 Examples:
   devstack otel configure --plugin=signoz
@@ -158,11 +160,9 @@ func resolveOtelWorkspace(cmd *cobra.Command) (*workspace.Workspace, error) {
 }
 
 func isOtelRunning(ws *workspace.Workspace) bool {
-	// Use a synthesized local env for running checks — the collector is running
-	// regardless of which env drove its start. CompanionRunning for forwarding
-	// always returns true; for signoz it checks docker-compose.
-	localEnv, _ := ws.ResolveEnvironment("local")
-	plugin := activePlugin(ws, localEnv)
+	// CompanionRunning for forwarding always returns true; for signoz it checks
+	// docker-compose.
+	plugin := activePlugin(ws)
 	if plugin == nil {
 		return false
 	}
@@ -189,42 +189,9 @@ func runOtelStart(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Resolve the active environment to drive plugin selection.
-	envName := viper.GetString("environment")
-	if envName == "" {
-		envName = "local"
-	}
-	env, ok := ws.ResolveEnvironment(envName)
-	if !ok {
-		env, _ = ws.ResolveEnvironment("local")
-		envName = "local"
-	}
-
-	plugin := activePlugin(ws, env)
+	plugin := activePlugin(ws)
 	if plugin == nil {
 		return fmt.Errorf("no OTEL plugin registered — this is a bug")
-	}
-
-	// If the environment drives forwarding mode, populate plugin config from env
-	// into a local (in-memory only) copy of the workspace. Never saved to disk.
-	if env.Observability.OTLPEndpoint != "" && ws.OtelPlugin != "signoz" {
-		wsCopy := *ws
-		if wsCopy.OtelPluginConfig == nil {
-			wsCopy.OtelPluginConfig = map[string]string{}
-		} else {
-			// shallow copy the map so we don't mutate the original
-			copied := make(map[string]string, len(wsCopy.OtelPluginConfig))
-			for k, v := range wsCopy.OtelPluginConfig {
-				copied[k] = v
-			}
-			wsCopy.OtelPluginConfig = copied
-		}
-		wsCopy.OtelPluginConfig["upstream"] = env.Observability.OTLPEndpoint
-		if env.Observability.APIKey != "" {
-			wsCopy.OtelPluginConfig["api_key"] = env.Observability.APIKey
-		}
-		wsCopy.OtelPluginConfig["deployment_env"] = envName
-		ws = &wsCopy
 	}
 
 	if isOtelRunning(ws) {
@@ -270,8 +237,7 @@ func runOtelStop(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	localEnv, _ := ws.ResolveEnvironment("local")
-	plugin := activePlugin(ws, localEnv)
+	plugin := activePlugin(ws)
 
 	collectorUp := otel.CollectorRunning(ws)
 	companionUp := plugin != nil && plugin.CompanionRunning(ws)
@@ -306,18 +272,7 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Resolve active environment for status context
-	envName := viper.GetString("environment")
-	if envName == "" {
-		envName = "local"
-	}
-	env, ok := ws.ResolveEnvironment(envName)
-	if !ok {
-		env, _ = ws.ResolveEnvironment("local")
-		envName = "local"
-	}
-
-	plugin := activePlugin(ws, env)
+	plugin := activePlugin(ws)
 	pluginName := "unknown"
 	if plugin != nil {
 		pluginName = plugin.Name()
@@ -328,13 +283,7 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("OTEL status for '%s':\n", ws.Name)
 
-	// Show plugin name with env context when env drives forwarding
-	if env.Observability.OTLPEndpoint != "" && ws.OtelPlugin != "signoz" {
-		fmt.Printf("  plugin:     %s (from environment: %s)\n", pluginName, envName)
-		fmt.Printf("  upstream:   %s\n", env.Observability.OTLPEndpoint)
-	} else {
-		fmt.Printf("  plugin:     %s\n", pluginName)
-	}
+	fmt.Printf("  plugin:     %s\n", pluginName)
 
 	if collectorRunning {
 		fmt.Printf("  collector:  running\n")
@@ -357,15 +306,11 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  ui:         %s\n", queryEndpoint)
 		}
 		// Forwarding plugin with no upstream configured → debug/local mode
-		if plugin.Name() == "forwarding" && env.Observability.OTLPEndpoint == "" && ws.PluginConfig("upstream") == "" {
+		if plugin.Name() == "forwarding" && ws.PluginConfig("upstream") == "" {
 			fmt.Printf("  mode:       debug (no upstream configured — telemetry logged to collector stdout)\n")
 			fmt.Printf("              To forward: devstack otel configure --plugin=forwarding --set upstream=<host:port> --set protocol=grpc\n")
 		} else if plugin.Name() == "forwarding" {
-			upstream := ws.PluginConfig("upstream")
-			if upstream == "" {
-				upstream = env.Observability.OTLPEndpoint
-			}
-			fmt.Printf("  mode:       forwarding → %s\n", upstream)
+			fmt.Printf("  mode:       forwarding → %s\n", ws.PluginConfig("upstream"))
 		}
 	}
 
@@ -391,8 +336,7 @@ func runOtelOpen(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	localEnv, _ := ws.ResolveEnvironment("local")
-	plugin := activePlugin(ws, localEnv)
+	plugin := activePlugin(ws)
 	if plugin == nil {
 		return fmt.Errorf("no OTEL plugin active")
 	}
@@ -415,23 +359,17 @@ func runOtelConfigure(cmd *cobra.Command, args []string) error {
 	pluginName, _ := cmd.Flags().GetString("plugin")
 	setFlags, _ := cmd.Flags().GetStringArray("set")
 
-	// Parse --set key=value pairs
-	setConfig := map[string]string{}
-	for _, kv := range setFlags {
-		parts := strings.SplitN(kv, "=", 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("invalid --set value %q (expected key=value)", kv)
-		}
-		setConfig[parts[0]] = parts[1]
+	setConfig, err := parseOtelSetFlags(setFlags)
+	if err != nil {
+		return err
 	}
 
 	if pluginName == "" && len(setConfig) == 0 {
 		return fmt.Errorf("specify --plugin=<name> and/or --set key=value")
 	}
 
-	// pluginNameForValidation is used for schema validation only.
-	// If no --plugin flag was given we don't change ws.OtelPlugin — preserving ""
-	// keeps env-driven plugin selection working.
+	// pluginNameForValidation is used for schema validation only. With no --plugin
+	// flag we validate against the workspace's current plugin and leave it unchanged.
 	pluginNameForValidation := pluginName
 	if pluginNameForValidation == "" {
 		pluginNameForValidation = ws.OtelPlugin
@@ -472,24 +410,40 @@ func runOtelConfigure(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to update workspace config: %w", err)
 	}
 
-	// Persist the backend where it's actually read from. On manifest workspaces
-	// that's the manifest (otherwise the manifest shadows the change on reload);
-	// legacy workspaces keep using .devstack.json.
-	if ws.Path != "" {
-		if config.HasWorkspaceManifest(ws.Path) {
-			if pluginName != "" {
-				if err := config.SetObservabilityBackend(ws.Path, pluginName); err != nil {
-					fmt.Fprintf(os.Stderr, "warning: failed to write backend to manifest: %v\n", err)
-				}
+	// Persist to the manifest, which is where the settings are read back from —
+	// otherwise it shadows the registry write above on the next reload.
+	if ws.Path != "" && config.HasWorkspaceManifest(ws.Path) {
+		if pluginName != "" {
+			if err := config.SetObservabilityBackend(ws.Path, pluginName); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to write backend to manifest: %v\n", err)
 			}
-		} else if err := saveOtelPluginToProject(ws.Path, pluginName, merged); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to save to project config: %v\n", err)
+		}
+		// Credentials stay out of the manifest — it is a committed file. They are
+		// already persisted to the machine-local registry above.
+		manifestSettings := map[string]string{}
+		var heldBack []string
+		for k, v := range setConfig {
+			if config.IsCredentialKey(k) {
+				heldBack = append(heldBack, k)
+				continue
+			}
+			manifestSettings[k] = v
+		}
+		if len(manifestSettings) > 0 {
+			if err := config.SetObservabilitySettings(ws.Path, manifestSettings); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to write settings to manifest: %v\n", err)
+			}
+		}
+		if len(heldBack) > 0 {
+			sort.Strings(heldBack)
+			fmt.Printf("Stored %s in the machine-local registry, not %s — it is committed.\n",
+				strings.Join(heldBack, ", "), config.WorkspaceManifestFileName)
 		}
 	}
 
 	displayName := pluginName
 	if displayName == "" {
-		displayName = pluginNameForValidation + " (env-driven)"
+		displayName = pluginNameForValidation
 	}
 	fmt.Printf("Plugin configured: %s\n", displayName)
 	for k, v := range setConfig {
@@ -497,6 +451,21 @@ func runOtelConfigure(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("\nRun: devstack otel start\n")
 	return nil
+}
+
+// parseOtelSetFlags turns --set key=value pairs into a config map. Credential
+// keys are refused: these settings are persisted to the workspace manifest,
+// which is committed.
+func parseOtelSetFlags(setFlags []string) (map[string]string, error) {
+	setConfig := map[string]string{}
+	for _, kv := range setFlags {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid --set value %q (expected key=value)", kv)
+		}
+		setConfig[parts[0]] = parts[1]
+	}
+	return setConfig, nil
 }
 
 func runOtelEnable(cmd *cobra.Command, args []string) error {
@@ -537,26 +506,11 @@ func runOtelDisable(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func saveOtelPluginToProject(wsPath, pluginName string, pluginConfig map[string]string) error {
-	cfg, err := config.Load(wsPath)
-	if err != nil {
-		return err
-	}
-	// Only overwrite plugin name when explicitly set; empty means env-driven
-	// selection and the existing project plugin name should be preserved.
-	if pluginName != "" {
-		cfg.OtelPlugin = pluginName
-	}
-	cfg.OtelPluginConfig = pluginConfig
-	return config.Save(wsPath, cfg)
-}
-
 func runOtelPlugins(cmd *cobra.Command, args []string) error {
 	// Try to detect workspace for active plugin marker
 	var activePluginName string
 	if ws, err := workspace.DetectFromCwd(); err == nil {
-		localEnv, _ := ws.ResolveEnvironment("local")
-		p := activePlugin(ws, localEnv)
+		p := activePlugin(ws)
 		if p != nil {
 			activePluginName = p.Name()
 		}

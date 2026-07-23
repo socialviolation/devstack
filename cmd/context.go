@@ -10,21 +10,15 @@ import (
 	"github.com/socialviolation/devstack/internal/config"
 )
 
-// resolveExplainContext resolves the active workspace + environment from flags,
-// env vars, and cwd. Shared by topology and workspace doctor.
+// resolveExplainContext resolves the active workspace from flags, env vars, and
+// cwd. Shared by topology and workspace doctor.
 func resolveExplainContext(cmd *cobra.Command) (*config.ResolvedContext, error) {
 	workspaceValue, _ := cmd.Root().PersistentFlags().GetString("workspace")
-	envValue, _ := cmd.Root().PersistentFlags().GetString("env")
-
 	workspaceFlagChanged := cmd.Root().PersistentFlags().Lookup("workspace").Changed
-	envFlagChanged := cmd.Root().PersistentFlags().Lookup("env").Changed
 
 	invocationEnv := map[string]string{}
 	if value := os.Getenv("DEVSTACK_WORKSPACE"); value != "" {
 		invocationEnv["DEVSTACK_WORKSPACE"] = value
-	}
-	if value := os.Getenv("DEVSTACK_ENVIRONMENT"); value != "" {
-		invocationEnv["DEVSTACK_ENVIRONMENT"] = value
 	}
 
 	opts := config.ResolveOptions{
@@ -33,17 +27,13 @@ func resolveExplainContext(cmd *cobra.Command) (*config.ResolvedContext, error) 
 	if workspaceFlagChanged {
 		opts.WorkspacePath = workspaceValue
 	}
-	if envFlagChanged {
-		opts.EnvironmentName = envValue
-	}
 	return config.ResolveContext(opts)
 }
 
-// printConfigExplain prints the active workspace + environment resolution.
+// printConfigExplain prints the active workspace resolution.
 func printConfigExplain(ctx *config.ResolvedContext) {
 	fmt.Printf("Workspace: %s\n", ctx.WorkspaceName.Value)
 	printValue("root", ctx.WorkspaceRoot)
-	printValue("environment", ctx.EnvironmentName)
 	if ctx.CurrentService.Value != "" {
 		printValue("current service", ctx.CurrentService)
 	}

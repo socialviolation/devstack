@@ -23,10 +23,16 @@ func TestEnvLadderPrecedenceOrder(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "ws.env"), "export K=ws_file\n")
 	writeFile(t, filepath.Join(dir, "svc.env"), "export K=svc_file\n")
 
-	ws := &WorkspaceManifest{Env: WorkspaceManifestEnv{
-		Files:  []string{"ws.env"},
-		Values: map[string]string{"K": "ws_values"},
-	}}
+	ws := &WorkspaceManifest{
+		Env: WorkspaceManifestEnv{
+			Files:  []string{"ws.env"},
+			Values: map[string]string{"K": "ws_values"},
+		},
+		Environments: map[string]WorkspaceEnvironment{
+			"prod": {Values: map[string]string{"K": "active_env"}},
+		},
+	}
+	ws.Workspace.Env = "prod"
 	m := &ServiceManifest{Env: ServiceEnv{
 		Files:  []string{"svc.env"},
 		Values: map[string]string{"K": "svc_values"},
@@ -222,6 +228,166 @@ func TestEnvLadderActiveEnvRung(t *testing.T) {
 	}
 	if activeRung.Source != "prod" {
 		t.Errorf("active env rung Source = %q, want %q (provenance must name which env)", activeRung.Source, "prod")
+	}
+}
+
+// A stack env that overrides only some of the workspace env's keys must not be
+// credited with the keys it never defines.
+func TestEnvLadderActiveEnvAttributesKeysToTheEnvThatSuppliedThem(t *testing.T) {
+	dir := t.TempDir()
+
+	ws := &WorkspaceManifest{
+		Environments: map[string]WorkspaceEnvironment{
+			"dev":  {Values: map[string]string{"A": "dev_a", "B": "dev_b"}},
+			"perf": {Values: map[string]string{"B": "perf_b"}},
+		},
+	}
+	ws.Workspace.Env = "dev"
+	m := &ServiceManifest{}
+
+	layers, err := EnvLadder(dir, ws, m, "perf", nil)
+	if err != nil {
+		t.Fatalf("EnvLadder: %v", err)
+	}
+
+	source := map[string]string{}
+	for _, l := range layers {
+		if l.Rung != RungActiveEnv {
+			continue
+		}
+		for k := range l.Values {
+			source[k] = l.Source
+		}
+	}
+	if source["A"] != "dev" {
+		t.Errorf("A attributed to env %q, want %q (perf never defines A)", source["A"], "dev")
+	}
+	if source["B"] != "perf" {
+		t.Errorf("B attributed to env %q, want %q", source["B"], "perf")
+	}
+	if got := MergeEnvLadder(layers)["B"]; got != "perf_b" {
+		t.Errorf("B = %q, want %q (stack env must still win)", got, "perf_b")
+	}
+}
+
+// Splitting the active-env band into one layer per scope must not change the env
+// a service actually receives: the merged ladder still ends at ResolveEnvPatch's
+// result layered over the static rungs.
+func TestEnvLadderActiveEnvSplitPreservesMerge(t *testing.T) {
+	dir := t.TempDir()
+
+	ws := &WorkspaceManifest{
+		Env: WorkspaceManifestEnv{Values: map[string]string{"A": "ws_values", "D": "ws_values"}},
+		Environments: map[string]WorkspaceEnvironment{
+			"dev":     {Values: map[string]string{"A": "dev_a", "B": "dev_b", "C": "dev_c"}},
+			"staging": {Values: map[string]string{"B": "staging_b", "C": "staging_c"}},
+			"perf":    {Values: map[string]string{"C": "perf_c"}},
+		},
+	}
+	ws.Workspace.Env = "dev"
+	m := &ServiceManifest{Env: ServiceEnv{Values: map[string]string{"A": "svc_values", "E": "svc_values"}}}
+	m.Service.Env = "staging"
+
+	layers, err := EnvLadder(dir, ws, m, "perf", map[string]string{"M": "managed"})
+	if err != nil {
+		t.Fatalf("EnvLadder: %v", err)
+	}
+
+	patch, err := ResolveEnvPatch(ws, m, "perf")
+	if err != nil {
+		t.Fatalf("ResolveEnvPatch: %v", err)
+	}
+	want := map[string]string{
+		"A": "dev_a",
+		"B": "staging_b",
+		"C": "perf_c",
+		"D": "ws_values",
+		"E": "svc_values",
+		"M": "managed",
+	}
+	viaPatch := MergeEnvLadder([]EnvLayer{
+		{Values: ws.Env.Values},
+		{Values: m.Env.Values},
+		{Values: patch},
+		{Values: map[string]string{"M": "managed"}},
+	})
+	for k, v := range want {
+		if viaPatch[k] != v {
+			t.Fatalf("test premise broken: ResolveEnvPatch over the static layers gives %s = %q, want %q", k, viaPatch[k], v)
+		}
+	}
+
+	got := MergeEnvLadder(layers)
+	if len(got) != len(want) {
+		t.Fatalf("merged ladder has %d keys, want %d (%v vs %v)", len(got), len(want), got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+func TestEnvLadderActiveEnvSkipsUnsetScopes(t *testing.T) {
+	dir := t.TempDir()
+
+	ws := &WorkspaceManifest{
+		Environments: map[string]WorkspaceEnvironment{
+			"dev": {Values: map[string]string{"A": "dev_a"}},
+		},
+	}
+	m := &ServiceManifest{}
+
+	layers, err := EnvLadder(dir, ws, m, "", nil)
+	if err != nil {
+		t.Fatalf("EnvLadder: %v", err)
+	}
+	for _, l := range layers {
+		if l.Rung == RungActiveEnv {
+			t.Fatalf("no env is applied at any scope, but got an active-env layer %+v", l)
+		}
+	}
+
+	ws.Workspace.Env = "dev"
+	layers, err = EnvLadder(dir, ws, m, "", nil)
+	if err != nil {
+		t.Fatalf("EnvLadder: %v", err)
+	}
+	n := 0
+	for _, l := range layers {
+		if l.Rung == RungActiveEnv {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("one scope is set, got %d active-env layers, want 1", n)
+	}
+}
+
+func TestEnvLadderUndefinedEnvIsAnError(t *testing.T) {
+	dir := t.TempDir()
+
+	scopes := []struct {
+		name     string
+		wsEnv    string
+		svcEnv   string
+		stackEnv string
+	}{
+		{"workspace", "ghost", "", ""},
+		{"service", "", "ghost", ""},
+		{"stack", "", "", "ghost"},
+	}
+	for _, tc := range scopes {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := &WorkspaceManifest{Environments: map[string]WorkspaceEnvironment{}}
+			ws.Workspace.Env = tc.wsEnv
+			m := &ServiceManifest{}
+			m.Service.Env = tc.svcEnv
+
+			if _, err := EnvLadder(dir, ws, m, tc.stackEnv, nil); err == nil {
+				t.Fatalf("env %q applied at %s scope is not defined, want an error", "ghost", tc.name)
+			}
+		})
 	}
 }
 

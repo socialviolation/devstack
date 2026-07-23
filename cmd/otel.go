@@ -3,8 +3,6 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/spf13/viper"
-
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/otel"
 	_ "github.com/socialviolation/devstack/internal/otel/plugins/forwarding" // register forwarding plugin
@@ -19,28 +17,9 @@ func ensureCollector(ws *workspace.Workspace) (started bool, err error) {
 	if !config.ObservabilityEnabled(ws.Path) || isOtelRunning(ws) {
 		return false, nil
 	}
-	envName := viper.GetString("environment")
-	if envName == "" {
-		envName = "local"
-	}
-	env, _ := ws.ResolveEnvironment(envName)
-	plugin := activePlugin(ws, env)
+	plugin := activePlugin(ws)
 	if plugin == nil {
 		return false, fmt.Errorf("no OTEL plugin configured")
-	}
-	if env.Observability.OTLPEndpoint != "" && ws.OtelPlugin == "" {
-		wsCopy := *ws
-		cfg := map[string]string{}
-		for k, v := range ws.OtelPluginConfig {
-			cfg[k] = v
-		}
-		cfg["upstream"] = env.Observability.OTLPEndpoint
-		if env.Observability.APIKey != "" {
-			cfg["api_key"] = env.Observability.APIKey
-		}
-		cfg["deployment_env"] = envName
-		wsCopy.OtelPluginConfig = cfg
-		ws = &wsCopy
 	}
 	if err := startOtelStack(ws, plugin); err != nil {
 		return false, err
@@ -48,19 +27,14 @@ func ensureCollector(ws *workspace.Workspace) (started bool, err error) {
 	return true, nil
 }
 
-// activePlugin returns the active otel plugin for the given workspace and environment.
-// Resolution order:
-//  1. Explicit plugin set in workspace config (ws.OtelPlugin non-empty) — manual config wins
-//  2. Environment has an OTLP endpoint → forwarding mode
-//  3. Default: forwarding (collector only, no companion infra)
-func activePlugin(ws *workspace.Workspace, env workspace.Environment) otel.Plugin {
+// activePlugin returns the active otel plugin for the given workspace: the
+// explicit plugin from workspace config when set, otherwise forwarding
+// (collector only, no companion infra).
+func activePlugin(ws *workspace.Workspace) otel.Plugin {
 	if ws.OtelPlugin != "" {
 		if p := otel.Get(ws.OtelPlugin); p != nil {
 			return p
 		}
-	}
-	if env.Observability.OTLPEndpoint != "" {
-		return otel.Get("forwarding")
 	}
 	return otel.Get("forwarding")
 }

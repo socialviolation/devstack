@@ -35,17 +35,14 @@ telemetry:
 `)
 
 	ctx, err := ResolveContext(ResolveOptions{
-		StartPath:       apiDir,
-		WorkspacePath:   workspaceDir,
-		EnvironmentName: "staging",
+		StartPath:     apiDir,
+		WorkspacePath: workspaceDir,
 		InvocationEnv: map[string]string{
-			"DEVSTACK_WORKSPACE":   "/wrong/workspace",
-			"DEVSTACK_ENVIRONMENT": "prod",
+			"DEVSTACK_WORKSPACE": "/wrong/workspace",
 		},
 		RuntimeOverrides: RuntimeOverrides{
-			WorkspacePath:   "/runtime/workspace",
-			EnvironmentName: "runtime",
-			ServiceName:     "worker",
+			WorkspacePath: "/runtime/workspace",
+			ServiceName:   "worker",
 		},
 	})
 	if err != nil {
@@ -57,9 +54,6 @@ telemetry:
 	}
 	if ctx.WorkspaceRoot.Source != SourceCLIFlag {
 		t.Fatalf("workspace root source = %q, want %q", ctx.WorkspaceRoot.Source, SourceCLIFlag)
-	}
-	if ctx.EnvironmentName.Value != "staging" || ctx.EnvironmentName.Source != SourceCLIFlag {
-		t.Fatalf("environment = (%q, %q), want staging from cli", ctx.EnvironmentName.Value, ctx.EnvironmentName.Source)
 	}
 	if ctx.CurrentService.Value != "worker" || ctx.CurrentService.Source != SourceRuntimeOverride {
 		t.Fatalf("current service = (%q, %q), want worker from runtime override", ctx.CurrentService.Value, ctx.CurrentService.Source)

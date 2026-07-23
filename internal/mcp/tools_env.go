@@ -18,8 +18,7 @@ import (
 
 // registerEnvTools registers the config-patch environment tools, mirroring the
 // CLI's `devstack env use/which/set`. These operate on the named environments
-// defined in the workspace manifest, not the infra environment (see the
-// environment tool for the distinction).
+// defined in the workspace manifest.
 func registerEnvTools(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	registerEnvUseTool(mcpServer, ws, workspacePath)
 	registerEnvWhichTool(mcpServer, ws, workspacePath)
@@ -93,7 +92,7 @@ func registerEnvUseTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 
 func registerEnvWhichTool(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	tool := mcp.NewTool("env_which",
-		mcp.WithDescription("Show which base-defined config-patch environment applies to a service at each scope (workspace/service/stack) and the merged effective config vars it would run with. Mirrors 'devstack env which'. Environments are defined once in the base workspace manifest and inherited by feature stacks; the stack scope reflects the base environment a stack was pointed at. Secret values are masked. If service is omitted it is resolved from the server's working directory."),
+		mcp.WithDescription("Show which base-defined config-patch environment applies to a service at each scope (workspace/service/stack) and the merged effective config vars it would run with. Mirrors 'devstack env which'. Environments are defined once in the base workspace manifest and inherited by feature stacks; the stack scope reflects the base environment a stack was pointed at. Credentials are redacted in place: identifying parts of a value (server, database, account, endpoint, user) stay visible and only the credential is hidden; values with no structure to preserve are masked whole. If service is omitted it is resolved from the server's working directory."),
 		mcp.WithString("service",
 			mcp.Description("Exact service name to resolve. If omitted, resolved from the current working directory.")),
 		mcp.WithString("stack",
@@ -148,9 +147,9 @@ func registerEnvWhichTool(mcpServer *server.MCPServer, ws *workspace.Workspace, 
 		fmt.Fprintf(&sb, "  workspace.env  %s\n", orNone(rw.Manifest.Workspace.Env))
 		fmt.Fprintf(&sb, "  service.env    %s\n", orNone(svc.Manifest.Service.Env))
 		fmt.Fprintf(&sb, "  stack.env      %s\n\n", orNone(stackEnv))
-		fmt.Fprintf(&sb, "Merged effective values (stack > service > workspace, secrets masked):\n")
+		fmt.Fprintf(&sb, "Merged effective values (stack > service > workspace, credentials redacted):\n")
 		for _, k := range sortedStrMapKeys(merged) {
-			fmt.Fprintf(&sb, "  %-32s %s\n", k, maskValue(k, merged[k]))
+			fmt.Fprintf(&sb, "  %-32s %s\n", k, svcconfig.RedactValue(k, merged[k]))
 		}
 		return mcp.NewToolResultText(sb.String()), nil
 	})
@@ -158,7 +157,7 @@ func registerEnvWhichTool(mcpServer *server.MCPServer, ws *workspace.Workspace, 
 
 func registerEnvSetTool(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	tool := mcp.NewTool("env_set",
-		mcp.WithDescription("Set a config-var (key=value) on one of the config-patch environments defined in the BASE workspace manifest. Mirrors 'devstack env set'. Environments are defined once in the base workspace and inherited by feature stacks. Secret values are masked in the confirmation output. Use env_use to point a scope at the environment."),
+		mcp.WithDescription("Set a config-var (key=value) on one of the config-patch environments defined in the BASE workspace manifest. Mirrors 'devstack env set'. Environments are defined once in the base workspace and inherited by feature stacks. The confirmation output redacts credentials in place, keeping identifying parts of the value visible. Use env_use to point a scope at the environment."),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description("Named environment to modify (e.g. 'staging').")),
 		mcp.WithString("key", mcp.Required(),
@@ -180,15 +179,8 @@ func registerEnvSetTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 		if err := config.SetEnvValue(ws.Path, name, key, value); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("set %s.%s = %s", name, key, maskValue(key, value))), nil
+		return mcp.NewToolResultText(fmt.Sprintf("set %s.%s = %s", name, key, svcconfig.RedactValue(key, value))), nil
 	})
-}
-
-func maskValue(key, value string) string {
-	if svcconfig.IsSecret(key, value) {
-		return svcconfig.MaskedValue
-	}
-	return value
 }
 
 func orNone(s string) string {

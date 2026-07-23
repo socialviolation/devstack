@@ -12,10 +12,6 @@ type WorkspaceConfig struct {
 	Deps         map[string][]string `json:"deps"`          // service -> list of deps
 	Groups       map[string][]string `json:"groups"`        // group name -> list of services
 	ServicePaths map[string]string   `json:"service_paths"` // service -> git repo root path
-
-	// OTEL plugin config — persisted here so settings travel with the project.
-	OtelPlugin       string            `json:"otel_plugin,omitempty"`
-	OtelPluginConfig map[string]string `json:"otel_plugin_config,omitempty"`
 }
 
 const configFileName = ".devstack.json"
@@ -33,17 +29,23 @@ func Load(workspacePath string) (*WorkspaceConfig, error) {
 	return loadLegacyConfig(workspacePath)
 }
 
-// Save writes <workspacePath>/.devstack.json with JSON indentation.
-func Save(workspacePath string, cfg *WorkspaceConfig) error {
-	path := filepath.Join(workspacePath, configFileName)
-	data, err := json.MarshalIndent(cfg, "", "  ")
+// LegacyOtelSettings returns the backend name and plugin settings stranded in
+// <workspacePath>/.devstack.json, the retired project store. devstack no longer
+// reads them as config; they are surfaced so a user can re-apply them to the
+// workspace manifest. Returns zero values when the file is absent or carries none.
+func LegacyOtelSettings(workspacePath string) (string, map[string]string) {
+	data, err := os.ReadFile(filepath.Join(workspacePath, configFileName))
 	if err != nil {
-		return fmt.Errorf("failed to marshal devstack config: %w", err)
+		return "", nil
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("failed to write devstack config: %w", err)
+	var legacy struct {
+		OtelPlugin       string            `json:"otel_plugin"`
+		OtelPluginConfig map[string]string `json:"otel_plugin_config"`
 	}
-	return nil
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return "", nil
+	}
+	return legacy.OtelPlugin, legacy.OtelPluginConfig
 }
 
 // ResolveDeps performs a BFS topological sort returning an ordered list of services

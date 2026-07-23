@@ -85,7 +85,7 @@ The devstack MCP server loads automatically from `.mcp.json`. Claude can now sta
 | **Dependency** | A declared ordering constraint: service A won't start until service B is running |
 | **Host daemon** | A single Tilt daemon (`:10300`) for the whole machine. Every active workspace's services and every active stack's overlay run inside it as `<workspace>:<service>[:<stack>]` resources. There is no daemon per workspace. |
 | **Feature stack** | A parallel version of one or more services, run from a git worktree on a feature branch on its own dynamic port, beside base — reusing base for everything it doesn't change. Lets you run several features live at once without cloning the world. |
-| **Environment** | A named config bundle (`environments:` in the workspace manifest) carrying an infra target (local/remote + observability) and config-var patches, applied at workspace / service / stack scope (most-specific wins). "Where a service points." |
+| **Environment** | A named config-var patch (`environments:` in the workspace manifest) applied at workspace / service / stack scope (most-specific wins). "Where a service points." |
 
 ---
 
@@ -162,18 +162,18 @@ Work on a stack by **`cd`-ing into its worktree** (path shown by `stack create`/
 
 ### Environments
 
-An **environment** is a named config bundle in the workspace manifest that repoints services — DB URLs, feature flags, endpoints, and the observability target — without code changes. Environments are defined **once in the base workspace manifest** and inherited by feature stacks — a stack doesn't define its own; `env use --stack <name>` just points a stack at one of the base's environments. It applies at three scopes, most-specific winning: **stack > service > workspace**. So base can run against `local` while one stack runs against `prod`.
+An **environment** is a named config-var patch in the workspace manifest that repoints services — DB URLs, feature flags, endpoints — without code changes. Environments are defined **once in the base workspace manifest** and inherited by feature stacks — a stack doesn't define its own; `env use --stack <name>` just points a stack at one of the base's environments. It applies at three scopes, most-specific winning: **stack > service > workspace**. So base can run against `local` while one stack runs against `prod`.
 
 ```bash
-devstack env add <name> [--type local|remote] [--url ...] [--api-key ...]   # define an environment
-devstack env set <name> KEY=VALUE                    # set a config-var patch (any value, incl. secrets — masked in output)
+devstack env set <name> KEY=VALUE                    # set a config-var patch, creating the env if new (secrets: see note below)
 devstack env use <name> [--service <svc>] [--stack <name>]   # point base, a service, or a stack at <name>
 devstack env which [--service <svc>] [--stack <name>]        # which env an instance resolves to + its values
 devstack env show <name>                             # an environment's values (secrets masked)
-devstack env list                                    # environments and the active one
+devstack env list                                    # environments and where each is applied
+devstack env remove <name>                           # drop an environment
 ```
 
-`devstack status` shows each instance's active env in the **ENV** column, so you can see where every running copy points. Env values live in the workspace manifest and are masked on display.
+`devstack status` shows each instance's active env in the **ENV** column, so you can see where every running copy points. Env values live in the workspace manifest and are masked on display only — so whether `env set` is safe for a secret depends on whether you commit that manifest; see [what to commit](#files-written-by-devstack--and-what-to-commit).
 
 ### Observability (OTEL collector)
 
@@ -234,7 +234,7 @@ This is what `.mcp.json` invokes. You don't run it directly.
 The tool set adapts to the active workspace: trace tools (`investigate`) appear only when observability is enabled, and the `tunnel` tool only when Tailscale is installed. Call `environment` first to see what's actually available.
 
 ### `environment`
-Orientation tool — shows the active infra environment (local vs remote) and which tools exist in this context, and points at the config-patch [environments](#environments) a service can be aimed at via `env_use`. Call this first.
+Orientation tool — shows the workspace's observability state, its in-flight feature stacks, and which tools exist in this context, and points at the [environments](#environments) a service can be aimed at via `env_use`. Call this first.
 
 ### `status`
 Show all services with state (`running` / `starting` / `building` / `stopped` / `erroring` / `disabled` / `unknown`), ports, source path, ENV (the active environment each instance points at), and last build error. Pass `stack` to see a feature stack's instances.
@@ -327,14 +327,35 @@ Claude Code reads `.mcp.json` automatically and loads the MCP server when you op
 | `TILT_PORT` | `10350` | Tilt API port |
 | `TILT_HOST` | `localhost` | Tilt API host |
 
-**Files written by devstack:**
+---
 
-| Path | Purpose |
-|------|---------|
-| `~/.config/devstack/workspaces.json` | Registered workspaces and their ports |
-| `~/.local/share/devstack/<name>/tilt.pid` | Tilt daemon PID |
-| `~/.local/share/devstack/<name>/tilt.log` | Tilt daemon stdout |
-| `<workspace>/devstack.workspace.yaml` | Workspace manifest: services, groups, dependencies, observability |
-| `<service>/devstack.service.yaml` | Service manifest: run command, ports, healthcheck, env |
-| `<service>/.mcp.json` | MCP config for that service repo |
-| `<service>/AGENTS.md` | Tool reference injected for Claude Code |
+## Files written by devstack — and what to commit
+
+| Artefact | Location | Commit? | Why |
+|----------|----------|---------|-----|
+| `devstack.workspace.yaml` | workspace root | **Yes** | Source of truth: services, groups, dependencies, environments. Portable — no machine paths. |
+| `devstack.service.yaml` | service repo | **No** | Machine-local: it bakes absolute tool paths (e.g. `/home/you/.local/share/mise/installs/dotnet/8.0.418/dotnet run`). Gitignore it. |
+| `.mcp.json` | service repo | **Yes** | Generated to be machine-agnostic — no workspace path, no daemon port. If an older copy still contains `DEVSTACK_WORKSPACE`, refresh it with `devstack init --all`. |
+| `AGENTS.md` | service repo | **Yes** | Agent instructions. devstack owns only the block between its sentinels; the rest is yours. |
+| `CLAUDE.md` / `GEMINI.md` / `.cursorrules` / `.github/copilot-instructions.md` | service repo | **Yes** | Yours, with a devstack-managed block appended between sentinels. devstack updates these only if they already exist. |
+| `.devstack.json` | workspace root | **No** | Retired. devstack no longer reads or writes it; otel plugin config now lives under `observability.settings` in `devstack.workspace.yaml`. Safe to delete once `devstack otel status` shows the settings you expect. |
+| `Tiltfile` | anywhere | **No** | Generated build artifact, never hand-edited. |
+| `~/.config/devstack/workspaces.json` | home | n/a | Machine-local registry of workspaces and their ports. |
+| `~/.local/share/devstack/**` | home | n/a | Host daemon state: pids, logs, `stacks.json`, the generated host Tiltfile. |
+
+Suggested per-repo `.gitignore`:
+
+```
+devstack.service.yaml
+.devstack.json
+Tiltfile
+```
+
+> **⚠️ Secrets and `devstack env set`.** `env set <env> KEY=VALUE` writes the value **into `devstack.workspace.yaml`**, in plaintext. Values are masked on *display* only (`env show`, `env which`, `status`), never at rest. So it depends on how you treat that manifest:
+>
+> - **You commit it** (the default recommended above): keep real secrets out. Declare them in a service's `env.required` and supply them at runtime from `.envrc` (direnv) or your own secret store, and use `env set` only for non-secret config — URLs, ports, feature flags. A secret written here is a committed secret.
+> - **It's machine-local** (you gitignore it, or the workspace root isn't a repo): `env set` is fine for secrets, including API keys — that is what it was built for. Just remember the file is plaintext on disk.
+>
+> If you're unsure which you are, run `git check-ignore -v devstack.workspace.yaml` in the workspace root.
+
+Because `devstack.service.yaml` is machine-local it is normally gitignored, which means a stack's git worktree does **not** inherit one — this is why `devstack stack create` materialises ignored config into each worktree rather than relying on git.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/tunnel"
@@ -111,11 +112,8 @@ func init() {
 // tunnelContext resolves the active workspace, its live Tilt port, and asserts a
 // local environment. Tunnels only make sense against the local dev stack.
 func tunnelContext() (*workspace.Workspace, error) {
-	ws, env, envName, err := resolveWorkspaceAndEnv()
+	ws, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
-		return nil, err
-	}
-	if err := requireLocalEnv(envName, env); err != nil {
 		return nil, err
 	}
 	ws.TiltPort = workspace.HostTiltPort

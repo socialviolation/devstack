@@ -2,14 +2,15 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"sort"
-	"text/tabwriter"
+	"strings"
 
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -18,23 +19,16 @@ var envCmd = &cobra.Command{
 	Short: "Manage devstack environments",
 	Long: `Named environments for your workspace, defined in the workspace manifest.
 
-An environment carries both an infrastructure target (local vs remote, observability
-backend) and config-var patches (DB URLs, feature flags, endpoints). Define them with
-add/list/remove and set; apply them with use (at workspace, service, or stack scope,
-most-specific winning); inspect with show/which. status shows where each instance points.`,
+An environment is a named config-var patch (DB URLs, feature flags, endpoints).
+Define them with set (which creates the env on demand) and drop them with remove;
+apply them with use (at workspace, service, or stack scope, most-specific winning);
+inspect with show/which. status shows where each instance points.`,
 }
 
 var envListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List environments for the current workspace",
 	RunE:  runEnvList,
-}
-
-var envAddCmd = &cobra.Command{
-	Use:   "add <name>",
-	Short: "Add or update a named environment",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runEnvAdd,
 }
 
 var envRemoveCmd = &cobra.Command{
@@ -46,13 +40,7 @@ var envRemoveCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(envCmd)
-	envCmd.AddCommand(envListCmd, envAddCmd, envRemoveCmd)
-
-	envAddCmd.Flags().String("type", "remote", `environment type: "local" or "remote"`)
-	envAddCmd.Flags().String("backend", "signoz", `observability backend (currently only "signoz")`)
-	envAddCmd.Flags().String("url", "", "observability backend URL (required for remote)")
-	envAddCmd.Flags().String("otlp-endpoint", "", "OTLP ingestion URL for the collector (e.g. https://otel.company.com:4318)")
-	envAddCmd.Flags().String("api-key", "", "API key for an authenticated remote collector")
+	envCmd.AddCommand(envListCmd, envRemoveCmd)
 }
 
 func runEnvList(cmd *cobra.Command, args []string) error {
@@ -65,13 +53,24 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	activeEnvName := viper.GetString("environment")
-	if activeEnvName == "" {
-		activeEnvName = m.Workspace.Env
+	usage := envUsage{
+		WorkspaceEnv: m.Workspace.Env,
+		ServiceEnvs:  map[string]string{},
+		StackEnvs:    map[string]string{},
 	}
-	if activeEnvName == "" {
-		activeEnvName = "local"
+	if rw, err := config.ResolveWorkspace(ws.Path); err == nil {
+		for name, svc := range rw.Services {
+			if svc.Manifest != nil {
+				usage.ServiceEnvs[name] = svc.Manifest.Service.Env
+			}
+		}
 	}
+	if recs, err := stack.LoadStore(ws.Name); err == nil {
+		for _, r := range recs {
+			usage.StackEnvs[r.Name] = r.Env
+		}
+	}
+	applied := appliedTo(usage)
 
 	names := make([]string, 0, len(m.Environments))
 	for k := range m.Environments {
@@ -79,74 +78,77 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	}
 	sort.Strings(names)
 
+	nameW, appliedW := len("NAME"), len("APPLIED TO")
+	for _, name := range names {
+		nameW = max(nameW, len(name))
+		appliedW = max(appliedW, len(appliedLabel(applied[name])))
+	}
+
 	fmt.Printf("Environments for workspace %q:\n\n", ws.Name)
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "NAME\tTYPE\tBACKEND\tURL\tOTLP ENDPOINT\t")
-	fmt.Fprintln(w, "----\t----\t-------\t---\t-------------\t")
+	fmt.Printf("  %-*s   %-*s   %s\n", nameW, "NAME", appliedW, "APPLIED TO", "KEYS")
+	fmt.Printf("  %-*s   %-*s   %s\n", nameW, "----", appliedW, "----------", "----")
 	for _, name := range names {
 		env := m.Environments[name]
-		marker := ""
-		if name == activeEnvName {
-			marker = " <- active"
+		scopes := applied[name]
+		label := fmt.Sprintf("%-*s", appliedW, appliedLabel(scopes))
+		if len(scopes) == 0 {
+			label = color.New(color.Faint).Sprint(label)
+		} else {
+			label = color.New(color.FgCyan).Sprint(label)
 		}
-		backend := env.Observability.Backend
-		if backend == "" {
-			backend = "signoz"
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s%s\n", name, env.Type, backend, env.Observability.URL, env.Observability.OTLPEndpoint, marker)
+		fmt.Printf("  %-*s   %s   %s\n", nameW, name, label, formatEnvKeys(env.Values, 6))
 	}
-	w.Flush()
 
-	fmt.Printf("\nTo switch: set DEVSTACK_ENVIRONMENT=<name> or use --env=<name>\n")
+	fmt.Printf("\nValues: devstack env show <name>\n")
+	fmt.Printf("To switch: devstack env use <name> [--service <svc>|--stack <name>]\n")
 	return nil
 }
 
-func runEnvAdd(cmd *cobra.Command, args []string) error {
-	envName := args[0]
+// envUsage is every place an environment name can be selected from.
+type envUsage struct {
+	WorkspaceEnv string
+	ServiceEnvs  map[string]string
+	StackEnvs    map[string]string
+}
 
-	ws, err := resolveEnvWorkspace(viper.GetString("workspace"))
-	if err != nil {
-		return err
+// appliedTo maps each selected env name to the scopes that select it, in plain
+// text: the workspace, each service, and each stack.
+func appliedTo(u envUsage) map[string][]string {
+	out := map[string][]string{}
+	if u.WorkspaceEnv != "" {
+		out[u.WorkspaceEnv] = append(out[u.WorkspaceEnv], "workspace")
 	}
-
-	envType, _ := cmd.Flags().GetString("type")
-	backend, _ := cmd.Flags().GetString("backend")
-	url, _ := cmd.Flags().GetString("url")
-	otlpEndpoint, _ := cmd.Flags().GetString("otlp-endpoint")
-	apiKey, _ := cmd.Flags().GetString("api-key")
-
-	switch envType {
-	case string(workspace.EnvironmentTypeLocal), string(workspace.EnvironmentTypeRemote):
-	default:
-		return fmt.Errorf("invalid type %q: must be \"local\" or \"remote\"", envType)
+	for _, name := range sortedStrKeys(u.ServiceEnvs) {
+		if env := u.ServiceEnvs[name]; env != "" {
+			out[env] = append(out[env], "service: "+name)
+		}
 	}
-
-	if envType == string(workspace.EnvironmentTypeRemote) && url == "" {
-		return fmt.Errorf("--url is required for a remote environment")
+	for _, name := range sortedStrKeys(u.StackEnvs) {
+		if env := u.StackEnvs[name]; env != "" {
+			out[env] = append(out[env], "stack: "+name)
+		}
 	}
+	return out
+}
 
-	env := config.WorkspaceEnvironment{
-		Type: envType,
-		Observability: config.WorkspaceEnvironmentObservability{
-			Backend:      backend,
-			URL:          url,
-			OTLPEndpoint: otlpEndpoint,
-			APIKey:       apiKey,
-		},
+func appliedLabel(scopes []string) string {
+	if len(scopes) == 0 {
+		return "unused"
 	}
+	return strings.Join(scopes, ", ")
+}
 
-	if err := config.SetEnvironment(ws.Path, envName, env); err != nil {
-		return fmt.Errorf("failed to add environment: %w", err)
+// formatEnvKeys lists an environment's config-var key names — never values, which
+// can be secrets — truncating to limit with a count of the remainder.
+func formatEnvKeys(values map[string]string, limit int) string {
+	keys := sortedStrKeys(values)
+	if len(keys) == 0 {
+		return "(none)"
 	}
-
-	fmt.Printf("Added environment %q to workspace %q\n", envName, ws.Name)
-	fmt.Printf("  Type:    %s\n", envType)
-	fmt.Printf("  Backend: %s\n", backend)
-	fmt.Printf("  URL:     %s\n", url)
-	if otlpEndpoint != "" {
-		fmt.Printf("  OTLP:    %s\n", otlpEndpoint)
+	if len(keys) <= limit {
+		return strings.Join(keys, ", ")
 	}
-	return nil
+	return fmt.Sprintf("%s, +%d more", strings.Join(keys[:limit], ", "), len(keys)-limit)
 }
 
 func runEnvRemove(cmd *cobra.Command, args []string) error {

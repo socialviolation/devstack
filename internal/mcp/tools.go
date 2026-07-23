@@ -28,70 +28,64 @@ import (
 // errorRegex matches common error-indicating log keywords.
 var errorRegex = regexp.MustCompile(`(?i)(error|exception|panic|fatal|fail)`)
 
-// RegisterTools registers devstack MCP tools. Tool set depends on the active environment type:
-// - Local environments get all 6 tools (status, restart, stop, configure, process_logs, investigate)
-// - Remote environments get investigate + environment + remote status only
+// RegisterTools registers devstack MCP tools: status, restart, stop, configure,
+// process_logs, service_env, observability, stack and env tools, plus investigate
+// when observability is enabled and tunnel when tailscale is installed.
 func RegisterTools(
 	mcpServer *server.MCPServer,
 	tiltClient *tilt.Client,
 	defaultService string,
 	backend observability.Backend,
-	activeEnvName string,
-	activeEnv workspace.Environment,
-	allEnvs map[string]workspace.Environment,
 	workspaceName string,
 	workspacePath string,
 	ws *workspace.Workspace,
 ) {
+	var obsURL string
+	if ws != nil {
+		obsURL = ws.LocalObservability().URL
+	}
+
 	// The environment orientation tool is always available — it tells the agent
 	// which of the capability-gated tools below actually exist for this context.
-	registerEnvironmentTool(mcpServer, activeEnvName, activeEnv, allEnvs, workspaceName, workspacePath, ws)
+	registerEnvironmentTool(mcpServer, obsURL, workspaceName, workspacePath, ws)
 
-	if activeEnv.Type == workspace.EnvironmentTypeLocal {
-		// Local-only tools: full service control
-		cfg, _ := config.Load(workspacePath)
-		if cfg == nil {
-			cfg = &config.WorkspaceConfig{
-				Deps:         map[string][]string{},
-				Groups:       map[string][]string{},
-				ServicePaths: map[string]string{},
-			}
+	cfg, _ := config.Load(workspacePath)
+	if cfg == nil {
+		cfg = &config.WorkspaceConfig{
+			Deps:         map[string][]string{},
+			Groups:       map[string][]string{},
+			ServicePaths: map[string]string{},
 		}
-		serviceDirs := cfg.ServicePaths
-		registerStatusTool(mcpServer, tiltClient, serviceDirs, cfg, ws)
-		registerRestartTool(mcpServer, tiltClient, defaultService, cfg, ws)
-		registerStopTool(mcpServer, tiltClient, cfg, ws)
-		registerConfigureTool(mcpServer, tiltClient, ws)
-		registerProcessLogsTool(mcpServer, tiltClient, defaultService, cfg, ws)
-		registerServiceEnvTool(mcpServer, ws, workspacePath)
-
-		// Observability control (status/enable/disable/configure) is always
-		// available locally so an agent can discover and turn it on.
-		registerObservabilityTool(mcpServer, ws, workspacePath)
-
-		// The trace-query tool only makes sense when the workspace has opted into
-		// observability — otherwise there's no collector or backend to query.
-		// (Telemetry evidence/confidence lives in the observability tool's status.)
-		if config.ObservabilityEnabled(workspacePath) {
-			registerInvestigateTool(mcpServer, tiltClient, defaultService, backend, activeEnvName, activeEnv, workspacePath, ws)
-		}
-
-		// Tunneling is SSH-over-tailnet; only expose it where tailscale exists.
-		if tailscaleInstalled() {
-			registerTunnelTool(mcpServer, tiltClient, ws)
-		}
-
-		// Feature stacks overlay this workspace as their base.
-		registerStackTools(mcpServer, ws)
-
-		// Config-patch environments: point scopes at named envs and inspect them.
-		registerEnvTools(mcpServer, ws, workspacePath)
-	} else {
-		// Remote environments are inherently observability-backed — investigate is
-		// the primary diagnostic tool there.
-		registerInvestigateTool(mcpServer, tiltClient, defaultService, backend, activeEnvName, activeEnv, workspacePath, ws)
-		registerRemoteStatusTool(mcpServer, backend, activeEnvName, activeEnv.Observability.URL)
 	}
+	serviceDirs := cfg.ServicePaths
+	registerStatusTool(mcpServer, tiltClient, serviceDirs, cfg, ws)
+	registerRestartTool(mcpServer, tiltClient, defaultService, cfg, ws)
+	registerStopTool(mcpServer, tiltClient, cfg, ws)
+	registerConfigureTool(mcpServer, tiltClient, ws)
+	registerProcessLogsTool(mcpServer, tiltClient, defaultService, cfg, ws)
+	registerServiceEnvTool(mcpServer, ws, workspacePath)
+
+	// Observability control (status/enable/disable/configure) is always
+	// available so an agent can discover and turn it on.
+	registerObservabilityTool(mcpServer, ws, workspacePath)
+
+	// The trace-query tool only makes sense when the workspace has opted into
+	// observability — otherwise there's no collector or backend to query.
+	// (Telemetry evidence/confidence lives in the observability tool's status.)
+	if config.ObservabilityEnabled(workspacePath) {
+		registerInvestigateTool(mcpServer, tiltClient, defaultService, backend, obsURL, workspacePath, ws)
+	}
+
+	// Tunneling is SSH-over-tailnet; only expose it where tailscale exists.
+	if tailscaleInstalled() {
+		registerTunnelTool(mcpServer, tiltClient, ws)
+	}
+
+	// Feature stacks overlay this workspace as their base.
+	registerStackTools(mcpServer, ws)
+
+	// Config-patch environments: point scopes at named envs and inspect them.
+	registerEnvTools(mcpServer, ws, workspacePath)
 }
 
 // tailscaleInstalled reports whether the tailscale CLI is on PATH. devstack
@@ -1047,55 +1041,32 @@ func resolveInvestigateStack(raw string) string {
 	}
 }
 
-func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, backend observability.Backend, activeEnvName string, activeEnv workspace.Environment, workspacePath string, ws *workspace.Workspace) {
-	// Determine the local plugin query endpoint (if any)
-	var localQueryEndpoint string
+func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, backend observability.Backend, obsURL string, workspacePath string, ws *workspace.Workspace) {
+	queryURL := obsURL
 	var localPluginName string
 	var localPluginHasNoUI bool
 	var localPluginUpstream string
-	if ws != nil && activeEnv.Type == workspace.EnvironmentTypeLocal {
-		plugin := otel.Get(ws.OtelPlugin)
-		if plugin != nil {
-			localQueryEndpoint = plugin.QueryEndpoint(ws)
+	if ws != nil {
+		if plugin := otel.Get(ws.OtelPlugin); plugin != nil {
 			localPluginName = plugin.Name()
-			if localQueryEndpoint == "" {
+			if endpoint := plugin.QueryEndpoint(ws); endpoint != "" {
+				queryURL = endpoint
+			} else {
 				localPluginHasNoUI = true
 				localPluginUpstream = ws.PluginConfig("upstream")
 			}
 		}
 	}
 
-	var desc string
-	if activeEnv.Type == workspace.EnvironmentTypeLocal {
-		queryURL := localQueryEndpoint
-		if queryURL == "" {
-			queryURL = activeEnv.Observability.URL
-		}
-		desc = fmt.Sprintf(
-			"Investigate distributed traces in the LOCAL dev environment (@ %s). "+
-				"Queries SignOz via ClickHouse — NOT a natural language search engine. Parameters are structured: exact service names, structured time ranges, and exact attribute key=value pairs. "+
-				"Modes: (1) trace_id/span_id — look up a specific trace or span; (2) attribute+value — search by business attribute (e.g. attribute='portfolio.id' value='123'); (3) service — show recent executions for a service. "+
-				"Results can be isolated to one stack's service: 'service' pins the service and 'stack' pins the devstack.stack resource attribute (a stack's short name, or 'stack'='base' to select base-workspace services). "+
-				"Example: service='api-service' stack='perf' since_minutes=15 errors_only=true. "+
-				"Returns an ASCII span tree showing service calls, durations, and errors. Combine with process_logs and status for full debugging context.",
-			queryURL,
-		)
-	} else {
-		desc = fmt.Sprintf(
-			"Investigate distributed traces in the **%s** environment (SigNoz @ %s). "+
-				"READ-ONLY — service control tools (restart/stop/configure) are not available here. "+
-				"Queries SignOz via ClickHouse — NOT a natural language search engine. Parameters are structured: exact service names, structured time ranges, and exact attribute key=value pairs. "+
-				"Modes: (1) trace_id/span_id — look up a specific trace or span; (2) attribute+value — search by business attribute; (3) service — show recent executions. "+
-				"Results can be isolated to one stack's service via 'service' plus 'stack' (a stack's short name, or 'stack'='base' for base-workspace services), which filter on service.name and the devstack.stack resource attribute. "+
-				"Returns an ASCII span tree showing service calls, durations, and errors.",
-			activeEnvName, activeEnv.Observability.URL,
-		)
-	}
-
-	// Suppress unused variable warnings
-	_ = localPluginName
-	_ = localPluginHasNoUI
-	_ = localPluginUpstream
+	desc := fmt.Sprintf(
+		"Investigate distributed traces in the LOCAL dev environment (@ %s). "+
+			"Queries SignOz via ClickHouse — NOT a natural language search engine. Parameters are structured: exact service names, structured time ranges, and exact attribute key=value pairs. "+
+			"Modes: (1) trace_id/span_id — look up a specific trace or span; (2) attribute+value — search by business attribute (e.g. attribute='portfolio.id' value='123'); (3) service — show recent executions for a service. "+
+			"Results can be isolated to one stack's service: 'service' pins the service and 'stack' pins the devstack.stack resource attribute (a stack's short name, or 'stack'='base' to select base-workspace services). "+
+			"Example: service='api-service' stack='perf' since_minutes=15 errors_only=true. "+
+			"Returns an ASCII span tree showing service calls, durations, and errors. Combine with process_logs and status for full debugging context.",
+		queryURL,
+	)
 
 	tool := mcp.NewTool("investigate",
 		mcp.WithDescription(desc),
@@ -1502,16 +1473,6 @@ func saveWorkspaceConfig(workspacePath string, cfg *mutableWorkspaceConfig) {
 		return
 	}
 	os.WriteFile(workspacePath+"/.devstack.json", data, 0644)
-}
-
-// sortedEnvKeys returns sorted map keys for deterministic output.
-func sortedEnvKeys(m map[string]workspace.Environment) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // executionDetail holds a fully fetched execution: span tree + correlated logs.

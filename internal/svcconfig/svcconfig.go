@@ -35,7 +35,7 @@ type ConfigEntry struct {
 
 // EffectiveConfig computes what a service in a stack WOULD run with. It reads the
 // service's declared config sources in order (later wins), applies the stack's
-// port overlay on top (highest precedence), and masks secret-looking values. It
+// port overlay on top (highest precedence), and redacts credentials. It
 // reads only — it never writes or applies anything.
 func EffectiveConfig(svc config.ResolvedService, stackName string) ([]ConfigEntry, error) {
 	if svc.Manifest == nil {
@@ -59,16 +59,8 @@ func EffectiveConfig(svc config.ResolvedService, stackName string) ([]ConfigEntr
 
 	entries := map[string]ConfigEntry{}
 	for k, v := range values {
-		val := v
-		secret := IsSecret(k, v)
-		switch {
-		case secret:
-			val = maskedValue
-		case credentialRe.MatchString(v):
-			val = credentialRe.ReplaceAllString(v, "$1="+maskedValue)
-			secret = true
-		}
-		entries[k] = ConfigEntry{Key: k, Value: val, Source: provenance[k], Secret: secret}
+		val := RedactValue(k, v)
+		entries[k] = ConfigEntry{Key: k, Value: val, Source: provenance[k], Secret: val != v}
 	}
 
 	if cfg.PortEnv != "" {
@@ -217,23 +209,15 @@ func renderPort(key string, port int) string {
 	return strconv.Itoa(port)
 }
 
-var secretSubstrings = []string{"connectionstring", "secret", "token", "password", "key"}
-
 // credentialRe matches a secret smuggled into a value as `param=<secret>` — an
 // Azure function `?code=`, a Redis/SQL `password=`, a SAS `sig=`, etc. — so the
 // value is redacted in place while the surrounding URL/string stays legible.
 // Key-name masking (IsSecret) misses these because the key looks innocent.
-var credentialRe = regexp.MustCompile(`(?i)(code|sig|passwo?rd|accountkey|sharedaccesskey|secret|token|api[_-]?key)=[^&;\s"']+`)
+var credentialRe = regexp.MustCompile(`(?i)(code|sig|passwo?rd|pwd|accountkey|sharedaccesskey|secret|token|api[_-]?key)=[^&;\s"']+`)
 
 func IsSecret(key, value string) bool {
 	if value == externalMarker {
 		return true
 	}
-	lower := strings.ToLower(key)
-	for _, s := range secretSubstrings {
-		if strings.Contains(lower, s) {
-			return true
-		}
-	}
-	return false
+	return config.IsCredentialKey(key)
 }

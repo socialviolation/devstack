@@ -81,8 +81,12 @@ type WorkspaceManifestObservability struct {
 	// services. When nil (unset) it is inferred for backward compatibility from
 	// local.enabled or the presence of a backend. Services are NOT assumed to be
 	// instrumented unless this resolves true.
-	Enabled  *bool                                  `yaml:"enabled,omitempty"`
-	Backend  string                                 `yaml:"backend,omitempty"`
+	Enabled *bool  `yaml:"enabled,omitempty"`
+	Backend string `yaml:"backend,omitempty"`
+	// Settings holds backend plugin configuration (upstream, protocol,
+	// resource_attributes, ...). This file is committed, so credentials never
+	// belong here — see SetObservabilitySettings.
+	Settings map[string]string                      `yaml:"settings,omitempty"`
 	Local    WorkspaceManifestObservabilityLocal    `yaml:"local,omitempty"`
 	Defaults WorkspaceManifestObservabilityDefaults `yaml:"defaults,omitempty"`
 }
@@ -123,17 +127,11 @@ type WorkspaceManifestObservabilityDefaults struct {
 	RequireLogs   bool `yaml:"requireLogs,omitempty"`
 }
 
+// WorkspaceEnvironment is a named config-var patch. Manifests written by older
+// devstack versions may still carry type/observability keys under an
+// environment; they are ignored.
 type WorkspaceEnvironment struct {
-	Type          string                            `yaml:"type,omitempty"`
-	Observability WorkspaceEnvironmentObservability `yaml:"observability,omitempty"`
-	Values        map[string]string                 `yaml:"values,omitempty"`
-}
-
-type WorkspaceEnvironmentObservability struct {
-	Backend      string `yaml:"backend,omitempty"`
-	URL          string `yaml:"url,omitempty"`
-	OTLPEndpoint string `yaml:"otlpEndpoint,omitempty"`
-	APIKey       string `yaml:"apiKey,omitempty"`
+	Values map[string]string `yaml:"values,omitempty"`
 }
 
 type ServiceManifest struct {
@@ -279,6 +277,19 @@ func ObservabilityEnabled(workspacePath string) bool {
 		return false
 	}
 	return rw.Manifest.Observability.IsEnabled()
+}
+
+// WorkspaceObservability returns the observability block of the workspace
+// manifest at workspacePath, or the zero value when it can't be resolved.
+func WorkspaceObservability(workspacePath string) WorkspaceManifestObservability {
+	if !HasWorkspaceManifest(workspacePath) {
+		return WorkspaceManifestObservability{}
+	}
+	manifest, err := LoadWorkspaceManifest(workspacePath)
+	if err != nil {
+		return WorkspaceManifestObservability{}
+	}
+	return manifest.Observability
 }
 
 func LoadWorkspaceManifest(workspacePath string) (*WorkspaceManifest, error) {
@@ -471,7 +482,6 @@ func (rw *ResolvedWorkspace) ToLegacyConfig() *WorkspaceConfig {
 		Deps:         cloneStringSlicesMap(rw.Manifest.Dependencies),
 		Groups:       cloneStringSlicesMap(rw.Manifest.Groups),
 		ServicePaths: map[string]string{},
-		OtelPlugin:   rw.Manifest.Observability.ResolvedBackend(),
 	}
 	for name, service := range rw.Services {
 		cfg.ServicePaths[name] = service.RepoPath
@@ -497,10 +507,6 @@ func LegacyWorkspaceManifest(workspacePath string, cfg *WorkspaceConfig) (*Works
 		},
 		Groups:       cloneStringSlicesMap(cfg.Groups),
 		Dependencies: cloneStringSlicesMap(cfg.Deps),
-	}
-
-	if cfg.OtelPlugin != "" {
-		manifest.Observability.Backend = cfg.OtelPlugin
 	}
 
 	paths := make([]string, 0, len(cfg.ServicePaths))
