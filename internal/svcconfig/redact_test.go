@@ -81,6 +81,45 @@ func TestRedactValue(t *testing.T) {
 			want:       "https://fn.example.com/api/Price?market=" + maskedValue + "&code=" + maskedValue,
 			credential: "abc123",
 		},
+		{
+			name:  "sql server azure ad auth without password fully visible",
+			key:   "ConnectionStrings__App",
+			value: "Server=db.example.com;Initial Catalog=appdb;Authentication=Active Directory Default;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30",
+			want:  "Server=db.example.com;Initial Catalog=appdb;Authentication=Active Directory Default;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30",
+		},
+		{
+			name:       "authentication survives alongside redacted password",
+			key:        "ConnectionStrings__App",
+			value:      "Server=db.example.com;Authentication=Active Directory Password;User ID=svc;Password=hunter2",
+			want:       "Server=db.example.com;Authentication=Active Directory Password;User ID=svc;Password=" + maskedValue,
+			credential: "hunter2",
+		},
+		{
+			name:  "mars and connection timeout visible",
+			key:   "ConnectionStrings__App",
+			value: "MultipleActiveResultSets=True;Connection Timeout=30",
+			want:  "MultipleActiveResultSets=True;Connection Timeout=30",
+		},
+		{
+			name:  "otel resource attributes fully visible",
+			key:   "OTEL_RESOURCE_ATTRIBUTES",
+			value: "devstack.workspace=ws,devstack.service=api,devstack.stack=feat",
+			want:  "devstack.workspace=ws,devstack.service=api,devstack.stack=feat",
+		},
+		{
+			name:       "comma list redacts named credentials only",
+			key:        "Redis__ConnectionString",
+			value:      "localhost:6379,abortConnect=false,password=hunter2,token=abc123,sharedAccessSignature=abc123,name=api",
+			want:       "localhost:6379,abortConnect=false,password=" + maskedValue + ",token=" + maskedValue + ",sharedAccessSignature=" + maskedValue + ",name=api",
+			credential: "hunter2",
+		},
+		{
+			name:       "shared access signature stays redacted",
+			key:        "Storage__Blobs",
+			value:      "BlobEndpoint=https://acct.blob.core.windows.net;SharedAccessSignature=sv=2021&sig=abc123",
+			want:       "BlobEndpoint=https://acct.blob.core.windows.net;SharedAccessSignature=" + maskedValue,
+			credential: "abc123",
+		},
 	}
 
 	for _, c := range cases {

@@ -4,18 +4,20 @@ import "strings"
 
 // credentialPairNames are settings-string pair names whose value authenticates.
 var credentialPairNames = map[string]bool{
-	"password":        true,
-	"pwd":             true,
-	"accountkey":      true,
-	"sharedaccesskey": true,
-	"secret":          true,
-	"token":           true,
-	"apikey":          true,
-	"sig":             true,
-	"code":            true,
-	"credential":      true,
-	"certificate":     true,
-	"privatekey":      true,
+	"password":              true,
+	"pwd":                   true,
+	"accountkey":            true,
+	"sharedaccesskey":       true,
+	"sharedaccesssignature": true,
+	"sas":                   true,
+	"secret":                true,
+	"token":                 true,
+	"apikey":                true,
+	"sig":                   true,
+	"code":                  true,
+	"credential":            true,
+	"certificate":           true,
+	"privatekey":            true,
 }
 
 // identifyingPairNames are settings-string pair names whose value says what the
@@ -49,6 +51,51 @@ var identifyingPairNames = map[string]bool{
 	"pooling":                  true,
 	"abortconnect":             true,
 	"applicationname":          true,
+
+	"authentication":           true,
+	"multipleactiveresultsets": true,
+	"connectiontimeout":        true,
+	"connectlifetime":          true,
+	"connectionlifetime":       true,
+	"minpoolsize":              true,
+	"maxpoolsize":              true,
+	"integratedsecurity":       true,
+	"persistsecurityinfo":      true,
+	"applicationintent":        true,
+	"multisubnetfailover":      true,
+	"currentlanguage":          true,
+	"packetsize":               true,
+	"workstationid":            true,
+	"failoverpartner":          true,
+	"columnencryptionsetting":  true,
+	"attachdbfilename":         true,
+	"networklibrary":           true,
+	"loadbalancetimeout":       true,
+	"enlist":                   true,
+	"replication":              true,
+	"hostnameincertificate":    true,
+	"commandtimeout":           true,
+
+	"entitypath":    true,
+	"transporttype": true,
+	"blobendpoint":  true,
+	"queueendpoint": true,
+	"tableendpoint": true,
+	"fileendpoint":  true,
+
+	"connectretry":    true,
+	"connecttimeout":  true,
+	"synctimeout":     true,
+	"defaultdatabase": true,
+	"allowadmin":      true,
+	"keepalive":       true,
+	"name":            true,
+
+	"searchpath":         true,
+	"sslrootcert":        true,
+	"sslcert":            true,
+	"channelbinding":     true,
+	"targetsessionattrs": true,
 }
 
 // RedactValue renders a config value so a reader can tell what it points at
@@ -65,7 +112,7 @@ func RedactValue(key, value string) string {
 	case strings.Contains(value, "&") && strings.Contains(value, "="):
 		return redactPairs(value, "&")
 	case strings.Contains(value, ",") && strings.Contains(value, "="):
-		return redactPairs(value, ",")
+		return redactAttrList(value)
 	}
 	if IsSecret(key, value) {
 		return maskedValue
@@ -94,6 +141,23 @@ func redactPair(pair string) string {
 		return pair
 	}
 	return name + "=" + maskedValue
+}
+
+// redactAttrList handles a comma-delimited attribute list — OTEL resource
+// attributes, Redis client options — where a pair carries a credential only if
+// it is named as one, so unrecognized names stay readable.
+func redactAttrList(value string) string {
+	parts := strings.Split(value, ",")
+	for i, p := range parts {
+		name, val, ok := strings.Cut(p, "=")
+		if !ok || strings.TrimSpace(val) == "" {
+			continue
+		}
+		if credentialPairNames[normalizePairName(name)] {
+			parts[i] = name + "=" + maskedValue
+		}
+	}
+	return strings.Join(parts, ",")
 }
 
 func normalizePairName(name string) string {
