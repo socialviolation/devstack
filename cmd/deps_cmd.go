@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -71,6 +72,10 @@ func runDepsAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if !config.HasWorkspaceManifest(ws.Path) {
+		return fmt.Errorf("workspace %q has no %s — dependencies can only be edited in a manifest-based workspace", ws.Name, config.WorkspaceManifestFileName)
+	}
+
 	cfg, err := config.Load(ws.Path)
 	if err != nil {
 		return err
@@ -95,11 +100,16 @@ func runDepsAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("dependency cycle detected: adding %q as a dep of %q would create a cycle", dep, service)
 	}
 
-	if err := config.Save(ws.Path, cfg); err != nil {
+	if err := config.SetServiceDependencies(ws.Path, service, cfg.Deps[service]); err != nil {
 		return err
 	}
 
 	fmt.Printf("✓ %s now depends on %s\n", service, dep)
+	if _, err := regenerateHostTiltfile(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not regenerate host config: %v\n", err)
+	} else {
+		fmt.Println("Regenerated host config.")
+	}
 	return nil
 }
 
@@ -111,6 +121,10 @@ func runDepsRemove(cmd *cobra.Command, args []string) error {
 	ws, err := resolveWorkspace(wsFlag)
 	if err != nil {
 		return err
+	}
+
+	if !config.HasWorkspaceManifest(ws.Path) {
+		return fmt.Errorf("workspace %q has no %s — dependencies can only be edited in a manifest-based workspace", ws.Name, config.WorkspaceManifestFileName)
 	}
 
 	cfg, err := config.Load(ws.Path)
@@ -136,11 +150,16 @@ func runDepsRemove(cmd *cobra.Command, args []string) error {
 
 	cfg.Deps[service] = newDeps
 
-	if err := config.Save(ws.Path, cfg); err != nil {
+	if err := config.SetServiceDependencies(ws.Path, service, newDeps); err != nil {
 		return err
 	}
 
 	fmt.Printf("✓ Removed %s from %s dependencies\n", dep, service)
+	if _, err := regenerateHostTiltfile(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not regenerate host config: %v\n", err)
+	} else {
+		fmt.Println("Regenerated host config.")
+	}
 	return nil
 }
 

@@ -19,17 +19,21 @@ import (
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show live service status (or all workspaces if run outside a workspace)",
-	Long: `Show a live grouped tree view of every service in the current workspace —
-their running state, exposed ports, and declared dependencies.
+	Long: `Show a live table of every service in the current workspace — the group or
+feature stack it belongs to, its running state, exposed ports, and declared
+dependencies.
 
 If run from outside any registered workspace, shows a summary table of all
 workspaces and their daemon status instead.
+
+Groups and feature stacks with nothing running collapse to a single line.
+Pass --all to table every group and stack, and to show each service's source path.
 
 Service states:
   running   — process is up and healthy
   starting  — process is starting or building
   error     — process exited with an error (check logs)
-  idle      — service is registered but not currently enabled
+  stopped   — service is registered but not currently running
   disabled  — service has been explicitly stopped
   unknown   — daemon is not reachable (run: devstack workspace up)`,
 	RunE: runStatus,
@@ -38,6 +42,7 @@ Service states:
 func init() {
 	rootCmd.AddCommand(statusCmd)
 	statusCmd.Flags().String("stack", "", "Show a feature stack's service instances (<ws>:<svc>:<stack>) instead of base")
+	statusCmd.Flags().Bool("all", false, "Show the full table for every group and stack, including ones with nothing running")
 }
 
 // groupPalette cycles through distinct colors for group headers.
@@ -61,7 +66,8 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		}
 		return runStackStatus(ws, rec)
 	}
-	return runWorkspaceStatus(ws)
+	expand, _ := cmd.Flags().GetBool("all")
+	return runWorkspaceStatus(ws, expand)
 }
 
 // runStackStatus shows a feature stack's services as they run in the one host
@@ -137,7 +143,7 @@ func runStackStatus(base *workspace.Workspace, rec *stack.Record) error {
 	return nil
 }
 
-func runWorkspaceStatus(ws *workspace.Workspace) error {
+func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 	ws.TiltPort = workspace.HostTiltPort
 
 	cfg, _ := config.Load(ws.Path)
@@ -151,14 +157,7 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 
 	resourceMap := make(map[string]tilt.UIResource)
 	if tiltErr == nil {
-		prefix := ws.Name + ":"
-		for _, r := range view.UiResources {
-			bare, ok := strings.CutPrefix(r.Metadata.Name, prefix)
-			if !ok || strings.Contains(bare, ":") {
-				continue
-			}
-			resourceMap[bare] = r
-		}
+		resourceMap = hostResourceMap(view.UiResources, ws.Name, "")
 	}
 
 	// Collect all known service names
@@ -208,11 +207,16 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 	} else {
 		infraParts = append(infraParts, fmt.Sprintf("host daemon :%d", ws.TiltPort))
 	}
-	if isOtelRunning(ws) {
-		infraParts = append(infraParts,
-			fmt.Sprintf("otel ui:%d otlp:%d grpc:%d", ws.UIPort(), ws.HTTPPort(), ws.GRPCPort()),
-		)
-	} else if config.ObservabilityEnabled(ws.Path) {
+	otelUp := isOtelRunning(ws)
+	pluginConfigured := ws.OtelPlugin != "" || len(ws.OtelPluginConfig) > 0
+	otelText, decided := otelSegment(otelUp, config.ObservabilityEnabled(ws.Path), pluginConfigured,
+		ws.OtelPlugin, ws.UIPort(), ws.HTTPPort(), ws.GRPCPort())
+	switch {
+	case decided && otelUp:
+		infraParts = append(infraParts, otelText)
+	case decided:
+		infraParts = append(infraParts, color.New(color.FgYellow).Sprint(otelText))
+	default:
 		if started, err := ensureCollector(ws); started {
 			infraParts = append(infraParts, color.New(color.FgGreen).Sprint("otel: collector was down — started it"))
 		} else if err != nil {
@@ -262,34 +266,27 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 		}
 	}
 
+	sections := make([]serviceSection, 0, len(groupNames)+1)
 	for i, groupName := range groupNames {
-		members := cfg.Groups[groupName]
+		members := append([]string(nil), cfg.Groups[groupName]...)
 		if len(members) == 0 {
 			continue
 		}
 		sort.Strings(members)
-
-		gc := groupPalette[i%len(groupPalette)]
-
-		groupRunning := 0
-		for _, svc := range members {
-			if r, ok := resourceMap[svc]; ok && serviceStatus(r) == "running" {
-				groupRunning++
-			}
-		}
-		gc.Printf("● %s", groupName)
-		color.New(color.Faint).Printf("  [%d/%d]\n", groupRunning, len(members))
-
-		memberSet := make(map[string]bool, len(members))
-		for _, m := range members {
-			memberSet[m] = true
-		}
-		roots := buildGroupTree(members, cfg.Deps)
-		renderStatusNodes(roots, "  ", resourceMap, cfg.Deps, memberSet, svcGroupColor, serviceDirs, svcEnvNames)
-		fmt.Println()
+		groupRunning := countRunning(members, resourceMap)
+		sections = append(sections, serviceSection{
+			label:     groupName,
+			members:   members,
+			deps:      cfg.Deps,
+			resources: resourceMap,
+			envs:      svcEnvNames,
+			dirs:      serviceDirs,
+			color:     groupPalette[i%len(groupPalette)],
+			running:   groupRunning,
+			tag:       fmt.Sprintf("[%d/%d]", groupRunning, len(members)),
+		})
 	}
 
-	// Ungrouped services
 	ungrouped := make([]string, 0)
 	for svc := range allServices {
 		if !inGroup[svc] {
@@ -297,67 +294,107 @@ func runWorkspaceStatus(ws *workspace.Workspace) error {
 		}
 	}
 	sort.Strings(ungrouped)
-
 	if len(ungrouped) > 0 {
-		color.New(color.Faint, color.Bold).Printf("● ungrouped\n")
-		for j, svc := range ungrouped {
-			isLast := j == len(ungrouped)-1
-			branch := "  ├── "
-			if isLast {
-				branch = "  └── "
-			}
-			statusStr, statusClr := svcStatusColor(svc, resourceMap)
-			portsRaw := svcPortsRaw(svc, resourceMap)
-			fmt.Print(branch)
-			fmt.Printf("%-22s  ", svc)
-			statusClr.Printf("%-10s", statusStr)
-			fmt.Print("  ")
-			printPorts(portsRaw, 14)
-			printEnv(svc, svcEnvNames)
-			fmt.Println()
-			if dir := serviceDirs[svc]; dir != "" {
-				color.New(color.Faint).Printf("      %s\n", shortDir(dir))
-			}
-		}
-		fmt.Println()
+		ungroupedRunning := countRunning(ungrouped, resourceMap)
+		sections = append(sections, serviceSection{
+			label:     ungroupedLabel,
+			members:   ungrouped,
+			deps:      cfg.Deps,
+			resources: resourceMap,
+			envs:      svcEnvNames,
+			dirs:      serviceDirs,
+			color:     color.New(color.Faint, color.Bold),
+			running:   ungroupedRunning,
+			tag:       fmt.Sprintf("[%d/%d]", ungroupedRunning, len(ungrouped)),
+		})
 	}
+	sections = append(sections, stackSections(ws, view, cfg.Deps, len(groupNames))...)
 
-	printStackSection(ws.Name)
+	table, condensed := partitionSections(sections, expand)
+	if rows := assembleRows(table); len(rows) > 0 {
+		renderStatusTable(rows, svcGroupColor, expand)
+	}
+	if len(condensed) > 0 {
+		fmt.Println()
+		for _, s := range condensed {
+			printCondensedSection(s.color, s.label, s.tag, s.members)
+		}
+	}
+	fmt.Println()
 
+	color.New(color.Faint).Printf("  within a group, top-to-bottom = startup order   ·   blank ENV = no env\n")
 	color.New(color.Faint).Printf("  devstack start <service>   ·   devstack start --group=<group>\n")
+	color.New(color.Faint).Printf("  devstack stack up <name>   ·   devstack stack config <svc> --stack <name>\n")
+	color.New(color.Faint).Printf("  idle groups are condensed   ·   devstack status --all shows every service and its source path\n")
 
 	return nil
 }
 
-// printStackSection lists the workspace's in-flight feature stacks under the base
-// service tree, so a status check surfaces the other running versions. It prints
-// nothing for a workspace with no stacks (or when the target is itself a stack,
-// whose name has no store of its own).
-func printStackSection(wsName string) {
-	stacks, err := stack.List(wsName)
-	if err != nil || len(stacks) == 0 {
-		return
+// stackSections turns the workspace's in-flight feature stacks into table
+// sections, reading each stack's <ws>:<svc>:<stack> resources out of the host
+// view already fetched for the base workspace. colorOffset continues the group
+// palette so a stack's rows stay distinguishable from the base groups'.
+func stackSections(ws *workspace.Workspace, view *tilt.TiltView, baseDeps map[string][]string, colorOffset int) []serviceSection {
+	recs, err := stack.LoadStore(ws.Name)
+	if err != nil || len(recs) == 0 {
+		return nil
 	}
-	fmt.Println()
-	color.New(color.Bold).Printf("Feature stacks of %s (%d in flight):\n", wsName, len(stacks))
-	for _, s := range stacks {
-		statusClr := color.New(color.Faint)
-		if s.Status == "active" {
-			statusClr = color.New(color.FgGreen)
+	sort.Slice(recs, func(i, j int) bool { return recs[i].Name < recs[j].Name })
+
+	out := make([]serviceSection, 0, len(recs))
+	for _, rec := range recs {
+		resourceMap := map[string]tilt.UIResource{}
+		if view != nil {
+			resourceMap = hostResourceMap(view.UiResources, ws.Name, rec.Name)
 		}
-		fmt.Printf("  %-22s ", s.Name)
-		statusClr.Printf("%-9s", s.Status)
-		fmt.Printf("  base :%d", s.BasePort)
-		links := make([]string, 0, len(s.Ports))
-		for _, k := range sortedKeys(s.Ports) {
-			links = append(links, fmt.Sprintf("%s→:%d", k, s.Ports[k]))
+
+		services := map[string]bool{}
+		for _, svc := range rec.Overlay {
+			services[svc] = true
 		}
-		if len(links) > 0 {
-			color.New(color.Faint).Printf("   %s", strings.Join(links, " "))
+		for svc := range resourceMap {
+			services[svc] = true
 		}
-		fmt.Println()
+		if len(services) == 0 {
+			continue
+		}
+
+		deps := baseDeps
+		rw, err := stack.ResolveWorktree(&rec)
+		if err == nil && rw != nil {
+			if stackCfg := rw.ToLegacyConfig(); stackCfg != nil && len(stackCfg.Deps) > 0 {
+				deps = stackCfg.Deps
+			}
+		} else {
+			rw, _ = config.ResolveWorkspace(ws.Path)
+		}
+		svcEnvNames := resolveActiveEnvs(rw, services, rec.Env)
+
+		names := make([]string, 0, len(services))
+		for svc := range services {
+			names = append(names, svc)
+		}
+		sort.Strings(names)
+
+		stackRunning := countRunning(names, resourceMap)
+		tag := fmt.Sprintf("[%d/%d]", stackRunning, len(names))
+		if !rec.Active {
+			tag += " inactive"
+		}
+
+		out = append(out, serviceSection{
+			label:     "stack: " + rec.Name,
+			members:   names,
+			deps:      deps,
+			resources: resourceMap,
+			envs:      svcEnvNames,
+			color:     groupPalette[(colorOffset+len(out))%len(groupPalette)],
+			running:   stackRunning,
+			tag:       tag,
+			isStack:   true,
+		})
 	}
-	color.New(color.Faint).Printf("  devstack stack up <name>   ·   devstack stack config <svc> --stack <name>\n")
+	return out
 }
 
 func svcStatusColor(svc string, resourceMap map[string]tilt.UIResource) (string, *color.Color) {

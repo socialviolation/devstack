@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -202,6 +203,10 @@ func runGroupsAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if !config.HasWorkspaceManifest(ws.Path) {
+		return fmt.Errorf("workspace %q has no %s — groups can only be edited in a manifest-based workspace", ws.Name, config.WorkspaceManifestFileName)
+	}
+
 	cfg, err := config.Load(ws.Path)
 	if err != nil {
 		return err
@@ -230,11 +235,16 @@ func runGroupsAdd(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if err := config.Save(ws.Path, cfg); err != nil {
+	if err := config.SetGroupMembers(ws.Path, group, cfg.Groups[group]); err != nil {
 		return err
 	}
 
 	fmt.Printf("✓ Group %q: %s\n", group, strings.Join(cfg.Groups[group], ", "))
+	if _, err := regenerateHostTiltfile(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not regenerate host config: %v\n", err)
+	} else {
+		fmt.Println("Regenerated host config.")
+	}
 	return nil
 }
 
@@ -249,6 +259,10 @@ func runGroupsRemove(cmd *cobra.Command, args []string) error {
 	ws, err := resolveWorkspace(wsFlag)
 	if err != nil {
 		return err
+	}
+
+	if !config.HasWorkspaceManifest(ws.Path) {
+		return fmt.Errorf("workspace %q has no %s — groups can only be edited in a manifest-based workspace", ws.Name, config.WorkspaceManifestFileName)
 	}
 
 	cfg, err := config.Load(ws.Path)
@@ -268,7 +282,7 @@ func runGroupsRemove(cmd *cobra.Command, args []string) error {
 	}
 	cfg.Groups[group] = remaining
 
-	if err := config.Save(ws.Path, cfg); err != nil {
+	if err := config.SetGroupMembers(ws.Path, group, remaining); err != nil {
 		return err
 	}
 
@@ -276,6 +290,11 @@ func runGroupsRemove(cmd *cobra.Command, args []string) error {
 		fmt.Printf("✓ Group %q is now empty\n", group)
 	} else {
 		fmt.Printf("✓ Group %q: %s\n", group, strings.Join(remaining, ", "))
+	}
+	if _, err := regenerateHostTiltfile(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not regenerate host config: %v\n", err)
+	} else {
+		fmt.Println("Regenerated host config.")
 	}
 	return nil
 }

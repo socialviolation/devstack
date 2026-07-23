@@ -13,6 +13,7 @@ import (
 
 	"github.com/fatih/color"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -75,59 +76,386 @@ func buildGroupTree(members []string, deps map[string][]string) []*treeNode {
 	return roots
 }
 
-// renderStatusNodes renders a slice of treeNodes as a status tree at the given indent level.
-// memberSet is the set of all services in the current group; cross-group deps show as arrows.
-// serviceDirs maps service name → source directory (may be empty map).
-func renderStatusNodes(nodes []*treeNode, indent string, resourceMap map[string]tilt.UIResource, deps map[string][]string, memberSet map[string]bool, svcGroupColor map[string]*color.Color, serviceDirs map[string]string, svcEnvNames map[string]string) {
-	for i, node := range nodes {
-		isLast := i == len(nodes)-1
-		branch := "├── "
-		childIndent := "│   "
-		if isLast {
-			branch = "└── "
-			childIndent = "    "
+// orderGroupServices returns the group's members in dependency order —
+// every service after the in-group dependencies it waits on.
+func orderGroupServices(members []string, deps map[string][]string) []string {
+	memberSet := make(map[string]bool, len(members))
+	for _, m := range members {
+		memberSet[m] = true
+	}
+
+	ordered := append([]string(nil), members...)
+	sort.Strings(ordered)
+
+	waits := make(map[string][]string, len(ordered))
+	for _, m := range ordered {
+		for _, dep := range deps[m] {
+			if memberSet[dep] && dep != m {
+				waits[m] = append(waits[m], dep)
+			}
 		}
+	}
 
-		svc := node.name
-		statusStr, statusClr := svcStatusColor(svc, resourceMap)
-		portsRaw := svcPortsRaw(svc, resourceMap)
+	out := make([]string, 0, len(ordered))
+	done := make(map[string]bool, len(ordered))
+	for len(out) < len(ordered) {
+		next := ""
+		for _, m := range ordered {
+			if done[m] {
+				continue
+			}
+			ready := true
+			for _, dep := range waits[m] {
+				if !done[dep] {
+					ready = false
+					break
+				}
+			}
+			if ready {
+				next = m
+				break
+			}
+		}
+		if next == "" {
+			for _, m := range ordered {
+				if !done[m] {
+					out = append(out, m)
+					done[m] = true
+				}
+			}
+			break
+		}
+		out = append(out, next)
+		done[next] = true
+	}
+	return out
+}
 
-		fmt.Print(indent + branch)
-		fmt.Printf("%-22s  ", svc)
-		statusClr.Printf("%-10s", statusStr)
+// splitHostResource decomposes a host-daemon resource name under prefix
+// (<workspace>:) into its bare service and stack namespace. ok is false when the
+// name belongs to a different workspace. A base-workspace resource yields an
+// empty stack namespace.
+func splitHostResource(name, prefix string) (svc, stackNS string, ok bool) {
+	if !strings.HasPrefix(name, prefix) {
+		return "", "", false
+	}
+	rest := name[len(prefix):]
+	if i := strings.IndexByte(rest, ':'); i >= 0 {
+		return rest[:i], rest[i+1:], true
+	}
+	return rest, "", true
+}
+
+// hostResourceMap indexes a host-daemon view by bare service name, keeping only
+// the resources of one namespace: the base workspace when stackName is "", or a
+// feature stack's <ws>:<svc>:<stack> resources otherwise.
+func hostResourceMap(resources []tilt.UIResource, wsName, stackName string) map[string]tilt.UIResource {
+	prefix := wsName + ":"
+	out := make(map[string]tilt.UIResource, len(resources))
+	for _, r := range resources {
+		svc, ns, ok := splitHostResource(r.Metadata.Name, prefix)
+		if !ok || ns != stackName {
+			continue
+		}
+		out[svc] = r
+	}
+	return out
+}
+
+// otelSegment returns the status header's otel segment for the states decidable
+// without touching the collector. decided is false only for the enabled but not
+// running case, which the caller resolves with an auto-start attempt.
+func otelSegment(running, enabled, pluginConfigured bool, plugin string, uiPort, httpPort, grpcPort int) (text string, decided bool) {
+	switch {
+	case running:
+		return fmt.Sprintf("otel ui:%d otlp:%d grpc:%d", uiPort, httpPort, grpcPort), true
+	case enabled:
+		return "", false
+	case pluginConfigured:
+		if plugin == "" {
+			plugin = "plugin config"
+		}
+		return fmt.Sprintf("otel: configured (%s) but not enabled — devstack otel enable", plugin), true
+	default:
+		return "otel: disabled — devstack otel enable", true
+	}
+}
+
+// hostOtelLine summarises otel across every registered workspace for the global
+// status view. running entries are preformatted "<workspace> ui:<port> otlp:<port>" labels.
+func hostOtelLine(running, enabled []string) string {
+	switch {
+	case len(running) > 0:
+		return "otel: " + strings.Join(running, ", ")
+	case len(enabled) > 0:
+		return "otel: enabled for " + strings.Join(enabled, ", ") + " but collector stopped — devstack otel start"
+	default:
+		return "otel: no collector running — devstack otel enable"
+	}
+}
+
+// condenseSection reports whether a section renders as a single summary line
+// instead of a full table: nothing running, and the user did not ask for
+// everything expanded.
+func condenseSection(running int, expand bool) bool {
+	return running == 0 && !expand
+}
+
+// wrapCommaList joins names into comma-separated lines no wider than width,
+// never dropping a name.
+func wrapCommaList(names []string, width int) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	var lines []string
+	cur := ""
+	for i, n := range names {
+		piece := n
+		if i < len(names)-1 {
+			piece += ","
+		}
+		switch {
+		case cur == "":
+			cur = piece
+		case len(cur)+1+len(piece) > width:
+			lines = append(lines, cur)
+			cur = piece
+		default:
+			cur += " " + piece
+		}
+	}
+	return append(lines, cur)
+}
+
+// printCondensedSection prints a section with nothing running as one line: an
+// idle marker, the section's coloured name, a count or state tag, then the
+// member names wrapped under the first name.
+func printCondensedSection(hdrColor *color.Color, label, tag string, names []string) {
+	head := statusIndent + "idle  " + label
+	suffix := " " + tag + " "
+	faint := color.New(color.Faint)
+	faint.Print(statusIndent + "idle  ")
+	hdrColor.Print(label)
+	faint.Print(suffix)
+
+	startCol := len(head) + len(suffix)
+	lines := wrapCommaList(names, condenseWidth-startCol)
+	if len(lines) == 0 {
+		fmt.Println()
+		return
+	}
+	for i, line := range lines {
+		if i > 0 {
+			fmt.Print(strings.Repeat(" ", startCol))
+		}
+		faint.Println(line)
+	}
+}
+
+const (
+	condenseWidth = 100
+	statusIndent  = "  "
+
+	colService    = 22
+	colServiceMax = 34
+	colGroup      = 12
+	colState      = 10
+	colPorts      = 14
+	colEnv        = 7
+	colNeeds      = 36
+
+	ungroupedLabel = "ungrouped"
+)
+
+// serviceSection is one band of the status table — a group of the base
+// workspace, the ungrouped remainder, or a feature stack's instances — carrying
+// everything needed to render its services without another daemon round-trip.
+type serviceSection struct {
+	label     string
+	members   []string
+	deps      map[string][]string
+	resources map[string]tilt.UIResource
+	envs      map[string]string
+	dirs      map[string]string
+	color     *color.Color
+	running   int
+	tag       string
+	isStack   bool
+}
+
+// statusRow is one rendered line of the single status table.
+type statusRow struct {
+	service    string
+	group      string
+	state      string
+	ports      string
+	env        string
+	needs      []string
+	dir        string
+	rowColor   *color.Color
+	stateColor *color.Color
+	memberSet  map[string]bool
+}
+
+func sectionRank(s serviceSection) int {
+	switch {
+	case s.isStack:
+		return 2
+	case s.label == ungroupedLabel:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// sortSections orders the table's bands: base groups alphabetically, then the
+// ungrouped remainder, then feature stacks alphabetically.
+func sortSections(sections []serviceSection) []serviceSection {
+	out := append([]serviceSection(nil), sections...)
+	sort.SliceStable(out, func(i, j int) bool {
+		if ri, rj := sectionRank(out[i]), sectionRank(out[j]); ri != rj {
+			return ri < rj
+		}
+		return out[i].label < out[j].label
+	})
+	return out
+}
+
+// partitionSections splits sections into the ones rendered as table rows and
+// the ones collapsed to a single idle line, preserving table order.
+func partitionSections(sections []serviceSection, expand bool) (table, condensed []serviceSection) {
+	for _, s := range sortSections(sections) {
+		if condenseSection(s.running, expand) {
+			condensed = append(condensed, s)
+		} else {
+			table = append(table, s)
+		}
+	}
+	return table, condensed
+}
+
+// assembleRows flattens sections into table rows, keeping each section's rows
+// contiguous and ordering services within a section so dependencies come first.
+func assembleRows(sections []serviceSection) []statusRow {
+	var rows []statusRow
+	for _, s := range sections {
+		memberSet := make(map[string]bool, len(s.members))
+		for _, m := range s.members {
+			memberSet[m] = true
+		}
+		for _, svc := range orderGroupServices(s.members, s.deps) {
+			state, stateClr := svcStatusColor(svc, s.resources)
+			rows = append(rows, statusRow{
+				service:    svc,
+				group:      s.label,
+				state:      state,
+				ports:      svcPortsRaw(svc, s.resources),
+				env:        s.envs[svc],
+				needs:      s.deps[svc],
+				dir:        s.dirs[svc],
+				rowColor:   s.color,
+				stateColor: stateClr,
+				memberSet:  memberSet,
+			})
+		}
+	}
+	return rows
+}
+
+// countRunning counts how many of the members are up in the given daemon view.
+func countRunning(members []string, resources map[string]tilt.UIResource) int {
+	n := 0
+	for _, m := range members {
+		if r, ok := resources[m]; ok && serviceStatus(r) == "running" {
+			n++
+		}
+	}
+	return n
+}
+
+// renderStatusTable prints every row of the workspace under one header row,
+// colouring each row by the group it belongs to while the STATE cell keeps its
+// own state colour. Source paths only print when the caller asked for them.
+func renderStatusTable(rows []statusRow, svcGroupColor map[string]*color.Color, showDirs bool) {
+	svcWidth, groupWidth := colService, colGroup
+	for _, r := range rows {
+		if len(r.service) > svcWidth {
+			svcWidth = len(r.service)
+		}
+		if len(r.group) > groupWidth {
+			groupWidth = len(r.group)
+		}
+	}
+	if svcWidth > colServiceMax {
+		svcWidth = colServiceMax
+	}
+	needsIndent := strings.Repeat(" ", len(statusIndent)+svcWidth+2+groupWidth+2+colState+2+colPorts+2+colEnv+2)
+
+	faint := color.New(color.Faint)
+	faint.Printf("%s%-*s  %-*s  %-*s  %-*s  %-*s  %s\n", statusIndent,
+		svcWidth, "SERVICE", groupWidth, "GROUP", colState, "STATE", colPorts, "PORTS", colEnv, "ENV", "NEEDS")
+
+	for _, r := range rows {
+		hasNeeds := len(r.needs) > 0
+
+		fmt.Print(statusIndent)
+		r.rowColor.Printf("%-*s", svcWidth, r.service)
 		fmt.Print("  ")
-		printPorts(portsRaw, 14)
-		printEnv(svc, svcEnvNames)
-
-		var crossDeps []string
-		for _, dep := range deps[svc] {
-			if !memberSet[dep] {
-				crossDeps = append(crossDeps, dep)
-			}
+		r.rowColor.Printf("%-*s", groupWidth, r.group)
+		fmt.Print("  ")
+		r.stateColor.Printf("%-*s", colState, r.state)
+		fmt.Print("  ")
+		if hasNeeds || r.env != "" {
+			printPorts(r.ports, colPorts)
+		} else {
+			printPorts(r.ports, 0)
 		}
-		if len(crossDeps) > 0 {
-			color.New(color.Faint).Print("  ← ")
-			for k, dep := range crossDeps {
-				if k > 0 {
-					color.New(color.Faint).Print(", ")
-				}
-				if c, ok := svcGroupColor[dep]; ok {
-					c.Print(dep)
-				} else {
-					color.New(color.Faint).Print(dep)
-				}
-			}
+
+		switch {
+		case hasNeeds:
+			fmt.Print("  ")
+			faint.Printf("%-*s", colEnv, r.env)
+			fmt.Print("  ")
+			printNeeds(r.needs, r.memberSet, svcGroupColor, needsIndent)
+		case r.env != "":
+			fmt.Print("  ")
+			faint.Print(r.env)
 		}
 		fmt.Println()
 
-		// Path on its own line, indented to align under the service name (past the branch chars)
-		if dir := serviceDirs[svc]; dir != "" {
-			color.New(color.Faint).Printf("%s    %s\n", indent, shortDir(dir))
+		if showDirs && r.dir != "" {
+			faint.Printf("%s  %s\n", statusIndent, shortDir(r.dir))
 		}
+	}
+}
 
-		if len(node.children) > 0 {
-			renderStatusNodes(node.children, indent+childIndent, resourceMap, deps, memberSet, svcGroupColor, serviceDirs, svcEnvNames)
+// printNeeds prints a service's dependencies, wrapping onto continuation lines
+// aligned under the NEEDS column.
+func printNeeds(svcDeps []string, memberSet map[string]bool, svcGroupColor map[string]*color.Color, contIndent string) {
+	names := append([]string(nil), svcDeps...)
+	sort.Strings(names)
+
+	faint := color.New(color.Faint)
+	col, first := 0, true
+	for _, dep := range names {
+		switch {
+		case first:
+		case col+2+len(dep) > colNeeds:
+			faint.Print(",")
+			fmt.Println()
+			fmt.Print(contIndent)
+			col, first = 0, true
+		default:
+			faint.Print(", ")
+			col += 2
 		}
+		if c, ok := svcGroupColor[dep]; ok && !memberSet[dep] {
+			c.Print(dep)
+		} else {
+			faint.Print(dep)
+		}
+		col += len(dep)
+		first = false
 	}
 }
 
@@ -218,7 +546,19 @@ func runStatusAll() error {
 
 	wg.Wait()
 
-	fmt.Printf("All workspaces and their stacks run in one host daemon on :%d, addressable as <workspace>:<service>[:<stack>].\n\n", workspace.HostTiltPort)
+	fmt.Printf("All workspaces and their stacks run in one host daemon on :%d, addressable as <workspace>:<service>[:<stack>].\n", workspace.HostTiltPort)
+
+	var otelRunning, otelEnabled []string
+	for i := range workspaces {
+		w := &workspaces[i]
+		switch {
+		case isOtelRunning(w):
+			otelRunning = append(otelRunning, fmt.Sprintf("%s ui:%d otlp:%d", w.Name, w.UIPort(), w.HTTPPort()))
+		case config.ObservabilityEnabled(w.Path):
+			otelEnabled = append(otelEnabled, w.Name)
+		}
+	}
+	color.New(color.Faint).Printf("%s\n\n", hostOtelLine(otelRunning, otelEnabled))
 	fmt.Printf("%-16s %-36s %-8s %-12s %s\n", "WORKSPACE", "PATH", "PORT", "STATUS", "SERVICES")
 	fmt.Println(strings.Repeat("-", 88))
 	for _, r := range results {
@@ -262,7 +602,7 @@ func serviceStatus(r tilt.UIResource) string {
 	if r.Status.UpdateStatus == "error" {
 		return "error"
 	}
-	return "idle"
+	return "stopped"
 }
 
 // extractPorts turns endpoint URLs into compact ":PORT" strings.
@@ -271,13 +611,17 @@ func extractPorts(links []tilt.EndpointLink) string {
 		return "-"
 	}
 	parts := make([]string, 0, len(links))
+	seen := make(map[string]bool, len(links))
 	for _, ep := range links {
-		u, err := url.Parse(ep.URL)
-		if err == nil && u.Port() != "" {
-			parts = append(parts, ":"+u.Port())
-		} else {
-			parts = append(parts, ep.URL)
+		part := ep.URL
+		if u, err := url.Parse(ep.URL); err == nil && u.Port() != "" {
+			part = ":" + u.Port()
 		}
+		if seen[part] {
+			continue
+		}
+		seen[part] = true
+		parts = append(parts, part)
 	}
 	return strings.Join(parts, " ")
 }
