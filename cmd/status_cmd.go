@@ -13,6 +13,7 @@ import (
 
 	"github.com/fatih/color"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -130,7 +131,129 @@ func orderGroupServices(members []string, deps map[string][]string) []string {
 	return out
 }
 
+// splitHostResource decomposes a host-daemon resource name under prefix
+// (<workspace>:) into its bare service and stack namespace. ok is false when the
+// name belongs to a different workspace. A base-workspace resource yields an
+// empty stack namespace.
+func splitHostResource(name, prefix string) (svc, stackNS string, ok bool) {
+	if !strings.HasPrefix(name, prefix) {
+		return "", "", false
+	}
+	rest := name[len(prefix):]
+	if i := strings.IndexByte(rest, ':'); i >= 0 {
+		return rest[:i], rest[i+1:], true
+	}
+	return rest, "", true
+}
+
+// hostResourceMap indexes a host-daemon view by bare service name, keeping only
+// the resources of one namespace: the base workspace when stackName is "", or a
+// feature stack's <ws>:<svc>:<stack> resources otherwise.
+func hostResourceMap(resources []tilt.UIResource, wsName, stackName string) map[string]tilt.UIResource {
+	prefix := wsName + ":"
+	out := make(map[string]tilt.UIResource, len(resources))
+	for _, r := range resources {
+		svc, ns, ok := splitHostResource(r.Metadata.Name, prefix)
+		if !ok || ns != stackName {
+			continue
+		}
+		out[svc] = r
+	}
+	return out
+}
+
+// otelSegment returns the status header's otel segment for the states decidable
+// without touching the collector. decided is false only for the enabled but not
+// running case, which the caller resolves with an auto-start attempt.
+func otelSegment(running, enabled, pluginConfigured bool, plugin string, uiPort, httpPort, grpcPort int) (text string, decided bool) {
+	switch {
+	case running:
+		return fmt.Sprintf("otel ui:%d otlp:%d grpc:%d", uiPort, httpPort, grpcPort), true
+	case enabled:
+		return "", false
+	case pluginConfigured:
+		if plugin == "" {
+			plugin = "plugin config"
+		}
+		return fmt.Sprintf("otel: configured (%s) but not enabled — devstack otel enable", plugin), true
+	default:
+		return "otel: disabled — devstack otel enable", true
+	}
+}
+
+// hostOtelLine summarises otel across every registered workspace for the global
+// status view. running entries are preformatted "<workspace> ui:<port> otlp:<port>" labels.
+func hostOtelLine(running, enabled []string) string {
+	switch {
+	case len(running) > 0:
+		return "otel: " + strings.Join(running, ", ")
+	case len(enabled) > 0:
+		return "otel: enabled for " + strings.Join(enabled, ", ") + " but collector stopped — devstack otel start"
+	default:
+		return "otel: no collector running — devstack otel enable"
+	}
+}
+
+// condenseSection reports whether a section renders as a single summary line
+// instead of a full table: nothing running, and the user did not ask for
+// everything expanded.
+func condenseSection(running int, expand bool) bool {
+	return running == 0 && !expand
+}
+
+// wrapCommaList joins names into comma-separated lines no wider than width,
+// never dropping a name.
+func wrapCommaList(names []string, width int) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	var lines []string
+	cur := ""
+	for i, n := range names {
+		piece := n
+		if i < len(names)-1 {
+			piece += ","
+		}
+		switch {
+		case cur == "":
+			cur = piece
+		case len(cur)+1+len(piece) > width:
+			lines = append(lines, cur)
+			cur = piece
+		default:
+			cur += " " + piece
+		}
+	}
+	return append(lines, cur)
+}
+
+// printCondensedSection prints a section with nothing running as one line: its
+// coloured header, a count or state tag, then the member names wrapped under the
+// first name.
+func printCondensedSection(hdrColor *color.Color, label, tag string, names []string) {
+	head := "● " + label
+	suffix := "  " + tag + "  "
+	hdrColor.Print(head)
+	faint := color.New(color.Faint)
+	faint.Print(suffix)
+
+	startCol := len(head) + len(suffix)
+	lines := wrapCommaList(names, condenseWidth-startCol)
+	if len(lines) == 0 {
+		fmt.Println()
+		return
+	}
+	for i, line := range lines {
+		if i > 0 {
+			fmt.Print(strings.Repeat(" ", startCol))
+		}
+		faint.Println(line)
+	}
+}
+
 const (
+	condenseWidth = 100
+
 	colService    = 22
 	colServiceMax = 34
 	colState      = 10
@@ -139,8 +262,6 @@ const (
 	colNeeds      = 36
 )
 
-// commonEnv returns the env name shared by every member, or "" when they differ
-// or any member has none.
 // commonEnv returns the group's prevailing environment — the one most of its
 // services resolve to. It is shown once on the group header so only the
 // services that differ have to name their own; ties break alphabetically for
@@ -342,7 +463,19 @@ func runStatusAll() error {
 
 	wg.Wait()
 
-	fmt.Printf("All workspaces and their stacks run in one host daemon on :%d, addressable as <workspace>:<service>[:<stack>].\n\n", workspace.HostTiltPort)
+	fmt.Printf("All workspaces and their stacks run in one host daemon on :%d, addressable as <workspace>:<service>[:<stack>].\n", workspace.HostTiltPort)
+
+	var otelRunning, otelEnabled []string
+	for i := range workspaces {
+		w := &workspaces[i]
+		switch {
+		case isOtelRunning(w):
+			otelRunning = append(otelRunning, fmt.Sprintf("%s ui:%d otlp:%d", w.Name, w.UIPort(), w.HTTPPort()))
+		case config.ObservabilityEnabled(w.Path):
+			otelEnabled = append(otelEnabled, w.Name)
+		}
+	}
+	color.New(color.Faint).Printf("%s\n\n", hostOtelLine(otelRunning, otelEnabled))
 	fmt.Printf("%-16s %-36s %-8s %-12s %s\n", "WORKSPACE", "PATH", "PORT", "STATUS", "SERVICES")
 	fmt.Println(strings.Repeat("-", 88))
 	for _, r := range results {
