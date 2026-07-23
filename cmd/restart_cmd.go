@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/tilt"
@@ -30,11 +31,8 @@ func init() {
 }
 
 func runRestart(cmd *cobra.Command, args []string) error {
-	ws, env, envName, err := resolveWorkspaceAndEnv()
+	ws, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
-		return err
-	}
-	if err := requireLocalEnv(envName, env); err != nil {
 		return err
 	}
 

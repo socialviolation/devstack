@@ -11,32 +11,11 @@ import (
 	"github.com/socialviolation/devstack/internal/config"
 )
 
-// EnvironmentType describes whether an environment is locally Tilt-managed or remote-only.
-type EnvironmentType string
-
-const (
-	// EnvironmentTypeLocal is a locally managed environment with Tilt + embedded SigNoz.
-	// All MCP tools are available including restart, stop, and configure.
-	EnvironmentTypeLocal EnvironmentType = "local"
-
-	// EnvironmentTypeRemote is a remote-only environment (staging, prod, etc).
-	// Only observability tools are available — no service control.
-	EnvironmentTypeRemote EnvironmentType = "remote"
-)
-
 // ObservabilityConfig holds the connection config for an observability backend.
 type ObservabilityConfig struct {
-	Backend      string `json:"backend"`                 // "signoz" (default and only supported value)
-	URL          string `json:"url"`                     // Base URL, e.g. "http://localhost:3301"
-	OTLPEndpoint string `json:"otlp_endpoint,omitempty"` // OTLP ingestion URL for collector (e.g. https://otel.company.com:4318)
-	APIKey       string `json:"api_key,omitempty"`       // Optional API key for remote instances
-}
-
-// Environment represents a named deployment target with associated observability config.
-// Local environments also have Tilt for service control. Remote environments are read-only.
-type Environment struct {
-	Type          EnvironmentType     `json:"type"`
-	Observability ObservabilityConfig `json:"observability"`
+	Backend string `json:"backend"` // "signoz" (default and only supported value)
+	URL     string `json:"url"`     // Base URL, e.g. "http://localhost:3301"
+	APIKey  string `json:"api_key,omitempty"`
 }
 
 // Workspace represents a registered development workspace.
@@ -517,18 +496,13 @@ func AnyWorkspaceActive() (bool, error) {
 	return false, nil
 }
 
-// ResolveEnvironment returns the named environment config.
-func (ws *Workspace) ResolveEnvironment(name string) (Environment, bool) {
-	if name == "local" || name == "" {
-		return Environment{
-			Type: EnvironmentTypeLocal,
-			Observability: ObservabilityConfig{
-				Backend: "signoz",
-				URL:     fmt.Sprintf("http://localhost:%d", ws.UIPort()),
-			},
-		}, true
+// LocalObservability returns the connection config for this workspace's local
+// observability backend.
+func (ws *Workspace) LocalObservability() ObservabilityConfig {
+	return ObservabilityConfig{
+		Backend: "signoz",
+		URL:     fmt.Sprintf("http://localhost:%d", ws.UIPort()),
 	}
-	return Environment{}, false
 }
 
 const minPort = 10350

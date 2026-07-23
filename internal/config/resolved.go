@@ -30,7 +30,6 @@ type SourcedValue struct {
 type ResolvedContext struct {
 	WorkspaceRoot     SourcedValue
 	WorkspaceName     SourcedValue
-	EnvironmentName   SourcedValue
 	CurrentService    SourcedValue
 	WorkspaceManifest *WorkspaceManifest
 	Workspace         *ResolvedWorkspace
@@ -57,15 +56,13 @@ type ResolvedServiceConfig struct {
 type ResolveOptions struct {
 	StartPath        string
 	WorkspacePath    string
-	EnvironmentName  string
 	InvocationEnv    map[string]string
 	RuntimeOverrides RuntimeOverrides
 }
 
 type RuntimeOverrides struct {
-	WorkspacePath   string
-	EnvironmentName string
-	ServiceName     string
+	WorkspacePath string
+	ServiceName   string
 }
 
 func ResolveContext(opts ResolveOptions) (*ResolvedContext, error) {
@@ -88,7 +85,6 @@ func ResolveContext(opts ResolveOptions) (*ResolvedContext, error) {
 		return nil, err
 	}
 
-	envValue, envSource, envDetail := resolveEnvironmentName(opts)
 	serviceValue, serviceSource, serviceDetail := resolveCurrentService(resolvedWorkspace, opts, startPath)
 
 	manifestPath := filepath.Join(workspaceRoot, WorkspaceManifestFileName)
@@ -108,11 +104,6 @@ func ResolveContext(opts ResolveOptions) (*ResolvedContext, error) {
 			Source: sourceForResolvedWorkspace(resolvedWorkspace),
 			Detail: "workspace.name",
 			Path:   manifestPath,
-		},
-		EnvironmentName: SourcedValue{
-			Value:  envValue,
-			Source: envSource,
-			Detail: envDetail,
 		},
 		CurrentService: SourcedValue{
 			Value:  serviceValue,
@@ -228,19 +219,6 @@ func resolveWorkspaceRoot(opts ResolveOptions, startPath string) (string, Config
 		return "", "", "", err
 	}
 	return root, SourceCWD, source, nil
-}
-
-func resolveEnvironmentName(opts ResolveOptions) (string, ConfigSource, string) {
-	if opts.EnvironmentName != "" {
-		return opts.EnvironmentName, SourceCLIFlag, "--env"
-	}
-	if envName := opts.InvocationEnv["DEVSTACK_ENVIRONMENT"]; envName != "" {
-		return envName, SourceInvocationEnv, "DEVSTACK_ENVIRONMENT"
-	}
-	if opts.RuntimeOverrides.EnvironmentName != "" {
-		return opts.RuntimeOverrides.EnvironmentName, SourceRuntimeOverride, "runtime environment override"
-	}
-	return "local", SourceDefault, "default"
 }
 
 func resolveCurrentService(workspace *ResolvedWorkspace, opts ResolveOptions, startPath string) (string, ConfigSource, string) {

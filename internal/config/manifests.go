@@ -123,17 +123,11 @@ type WorkspaceManifestObservabilityDefaults struct {
 	RequireLogs   bool `yaml:"requireLogs,omitempty"`
 }
 
+// WorkspaceEnvironment is a named config-var patch. Manifests written by older
+// devstack versions may still carry type/observability keys under an
+// environment; they are ignored.
 type WorkspaceEnvironment struct {
-	Type          string                            `yaml:"type,omitempty"`
-	Observability WorkspaceEnvironmentObservability `yaml:"observability,omitempty"`
-	Values        map[string]string                 `yaml:"values,omitempty"`
-}
-
-type WorkspaceEnvironmentObservability struct {
-	Backend      string `yaml:"backend,omitempty"`
-	URL          string `yaml:"url,omitempty"`
-	OTLPEndpoint string `yaml:"otlpEndpoint,omitempty"`
-	APIKey       string `yaml:"apiKey,omitempty"`
+	Values map[string]string `yaml:"values,omitempty"`
 }
 
 type ServiceManifest struct {

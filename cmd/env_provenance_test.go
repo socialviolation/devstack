@@ -215,18 +215,15 @@ func TestAppliedToLabelsEveryScope(t *testing.T) {
 	}
 }
 
-func TestAppliedToIncludesOverrideAndSkipsUnused(t *testing.T) {
-	got := appliedTo(envUsage{OverrideEnv: "perf"})
-	if !reflect.DeepEqual(got["perf"], []string{"override: DEVSTACK_ENVIRONMENT"}) {
-		t.Errorf("appliedTo override = %+v", got["perf"])
-	}
+func TestAppliedToSkipsUnused(t *testing.T) {
+	got := appliedTo(envUsage{WorkspaceEnv: "perf"})
 	if len(got) != 1 {
-		t.Errorf("appliedTo = %+v, want only the overridden env", got)
+		t.Errorf("appliedTo = %+v, want only the workspace env", got)
 	}
 	if appliedLabel(got["staging"]) != "unused" {
 		t.Errorf("appliedLabel(nil) = %q, want unused", appliedLabel(got["staging"]))
 	}
-	if appliedLabel(got["perf"]) != "override: DEVSTACK_ENVIRONMENT" {
+	if appliedLabel(got["perf"]) != "workspace" {
 		t.Errorf("appliedLabel = %q", appliedLabel(got["perf"]))
 	}
 }

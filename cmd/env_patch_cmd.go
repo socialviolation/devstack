@@ -164,27 +164,6 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Environment %q:\n", name)
 
-	infra := [][2]string{
-		{"type", env.Type},
-		{"backend", env.Observability.Backend},
-		{"url", env.Observability.URL},
-		{"otlp endpoint", env.Observability.OTLPEndpoint},
-	}
-	if env.Observability.APIKey != "" {
-		infra = append(infra, [2]string{"api key", mask("apikey", env.Observability.APIKey, reveal)})
-	}
-	shown := 0
-	for _, kv := range infra {
-		if kv[1] == "" {
-			continue
-		}
-		if shown == 0 {
-			fmt.Printf("\nInfrastructure target:\n\n")
-		}
-		fmt.Printf("  %-15s %s\n", kv[0], kv[1])
-		shown++
-	}
-
 	fmt.Printf("\nConfig-var values (%s):\n\n", redactionNote(reveal))
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 	fmt.Fprintln(w, "KEY\tVALUE")

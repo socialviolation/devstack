@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/infra"
 	"github.com/socialviolation/devstack/internal/stack"
@@ -37,11 +38,8 @@ func runDown(cmd *cobra.Command, args []string) error {
 		return runDownAll()
 	}
 
-	ws, env, envName, err := resolveWorkspaceAndEnv()
+	ws, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
-		return err
-	}
-	if err := requireLocalEnv(envName, env); err != nil {
 		return err
 	}
 
@@ -75,8 +73,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 	// Stop observability stack
 	if isOtelRunning(ws) {
-		localEnv, _ := ws.ResolveEnvironment("local")
-		plugin := activePlugin(ws, localEnv)
+		plugin := activePlugin(ws)
 		if err := stopOtelStack(ws, plugin); err != nil {
 			fmt.Fprintf(os.Stderr, "  warning: OTEL stop failed: %v\n", err)
 		} else {
@@ -187,8 +184,7 @@ func runDownAll() error {
 	for i := range workspaces {
 		ws := workspaces[i]
 		if isOtelRunning(&ws) {
-			localEnv, _ := ws.ResolveEnvironment("local")
-			plugin := activePlugin(&ws, localEnv)
+			plugin := activePlugin(&ws)
 			if err := stopOtelStack(&ws, plugin); err != nil {
 				fmt.Fprintf(os.Stderr, "  warning: OTEL stop failed for %s: %v\n", ws.Name, err)
 			} else {

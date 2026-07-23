@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -20,23 +19,16 @@ var envCmd = &cobra.Command{
 	Short: "Manage devstack environments",
 	Long: `Named environments for your workspace, defined in the workspace manifest.
 
-An environment carries both an infrastructure target (local vs remote, observability
-backend) and config-var patches (DB URLs, feature flags, endpoints). Define them with
-add/list/remove and set; apply them with use (at workspace, service, or stack scope,
-most-specific winning); inspect with show/which. status shows where each instance points.`,
+An environment is a named config-var patch (DB URLs, feature flags, endpoints).
+Define them with set (which creates the env on demand) and drop them with remove;
+apply them with use (at workspace, service, or stack scope, most-specific winning);
+inspect with show/which. status shows where each instance points.`,
 }
 
 var envListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List environments for the current workspace",
 	RunE:  runEnvList,
-}
-
-var envAddCmd = &cobra.Command{
-	Use:   "add <name>",
-	Short: "Add or update a named environment",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runEnvAdd,
 }
 
 var envRemoveCmd = &cobra.Command{
@@ -48,13 +40,7 @@ var envRemoveCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(envCmd)
-	envCmd.AddCommand(envListCmd, envAddCmd, envRemoveCmd)
-
-	envAddCmd.Flags().String("type", "remote", `environment type: "local" or "remote"`)
-	envAddCmd.Flags().String("backend", "signoz", `observability backend (currently only "signoz")`)
-	envAddCmd.Flags().String("url", "", "observability backend URL (required for remote)")
-	envAddCmd.Flags().String("otlp-endpoint", "", "OTLP ingestion URL for the collector (e.g. https://otel.company.com:4318)")
-	envAddCmd.Flags().String("api-key", "", "API key for an authenticated remote collector")
+	envCmd.AddCommand(envListCmd, envRemoveCmd)
 }
 
 func runEnvList(cmd *cobra.Command, args []string) error {
@@ -71,9 +57,6 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 		WorkspaceEnv: m.Workspace.Env,
 		ServiceEnvs:  map[string]string{},
 		StackEnvs:    map[string]string{},
-	}
-	if os.Getenv("DEVSTACK_ENVIRONMENT") != "" || cmd.Flags().Changed("env") {
-		usage.OverrideEnv = viper.GetString("environment")
 	}
 	if rw, err := config.ResolveWorkspace(ws.Path); err == nil {
 		for name, svc := range rw.Services {
@@ -95,16 +78,15 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	}
 	sort.Strings(names)
 
-	nameW, typeW, appliedW := len("NAME"), len("TYPE"), len("APPLIED TO")
+	nameW, appliedW := len("NAME"), len("APPLIED TO")
 	for _, name := range names {
 		nameW = max(nameW, len(name))
-		typeW = max(typeW, len(m.Environments[name].Type))
 		appliedW = max(appliedW, len(appliedLabel(applied[name])))
 	}
 
 	fmt.Printf("Environments for workspace %q:\n\n", ws.Name)
-	fmt.Printf("  %-*s   %-*s   %-*s   %s\n", nameW, "NAME", typeW, "TYPE", appliedW, "APPLIED TO", "KEYS")
-	fmt.Printf("  %-*s   %-*s   %-*s   %s\n", nameW, "----", typeW, "----", appliedW, "----------", "----")
+	fmt.Printf("  %-*s   %-*s   %s\n", nameW, "NAME", appliedW, "APPLIED TO", "KEYS")
+	fmt.Printf("  %-*s   %-*s   %s\n", nameW, "----", appliedW, "----------", "----")
 	for _, name := range names {
 		env := m.Environments[name]
 		scopes := applied[name]
@@ -114,10 +96,10 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 		} else {
 			label = color.New(color.FgCyan).Sprint(label)
 		}
-		fmt.Printf("  %-*s   %-*s   %s   %s\n", nameW, name, typeW, env.Type, label, formatEnvKeys(env.Values, 6))
+		fmt.Printf("  %-*s   %s   %s\n", nameW, name, label, formatEnvKeys(env.Values, 6))
 	}
 
-	fmt.Printf("\nDetails (type, backend, url, otlp) and values: devstack env show <name>\n")
+	fmt.Printf("\nValues: devstack env show <name>\n")
 	fmt.Printf("To switch: devstack env use <name> [--service <svc>|--stack <name>]\n")
 	return nil
 }
@@ -125,13 +107,12 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 // envUsage is every place an environment name can be selected from.
 type envUsage struct {
 	WorkspaceEnv string
-	OverrideEnv  string
 	ServiceEnvs  map[string]string
 	StackEnvs    map[string]string
 }
 
 // appliedTo maps each selected env name to the scopes that select it, in plain
-// text: the workspace, each service, each stack, and the process-level override.
+// text: the workspace, each service, and each stack.
 func appliedTo(u envUsage) map[string][]string {
 	out := map[string][]string{}
 	if u.WorkspaceEnv != "" {
@@ -146,9 +127,6 @@ func appliedTo(u envUsage) map[string][]string {
 		if env := u.StackEnvs[name]; env != "" {
 			out[env] = append(out[env], "stack: "+name)
 		}
-	}
-	if u.OverrideEnv != "" {
-		out[u.OverrideEnv] = append(out[u.OverrideEnv], "override: DEVSTACK_ENVIRONMENT")
 	}
 	return out
 }
@@ -171,54 +149,6 @@ func formatEnvKeys(values map[string]string, limit int) string {
 		return strings.Join(keys, ", ")
 	}
 	return fmt.Sprintf("%s, +%d more", strings.Join(keys[:limit], ", "), len(keys)-limit)
-}
-
-func runEnvAdd(cmd *cobra.Command, args []string) error {
-	envName := args[0]
-
-	ws, err := resolveEnvWorkspace(viper.GetString("workspace"))
-	if err != nil {
-		return err
-	}
-
-	envType, _ := cmd.Flags().GetString("type")
-	backend, _ := cmd.Flags().GetString("backend")
-	url, _ := cmd.Flags().GetString("url")
-	otlpEndpoint, _ := cmd.Flags().GetString("otlp-endpoint")
-	apiKey, _ := cmd.Flags().GetString("api-key")
-
-	switch envType {
-	case string(workspace.EnvironmentTypeLocal), string(workspace.EnvironmentTypeRemote):
-	default:
-		return fmt.Errorf("invalid type %q: must be \"local\" or \"remote\"", envType)
-	}
-
-	if envType == string(workspace.EnvironmentTypeRemote) && url == "" {
-		return fmt.Errorf("--url is required for a remote environment")
-	}
-
-	env := config.WorkspaceEnvironment{
-		Type: envType,
-		Observability: config.WorkspaceEnvironmentObservability{
-			Backend:      backend,
-			URL:          url,
-			OTLPEndpoint: otlpEndpoint,
-			APIKey:       apiKey,
-		},
-	}
-
-	if err := config.SetEnvironment(ws.Path, envName, env); err != nil {
-		return fmt.Errorf("failed to add environment: %w", err)
-	}
-
-	fmt.Printf("Added environment %q to workspace %q\n", envName, ws.Name)
-	fmt.Printf("  Type:    %s\n", envType)
-	fmt.Printf("  Backend: %s\n", backend)
-	fmt.Printf("  URL:     %s\n", url)
-	if otlpEndpoint != "" {
-		fmt.Printf("  OTLP:    %s\n", otlpEndpoint)
-	}
-	return nil
 }
 
 func runEnvRemove(cmd *cobra.Command, args []string) error {

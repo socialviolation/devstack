@@ -18,8 +18,7 @@ import (
 
 // registerEnvTools registers the config-patch environment tools, mirroring the
 // CLI's `devstack env use/which/set`. These operate on the named environments
-// defined in the workspace manifest, not the infra environment (see the
-// environment tool for the distinction).
+// defined in the workspace manifest.
 func registerEnvTools(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	registerEnvUseTool(mcpServer, ws, workspacePath)
 	registerEnvWhichTool(mcpServer, ws, workspacePath)

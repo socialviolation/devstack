@@ -85,7 +85,7 @@ The devstack MCP server loads automatically from `.mcp.json`. Claude can now sta
 | **Dependency** | A declared ordering constraint: service A won't start until service B is running |
 | **Host daemon** | A single Tilt daemon (`:10300`) for the whole machine. Every active workspace's services and every active stack's overlay run inside it as `<workspace>:<service>[:<stack>]` resources. There is no daemon per workspace. |
 | **Feature stack** | A parallel version of one or more services, run from a git worktree on a feature branch on its own dynamic port, beside base — reusing base for everything it doesn't change. Lets you run several features live at once without cloning the world. |
-| **Environment** | A named config bundle (`environments:` in the workspace manifest) carrying an infra target (local/remote + observability) and config-var patches, applied at workspace / service / stack scope (most-specific wins). "Where a service points." |
+| **Environment** | A named config-var patch (`environments:` in the workspace manifest) applied at workspace / service / stack scope (most-specific wins). "Where a service points." |
 
 ---
 
@@ -162,15 +162,15 @@ Work on a stack by **`cd`-ing into its worktree** (path shown by `stack create`/
 
 ### Environments
 
-An **environment** is a named config bundle in the workspace manifest that repoints services — DB URLs, feature flags, endpoints, and the observability target — without code changes. Environments are defined **once in the base workspace manifest** and inherited by feature stacks — a stack doesn't define its own; `env use --stack <name>` just points a stack at one of the base's environments. It applies at three scopes, most-specific winning: **stack > service > workspace**. So base can run against `local` while one stack runs against `prod`.
+An **environment** is a named config-var patch in the workspace manifest that repoints services — DB URLs, feature flags, endpoints — without code changes. Environments are defined **once in the base workspace manifest** and inherited by feature stacks — a stack doesn't define its own; `env use --stack <name>` just points a stack at one of the base's environments. It applies at three scopes, most-specific winning: **stack > service > workspace**. So base can run against `local` while one stack runs against `prod`.
 
 ```bash
-devstack env add <name> [--type local|remote] [--url ...] [--api-key ...]   # define an environment
-devstack env set <name> KEY=VALUE                    # set a config-var patch (secrets: see note below)
+devstack env set <name> KEY=VALUE                    # set a config-var patch, creating the env if new (secrets: see note below)
 devstack env use <name> [--service <svc>] [--stack <name>]   # point base, a service, or a stack at <name>
 devstack env which [--service <svc>] [--stack <name>]        # which env an instance resolves to + its values
 devstack env show <name>                             # an environment's values (secrets masked)
-devstack env list                                    # environments and the active one
+devstack env list                                    # environments and where each is applied
+devstack env remove <name>                           # drop an environment
 ```
 
 `devstack status` shows each instance's active env in the **ENV** column, so you can see where every running copy points. Env values live in the workspace manifest and are masked on display only — so whether `env set` is safe for a secret depends on whether you commit that manifest; see [what to commit](#files-written-by-devstack--and-what-to-commit).
@@ -234,7 +234,7 @@ This is what `.mcp.json` invokes. You don't run it directly.
 The tool set adapts to the active workspace: trace tools (`investigate`) appear only when observability is enabled, and the `tunnel` tool only when Tailscale is installed. Call `environment` first to see what's actually available.
 
 ### `environment`
-Orientation tool — shows the active infra environment (local vs remote) and which tools exist in this context, and points at the config-patch [environments](#environments) a service can be aimed at via `env_use`. Call this first.
+Orientation tool — shows the workspace's observability state, its in-flight feature stacks, and which tools exist in this context, and points at the [environments](#environments) a service can be aimed at via `env_use`. Call this first.
 
 ### `status`
 Show all services with state (`running` / `starting` / `building` / `stopped` / `erroring` / `disabled` / `unknown`), ports, source path, ENV (the active environment each instance points at), and last build error. Pass `stack` to see a feature stack's instances.

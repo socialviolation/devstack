@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
@@ -33,11 +34,8 @@ func init() {
 }
 
 func runStart(cmd *cobra.Command, args []string) error {
-	ws, env, envName, err := resolveWorkspaceAndEnv()
+	ws, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
-		return err
-	}
-	if err := requireLocalEnv(envName, env); err != nil {
 		return err
 	}
 	if !config.HasWorkspaceManifest(ws.Path) {
@@ -78,30 +76,10 @@ func runStart(cmd *cobra.Command, args []string) error {
 	} else if isOtelRunning(ws) {
 		fmt.Printf("OTEL stack already running\n")
 	} else {
-		plugin := activePlugin(ws, env)
+		plugin := activePlugin(ws)
 		if plugin == nil {
 			fmt.Fprintf(os.Stderr, "No OTEL plugin configured\n")
 		} else {
-			// If the environment drives forwarding mode, populate plugin config from env
-			// into a local (in-memory only) copy of the workspace. Never saved to disk.
-			if env.Observability.OTLPEndpoint != "" && ws.OtelPlugin == "" {
-				wsCopy := *ws
-				if wsCopy.OtelPluginConfig == nil {
-					wsCopy.OtelPluginConfig = map[string]string{}
-				} else {
-					copied := make(map[string]string, len(wsCopy.OtelPluginConfig))
-					for k, v := range wsCopy.OtelPluginConfig {
-						copied[k] = v
-					}
-					wsCopy.OtelPluginConfig = copied
-				}
-				wsCopy.OtelPluginConfig["upstream"] = env.Observability.OTLPEndpoint
-				if env.Observability.APIKey != "" {
-					wsCopy.OtelPluginConfig["api_key"] = env.Observability.APIKey
-				}
-				wsCopy.OtelPluginConfig["deployment_env"] = envName
-				ws = &wsCopy
-			}
 			fmt.Printf("Starting OTEL stack (plugin: %s)...\n", plugin.Name())
 			if err := startOtelStack(ws, plugin); err != nil {
 				fmt.Fprintf(os.Stderr, "OTEL stack failed: %v\n", err)

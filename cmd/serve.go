@@ -86,49 +86,27 @@ func serveStdio() error {
 	defaultService := viper.GetString("default_service")
 	ws := resolveServeWorkspace(wsName)
 
-	// Resolve active environment
-	envName := viper.GetString("environment")
-	if envName == "" {
-		envName = "local"
-	}
-	activeEnv, ok := resolveActiveEnv(ws, envName)
-	if !ok {
-		log.Fatalf("environment %q not found in workspace %q. Run: devstack env list", envName, ws.Name)
-	}
-	allEnvs := allEnvironments(ws)
-
-	// Create observability backend
-	backend, err := observability.NewBackend(
-		activeEnv.Observability.Backend,
-		activeEnv.Observability.URL,
-		activeEnv.Observability.APIKey,
-	)
+	obs := ws.LocalObservability()
+	backend, err := observability.NewBackend(obs.Backend, obs.URL, obs.APIKey)
 	if err != nil {
 		log.Fatalf("failed to create observability backend: %v", err)
 	}
 
-	// Only create Tilt client for local environments
-	var tiltClient *tilt.Client
-	if activeEnv.Type == workspace.EnvironmentTypeLocal {
-		tiltClient = tilt.NewDynamicClient(host, func() int {
-			return workspace.HostTiltPort
-		})
-	}
+	tiltClient := tilt.NewDynamicClient(host, func() int {
+		return workspace.HostTiltPort
+	})
 
 	nvxmcp.RegisterTools(
 		mcpServer,
 		tiltClient,
 		defaultService,
 		backend,
-		envName,
-		activeEnv,
-		allEnvs,
 		ws.Name,
 		ws.Path,
 		ws,
 	)
 
-	log.Printf("Starting devstack MCP server (workspace: %s, env: %s/%s, tilt-port: %d)", ws.Name, envName, activeEnv.Type, workspace.HostTiltPort)
+	log.Printf("Starting devstack MCP server (workspace: %s, tilt-port: %d)", ws.Name, workspace.HostTiltPort)
 
 	return server.ServeStdio(mcpServer)
 }
