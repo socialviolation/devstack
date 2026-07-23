@@ -38,7 +38,7 @@ var envUseCmd = &cobra.Command{
 var envShowCmd = &cobra.Command{
 	Use:   "show <name>",
 	Short: "Show a named environment's config-var values",
-	Long:  "Show a base workspace environment's config-var values (secrets masked).\nEnvironments are defined once in the base workspace manifest.",
+	Long:  "Show a base workspace environment's config-var values. Credentials are redacted in place — a connection string still shows its server and database. Pass --reveal to print them in the clear.\nEnvironments are defined once in the base workspace manifest.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runEnvShow,
 }
@@ -46,7 +46,7 @@ var envShowCmd = &cobra.Command{
 var envWhichCmd = &cobra.Command{
 	Use:   "which",
 	Short: "Show the env a service actually resolves to, and where each value came from",
-	Long:  "Show which base-defined environment a service resolves to at each scope (workspace/service/stack), then the full resolved environment the process receives — every key with the ladder rung it came from (.envrc, env.files, manifest env.values, active env, devstack-computed). Secrets masked.",
+	Long:  "Show which base-defined environment a service resolves to at each scope (workspace/service/stack), then the full resolved environment the process receives — every key with the ladder rung it came from (.envrc, env.files, manifest env.values, active env, devstack-computed). Credentials are redacted in place — a connection string still shows its server and database. Pass --reveal to print them in the clear.",
 	Args:  cobra.NoArgs,
 	RunE:  runEnvWhich,
 }
@@ -60,6 +60,9 @@ func init() {
 	envWhichCmd.Flags().String("service", "", "service to resolve (defaults to the current directory)")
 	envWhichCmd.Flags().String("stack", "", "stack whose env to include")
 	envWhichCmd.Flags().Bool("shadowed", false, "also list the lower-rung values each key overrode")
+
+	envShowCmd.Flags().Bool("reveal", false, "print every value in full, including credentials, in the clear")
+	envWhichCmd.Flags().Bool("reveal", false, "print every value in full, including credentials, in the clear")
 }
 
 func runEnvSet(cmd *cobra.Command, args []string) error {
@@ -76,7 +79,7 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 		if err := config.SetEnvValue(ws.Path, name, key, value); err != nil {
 			return err
 		}
-		fmt.Printf("set %s.%s = %s\n", name, key, mask(key, value))
+		fmt.Printf("set %s.%s = %s\n", name, key, mask(key, value, false))
 	}
 	if _, err := regenerateHostTiltfile(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not regenerate host config: %v\n", err)
@@ -157,6 +160,7 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 	if !ok {
 		return unknownEnvError(name, ws.Name, m)
 	}
+	reveal, _ := cmd.Flags().GetBool("reveal")
 
 	fmt.Printf("Environment %q:\n\n", name)
 	fmt.Printf("  type            %s\n", orDash(env.Type))
@@ -164,15 +168,15 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  url             %s\n", orDash(env.Observability.URL))
 	fmt.Printf("  otlp endpoint   %s\n", orDash(env.Observability.OTLPEndpoint))
 	if env.Observability.APIKey != "" {
-		fmt.Printf("  api key         %s\n", svcconfig.MaskedValue)
+		fmt.Printf("  api key         %s\n", mask("apikey", env.Observability.APIKey, reveal))
 	}
 
-	fmt.Printf("\nConfig-var values (secrets masked):\n\n")
+	fmt.Printf("\nConfig-var values (%s):\n\n", redactionNote(reveal))
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 	fmt.Fprintln(w, "KEY\tVALUE")
 	fmt.Fprintln(w, "---\t-----")
 	for _, k := range sortedStrKeys(env.Values) {
-		fmt.Fprintf(w, "%s\t%s\n", k, mask(k, env.Values[k]))
+		fmt.Fprintf(w, "%s\t%s\n", k, mask(k, env.Values[k], reveal))
 	}
 	w.Flush()
 	return nil
@@ -255,10 +259,11 @@ func runEnvWhich(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	rows := buildEnvRows(layers)
 	shadowed, _ := cmd.Flags().GetBool("shadowed")
+	reveal, _ := cmd.Flags().GetBool("reveal")
+	rows := buildEnvRows(layers, reveal)
 
-	fmt.Printf("\nResolved environment for %s in %s — what the process receives (secrets masked):\n\n", svcName, scope)
+	fmt.Printf("\nResolved environment for %s in %s — what the process receives (%s):\n\n", svcName, scope, redactionNote(reveal))
 	printEnvRows(rows, shadowed)
 	if !shadowed && anyShadowed(rows) {
 		fmt.Printf("\nSome keys are set at more than one rung; see them with --shadowed.\n")
@@ -319,7 +324,7 @@ type envShadow struct {
 // defines it, lowest rung first. Shadowed carries the buried layers in ladder
 // order; By names the layer that immediately buried one, when that is not the
 // winning layer itself.
-func buildEnvRows(layers []config.EnvLayer) []envRow {
+func buildEnvRows(layers []config.EnvLayer, reveal bool) []envRow {
 	winner := map[string]int{}
 	for i, l := range layers {
 		for k := range l.Values {
@@ -335,13 +340,13 @@ func buildEnvRows(layers []config.EnvLayer) []envRow {
 	rows := make([]envRow, 0, len(keys))
 	for _, k := range keys {
 		top := layers[winner[k]]
-		row := envRow{Key: k, Value: mask(k, top.Values[k]), Rung: top.Rung, Source: envSourceLabel(top)}
+		row := envRow{Key: k, Value: mask(k, top.Values[k], reveal), Rung: top.Rung, Source: envSourceLabel(top)}
 		for i := 0; i < winner[k]; i++ {
 			v, ok := layers[i].Values[k]
 			if !ok {
 				continue
 			}
-			sh := envShadow{Rung: layers[i].Rung, Source: envSourceLabel(layers[i]), Value: mask(k, v)}
+			sh := envShadow{Rung: layers[i].Rung, Source: envSourceLabel(layers[i]), Value: mask(k, v, reveal)}
 			if j, ok := nextDefining(layers, i, k); ok && j != winner[k] {
 				sh.By = envSourceLabel(layers[j])
 			}
@@ -453,11 +458,18 @@ func unknownEnvError(name, wsName string, m *config.WorkspaceManifest) error {
 	return fmt.Errorf("env %q is not defined in workspace %q; available: %s", name, wsName, envNames(m))
 }
 
-func mask(key, value string) string {
-	if svcconfig.IsSecret(key, value) {
-		return svcconfig.MaskedValue
+func mask(key, value string, reveal bool) string {
+	if reveal {
+		return value
 	}
-	return value
+	return svcconfig.RedactValue(key, value)
+}
+
+func redactionNote(reveal bool) string {
+	if reveal {
+		return "REVEALED — secrets printed in the clear"
+	}
+	return "credentials redacted"
 }
 
 func orDash(s string) string {

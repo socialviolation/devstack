@@ -35,7 +35,7 @@ func rowByKey(t *testing.T, rows []envRow, key string) envRow {
 }
 
 func TestBuildEnvRowsAttributesWinningRung(t *testing.T) {
-	rows := buildEnvRows(provenanceLadder())
+	rows := buildEnvRows(provenanceLadder(), false)
 
 	keys := make([]string, 0, len(rows))
 	for _, r := range rows {
@@ -65,14 +65,34 @@ func TestBuildEnvRowsAttributesWinningRung(t *testing.T) {
 }
 
 func TestBuildEnvRowsMasksSecrets(t *testing.T) {
-	rows := buildEnvRows(provenanceLadder())
+	rows := buildEnvRows(provenanceLadder(), false)
 	if got := rowByKey(t, rows, "PASSWORD").Value; got != svcconfig.MaskedValue {
 		t.Errorf("PASSWORD value = %q, want it masked", got)
 	}
 }
 
+func TestBuildEnvRowsKeepsConnectionTargetVisible(t *testing.T) {
+	layers := []config.EnvLayer{{Rung: config.RungActiveEnv, Source: "perf", Values: map[string]string{
+		"ConnectionStrings__App": "Server=db.example.com;Initial Catalog=appdb;Password=hunter2",
+	}}}
+	got := buildEnvRows(layers, false)[0].Value
+	if !strings.Contains(got, "db.example.com") || !strings.Contains(got, "appdb") {
+		t.Errorf("value = %q, want the server and database still visible", got)
+	}
+	if strings.Contains(got, "hunter2") {
+		t.Errorf("password leaked in %q", got)
+	}
+}
+
+func TestBuildEnvRowsRevealPrintsSecrets(t *testing.T) {
+	rows := buildEnvRows(provenanceLadder(), true)
+	if got := rowByKey(t, rows, "PASSWORD").Value; got != "hunter2" {
+		t.Errorf("PASSWORD with reveal = %q, want the raw value", got)
+	}
+}
+
 func TestBuildEnvRowsListsShadowedLayers(t *testing.T) {
-	rows := buildEnvRows(provenanceLadder())
+	rows := buildEnvRows(provenanceLadder(), false)
 	db := rowByKey(t, rows, "DB")
 
 	want := []envShadow{
@@ -90,7 +110,7 @@ func TestBuildEnvRowsShadowedMasksSecrets(t *testing.T) {
 		{Rung: config.RungEnvrc, Source: ".envrc", Values: map[string]string{"PASSWORD": "hunter2"}},
 		{Rung: config.RungActiveEnv, Source: "perf", Values: map[string]string{"PASSWORD": "swordfish"}},
 	}
-	rows := buildEnvRows(layers)
+	rows := buildEnvRows(layers, false)
 	sh := rowByKey(t, rows, "PASSWORD").Shadowed
 	if len(sh) != 1 || sh[0].Value != svcconfig.MaskedValue {
 		t.Errorf("shadowed = %+v, want a single masked entry", sh)
@@ -104,7 +124,7 @@ func TestBuildEnvRowsSeparatesActiveEnvScopes(t *testing.T) {
 		{Rung: config.RungActiveEnv, Source: "dev", Values: map[string]string{"A": "dev-a", "B": "dev-b"}},
 		{Rung: config.RungActiveEnv, Source: "perf", Values: map[string]string{"B": "perf-b"}},
 	}
-	rows := buildEnvRows(layers)
+	rows := buildEnvRows(layers, false)
 
 	a := rowByKey(t, rows, "A")
 	if a.Value != "dev-a" || a.Source != "active env (dev)" {
@@ -125,10 +145,10 @@ func TestBuildEnvRowsSeparatesActiveEnvScopes(t *testing.T) {
 }
 
 func TestAnyShadowed(t *testing.T) {
-	if anyShadowed(buildEnvRows([]config.EnvLayer{{Rung: config.RungEnvrc, Values: map[string]string{"A": "1"}}})) {
+	if anyShadowed(buildEnvRows([]config.EnvLayer{{Rung: config.RungEnvrc, Values: map[string]string{"A": "1"}}}, false)) {
 		t.Error("anyShadowed = true for a single layer, want false")
 	}
-	if !anyShadowed(buildEnvRows(provenanceLadder())) {
+	if !anyShadowed(buildEnvRows(provenanceLadder(), false)) {
 		t.Error("anyShadowed = false for a ladder with a buried key, want true")
 	}
 }

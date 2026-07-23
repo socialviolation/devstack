@@ -303,10 +303,7 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  %-42s %-22s %s\n", "KEY", "SOURCE", "VALUE")
 	fmt.Println(strings.Repeat("-", 90))
 	for _, k := range keys {
-		v := merged[k]
-		if svcconfig.IsSecret(k, v) {
-			v = svcconfig.MaskedValue
-		}
+		v := svcconfig.RedactValue(k, merged[k])
 		fmt.Printf("  %-42s %-22s %s\n", k, string(source[k]), v)
 	}
 	return nil
