@@ -24,7 +24,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 				"Call this first to understand what you can and cannot do in the current context. "+
 				"An 'env' here is a CONFIG-PATCH environment — a named set of config vars (e.g. 'staging') that a workspace, service, or stack instance is pointed at via env_use (CLI: devstack env use). status and env_which show which env each instance currently points at. "+
 				"devstack is a LOCAL development environment. Data is ephemeral and local — not production. "+
-				"The available tools depend on this workspace's configuration: trace/telemetry tools appear only when observability is enabled, tunnel tools only when tailscale is installed. "+
+				"The available tools depend on this workspace's configuration: trace/telemetry tools appear only when observability is enabled, tunnel tools only when an ssh client is available. "+
 				"Call this tool first to understand the context before using other tools.",
 		),
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -37,7 +37,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		var sb strings.Builder
 
 		otelOn := config.ObservabilityEnabled(workspacePath)
-		tunnelsOn := tailscaleInstalled()
+		tunnelsOn := coreSSHAvailable()
 
 		backend := "none"
 		if otelOn {
@@ -71,7 +71,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 			fmt.Fprintf(&sb, "note: observability disabled — no trace/telemetry tools. Turn it on with the observability tool (action=enable).\n")
 		}
 		if !tunnelsOn {
-			fmt.Fprintf(&sb, "note: tunnel tool unavailable — tailscale is not installed on this machine.\n")
+			fmt.Fprintf(&sb, "note: tunnel tool unavailable — no ssh client on this machine.\n")
 		}
 
 		if cfg, err := config.Load(workspacePath); err == nil && len(cfg.Groups) > 0 {

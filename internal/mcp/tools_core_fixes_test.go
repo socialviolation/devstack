@@ -29,7 +29,7 @@ func listCoreTools(t *testing.T) map[string]listedTool {
 	registerTopologyTool(s, dir)
 	registerStartTool(s, nil, "", cfg, ws)
 	registerRestartTool(s, nil, "", cfg, ws)
-	registerStopTool(s, nil, cfg, ws)
+	registerStopTool(s, nil, "", cfg, ws)
 	registerConfigureTool(s, nil, ws)
 	registerProcessLogsTool(s, nil, "", cfg, ws)
 	registerInvestigateTool(s, nil, "", nil, "", dir, ws)
@@ -135,10 +135,10 @@ func TestStartAndTopologyToolsRegistered(t *testing.T) {
 func TestStopDescriptionStatesStackScoping(t *testing.T) {
 	desc := listCoreTools(t)["stop"].Description
 	for _, want := range []string{
-		"every service of the targeted instance",
-		"this workspace's base services only",
-		"never reaches another workspace",
-		"never touches a feature stack's instances",
+		"stops the default service for this repo",
+		"Stopping everything requires all=true",
+		"never base's",
+		"touches only that stack's instances",
 	} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("stop description missing %q; got %s", want, desc)

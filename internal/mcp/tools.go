@@ -31,8 +31,8 @@ var errorRegex = regexp.MustCompile(`(?i)(error|exception|panic|fatal|fail)`)
 
 // RegisterTools registers devstack MCP tools: status, topology, start, restart,
 // stop, configure, process_logs, service_env, observability, stack and env tools,
-// plus investigate when observability is enabled and tunnel when tailscale is
-// installed.
+// plus investigate when observability is enabled and tunnel when an ssh client
+// is available.
 func RegisterTools(
 	mcpServer *server.MCPServer,
 	tiltClient *tilt.Client,
@@ -64,7 +64,7 @@ func RegisterTools(
 	registerTopologyTool(mcpServer, workspacePath)
 	registerStartTool(mcpServer, tiltClient, defaultService, cfg, ws)
 	registerRestartTool(mcpServer, tiltClient, defaultService, cfg, ws)
-	registerStopTool(mcpServer, tiltClient, cfg, ws)
+	registerStopTool(mcpServer, tiltClient, defaultService, cfg, ws)
 	registerConfigureTool(mcpServer, tiltClient, ws)
 	registerProcessLogsTool(mcpServer, tiltClient, defaultService, cfg, ws)
 	registerServiceEnvTool(mcpServer, ws, workspacePath)
@@ -80,8 +80,10 @@ func RegisterTools(
 		registerInvestigateTool(mcpServer, tiltClient, defaultService, backend, obsURL, workspacePath, ws)
 	}
 
-	// Tunneling is SSH-over-tailnet; only expose it where tailscale exists.
-	if tailscaleInstalled() {
+	// Tunnels are plain ssh forwards to any reachable host or ssh-config alias
+	// (internal/tunnel shells out to ssh and nothing else), so the gate is ssh
+	// itself — a tailnet is one way to reach the remote, not a requirement.
+	if coreSSHAvailable() {
 		registerTunnelTool(mcpServer, tiltClient, ws)
 	}
 
@@ -92,11 +94,10 @@ func RegisterTools(
 	registerEnvTools(mcpServer, ws, workspacePath)
 }
 
-// tailscaleInstalled reports whether the tailscale CLI is on PATH. devstack
-// tunnels reach remote hosts over a tailnet, so the tunnel tool is only exposed
-// when tailscale is present on this machine.
-func tailscaleInstalled() bool {
-	_, err := exec.LookPath("tailscale")
+// coreSSHAvailable reports whether the ssh client is on PATH — every tunnel
+// action that touches a remote is an ssh child process.
+func coreSSHAvailable() bool {
+	_, err := exec.LookPath("ssh")
 	return err == nil
 }
 
@@ -218,7 +219,7 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 
 		checkouts := gitinfo.ReadAll(serviceDirs)
 
-		rows := [][]string{{"SERVICE", "STATUS", "PORT(S)", "PATH", "BRANCH", "GROUP", "ENV", "ERROR"}}
+		rows := [][]string{{"SERVICE", "STATUS", "PORT(S)", "PATH", "BRANCH", "GROUP", "ENV", "RELOAD", "ERROR"}}
 		prefix := ws.Name + ":"
 		for _, r := range view.UiResources {
 			svc, stackNS, ok := splitHostResource(r.Metadata.Name, prefix)
@@ -239,9 +240,13 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			path := shortenPath(serviceDirs[svc])
 			group := serviceGroup(name, cfg)
 			svcEnv := ""
+			reload := coreReloadUnknown
 			if rw != nil {
-				if rs, ok := rw.Services[svc]; ok && rs.Manifest != nil {
-					svcEnv = rs.Manifest.Service.Env
+				if rs, ok := rw.Services[svc]; ok {
+					if rs.Manifest != nil {
+						svcEnv = rs.Manifest.Service.Env
+					}
+					reload = coreReloadMode(rs.Manifest, rs.RepoPath)
 				}
 			}
 			env := config.ActiveEnvName(wsEnv, svcEnv, stackEnv)
@@ -252,14 +257,14 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			if branch == "" {
 				branch = "-"
 			}
-			rows = append(rows, []string{name, status, ports, path, branch, group, env, lastError})
+			rows = append(rows, []string{name, status, ports, path, branch, group, env, reload, lastError})
 		}
 
 		var sb strings.Builder
 		sb.WriteString(targetHeader(t.label))
 		sb.WriteString("Tilt is running.\n\n")
 		sb.WriteString(renderColumns(rows))
-		sb.WriteString("\nBRANCH is the git checkout each service actually runs from; * marks uncommitted changes.\nA service runs the code on that branch — if it is not the branch you expect, the running process does not contain the work you are looking for.\n")
+		sb.WriteString("\nBRANCH is the git checkout each service actually runs from; * marks uncommitted changes.\nA service runs the code on that branch — if it is not the branch you expect, the running process does not contain the work you are looking for.\nRELOAD auto = source edits apply on their own; manual = restart it after editing or it keeps running the old code.\n")
 
 		// Groups summary section.
 		if len(cfg.Groups) > 0 {
@@ -456,6 +461,126 @@ func registerTopologyTool(mcpServer *server.MCPServer, workspacePath string) {
 	})
 }
 
+// coreMaxWaitSeconds caps wait_seconds so a wait can never block a session
+// indefinitely, and corePollInterval is how often it re-reads the daemon.
+const (
+	coreMaxWaitSeconds = 300
+	corePollInterval   = 2 * time.Second
+)
+
+// coreWaitState is one resource's status during a wait, plus whether the daemon
+// has recorded a new deploy for it since the wait's baseline.
+type coreWaitState struct {
+	name     string
+	status   string
+	deployed bool
+}
+
+// coreSettled reports whether a status is one a wait stops on — anything but
+// the two in-flight states.
+func coreSettled(status string) bool {
+	return status != "building" && status != "starting"
+}
+
+// coreResourceSettled reports whether a triggered resource has finished. A
+// settled status alone is not enough: a trigger takes a moment to flip the
+// resource to building, so a still-running old process would otherwise read as
+// a completed restart. States the daemon will not move on from are final.
+func coreResourceSettled(s coreWaitState) bool {
+	switch s.status {
+	case "erroring", "disabled", "unknown":
+		return true
+	}
+	return coreSettled(s.status) && s.deployed
+}
+
+// coreDeployTimes maps resource name to the daemon's last deploy timestamp — the
+// value a completed restart advances.
+func coreDeployTimes(view *tilt.TiltView) map[string]string {
+	times := make(map[string]string, len(view.UiResources))
+	for _, r := range view.UiResources {
+		if r.Status.LastDeployTime != nil {
+			times[r.Metadata.Name] = *r.Status.LastDeployTime
+		}
+	}
+	return times
+}
+
+// coreWaitForSettled polls fetch every interval until every named resource has
+// redeployed and left building/starting, or timeout elapses. baseline holds each
+// resource's deploy time from before the trigger. It returns the last states
+// read and whether they all settled; sleep is injected so the loop is
+// exercisable without a daemon.
+func coreWaitForSettled(fetch func() (*tilt.TiltView, error), names []string, baseline map[string]string, timeout, interval time.Duration, sleep func(time.Duration)) ([]coreWaitState, bool, error) {
+	if interval <= 0 {
+		interval = corePollInterval
+	}
+	var elapsed time.Duration
+	for {
+		view, err := fetch()
+		if err != nil {
+			return nil, false, err
+		}
+		now := coreDeployTimes(view)
+		states := make([]coreWaitState, 0, len(names))
+		done := true
+		for _, n := range names {
+			s := coreWaitState{name: n, status: "unknown", deployed: now[n] != baseline[n]}
+			for _, r := range view.UiResources {
+				if r.Metadata.Name == n {
+					s.status = mcpServiceStatus(r)
+					break
+				}
+			}
+			states = append(states, s)
+			if !coreResourceSettled(s) {
+				done = false
+			}
+		}
+		if done || elapsed+interval > timeout {
+			return states, done, nil
+		}
+		sleep(interval)
+		elapsed += interval
+	}
+}
+
+// coreWaitReport renders a wait's outcome. A timeout reports the state each
+// resource was still in rather than a verdict.
+func coreWaitReport(states []coreWaitState, settled bool, timeout time.Duration) string {
+	parts := make([]string, 0, len(states))
+	for _, s := range states {
+		part := fmt.Sprintf("%s=%s", s.name, s.status)
+		if !settled && !s.deployed && coreSettled(s.status) {
+			part += " (no new deploy yet)"
+		}
+		parts = append(parts, part)
+	}
+	if settled {
+		return "after waiting: " + strings.Join(parts, ", ")
+	}
+	return fmt.Sprintf("waited %ds and these had not settled: %s — 'building' can persist (slow or hung build); check logs.",
+		int(timeout.Seconds()), strings.Join(parts, ", "))
+}
+
+// coreWaitFor blocks for at most seconds (capped at coreMaxWaitSeconds) while
+// the named resources finish redeploying, and returns a line describing where
+// they ended up. seconds <= 0 returns immediately with no line.
+func coreWaitFor(tiltClient *tilt.Client, names []string, baseline map[string]string, seconds int) string {
+	if seconds <= 0 || len(names) == 0 || tiltClient == nil {
+		return ""
+	}
+	if seconds > coreMaxWaitSeconds {
+		seconds = coreMaxWaitSeconds
+	}
+	timeout := time.Duration(seconds) * time.Second
+	states, settled, err := coreWaitForSettled(tiltClient.GetView, names, baseline, timeout, corePollInterval, time.Sleep)
+	if err != nil {
+		return "\nwait failed: " + err.Error()
+	}
+	return "\n" + coreWaitReport(states, settled, timeout)
+}
+
 func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
 	tool := mcp.NewTool("restart",
 		mcp.WithDescription("Restart a specific service or all services in a group in the LOCAL dev stack by triggering a rebuild. Operates on local dev services only — service name must be exact. If neither service nor group is given, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
@@ -470,11 +595,14 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(false),
+		mcp.WithNumber("wait_seconds",
+			mcp.Description("Wait up to this many seconds for the restarted services to settle, then report the state each ended in. Default 0 returns immediately, before the rebuild has finished. Capped at 300. On timeout it names the state each service was still in rather than claiming success.")),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		name := request.GetString("service", "")
 		groupName := request.GetString("group", "")
+		waitSeconds := int(request.GetFloat("wait_seconds", 0))
 
 		if name != "" && groupName != "" {
 			return mcp.NewToolResultError("specify either service or group, not both"), nil
@@ -496,6 +624,7 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		deployedBefore := coreDeployTimes(view)
 
 		// Group restart.
 		if groupName != "" {
@@ -542,8 +671,12 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 				return mcp.NewToolResultError(fmt.Sprintf("restarted %d/%d services in group %q: %s\nfailures: %s",
 					len(successes), len(members), groupName, strings.Join(successes, ", "), strings.Join(failures, "; "))), nil
 			}
+			waited := make([]string, 0, len(members))
+			for _, svc := range members {
+				waited = append(waited, resourceName(ws.Name, svc, t.namespace))
+			}
 			return mcp.NewToolResultText(syncNotes + onTarget(t.label, fmt.Sprintf("restarted %d services in group %s: %s",
-				len(members), groupName, strings.Join(successes, ", ")))), nil
+				len(members), groupName, strings.Join(successes, ", "))) + coreWaitFor(tiltClient, waited, deployedBefore, waitSeconds)), nil
 		}
 
 		// Single service restart.
@@ -706,35 +839,48 @@ func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, def
 	})
 }
 
-func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
+func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stop",
-		mcp.WithDescription("Stop (disable) one service, all services in a group, or every service of one instance in the LOCAL dev stack. Operates on local dev services only — service name must be exact. If service is given, stops that service. If group is given, stops all services in the group. If neither is given, stops every service of the targeted instance and nothing else: with stack absent that is this workspace's base services only, and with stack set it is only that stack's instances (<workspace>:<service>:<stack>). One daemon holds every workspace and every stack, but a stop never reaches another workspace, a base-wide stop never touches a feature stack's instances, and a stack-scoped stop never touches base. Cannot specify both service and group."),
+		mcp.WithDescription("Stop (disable) services in the LOCAL dev stack. Operates on local dev services only — service name must be exact. Exactly one target: service stops that service; group stops every service in that group; all=true stops every service of the targeted instance. With none of them, stops the default service for this repo — the same default restart uses (DEVSTACK_DEFAULT_SERVICE), so a bare call never takes the workspace down. Stopping everything requires all=true. Scoped by stack: with stack set, even all=true touches only that stack's instances, never base's."),
 		mcp.WithString("service",
 			mcp.Description("Exact service name or alias to stop (e.g. 'api-service'). NOT a description or partial match. If omitted, every service of the targeted instance is stopped (unless group is given) — base's services when stack is absent, that stack's services when stack is set."),
 		),
 		mcp.WithString("group",
-			mcp.Description("Group name to stop. All services in the group are stopped in parallel, in the targeted instance only. Cannot be combined with service."),
+			mcp.Description("Group name to stop. All services in the group are stopped in parallel, in the targeted instance only. Cannot be combined with service or all."),
 		),
 		mcp.WithString("stack", mcp.Description(stackParamDesc)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(false),
+		mcp.WithBoolean("all",
+			mcp.Description("Stop every service of the targeted instance (the whole workspace, or the whole stack when stack is set). Required to stop more than one service — omitting service/group does NOT mean all. Cannot be combined with service or group.")),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		name := request.GetString("service", "")
 		groupName := request.GetString("group", "")
+		stopAll := request.GetBool("all", false)
 
 		if name != "" && groupName != "" {
 			return mcp.NewToolResultError("specify either service or group, not both"), nil
 		}
+		if stopAll && (name != "" || groupName != "") {
+			return mcp.NewToolResultError("all cannot be combined with service or group"), nil
+		}
 
-		t, err := resolveLocalTarget(ws, localTarget{client: tiltClient, cfg: cfg}, request.GetString("stack", ""))
+		t, err := resolveLocalTarget(ws, localTarget{client: tiltClient, cfg: cfg, defaultSvc: defaultService}, request.GetString("stack", ""))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		tiltClient, cfg := t.client, t.cfg
+		tiltClient, defaultService, cfg := t.client, t.defaultSvc, t.cfg
+
+		if name == "" && groupName == "" && !stopAll {
+			name = defaultService
+			if name == "" {
+				return mcp.NewToolResultError("no service specified and no default service configured for this repo — pass service, group, or all=true to stop every service"), nil
+			}
+		}
 
 		view, err := tiltClient.GetView()
 		if err != nil {
@@ -795,7 +941,8 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg 
 			return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("Stopped %q.", resolved))), nil
 		}
 
-		// Stop all (scoped to the stack's resources when a stack is targeted).
+		// Stop all — only ever reached via an explicit all=true, and scoped to
+		// the stack's resources when a stack is targeted.
 		targets := stackResourceNames(view, ws.Name, t.namespace)
 		var sb strings.Builder
 		var failures []string
@@ -1210,7 +1357,9 @@ func applyGrep(lines []string, re *regexp.Regexp, contextLines int) []string {
 
 func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws *workspace.Workspace) {
 	tool := mcp.NewTool("configure",
-		mcp.WithDescription("Set a dev daemon runtime argument (key=value) that controls how services are configured. Use this to change feature flags, modes, or other runtime config. Affected services will restart automatically."),
+		mcp.WithDescription("Set a dev daemon runtime argument (key=value) that controls how services are configured. Use this to change feature flags, modes, or other runtime config. Affected services will restart automatically. "+
+			"Boundary: this sets arguments the daemon itself reads when it generates the stack — for config values a service reads, use env_use (point a scope at a named config env), env_set (edit a named env's vars) or service_env (edit one service's vars) instead. "+
+			"Setting an argument REPLACES the daemon's entire argument list: this tool sets one key, so every argument set earlier is silently dropped."),
 		mcp.WithString("key",
 			mcp.Required(),
 			mcp.Description("The argument key (e.g. 'env', 'debug', 'profile')."),
@@ -1248,17 +1397,37 @@ func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client,
 	})
 }
 
+// coreOtelUIService resolves the observability UI as a forwardable port, the
+// same resolution `devstack tunnel --otel` uses. It is not a daemon resource, so
+// it is never discovered — it is only added on request.
+func coreOtelUIService(ws *workspace.Workspace) (svc tunnel.Service, reason string, ok bool) {
+	plugin := otel.For(ws)
+	if plugin == nil {
+		return tunnel.Service{}, "no observability backend configured", false
+	}
+	endpoint := plugin.QueryEndpoint(ws)
+	if endpoint == "" {
+		return tunnel.Service{}, fmt.Sprintf("backend %q has no local UI to forward — telemetry goes upstream instead", plugin.Name()), false
+	}
+	port := tunnel.PortFromURL(endpoint)
+	if port == 0 {
+		return tunnel.Service{}, fmt.Sprintf("could not read a port from the %s UI address %q", plugin.Name(), endpoint), false
+	}
+	return tunnel.Service{Name: "otel-ui (" + plugin.Name() + ")", Port: port, Runtime: "ok"}, "", true
+}
+
 func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws *workspace.Workspace) {
 	tool := mcp.NewTool("tunnel",
 		mcp.WithDescription("Forward this workspace's LOCAL service ports to/from a remote host over SSH, so a remote machine can reach services running on this dev box. "+
 			"Requires key-based SSH access to the remote (no passwords) — if keys aren't installed you'll get instructions to run ssh-copy-id. "+
 			"Only ports that are actually serving traffic are forwarded; dead/idle services are skipped. "+
 			"The remote host/user are remembered per-workspace after the first successful push, so later calls can omit them. "+
+			"Any host you can ssh to works, including a plain ssh-config alias; a tailnet address is one such host, not a requirement. "+
 			"Actions: 'list' (discovered services + whether each is serving), 'status' (which tunnels are currently up), "+
 			"'push' (expose local ports on the remote via ssh -R — the common case), 'pull' (pull ports from a source machine to here via ssh -L), "+
 			"'stop' (tear down all tunnels). The remote is saved automatically on the first successful push/pull."),
 		mcp.WithString("action", mcp.Required(),
-			mcp.Description("One of: list, status, push, pull, stop.")),
+			mcp.Description("One of: list, status, push, pull, stop. Read-only, changes nothing: 'list', 'status'. Writes — they start or kill ssh forwards, and push/pull also save the remote: 'push', 'pull', 'stop'.")),
 		mcp.WithString("host",
 			mcp.Description("Remote host or SSH config alias (e.g. 'macbook'). Optional if a default is saved for this workspace.")),
 		mcp.WithString("user",
@@ -1273,6 +1442,8 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(false),
 		mcp.WithOpenWorldHintAnnotation(true),
+		mcp.WithBoolean("otel",
+			mcp.Description("Also forward the observability UI port, so the remote can read this machine's telemetry at the same address you use locally (CLI: --otel). Default false. Ignored with a note when the backend has no local UI.")),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1294,6 +1465,15 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			}
 		}
 		svcs := tunnel.Discover(view, filter, ws.Name, request.GetBool("stacks", false))
+		var otelNote string
+		if request.GetBool("otel", false) {
+			ui, reason, ok := coreOtelUIService(ws)
+			if ok {
+				svcs = append(svcs, ui)
+			} else {
+				otelNote = fmt.Sprintf("warning: otel UI not forwarded — %s.\n", reason)
+			}
+		}
 		sort.Slice(svcs, func(i, j int) bool { return svcs[i].Port < svcs[j].Port })
 
 		switch action {
@@ -1307,7 +1487,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 				}
 				fmt.Fprintf(&sb, "  %-30s :%d  (%s)\n", s.Name, s.Port, state)
 			}
-			return mcp.NewToolResultText(sb.String()), nil
+			return mcp.NewToolResultText(otelNote + sb.String()), nil
 
 		case "status":
 			var sb strings.Builder
@@ -1321,13 +1501,13 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 				}
 				fmt.Fprintf(&sb, "  [%-4s] %-30s :%d\n", state, s.Name, s.Port)
 			}
-			return mcp.NewToolResultText(sb.String()), nil
+			return mcp.NewToolResultText(otelNote + sb.String()), nil
 
 		case "stop":
 			for _, s := range svcs {
 				tunnel.KillPort(ws.Name, s.Port)
 			}
-			return mcp.NewToolResultText(fmt.Sprintf("Stopped tunnels for %d service(s).", len(svcs))), nil
+			return mcp.NewToolResultText(otelNote + fmt.Sprintf("Stopped tunnels for %d service(s).", len(svcs))), nil
 
 		case "push", "pull":
 			mode := tunnel.ModePush
@@ -1378,6 +1558,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			}
 
 			var sb strings.Builder
+			sb.WriteString(otelNote)
 			fmt.Fprintf(&sb, "%s tunnels → %s@%s\n", strings.ToUpper(action), ruser, rhost)
 			for _, s := range skipped {
 				fmt.Fprintf(&sb, "  [skip]    %-30s :%d  (not serving)\n", s.Name, s.Port)

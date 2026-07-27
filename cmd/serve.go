@@ -34,10 +34,10 @@ TOOLS EXPOSED TO AI AGENTS
   investigate     correlated traces + logs in one call        [when observability enabled]
   observability   inspect/enable/disable OTEL + telemetry evidence [local only]
   configure       set a Tilt runtime argument                 [local only]
-  tunnel          forward local service ports to/from a remote over SSH [local, when tailscale installed]
+  tunnel          forward local service ports to/from a remote over SSH [local, when an ssh client is available]
 
 The exact tool set adapts to the active workspace: trace/telemetry tools appear only
-when observability is enabled in the manifest, and tunnel tools only when tailscale is installed.
+when observability is enabled in the manifest, and tunnel tools only when an ssh client is available.
 Call the 'environment' tool first to see what's available.
 
 TRANSPORT
