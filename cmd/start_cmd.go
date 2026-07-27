@@ -22,7 +22,7 @@ The dev daemon is responsible for running all local services, watching source
 files for changes, and hot-reloading services when code is modified. It must
 be running before you can start, stop, or restart individual services.
 
-The SigNoz observability stack is also started automatically so services can
+The shared observability stack is also started automatically so services can
 begin shipping traces and logs immediately.
 
 Logs are written to ~/.local/share/devstack/<workspace-name>/tilt.log.`,

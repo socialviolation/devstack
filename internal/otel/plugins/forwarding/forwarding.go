@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/socialviolation/devstack/internal/observability"
+
 	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -21,31 +23,21 @@ type ForwardingPlugin struct{}
 
 func (p *ForwardingPlugin) Name() string { return "forwarding" }
 
-// CollectorConfig generates YAML to forward telemetry to the configured upstream endpoint.
-// When no upstream is configured, it generates a debug-exporter config so the collector
-// starts and telemetry is visible in collector stdout rather than silently dropped.
-func (p *ForwardingPlugin) CollectorConfig(ws *workspace.Workspace) ([]byte, error) {
+// Contribute forwards this workspace's telemetry to its configured upstream,
+// stamping deployment.environment and any extra resource attributes on the way
+// out. With no upstream configured it falls back to the debug exporter so
+// telemetry lands in the collector log rather than being silently dropped.
+func (p *ForwardingPlugin) Contribute(ws *workspace.Workspace) (otel.Contribution, error) {
 	upstream := ws.PluginConfig("upstream")
 
-	// No upstream configured: use debug exporter so telemetry isn't silently dropped.
 	if upstream == "" {
-		cfg := `exporters:
-  debug:
-    verbosity: detailed
-
-service:
-  pipelines:
-    traces:
-      receivers: [otlp]
-      exporters: [debug]
-    metrics:
-      receivers: [otlp]
-      exporters: [debug]
-    logs:
-      receivers: [otlp]
-      exporters: [debug]
-`
-		return []byte(cfg), nil
+		debug := otel.Pipeline{Exporters: []string{"debug"}}
+		return otel.Contribution{
+			Exporters: map[string]any{"debug": map[string]any{"verbosity": "detailed"}},
+			Traces:    debug,
+			Metrics:   debug,
+			Logs:      debug,
+		}, nil
 	}
 
 	deploymentEnv := ws.PluginConfig("deployment_env")
@@ -53,18 +45,9 @@ service:
 		deploymentEnv = "dev"
 	}
 
-	apiKey := ws.PluginConfig("api_key")
-	// api_key_header allows customising the header name (default: Authorization with Bearer prefix).
-	// Use "signoz-ingestion-key" for SigNoz cloud, or any other custom header name.
-	// When a custom header name is set the key value is sent verbatim (no "Bearer " prefix).
-	apiKeyHeader := ws.PluginConfig("api_key_header")
-
-	protocol := ws.PluginConfig("protocol") // "grpc" or "http" (default "http")
-	useGRPC := strings.ToLower(protocol) == "grpc"
-
-	// Build resource attribute entries: deployment.environment first, then extras.
-	attrLines := fmt.Sprintf("      - action: upsert\n        key: deployment.environment\n        value: %s\n", deploymentEnv)
-
+	attrs := []any{
+		map[string]any{"action": "upsert", "key": "deployment.environment", "value": deploymentEnv},
+	}
 	// resource_attributes: comma-separated key=value pairs, e.g. "engineer=nick,team=platform"
 	if extras := ws.PluginConfig("resource_attributes"); extras != "" {
 		for _, pair := range strings.Split(extras, ",") {
@@ -73,66 +56,57 @@ service:
 			if idx < 1 {
 				continue
 			}
-			k := strings.TrimSpace(pair[:idx])
-			v := strings.TrimSpace(pair[idx+1:])
-			attrLines += fmt.Sprintf("      - action: upsert\n        key: %s\n        value: %s\n", k, v)
+			attrs = append(attrs, map[string]any{
+				"action": "upsert",
+				"key":    strings.TrimSpace(pair[:idx]),
+				"value":  strings.TrimSpace(pair[idx+1:]),
+			})
 		}
 	}
 
-	// Build exporter block.
-	var exporterName, exporterBlock string
+	apiKey := ws.PluginConfig("api_key")
+	// api_key_header allows customising the header name (default: Authorization with Bearer prefix).
+	// Use "signoz-ingestion-key" for SigNoz cloud, or any other custom header name.
+	// When a custom header name is set the key value is sent verbatim (no "Bearer " prefix).
+	apiKeyHeader := ws.PluginConfig("api_key_header")
+	headers := map[string]any{}
+	if apiKey != "" {
+		if apiKeyHeader != "" {
+			headers[apiKeyHeader] = apiKey
+		} else {
+			headers["Authorization"] = "Bearer " + apiKey
+		}
+	}
+
+	useGRPC := strings.ToLower(ws.PluginConfig("protocol")) == "grpc"
+	exporterName := "otlphttp"
+	endpoint := upstream
 	if useGRPC {
 		exporterName = "otlp_grpc"
 		// gRPC endpoint: strip https:// or http:// scheme — otelcol gRPC expects host:port only.
-		endpoint := upstream
-		endpoint = strings.TrimPrefix(endpoint, "https://")
-		endpoint = strings.TrimPrefix(endpoint, "http://")
-
-		headersBlock := ""
-		if apiKey != "" {
-			if apiKeyHeader != "" {
-				headersBlock = fmt.Sprintf("    headers:\n      %s: \"%s\"\n", apiKeyHeader, apiKey)
-			} else {
-				headersBlock = fmt.Sprintf("    headers:\n      Authorization: \"Bearer %s\"\n", apiKey)
-			}
-		}
-		exporterBlock = fmt.Sprintf("exporters:\n  otlp_grpc:\n    endpoint: %s\n%s", endpoint, headersBlock)
-	} else {
-		exporterName = "otlphttp"
-		headersBlock := ""
-		if apiKey != "" {
-			if apiKeyHeader != "" {
-				headersBlock = fmt.Sprintf("    headers:\n      %s: \"%s\"\n", apiKeyHeader, apiKey)
-			} else {
-				headersBlock = fmt.Sprintf("    headers:\n      Authorization: \"Bearer %s\"\n", apiKey)
-			}
-		}
-		exporterBlock = fmt.Sprintf("exporters:\n  otlphttp:\n    endpoint: %s\n%s", upstream, headersBlock)
+		endpoint = strings.TrimPrefix(strings.TrimPrefix(endpoint, "https://"), "http://")
 	}
 
-	cfg := fmt.Sprintf(`processors:
-  resource:
-    attributes:
-%s  batch: {}
+	exporter := map[string]any{"endpoint": endpoint}
+	if len(headers) > 0 {
+		exporter["headers"] = headers
+	}
 
-%s
-service:
-  pipelines:
-    traces:
-      receivers: [otlp]
-      processors: [resource, batch]
-      exporters: [%s]
-    metrics:
-      receivers: [otlp]
-      processors: [resource, batch]
-      exporters: [%s]
-    logs:
-      receivers: [otlp]
-      processors: [resource, batch]
-      exporters: [%s]
-`, attrLines, exporterBlock, exporterName, exporterName, exporterName)
+	pipeline := otel.Pipeline{
+		Processors: []string{"resource", "batch"},
+		Exporters:  []string{exporterName},
+	}
 
-	return []byte(cfg), nil
+	return otel.Contribution{
+		Processors: map[string]any{
+			"resource": map[string]any{"attributes": attrs},
+			"batch":    map[string]any{},
+		},
+		Exporters: map[string]any{exporterName: exporter},
+		Traces:    pipeline,
+		Metrics:   pipeline,
+		Logs:      pipeline,
+	}, nil
 }
 
 // StartCompanion is a no-op — forwarding has no companion infrastructure.
@@ -141,11 +115,23 @@ func (p *ForwardingPlugin) StartCompanion(ws *workspace.Workspace) error { retur
 // StopCompanion is a no-op.
 func (p *ForwardingPlugin) StopCompanion(ws *workspace.Workspace) error { return nil }
 
+// CompanionStale is always false — there is no companion to go stale.
+func (p *ForwardingPlugin) CompanionStale(ws *workspace.Workspace) bool { return false }
+
 // CompanionRunning always returns true — no companion to check.
 func (p *ForwardingPlugin) CompanionRunning(ws *workspace.Workspace) bool { return true }
 
 // QueryEndpoint returns "" — forwarding has no local UI.
 func (p *ForwardingPlugin) QueryEndpoint(ws *workspace.Workspace) string { return "" }
+
+// Backend reports where the telemetry went, since forwarding keeps nothing
+// locally to query.
+func (p *ForwardingPlugin) Backend(ws *workspace.Workspace) (observability.Backend, error) {
+	if upstream := ws.PluginConfig("upstream"); upstream != "" {
+		return nil, fmt.Errorf("workspace %q forwards telemetry to %s — query it there, or switch to a local backend with: devstack otel configure --plugin=openobserve", ws.Name, upstream)
+	}
+	return nil, fmt.Errorf("workspace %q has no upstream configured — telemetry goes to the collector log. Switch to a local backend with: devstack otel configure --plugin=openobserve", ws.Name)
+}
 
 // Validate always passes — upstream is optional. When not set the collector
 // runs in debug mode and writes telemetry to stdout.

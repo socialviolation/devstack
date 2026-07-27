@@ -43,7 +43,7 @@ workspace:
 `+obs)
 	writeFile(t, filepath.Join(apiDir, config.ServiceManifestFileName), serviceManifest)
 
-	ws := &workspace.Workspace{Name: "testws", Path: root, OtelOTLPGRPCPort: 4317}
+	ws := &workspace.Workspace{Name: "testws", Path: root}
 	return ws, root, apiDir
 }
 

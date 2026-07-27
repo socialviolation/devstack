@@ -286,3 +286,38 @@ func TestLaunchLifecycle(t *testing.T) {
 		t.Fatalf("PID file not removed after KillPort: %v", err)
 	}
 }
+
+// A forward outlives whatever created it, so stopping and reporting must work
+// from the PID files rather than from service discovery — otherwise a forward
+// for something no longer discoverable (the observability UI, a removed
+// service) is left running with no way to reach it.
+func TestTrackedPortsReadsLiveForwards(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := Dir("navexa")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"5080.pid", "63290.pid", "20000.pid", "notes.txt", "bogus.pid"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("1234"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := TrackedPorts("navexa")
+	want := []int{5080, 20000, 63290}
+	if len(got) != len(want) {
+		t.Fatalf("TrackedPorts() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("TrackedPorts() = %v, want %v (sorted)", got, want)
+		}
+	}
+}
+
+func TestTrackedPortsNoForwards(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if got := TrackedPorts("navexa"); len(got) != 0 {
+		t.Errorf("TrackedPorts() = %v, want none", got)
+	}
+}

@@ -125,7 +125,7 @@ func resolveLadders(ws *workspace.Workspace, workspacePath, stackEnv string, ser
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve workspace manifests: %w", err)
 	}
-	managed := workspace.ManagedEnv(ws, services)
+	managed := workspace.ManagedEnv(ws, services, workspace.ActiveEnvNames(rw, stackEnv))
 
 	out := map[string][]config.EnvLayer{}
 	for _, name := range services {

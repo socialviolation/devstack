@@ -22,7 +22,7 @@ Requires Go 1.25+ and [Tilt](https://docs.tilt.dev/install.html) on `$PATH`.
 
 If you're joining a team that already uses devstack, follow these steps once per machine. **Claude Code can run all of this for you** — open any repo, ask it to set up your workspace, and it will follow the steps below.
 
-**Prerequisites:** Go 1.25+, [Tilt](https://docs.tilt.dev/install.html), and Docker (only needed if you enable local SigNoz observability)
+**Prerequisites:** Go 1.25+, [Tilt](https://docs.tilt.dev/install.html), and Docker (only needed if you enable local observability)
 
 **1. Install devstack**
 
@@ -190,14 +190,30 @@ Or set it directly in `devstack.workspace.yaml`:
 ```yaml
 observability:
   enabled: true
-  backend: signoz        # default when enabled; use "forwarding" for collector-only / BYO backend
+  backend: openobserve   # default when enabled; "signoz" for the heavier local stack,
+                         # "forwarding" for collector-only / BYO backend
 ```
 
 When enabled, `devstack workspace up` starts a local `otelcol-contrib` collector (detached, logging to its own file) and the OTLP endpoint (`localhost:4317`, gRPC) is pushed down to every service automatically — you never repeat it. If the collector is ever down while enabled, `devstack status` warns and tries to restart it.
 
 > **Prereq:** the collector needs `otelcol-contrib` on `$PATH`. If it's missing, the workspace still comes up but `devstack otel start` fails until you install it — download the matching binary from [opentelemetry-collector-releases](https://github.com/open-telemetry/opentelemetry-collector-releases/releases), or point `OTELCOL_BIN=/path/to/otelcol-contrib`.
 
-**Backends.** The default backend when enabled is **SigNoz** (local UI via Docker — spins up ClickHouse + SigNoz). To forward to your own OTLP endpoint instead of running SigNoz, use the `forwarding` backend:
+**One stack per machine.** The collector and the backend are machine-level, not per-workspace: one `otelcol-contrib` and one backend container serve every workspace, exactly as one Tilt daemon runs every workspace's services.
+
+Because every variant of a service reports to that one backend, each is stamped with the resource attributes that tell them apart — `devstack.workspace`, `devstack.service`, `devstack.stack`, and `devstack.env`. These are namespaced deliberately: `deployment.environment` belongs to whoever owns the destination, and the `forwarding` backend sets it per workspace. Telemetry is sliced at query time rather than by running a stack each:
+
+```bash
+devstack otel services               # which variants are reporting
+# Navexa.API      (devstack: navexa-api)  stack=agent env=dev
+# Navexa.API      (devstack: navexa-api)  stack=base  env=dev
+# nxTradeImporter                         stack=base  env=dev
+
+devstack otel traces --stack=agent   # just that stack's variant
+```
+
+A service often reports itself under a different name than devstack knows it by (a repo devstack calls `navexa-api` reporting as `Navexa.API`). Filters match either name, and `otel services` shows both.
+
+**Backends.** The default is **OpenObserve** — a single container (~230 MB idle), no configuration, UI on `localhost:5080`. **SigNoz** remains available (`--plugin=signoz`) but is far heavier: ClickHouse + Zookeeper + UI, ~1.5–2 GB idle. To forward to your own OTLP endpoint instead of storing locally, use the `forwarding` backend:
 
 ```bash
 # Forward to any OTLP endpoint via gRPC
@@ -207,17 +223,28 @@ devstack otel configure --plugin=forwarding --set upstream=telemetry.example.com
 devstack otel configure --plugin=forwarding --set upstream=https://otel.example.com:4318
 ```
 
-`--plugin` (the backend) is persisted to the workspace manifest, so the choice sticks. Per-developer endpoint override: set `OTEL_EXPORTER_OTLP_ENDPOINT` in `.envrc` in any service repo.
+`--plugin` (the backend) is persisted to the workspace manifest, so the choice sticks — and workspaces may differ. When they do, the one collector routes each workspace's telemetry to its own backend on the `devstack.workspace` attribute, so nothing leaks between them. Per-developer endpoint override: set `OTEL_EXPORTER_OTLP_ENDPOINT` in `.envrc` in any service repo.
 
 ```bash
 devstack otel status                 # collector state, ports, upstream + per-service telemetry evidence
-devstack otel start                  # start the collector (and companion if signoz)
+devstack otel start                  # start the collector (and the backend if it runs locally)
 devstack otel stop
-devstack otel open                   # open the UI (signoz only)
+devstack otel open                   # open the UI
 devstack otel plugins                # list available plugins and their config keys
 ```
 
-Flags for `start`: `--otlp-grpc-port` (default 4317), `--otlp-http-port` (default 4318), `--ui-port` (default 3301, signoz only).
+**Querying, without naming a backend.** `devstack` resolves the workspace's configured backend, endpoint and credentials for you — no URLs, keys or backend names are ever passed in. The same resolution backs the `investigate` MCP tool:
+
+```bash
+devstack otel traces                 # recent traces
+devstack otel traces --service=api --since=15m
+devstack otel traces --stack=feat-x  # only this feature stack's traces
+devstack otel traces <trace-id>      # full span tree
+devstack otel logs --trace=<trace-id>
+devstack otel services               # what's reporting telemetry
+```
+
+OTLP ingest is fixed machine-wide: gRPC on 4317, HTTP on 4318.
 
 ### MCP Server
 
@@ -276,8 +303,16 @@ Inspect and change the workspace's OTEL config: `status` (enabled, backend, coll
 ### `tunnel`
 Forward service ports to/from a remote host over SSH (push/pull/list/status/stop). Only registered when Tailscale is installed.
 
+From the CLI, `--stacks` also forwards active feature stacks' ports and `--otel` also forwards the observability UI, so the remote reads this machine's traces at the same address you use locally:
+
+```bash
+devstack tunnel push my-box.ts.net --otel
+```
+
+`stop` and `status` work from the forwards that are actually running, not from what is currently discoverable — so the observability UI (never a Tilt resource) and any port whose service has since gone are still reported and still torn down.
+
 ### `investigate`
-Primary trace tool — **only available when observability is enabled**. Queries the backend (SigNoz by default) for distributed traces and correlated logs, then falls back to dev-daemon process logs if OTEL logs are unavailable.
+Primary trace tool — **only available when observability is enabled**. Queries whatever backend the workspace is configured with (OpenObserve by default) for distributed traces and correlated logs, then falls back to dev-daemon process logs if OTEL logs are unavailable.
 
 Three modes:
 
@@ -289,7 +324,7 @@ Three modes:
 
 Parameters: `trace_id`, `attribute`, `value`, `service`, `stack` (absent = base instance only, a name = that stack, `"all"` = every instance), `since_minutes` (default 5), `limit` (default 3), `errors_only`.
 
-Attribute search queries SigNoz with `isRoot=true` so each result is a distinct trace entry point — no matter which service owns the root span.
+Attribute search matches root spans only, so each result is a distinct trace entry point — no matter which service owns the root span.
 
 ---
 

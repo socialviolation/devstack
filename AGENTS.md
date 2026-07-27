@@ -55,8 +55,25 @@ devstack start devstack                       # start this service + its deps
 | Stop service(s) | `stop [name]` — omit name to stop all |
 | Change a Tilt config value | `configure key=<k> value=<v>` |
 
+### Querying telemetry
+
+One collector and one backend (OpenObserve by default) serve the whole machine, so every workspace and every feature stack lands in the same store. Nothing needs configuring to query it — devstack resolves the backend, endpoint and credentials, and confines results to the current workspace. Variants are told apart by resource attributes: `devstack.workspace`, `devstack.service`, `devstack.stack` (`base` or a stack name), `devstack.env`.
+
+```bash
+devstack otel services                  # which variants are reporting, with stack + env
+devstack otel traces                    # recent traces (defaults to the service you are in)
+devstack otel traces --stack <name>     # only that stack's instance
+devstack otel traces --service all      # every service in the workspace
+devstack otel logs --trace <trace-id>   # logs correlated with one trace
+devstack otel status                    # per-variant evidence: which instances are emitting
+```
+
+A service usually reports itself under a name of its own choosing, not the one devstack uses (devstack `navexa-api` reports as `Navexa.API`). Filters match either; `otel services` shows both.
+
 ### Rules
 
 - **`investigate` first** when something is broken — it correlates traces and logs in one call
+- **Pass `stack` when a feature stack is involved** — omitting it queries the base instance only, so a stack's traffic reads as missing
+- **Check `otel status` before calling a service silent** — it reports which variants actually emitted
 - **Stop only what you started** — don't tear down the whole stack unless asked
 - **Never use devstack for prod/staging** — it only sees local Tilt-managed processes

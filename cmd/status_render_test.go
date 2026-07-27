@@ -85,7 +85,7 @@ func TestOtelSegment(t *testing.T) {
 			name:        "running wins",
 			running:     true,
 			enabled:     true,
-			wantText:    "otel ui:1 otlp:2 grpc:3",
+			wantText:    "otel ui:http://localhost:5080 otlp:4318 grpc:4317",
 			wantDecided: true,
 		},
 		{
@@ -115,7 +115,7 @@ func TestOtelSegment(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			text, decided := otelSegment(tt.running, tt.enabled, tt.pluginConfigured, tt.plugin, 1, 2, 3)
+			text, decided := otelSegment(tt.running, tt.enabled, tt.pluginConfigured, tt.plugin, "http://localhost:5080", 4318, 4317)
 			if text != tt.wantText || decided != tt.wantDecided {
 				t.Fatalf("otelSegment = (%q, %v), want (%q, %v)", text, decided, tt.wantText, tt.wantDecided)
 			}

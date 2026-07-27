@@ -15,6 +15,7 @@ import (
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/gitinfo"
+	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -166,10 +167,13 @@ func hostResourceMap(resources []tilt.UIResource, wsName, stackName string) map[
 // otelSegment returns the status header's otel segment for the states decidable
 // without touching the collector. decided is false only for the enabled but not
 // running case, which the caller resolves with an auto-start attempt.
-func otelSegment(running, enabled, pluginConfigured bool, plugin string, uiPort, httpPort, grpcPort int) (text string, decided bool) {
+func otelSegment(running, enabled, pluginConfigured bool, plugin, ui string, httpPort, grpcPort int) (text string, decided bool) {
 	switch {
 	case running:
-		return fmt.Sprintf("otel ui:%d otlp:%d grpc:%d", uiPort, httpPort, grpcPort), true
+		if ui == "" {
+			return fmt.Sprintf("otel otlp:%d grpc:%d", httpPort, grpcPort), true
+		}
+		return fmt.Sprintf("otel ui:%s otlp:%d grpc:%d", ui, httpPort, grpcPort), true
 	case enabled:
 		return "", false
 	case pluginConfigured:
@@ -570,7 +574,7 @@ func runStatusAll() error {
 		w := &workspaces[i]
 		switch {
 		case isOtelRunning(w):
-			otelRunning = append(otelRunning, fmt.Sprintf("%s ui:%d otlp:%d", w.Name, w.UIPort(), w.HTTPPort()))
+			otelRunning = append(otelRunning, fmt.Sprintf("%s ui:%s otlp:%d", w.Name, otel.QueryEndpointFor(w), workspace.OTLPHTTPPort))
 		case config.ObservabilityEnabled(w.Path):
 			otelEnabled = append(otelEnabled, w.Name)
 		}

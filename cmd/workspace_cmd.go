@@ -26,7 +26,7 @@ so it knows where each one lives and which port its dev daemon is running on.
 Each workspace has its own:
   - dev daemon   (the background process that runs and hot-reloads services)
   - service list (declared in <workspace>/.devstack.json)
-  - observability stack (SigNoz, started automatically with 'workspace up')
+  - a share of the machine-wide observability stack (started with 'workspace up')
 
 SUBCOMMANDS
   devstack workspace            show all registered workspaces and service counts

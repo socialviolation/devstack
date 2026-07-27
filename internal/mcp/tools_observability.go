@@ -24,14 +24,15 @@ func registerObservabilityTool(mcpServer *server.MCPServer, ws *workspace.Worksp
 		mcp.WithDescription("Inspect and change this workspace's OpenTelemetry (OTEL) configuration. "+
 			"When enabled, `devstack workspace up` runs a local collector and OTEL export env is pushed down to services; "+
 			"when disabled, services are not assumed to be instrumented and no collector runs. "+
-			"The trace-query tool (investigate) only exists while observability is enabled — use action='enable' to turn it on; action='status' also reports per-service telemetry evidence and confidence. "+
+			"The trace-query tool (investigate) only exists while observability is enabled — use action='enable' to turn it on. "+
+			"action='status' reports evidence per running variant — for each service, which instances (base, each feature stack) actually emitted spans in the last 15 minutes, with the env each runs under and the name it reports itself as. Check it before concluding a service or a stack is silent. "+
 			"Actions: 'status' (current enabled state, backend, collector), 'enable' (turn on, optionally set backend), 'disable' (turn off), "+
 			"'configure' (set the backend and/or a plugin config key such as upstream). "+
 			"Config changes take effect on the next `devstack otel start` / `workspace up`; the available MCP tool set updates when the MCP server restarts."),
 		mcp.WithString("action", mcp.Required(),
 			mcp.Description("One of: status, enable, disable, configure.")),
 		mcp.WithString("backend",
-			mcp.Description("Backend/plugin to use (e.g. 'signoz', 'forwarding'). Optional for enable/configure; defaults to signoz when first enabled.")),
+			mcp.Description("Backend/plugin to use (e.g. 'openobserve', 'signoz', 'forwarding'). Optional for enable/configure; defaults to openobserve — a single lightweight local stack shared by every workspace.")),
 		mcp.WithString("key",
 			mcp.Description("Plugin config key to set with 'configure' (e.g. 'upstream', 'deployment_env'). Requires value.")),
 		mcp.WithString("value",
@@ -118,20 +119,20 @@ func observabilityStatus(ws *workspace.Workspace, workspacePath string) string {
 		fmt.Fprintf(&sb, "note: enable to run a collector and expose the investigate tool.\n")
 		return sb.String()
 	}
-	fmt.Fprintf(&sb, "collector: %s\n", runningLabel(otel.CollectorRunning(ws)))
-	fmt.Fprintf(&sb, "otlp: grpc=localhost:%d http=localhost:%d\n", ws.GRPCPort(), ws.HTTPPort())
+	fmt.Fprintf(&sb, "collector: %s\n", runningLabel(otel.CollectorRunning()))
+	fmt.Fprintf(&sb, "otlp: grpc=localhost:%d http=localhost:%d\n", workspace.OTLPGRPCPort, workspace.OTLPHTTPPort)
 	if upstream := ws.PluginConfig("upstream"); upstream != "" {
 		fmt.Fprintf(&sb, "upstream: %s\n", upstream)
 	}
 
 	// Per-service telemetry evidence — whether signals are actually arriving.
 	// Check this before inferring anything from missing traces or logs.
-	if statuses, err := telemetry.Status(workspacePath); err == nil && len(statuses) > 0 {
-		sb.WriteString("evidence:\n")
+	evidenceBackend, _ := otel.BackendFor(ws)
+	if statuses, err := telemetry.Status(workspacePath, evidenceBackend, telemetry.DefaultWindow); err == nil && len(statuses) > 0 {
+		fmt.Fprintf(&sb, "evidence (last %s, per variant):\n", telemetry.DefaultWindow)
 		for _, s := range statuses {
-			fmt.Fprintf(&sb, "  %s: confidence=%s traces=%d logs=%t collector_reachable=%t mode=%s\n",
-				s.Service, s.Confidence, s.TraceCount, s.LogEvidence, s.CollectorReachable, s.Mode)
-			fmt.Fprintf(&sb, "    %s\n", s.Interpretation)
+			fmt.Fprintf(&sb, "  %s: confidence=%s spans=%d mode=%s\n", s.Service, s.Confidence, s.TraceCount, s.Mode)
+			fmt.Fprintf(&sb, "    %s\n", s.Summary())
 		}
 	}
 	return sb.String()

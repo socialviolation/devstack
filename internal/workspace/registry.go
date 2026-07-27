@@ -27,12 +27,7 @@ type Workspace struct {
 	Path     string `json:"path"`      // absolute path to workspace root (e.g. /home/nick/dev/navexa)
 	TiltPort int    `json:"tilt_port"` // port Tilt API listens on for this workspace
 
-	// SigNoz port overrides. Zero means use the default.
-	OtelUIPort       int `json:"otel_ui_port,omitempty"`        // SigNoz UI + query API (default 3301)
-	OtelOTLPGRPCPort int `json:"otel_otlp_grpc_port,omitempty"` // OTLP gRPC (default 4317)
-	OtelOTLPHTTPPort int `json:"otel_otlp_http_port,omitempty"` // OTLP HTTP (default 4318)
-
-	// OtelPlugin names the active OTEL plugin (default "signoz").
+	// OtelPlugin names the active OTEL plugin (default "openobserve").
 	OtelPlugin string `json:"otel_plugin,omitempty"`
 	// OtelPluginConfig holds plugin-specific configuration key-value pairs.
 	OtelPluginConfig map[string]string `json:"otel_plugin_config,omitempty"`
@@ -384,42 +379,14 @@ func DetectFromCwd() (*Workspace, error) {
 	return nil, fmt.Errorf("not inside a registered devstack workspace. Run: devstack register")
 }
 
-const defaultOtelUIPort = 3301
-const defaultOtelOTLPGRPCPort = 4317
-const defaultOtelOTLPHTTPPort = 4318
-
-// UIPort returns the effective SigNoz UI/query port for a managed workspace.
-func (ws *Workspace) UIPort() int {
-	if ws.OtelUIPort > 0 {
-		return ws.OtelUIPort
-	}
-	return defaultOtelUIPort
-}
-
-// GRPCPort returns the effective OTLP gRPC port for a managed workspace.
-func (ws *Workspace) GRPCPort() int {
-	if ws.OtelOTLPGRPCPort > 0 {
-		return ws.OtelOTLPGRPCPort
-	}
-	return defaultOtelOTLPGRPCPort
-}
-
-// HTTPPort returns the effective OTLP HTTP port for a managed workspace.
-func (ws *Workspace) HTTPPort() int {
-	if ws.OtelOTLPHTTPPort > 0 {
-		return ws.OtelOTLPHTTPPort
-	}
-	return defaultOtelOTLPHTTPPort
-}
+// OTLP ingestion is machine-level: one collector serves every workspace, which
+// is why these are fixed rather than per-workspace.
+const OTLPGRPCPort = 4317
+const OTLPHTTPPort = 4318
 
 // OtelOTLPEndpoint returns the OTLP gRPC endpoint services should push to.
 func OtelOTLPEndpoint(ws *Workspace) string {
-	return fmt.Sprintf("http://localhost:%d", ws.GRPCPort())
-}
-
-// OtelQueryEndpoint returns the SigNoz query API base URL used by MCP tools.
-func OtelQueryEndpoint(ws *Workspace) string {
-	return fmt.Sprintf("http://localhost:%d", ws.UIPort())
+	return fmt.Sprintf("http://localhost:%d", OTLPGRPCPort)
 }
 
 // UpdateOtelPlugin sets the OTEL plugin name and config for a workspace.
@@ -434,30 +401,6 @@ func UpdateOtelPlugin(name, pluginName string, config map[string]string) error {
 			workspaces[i].OtelPlugin = pluginName
 			if config != nil {
 				workspaces[i].OtelPluginConfig = config
-			}
-			return Save(workspaces)
-		}
-	}
-	return fmt.Errorf("workspace %q not found", name)
-}
-
-// UpdateOtelPorts sets port overrides for a workspace.
-// Pass 0 for any port to leave it unchanged.
-func UpdateOtelPorts(name string, uiPort, grpcPort, httpPort int) error {
-	workspaces, err := Load()
-	if err != nil {
-		return err
-	}
-	for i, ws := range workspaces {
-		if strings.ToLower(ws.Name) == strings.ToLower(name) {
-			if uiPort > 0 {
-				workspaces[i].OtelUIPort = uiPort
-			}
-			if grpcPort > 0 {
-				workspaces[i].OtelOTLPGRPCPort = grpcPort
-			}
-			if httpPort > 0 {
-				workspaces[i].OtelOTLPHTTPPort = httpPort
 			}
 			return Save(workspaces)
 		}
@@ -548,15 +491,6 @@ func AnyWorkspaceActive() (bool, error) {
 		}
 	}
 	return false, nil
-}
-
-// LocalObservability returns the connection config for this workspace's local
-// observability backend.
-func (ws *Workspace) LocalObservability() ObservabilityConfig {
-	return ObservabilityConfig{
-		Backend: "signoz",
-		URL:     fmt.Sprintf("http://localhost:%d", ws.UIPort()),
-	}
 }
 
 const minPort = 10350

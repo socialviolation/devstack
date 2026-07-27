@@ -9,6 +9,7 @@ import (
 type TraceQuery struct {
 	TraceID   string        // If set, fetch this specific trace (all other fields ignored)
 	SpanID    string        // If set, find the trace containing this span (TraceID takes precedence)
+	Workspace string        // devstack.workspace filter; set for you by ScopedTo
 	Service   string        // Optional service filter
 	Stack     string        // Optional devstack.stack resource-attribute filter ("base" for base workspace)
 	Attribute string        // Optional attribute key (paired with Value)
@@ -19,10 +20,36 @@ type TraceQuery struct {
 
 // LogQuery parameters for querying logs.
 type LogQuery struct {
-	TraceID string
+	TraceID   string
+	Workspace string // devstack.workspace filter; set for you by ScopedTo
+	Service   string
+	Since     time.Duration
+	Limit     int
+}
+
+// ServiceVariant is one distinguishable instance of a service. The same service
+// runs many times over — in the base workspace, in each feature stack, under
+// each config env — and all of them report to the one shared backend, so these
+// fields are what tell a caller which one they are looking at.
+type ServiceVariant struct {
+	// Service is the name the service reports itself as (OTEL service.name).
 	Service string
-	Since   time.Duration
-	Limit   int
+	// Devstack is the name devstack knows it by, which is what a caller stands
+	// in and filters on. It often differs from Service.
+	Devstack string
+	// Stack is the feature stack ("base" for the base workspace).
+	Stack string
+	// Env is the config env the variant runs under, when one is selected.
+	Env string
+	// Spans is how many spans this variant reported in the window — the evidence
+	// that it is actually emitting, not merely configured to.
+	Spans int
+}
+
+// ServiceQuery parameters for listing services that reported telemetry.
+type ServiceQuery struct {
+	Workspace string // devstack.workspace filter; set for you by ScopedTo
+	Since     time.Duration
 }
 
 // Span represents a single span in a distributed trace.
@@ -58,6 +85,7 @@ type Backend interface {
 	// QueryLogs returns log entries matching the query.
 	QueryLogs(ctx context.Context, req LogQuery) ([]LogEntry, error)
 
-	// ListServices returns service names that have emitted traces within the given window.
-	ListServices(ctx context.Context, since time.Duration) ([]string, error)
+	// ListVariants returns the distinct service variants that reported telemetry
+	// in the window, so a caller can see which instance to query.
+	ListVariants(ctx context.Context, req ServiceQuery) ([]ServiceVariant, error)
 }

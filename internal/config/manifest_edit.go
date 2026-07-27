@@ -133,7 +133,7 @@ func SetObservabilityEnabled(workspacePath string, enabled bool) error {
 
 // SetObservabilityBackend writes observability.backend into the workspace
 // manifest, creating the observability block if absent. An empty backend clears
-// the key so the default (signoz) applies.
+// the key so the default (openobserve) applies.
 func SetObservabilityBackend(workspacePath string, backend string) error {
 	return editWorkspaceManifest(workspacePath, func(root *yaml.Node) error {
 		obs := mappingChild(root, "observability")

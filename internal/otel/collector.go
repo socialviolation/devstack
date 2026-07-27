@@ -2,28 +2,34 @@ package otel
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
-// collectorPIDFile returns the path to the collector PID file for a workspace.
-func collectorPIDFile(ws *workspace.Workspace) string {
-	return filepath.Join(workspace.DataDir(ws.Name), "collector.pid")
+// hostDataDir is where the one collector's PID file and log live.
+func hostDataDir() string {
+	return workspace.DataDir(workspace.HostWorkspace().Name)
 }
 
-// collectorConfigPath returns the path where the collector config is written.
-func collectorConfigPath(ws *workspace.Workspace) (string, error) {
+func collectorPIDFile() string {
+	return filepath.Join(hostDataDir(), "collector.pid")
+}
+
+// CollectorConfigPath returns the path of the host collector's generated config.
+func CollectorConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("could not determine home directory: %w", err)
 	}
-	return filepath.Join(home, ".config", "devstack", "collector", ws.Name, "config.yaml"), nil
+	return filepath.Join(home, ".config", "devstack", "collector", "config.yaml"), nil
 }
 
 // otelcolBin returns the path to the otelcol-contrib binary.
@@ -42,47 +48,48 @@ Or set OTELCOL_BIN=/path/to/binary`)
 	return path, nil
 }
 
-// receiverBlock returns the OTLP receiver YAML block for the given workspace ports.
-func receiverBlock(ws *workspace.Workspace) string {
-	return fmt.Sprintf(`receivers:
-  otlp:
-    protocols:
-      grpc:
-        endpoint: 0.0.0.0:%d
-      http:
-        endpoint: 0.0.0.0:%d
-`, ws.GRPCPort(), ws.HTTPPort())
-}
-
-// StartCollector generates the full collector config and spawns otelcol-contrib.
-func StartCollector(ws *workspace.Workspace, plugin Plugin) error {
+// StartCollector writes the merged config for every contributing workspace and
+// (re)starts the one host collector so the new config takes effect. Restarting
+// is what lets a second workspace coming up be folded into the running collector.
+func StartCollector(contribs []WorkspaceContribution) error {
 	bin, err := otelcolBin()
 	if err != nil {
 		return err
 	}
 
-	pluginConfig, err := plugin.CollectorConfig(ws)
+	cfg, err := BuildConfig(workspace.OTLPGRPCPort, workspace.OTLPHTTPPort, contribs)
 	if err != nil {
-		return fmt.Errorf("plugin %q config error: %w", plugin.Name(), err)
+		return err
 	}
 
-	// Merge receiver block + plugin config
-	fullConfig := receiverBlock(ws) + "\n" + string(pluginConfig)
-
-	// Write config to disk
-	cfgPath, err := collectorConfigPath(ws)
+	cfgPath, err := CollectorConfigPath()
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
 		return fmt.Errorf("failed to create collector config dir: %w", err)
 	}
-	if err := os.WriteFile(cfgPath, []byte(fullConfig), 0644); err != nil {
+	if err := os.WriteFile(cfgPath, cfg, 0600); err != nil {
 		return fmt.Errorf("failed to write collector config: %w", err)
 	}
+	// WriteFile leaves an existing file's mode alone, and the generated config
+	// embeds backend credentials.
+	if err := os.Chmod(cfgPath, 0600); err != nil {
+		return fmt.Errorf("failed to secure collector config: %w", err)
+	}
 
-	// Ensure data dir exists for PID file
-	pidPath := collectorPIDFile(ws)
+	stopLegacyCollectors()
+
+	if CollectorRunning() {
+		if err := StopCollector(); err != nil {
+			return err
+		}
+	}
+	if err := awaitPortFree(workspace.OTLPGRPCPort); err != nil {
+		return err
+	}
+
+	pidPath := collectorPIDFile()
 	if err := os.MkdirAll(filepath.Dir(pidPath), 0755); err != nil {
 		return fmt.Errorf("failed to create data dir: %w", err)
 	}
@@ -103,7 +110,6 @@ func StartCollector(ws *workspace.Workspace, plugin Plugin) error {
 		return fmt.Errorf("failed to start otelcol-contrib: %w", err)
 	}
 
-	// Write PID file
 	pid := cmd.Process.Pid
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0644); err != nil {
 		// Don't fail — process is running, just can't track it
@@ -113,9 +119,68 @@ func StartCollector(ws *workspace.Workspace, plugin Plugin) error {
 	return nil
 }
 
+// stopLegacyCollectors kills collectors left over from when devstack ran one per
+// workspace. They hold the OTLP and telemetry ports the host collector needs, so
+// without this a machine that ran an older devstack can never start the new one.
+func stopLegacyCollectors() {
+	entries, err := os.ReadDir(workspace.DataRoot())
+	if err != nil {
+		return
+	}
+	hostKey := workspace.HostWorkspace().Name
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == hostKey {
+			continue
+		}
+		pidPath := filepath.Join(workspace.DataRoot(), e.Name(), "collector.pid")
+		data, err := os.ReadFile(pidPath)
+		if err != nil {
+			continue
+		}
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && isCollectorProcess(pid) {
+			if proc, err := os.FindProcess(pid); err == nil {
+				_ = proc.Signal(os.Interrupt)
+			}
+		}
+		os.Remove(pidPath)
+	}
+}
+
+// isCollectorProcess reports whether a PID is actually an otelcol. A leftover
+// PID file can be days old by the time it is read, and the kernel may have
+// handed that number to something else entirely.
+func isCollectorProcess(pid int) bool {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), "otelcol")
+}
+
+// awaitPortFree waits for the stopping collector to release its OTLP port, since
+// the replacement fails to bind if it starts too soon.
+func awaitPortFree(port int) error {
+	for i := 0; i < 50; i++ {
+		if !portListening(port) {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("collector still holding port %d after 5s", port)
+}
+
+func portListening(port int) bool {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 // StopCollector reads the PID file and sends SIGTERM to the collector process.
-func StopCollector(ws *workspace.Workspace) error {
-	pidPath := collectorPIDFile(ws)
+func StopCollector() error {
+	pidPath := collectorPIDFile()
 	data, err := os.ReadFile(pidPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -146,10 +211,9 @@ func StopCollector(ws *workspace.Workspace) error {
 	return nil
 }
 
-// CollectorRunning returns true if the collector process is alive.
-func CollectorRunning(ws *workspace.Workspace) bool {
-	pidPath := collectorPIDFile(ws)
-	data, err := os.ReadFile(pidPath)
+// CollectorRunning returns true if the host collector process is alive.
+func CollectorRunning() bool {
+	data, err := os.ReadFile(collectorPIDFile())
 	if err != nil {
 		return false
 	}

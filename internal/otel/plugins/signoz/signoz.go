@@ -13,12 +13,18 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/socialviolation/devstack/internal/observability"
+	obssignoz "github.com/socialviolation/devstack/internal/observability/signoz"
 	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 //go:embed files
 var signozFiles embed.FS
+
+// uiPort serves the SigNoz UI and query API. One SigNoz runs per machine, so it
+// is fixed rather than per-workspace.
+const uiPort = 3301
 
 func init() {
 	otel.Register(&SignozPlugin{})
@@ -29,120 +35,134 @@ type SignozPlugin struct{}
 
 func (p *SignozPlugin) Name() string { return "signoz" }
 
-// CollectorConfig returns the processor/exporter/pipeline YAML for the SigNoz ClickHouse backend.
-// The OTLP receiver block is injected by the collector core before this is written.
-func (p *SignozPlugin) CollectorConfig(ws *workspace.Workspace) ([]byte, error) {
-	cfg := `connectors:
-  signozmeter:
-    metrics_flush_interval: 1h
-    dimensions:
-      - name: service.name
-      - name: deployment.environment
-      - name: host.name
-
-processors:
-  batch:
-    send_batch_size: 10000
-    send_batch_max_size: 11000
-    timeout: 10s
-  batch/meter:
-    send_batch_max_size: 25000
-    send_batch_size: 20000
-    timeout: 1s
-  resourcedetection:
-    detectors: [env, system]
-    timeout: 2s
-  signozspanmetrics/delta:
-    metrics_exporter: signozclickhousemetrics
-    metrics_flush_interval: 60s
-    latency_histogram_buckets: [100us, 1ms, 2ms, 6ms, 10ms, 50ms, 100ms, 250ms, 500ms, 1000ms, 1400ms, 2000ms, 5s, 10s, 20s, 40s, 60s]
-    dimensions_cache_size: 100000
-    aggregation_temporality: AGGREGATION_TEMPORALITY_DELTA
-    enable_exp_histogram: true
-    dimensions:
-      - name: service.namespace
-        default: default
-      - name: deployment.environment
-        default: default
-      - name: signoz.collector.id
-      - name: service.version
-      - name: host.name
-
-extensions:
-  health_check:
-    endpoint: 0.0.0.0:13133
-  pprof:
-    endpoint: 0.0.0.0:1777
-
-exporters:
-  clickhousetraces:
-    datasource: tcp://clickhouse:9000/signoz_traces
-    low_cardinal_exception_grouping: false
-    use_new_schema: true
-  signozclickhousemetrics:
-    dsn: tcp://clickhouse:9000/signoz_metrics
-  clickhouselogsexporter:
-    dsn: tcp://clickhouse:9000/signoz_logs
-    timeout: 10s
-    use_new_schema: true
-  signozclickhousemeter:
-    dsn: tcp://clickhouse:9000/signoz_meter
-    timeout: 45s
-    sending_queue:
-      enabled: false
-  metadataexporter:
-    cache:
-      provider: in_memory
-    dsn: tcp://clickhouse:9000/signoz_metadata
-    enabled: true
-    timeout: 45s
-
-service:
-  telemetry:
-    logs:
-      encoding: json
-  extensions:
-    - health_check
-    - pprof
-  pipelines:
-    traces:
-      receivers: [otlp]
-      processors: [signozspanmetrics/delta, batch]
-      exporters: [clickhousetraces, metadataexporter, signozmeter]
-    metrics:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [signozclickhousemetrics, metadataexporter, signozmeter]
-    logs:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [clickhouselogsexporter, metadataexporter, signozmeter]
-    metrics/meter:
-      receivers: [signozmeter]
-      processors: [batch/meter]
-      exporters: [signozclickhousemeter]
-`
-	return []byte(cfg), nil
+// Contribute returns the components and pipelines that export a workspace's
+// telemetry into SigNoz's ClickHouse schema.
+func (p *SignozPlugin) Contribute(ws *workspace.Workspace) (otel.Contribution, error) {
+	return otel.Contribution{
+		Connectors: map[string]any{
+			"signozmeter": map[string]any{
+				"metrics_flush_interval": "1h",
+				"dimensions": []any{
+					map[string]any{"name": "service.name"},
+					map[string]any{"name": "deployment.environment"},
+					map[string]any{"name": "host.name"},
+				},
+			},
+		},
+		Processors: map[string]any{
+			"batch": map[string]any{
+				"send_batch_size":     10000,
+				"send_batch_max_size": 11000,
+				"timeout":             "10s",
+			},
+			"batch/meter": map[string]any{
+				"send_batch_max_size": 25000,
+				"send_batch_size":     20000,
+				"timeout":             "1s",
+			},
+			"resourcedetection": map[string]any{
+				"detectors": []string{"env", "system"},
+				"timeout":   "2s",
+			},
+			"signozspanmetrics/delta": map[string]any{
+				"metrics_exporter":       "signozclickhousemetrics",
+				"metrics_flush_interval": "60s",
+				"latency_histogram_buckets": []string{
+					"100us", "1ms", "2ms", "6ms", "10ms", "50ms", "100ms", "250ms",
+					"500ms", "1000ms", "1400ms", "2000ms", "5s", "10s", "20s", "40s", "60s",
+				},
+				"dimensions_cache_size":   100000,
+				"aggregation_temporality": "AGGREGATION_TEMPORALITY_DELTA",
+				"enable_exp_histogram":    true,
+				"dimensions": []any{
+					map[string]any{"name": "service.namespace", "default": "default"},
+					map[string]any{"name": "deployment.environment", "default": "default"},
+					map[string]any{"name": "signoz.collector.id"},
+					map[string]any{"name": "service.version"},
+					map[string]any{"name": "host.name"},
+				},
+			},
+		},
+		Extensions: map[string]any{
+			"health_check": map[string]any{"endpoint": "0.0.0.0:13133"},
+			"pprof":        map[string]any{"endpoint": "0.0.0.0:1777"},
+		},
+		Exporters: map[string]any{
+			"clickhousetraces": map[string]any{
+				"datasource":                      "tcp://clickhouse:9000/signoz_traces",
+				"low_cardinal_exception_grouping": false,
+				"use_new_schema":                  true,
+			},
+			"signozclickhousemetrics": map[string]any{"dsn": "tcp://clickhouse:9000/signoz_metrics"},
+			"clickhouselogsexporter": map[string]any{
+				"dsn":            "tcp://clickhouse:9000/signoz_logs",
+				"timeout":        "10s",
+				"use_new_schema": true,
+			},
+			"signozclickhousemeter": map[string]any{
+				"dsn":           "tcp://clickhouse:9000/signoz_meter",
+				"timeout":       "45s",
+				"sending_queue": map[string]any{"enabled": false},
+			},
+			"metadataexporter": map[string]any{
+				"cache":   map[string]any{"provider": "in_memory"},
+				"dsn":     "tcp://clickhouse:9000/signoz_metadata",
+				"enabled": true,
+				"timeout": "45s",
+			},
+		},
+		Traces: otel.Pipeline{
+			Processors: []string{"signozspanmetrics/delta", "batch"},
+			Exporters:  []string{"clickhousetraces", "metadataexporter", "signozmeter"},
+		},
+		Metrics: otel.Pipeline{
+			Processors: []string{"batch"},
+			Exporters:  []string{"signozclickhousemetrics", "metadataexporter", "signozmeter"},
+		},
+		Logs: otel.Pipeline{
+			Processors: []string{"batch"},
+			Exporters:  []string{"clickhouselogsexporter", "metadataexporter", "signozmeter"},
+		},
+		Extra: map[string]otel.Pipeline{
+			"metrics/meter": {
+				Receivers:  []string{"signozmeter"},
+				Processors: []string{"batch/meter"},
+				Exporters:  []string{"signozclickhousemeter"},
+			},
+		},
+		Telemetry: map[string]any{
+			"logs": map[string]any{"encoding": "json"},
+		},
+	}, nil
 }
 
 // StartCompanion extracts config files and starts the SigNoz stack via docker compose.
 func (p *SignozPlugin) StartCompanion(ws *workspace.Workspace) error {
-	return startSignoz(ws)
+	return startSignoz()
 }
 
 // StopCompanion stops the SigNoz docker-compose stack.
 func (p *SignozPlugin) StopCompanion(ws *workspace.Workspace) error {
-	return stopSignoz(ws.Name)
+	return stopSignoz()
 }
+
+// CompanionStale is always false: the compose file pins its own images and
+// docker compose reconciles them on the next up.
+func (p *SignozPlugin) CompanionStale(ws *workspace.Workspace) bool { return false }
 
 // CompanionRunning returns true if the SigNoz signoz container is running.
 func (p *SignozPlugin) CompanionRunning(ws *workspace.Workspace) bool {
-	return isSignozRunning(ws.Name)
+	return isSignozRunning()
 }
 
-// QueryEndpoint returns the SigNoz UI URL for the workspace.
+// QueryEndpoint returns the SigNoz UI URL.
 func (p *SignozPlugin) QueryEndpoint(ws *workspace.Workspace) string {
-	return fmt.Sprintf("http://localhost:%d", ws.UIPort())
+	return fmt.Sprintf("http://localhost:%d", uiPort)
+}
+
+// Backend returns a query client for the local SigNoz.
+func (p *SignozPlugin) Backend(ws *workspace.Workspace) (observability.Backend, error) {
+	return obssignoz.NewClient(p.QueryEndpoint(ws), ""), nil
 }
 
 // Validate checks that docker is available.
@@ -176,9 +196,9 @@ func signozComposePath() (string, error) {
 	return filepath.Join(dir, "docker-compose.yml"), nil
 }
 
-func signozProjectName(workspaceName string) string {
-	return "devstack-signoz-" + workspaceName
-}
+// signozProject is the one compose project per machine — every workspace shares
+// the stack and is told apart by its devstack.* resource attributes.
+const signozProject = "devstack-signoz"
 
 // ensureSignozFiles extracts all embedded SigNoz config files to ~/.config/devstack/signoz/.
 // Files are always overwritten so updates to the binary propagate.
@@ -224,7 +244,7 @@ type composePS struct {
 	Status  string `json:"Status"`
 }
 
-func isSignozRunning(workspaceName string) bool {
+func isSignozRunning() bool {
 	composePath, err := signozComposePath()
 	if err != nil {
 		return false
@@ -233,10 +253,9 @@ func isSignozRunning(workspaceName string) bool {
 		return false
 	}
 
-	project := signozProjectName(workspaceName)
 	out, err := exec.Command("docker", "compose",
 		"-f", composePath,
-		"-p", project,
+		"-p", signozProject,
 		"ps", "--format", "json",
 	).Output()
 	if err != nil {
@@ -270,20 +289,19 @@ func isSignozRunning(workspaceName string) bool {
 	return false
 }
 
-func startSignoz(ws *workspace.Workspace) error {
+func startSignoz() error {
 	composePath, err := ensureSignozFiles()
 	if err != nil {
 		return err
 	}
 
-	project := signozProjectName(ws.Name)
 	cmd := exec.Command("docker", "compose",
 		"-f", composePath,
-		"-p", project,
+		"-p", signozProject,
 		"up", "-d",
 	)
 	cmd.Env = append(os.Environ(),
-		fmt.Sprintf("SIGNOZ_UI_PORT=%d", ws.UIPort()),
+		fmt.Sprintf("SIGNOZ_UI_PORT=%d", uiPort),
 	)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
@@ -293,7 +311,7 @@ func startSignoz(ws *workspace.Workspace) error {
 	return nil
 }
 
-func stopSignoz(workspaceName string) error {
+func stopSignoz() error {
 	composePath, err := signozComposePath()
 	if err != nil {
 		return err
@@ -302,10 +320,9 @@ func stopSignoz(workspaceName string) error {
 		return fmt.Errorf("signoz compose file not found at %s", composePath)
 	}
 
-	project := signozProjectName(workspaceName)
 	cmd := exec.Command("docker", "compose",
 		"-f", composePath,
-		"-p", project,
+		"-p", signozProject,
 		"down",
 	)
 	cmd.Stdout = os.Stderr

@@ -11,6 +11,7 @@ import (
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/infra"
+	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -211,7 +212,7 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 	otelUp := isOtelRunning(ws)
 	pluginConfigured := ws.OtelPlugin != "" || len(ws.OtelPluginConfig) > 0
 	otelText, decided := otelSegment(otelUp, config.ObservabilityEnabled(ws.Path), pluginConfigured,
-		ws.OtelPlugin, ws.UIPort(), ws.HTTPPort(), ws.GRPCPort())
+		ws.OtelPlugin, otel.QueryEndpointFor(ws), workspace.OTLPHTTPPort, workspace.OTLPGRPCPort)
 	switch {
 	case decided && otelUp:
 		infraParts = append(infraParts, otelText)

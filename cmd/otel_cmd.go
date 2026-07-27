@@ -18,15 +18,18 @@ import (
 var otelCmd = &cobra.Command{
 	Use:   "otel",
 	Short: "Manage the local observability stack (traces and logs)",
-	Long: `devstack runs a local otelcol-contrib collector per workspace. Every service
-registered with 'devstack init' is pre-configured to ship OpenTelemetry traces
-and logs to this collector via OTEL_EXPORTER_OTLP_ENDPOINT (gRPC on port 4317).
+	Long: `devstack runs one otelcol-contrib collector and one telemetry backend for the
+whole machine, shared by every workspace. Every service registered with
+'devstack init' ships OpenTelemetry traces and logs to it via
+OTEL_EXPORTER_OTLP_ENDPOINT (gRPC on port 4317), stamped with its workspace,
+stack and service name so telemetry is sliced at query time.
 
-By default the collector runs in debug mode — telemetry is written to the collector
-stdout and not forwarded anywhere. Configure an upstream to route telemetry:
+The default backend is OpenObserve: a single container, no configuration.
+Workspaces can each choose their own backend and the collector routes between
+them:
 
   devstack otel configure --plugin=forwarding --set upstream=<host:port> --set protocol=grpc
-  devstack otel configure --plugin=signoz      # opt-in: local SigNoz UI via Docker
+  devstack otel configure --plugin=signoz      # heavier: local SigNoz via Docker
 
 The stack starts automatically when you run 'devstack workspace up'.
 
@@ -37,6 +40,9 @@ SUBCOMMANDS
   devstack otel start              start the collector + companion stack
   devstack otel stop               stop the collector + companion stack
   devstack otel open               open the observability UI in the browser
+  devstack otel traces             query traces from the configured backend
+  devstack otel logs               query collected logs
+  devstack otel services           list services reporting telemetry
   devstack otel configure          configure the active plugin (backend, upstream)
   devstack otel plugins            list all registered plugins`,
 }
@@ -82,7 +88,7 @@ committed, so credential keys (api_key, tokens, passwords) are kept out of it
 and stored in the machine-local registry instead.
 
 Examples:
-  devstack otel configure --plugin=signoz
+  devstack otel configure --plugin=openobserve
   devstack otel configure --plugin=forwarding --set upstream=https://otel.example.com:4318 --set deployment_env=dev`,
 	RunE: runOtelConfigure,
 }
@@ -96,7 +102,7 @@ observability.enabled: true to the workspace manifest.
 
 Examples:
   devstack otel enable
-  devstack otel enable --backend=signoz`,
+  devstack otel enable --backend=forwarding`,
 	RunE: runOtelEnable,
 }
 
@@ -129,15 +135,10 @@ func init() {
 	for _, sub := range []*cobra.Command{otelEnableCmd, otelDisableCmd, otelStartCmd, otelStopCmd, otelStatusCmd, otelOpenCmd, otelConfigureCmd} {
 		sub.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
 	}
-	otelEnableCmd.Flags().String("backend", "", "Observability backend to use (default: signoz)")
-
-	// Port flags — stored in workspace config so they persist.
-	otelStartCmd.Flags().Int("ui-port", 0, "SigNoz UI + query API port (default 3301)")
-	otelStartCmd.Flags().Int("otlp-grpc-port", 0, "OTLP gRPC ingestion port (default 4317)")
-	otelStartCmd.Flags().Int("otlp-http-port", 0, "OTLP HTTP ingestion port (default 4318)")
+	otelEnableCmd.Flags().String("backend", "", "Observability backend to use (default: openobserve)")
 
 	// Configure flags
-	otelConfigureCmd.Flags().String("plugin", "", "Plugin name to activate (e.g. signoz, forwarding)")
+	otelConfigureCmd.Flags().String("plugin", "", "Plugin name to activate (e.g. openobserve, signoz, forwarding)")
 	otelConfigureCmd.Flags().StringArray("set", nil, "Set a plugin config key (format: key=value, repeatable)")
 }
 
@@ -160,13 +161,13 @@ func resolveOtelWorkspace(cmd *cobra.Command) (*workspace.Workspace, error) {
 }
 
 func isOtelRunning(ws *workspace.Workspace) bool {
-	// CompanionRunning for forwarding always returns true; for signoz it checks
-	// docker-compose.
+	// CompanionRunning for forwarding always returns true; backends with local
+	// infrastructure check their container.
 	plugin := activePlugin(ws)
 	if plugin == nil {
 		return false
 	}
-	return otel.CollectorRunning(ws) && plugin.CompanionRunning(ws)
+	return otel.CollectorRunning() && plugin.CompanionRunning(ws)
 }
 
 func runOtelStart(cmd *cobra.Command, args []string) error {
@@ -175,26 +176,14 @@ func runOtelStart(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Apply any port overrides from flags before starting.
-	uiPort, _ := cmd.Flags().GetInt("ui-port")
-	grpcPort, _ := cmd.Flags().GetInt("otlp-grpc-port")
-	httpPort, _ := cmd.Flags().GetInt("otlp-http-port")
-	if uiPort > 0 || grpcPort > 0 || httpPort > 0 {
-		if err := workspace.UpdateOtelPorts(ws.Name, uiPort, grpcPort, httpPort); err != nil {
-			return fmt.Errorf("failed to save port config: %w", err)
-		}
-		ws, err = resolveOtelWorkspace(cmd)
-		if err != nil {
-			return err
-		}
-	}
-
 	plugin := activePlugin(ws)
 	if plugin == nil {
 		return fmt.Errorf("no OTEL plugin registered — this is a bug")
 	}
 
-	if isOtelRunning(ws) {
+	// A stale companion is replaced even when everything is up: this is the
+	// command that applies a devstack upgrade.
+	if isOtelRunning(ws) && !plugin.CompanionStale(ws) {
 		queryEndpoint := plugin.QueryEndpoint(ws)
 		if queryEndpoint != "" {
 			fmt.Printf("OTEL stack already running for '%s' (plugin: %s) — %s\n", ws.Name, plugin.Name(), queryEndpoint)
@@ -211,20 +200,14 @@ func runOtelStart(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Starting OTEL stack for '%s' (plugin: %s)...\n", ws.Name, plugin.Name())
 
-	// Start companion infrastructure
-	if err := plugin.StartCompanion(ws); err != nil {
-		return fmt.Errorf("failed to start companion: %w", err)
-	}
-
-	// Start collector
-	if err := otel.StartCollector(ws, plugin); err != nil {
-		return fmt.Errorf("failed to start collector: %w", err)
+	if err := startOtelStack(ws, plugin); err != nil {
+		return err
 	}
 
 	queryEndpoint := plugin.QueryEndpoint(ws)
 	fmt.Printf("  plugin:   %s\n", plugin.Name())
-	fmt.Printf("  otlp:     http://localhost:%d (HTTP)\n", ws.HTTPPort())
-	fmt.Printf("  grpc:     localhost:%d\n", ws.GRPCPort())
+	fmt.Printf("  otlp:     http://localhost:%d (HTTP)\n", workspace.OTLPHTTPPort)
+	fmt.Printf("  grpc:     localhost:%d\n", workspace.OTLPGRPCPort)
 	if queryEndpoint != "" {
 		fmt.Printf("  ui:       %s\n", queryEndpoint)
 	}
@@ -239,7 +222,7 @@ func runOtelStop(cmd *cobra.Command, args []string) error {
 
 	plugin := activePlugin(ws)
 
-	collectorUp := otel.CollectorRunning(ws)
+	collectorUp := otel.CollectorRunning()
 	companionUp := plugin != nil && plugin.CompanionRunning(ws)
 	if !collectorUp && !companionUp {
 		fmt.Printf("OTEL stack is not running for '%s'\n", ws.Name)
@@ -248,18 +231,9 @@ func runOtelStop(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Stopping OTEL stack for '%s'...", ws.Name)
 
-	// Stop collector first
-	if err := otel.StopCollector(ws); err != nil {
-		fmt.Println(" collector stop failed:", err)
+	if err := stopOtelStack(ws, plugin); err != nil {
+		fmt.Println(" failed:", err)
 		return err
-	}
-
-	// Stop companion
-	if plugin != nil {
-		if err := plugin.StopCompanion(ws); err != nil {
-			fmt.Println(" companion stop failed:", err)
-			return err
-		}
 	}
 
 	fmt.Println(" stopped")
@@ -278,7 +252,7 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 		pluginName = plugin.Name()
 	}
 
-	collectorRunning := otel.CollectorRunning(ws)
+	collectorRunning := otel.CollectorRunning()
 	companionRunning := plugin != nil && plugin.CompanionRunning(ws)
 
 	fmt.Printf("OTEL status for '%s':\n", ws.Name)
@@ -299,7 +273,7 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Printf("  otlp:       grpc=localhost:%d  http=localhost:%d\n", ws.GRPCPort(), ws.HTTPPort())
+	fmt.Printf("  otlp:       grpc=localhost:%d  http=localhost:%d\n", workspace.OTLPGRPCPort, workspace.OTLPHTTPPort)
 
 	if plugin != nil {
 		if queryEndpoint := plugin.QueryEndpoint(ws); queryEndpoint != "" {
@@ -314,13 +288,14 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Per-service telemetry evidence — whether signals are actually arriving.
-	if statuses, terr := telemetry.Status(ws.Path); terr == nil && len(statuses) > 0 {
-		fmt.Printf("\nevidence:\n")
+	// Per-variant telemetry evidence — which instances are actually emitting,
+	// queried from the backend rather than inferred.
+	evidenceBackend, _ := otel.BackendFor(ws)
+	if statuses, terr := telemetry.Status(ws.Path, evidenceBackend, telemetry.DefaultWindow); terr == nil && len(statuses) > 0 {
+		fmt.Printf("\nevidence (last %s):\n", telemetry.DefaultWindow)
 		for _, s := range statuses {
-			fmt.Printf("  %s: confidence=%s traces=%d logs=%t collector_reachable=%t mode=%s\n",
-				s.Service, s.Confidence, s.TraceCount, s.LogEvidence, s.CollectorReachable, s.Mode)
-			fmt.Printf("    %s\n", s.Interpretation)
+			fmt.Printf("  %s: confidence=%s spans=%d mode=%s\n", s.Service, s.Confidence, s.TraceCount, s.Mode)
+			fmt.Printf("    %s\n", s.Summary())
 		}
 	}
 
@@ -486,7 +461,7 @@ func runOtelEnable(cmd *cobra.Command, args []string) error {
 
 	effective := backend
 	if effective == "" {
-		effective = "signoz (default)"
+		effective = config.DefaultObservabilityBackend + " (default)"
 	}
 	fmt.Printf("Observability enabled for '%s' (backend: %s)\n", ws.Name, effective)
 	fmt.Printf("\nRun: devstack otel start\n")

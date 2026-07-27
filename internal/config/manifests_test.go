@@ -330,10 +330,10 @@ func TestObservabilityEnabledResolution(t *testing.T) {
 			wantBackend: "",
 		},
 		{
-			name:        "explicit enabled true, no backend defaults signoz",
+			name:        "explicit enabled true, no backend defaults to openobserve",
 			obs:         WorkspaceManifestObservability{Enabled: boolPtr(true)},
 			wantEnabled: true,
-			wantBackend: "signoz",
+			wantBackend: DefaultObservabilityBackend,
 		},
 		{
 			name:        "explicit enabled false wins over backend",
@@ -345,7 +345,7 @@ func TestObservabilityEnabledResolution(t *testing.T) {
 			name:        "inferred from local.enabled",
 			obs:         WorkspaceManifestObservability{Local: WorkspaceManifestObservabilityLocal{Enabled: true}},
 			wantEnabled: true,
-			wantBackend: "signoz",
+			wantBackend: DefaultObservabilityBackend,
 		},
 		{
 			name:        "inferred from backend",
