@@ -178,7 +178,7 @@ func availableGroups(cfg *config.WorkspaceConfig) string {
 
 func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, serviceDirs map[string]string, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
 	tool := mcp.NewTool("status",
-		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack. Status reflects the current state of locally running dev services, not production. Returns SERVICE, STATUS (one of running/starting/building/stopped/erroring/disabled/unknown), PORT(S), PATH (source directory), BRANCH (the git branch that directory is on, with * for uncommitted changes — this is the code the process is actually running), GROUP, ENV (the active environment/config-patch the instance is pointed at, blank if none), and last error. Also shows a groups summary. 'running' means the process is up. 'starting' means it is coming up; 'building' means the daemon is building/updating it. 'stopped' means the service is known but not currently running (not started yet, or was stopped). 'erroring' means the service or its build failed — check logs. 'disabled' means the resource is switched off in the daemon. 'unknown' means the daemon reported no state for it. Pass stack to see a feature stack's instances."),
+		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack. Status reflects the current state of locally running dev services, not production. Returns SERVICE, STATUS (one of running/starting/building/stopped/erroring/disabled/unknown), PORT(S), PATH (source directory), BRANCH (the git branch that directory is on, with * for uncommitted changes — this is the code the process is actually running), GROUP, ENV (the active environment/config-patch the instance is pointed at, blank if none), and last error. Also shows a groups summary. 'running' means the process is up. 'starting' means it is coming up; 'building' means the daemon is building/updating it. 'stopped' means the service is known but not currently running (not started yet, or was stopped). 'erroring' means the service or its build failed — check logs. 'disabled' means the resource is switched off in the daemon. 'unknown' means the daemon reported no state for it. Pass stack to see a feature stack's instances. RELOAD says whether a service reloads on its own (auto) or needs an explicit restart after an edit (manual)."),
 		mcp.WithString("stack", mcp.Description(stackParamDesc)),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
@@ -745,11 +745,15 @@ func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, def
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(false),
+		mcp.WithNumber("wait_seconds",
+			mcp.Description("Wait up to this many seconds for the started services to settle, then report the state each ended in. Default 0 returns immediately, before startup has finished. Capped at 300. On timeout it names the state each service was still in rather than claiming success.")),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		name := request.GetString("service", "")
 		groupName := request.GetString("group", "")
+		waitSeconds := int(request.GetFloat("wait_seconds", 0))
+		var waited []string
 
 		if name != "" && groupName != "" {
 			return mcp.NewToolResultError("specify either service or group, not both"), nil
@@ -793,6 +797,7 @@ func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, def
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		deployedBefore := coreDeployTimes(view)
 		present := map[string]bool{}
 		disabled := map[string]bool{}
 		for _, r := range view.UiResources {
@@ -820,6 +825,7 @@ func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, def
 				continue
 			}
 			started = append(started, svc)
+			waited = append(waited, rn)
 		}
 
 		if len(started) == 0 && len(failures) == 0 {
@@ -835,7 +841,7 @@ func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, def
 		if len(failures) > 0 {
 			return mcp.NewToolResultError(sb.String() + "\nfailures: " + strings.Join(failures, "; ")), nil
 		}
-		return mcp.NewToolResultText(sb.String()), nil
+		return mcp.NewToolResultText(sb.String() + coreWaitFor(tiltClient, waited, deployedBefore, waitSeconds)), nil
 	})
 }
 
@@ -843,7 +849,7 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 	tool := mcp.NewTool("stop",
 		mcp.WithDescription("Stop (disable) services in the LOCAL dev stack. Operates on local dev services only — service name must be exact. Exactly one target: service stops that service; group stops every service in that group; all=true stops every service of the targeted instance. With none of them, stops the default service for this repo — the same default restart uses (DEVSTACK_DEFAULT_SERVICE), so a bare call never takes the workspace down. Stopping everything requires all=true. Scoped by stack: with stack set, even all=true touches only that stack's instances, never base's."),
 		mcp.WithString("service",
-			mcp.Description("Exact service name or alias to stop (e.g. 'api-service'). NOT a description or partial match. If omitted, every service of the targeted instance is stopped (unless group is given) — base's services when stack is absent, that stack's services when stack is set."),
+			mcp.Description("Exact service name or alias to stop (e.g. 'api-service'). NOT a description or partial match. If omitted, the default service for this repo is stopped — not every service. Stopping every service requires all=true."),
 		),
 		mcp.WithString("group",
 			mcp.Description("Group name to stop. All services in the group are stopped in parallel, in the targeted instance only. Cannot be combined with service or all."),
@@ -1032,7 +1038,7 @@ func coreLogEmptyNote(f coreLogFilters) string {
 
 func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
 	tool := mcp.NewTool("process_logs",
-		mcp.WithDescription("Fetch raw stdout/stderr from a locally running dev service process. NOT a log search engine — fetches live process output directly from the dev daemon. Parameters are structured: exact service name, integer line count, boolean flags. Natural language queries are NOT accepted. Example: service='api-service' lines=100 since_restart=true. Use for services not instrumented with OTEL or when you need unstructured process output. If no service is given, uses the default or fetches all services in parallel. Supports grep filtering, paging via offset, and since_restart to isolate post-startup output. When group is given, fetches logs from all services in the group concurrently. Cannot specify both service and group."),
+		mcp.WithDescription("Fetch raw stdout/stderr from a locally running dev service process. NOT a log search engine — fetches live process output directly from the dev daemon. Parameters are structured: exact service name, integer line count, boolean flags. Natural language queries are NOT accepted. Example: service='api-service' lines=100 since_restart=true. Use for services not instrumented with OTEL or when you need unstructured process output. If no service is given, uses this repo's default service when one is configured, and only fetches every service in parallel when there is none. Supports grep filtering, paging via offset, and since_restart to isolate post-startup output. When group is given, fetches logs from all services in the group concurrently. Cannot specify both service and group."),
 		mcp.WithString("service",
 			mcp.Description("Exact service name or alias (e.g. 'api-service'). NOT a description or partial match. If omitted, uses the default service for this repo or fetches all."),
 		),
@@ -1739,7 +1745,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithOpenWorldHintAnnotation(false),
+		mcp.WithOpenWorldHintAnnotation(true),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

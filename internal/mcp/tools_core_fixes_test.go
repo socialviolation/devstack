@@ -62,7 +62,7 @@ func TestCoreToolAnnotationsAreHonest(t *testing.T) {
 		"status":       {readOnly: true, destructive: false, idempotent: true, openWorld: false},
 		"topology":     {readOnly: true, destructive: false, idempotent: true, openWorld: false},
 		"process_logs": {readOnly: true, destructive: false, idempotent: true, openWorld: false},
-		"investigate":  {readOnly: true, destructive: false, idempotent: true, openWorld: false},
+		"investigate":  {readOnly: true, destructive: false, idempotent: true, openWorld: true},
 		"start":        {readOnly: false, destructive: false, idempotent: true, openWorld: false},
 		"restart":      {readOnly: false, destructive: false, idempotent: true, openWorld: false},
 		"stop":         {readOnly: false, destructive: true, idempotent: true, openWorld: false},
