@@ -14,12 +14,6 @@ import (
 	"github.com/socialviolation/devstack/internal/observability"
 )
 
-func init() {
-	observability.RegisterBackend("signoz", func(url, apiKey string) observability.Backend {
-		return NewClient(url, apiKey)
-	})
-}
-
 // Client implements observability.Backend for a SigNoz instance.
 type Client struct {
 	baseURL string
@@ -388,15 +382,28 @@ func (c *Client) QueryTraces(ctx context.Context, req observability.TraceQuery) 
 	}
 
 	if req.Attribute != "" && req.Value != "" {
-		return c.searchByAttribute(req.Attribute, req.Value, req.Service, req.Stack, limit, since)
+		return c.searchByAttribute(req.Attribute, req.Value, req.Service, req.Workspace, req.Stack, limit, since)
 	}
 
-	return c.fetchRootTraces(req.Service, req.Stack, limit, since)
+	return c.fetchRootTraces(req.Service, req.Workspace, req.Stack, limit, since)
 }
 
 // stackFilter returns a resource-attribute filter constraining results to one
 // stack's telemetry via the devstack.stack resource attribute, or nil when no
 // stack is given.
+// workspaceFilter scopes a query to one workspace's telemetry, so a machine
+// running several workspaces never answers with another project's traces.
+func workspaceFilter(workspace string) []filter {
+	if workspace == "" {
+		return nil
+	}
+	return []filter{{
+		Key:   filterKey{Key: "devstack.workspace", Type: "resource", DataType: "string", IsColumn: false},
+		Op:    "=",
+		Value: workspace,
+	}}
+}
+
 func stackFilter(stack string) []filter {
 	if stack == "" {
 		return nil
@@ -518,7 +525,7 @@ func (c *Client) fetchTraceByID(traceID string) ([]observability.Span, error) {
 	return spans, nil
 }
 
-func (c *Client) searchByAttribute(attribute, value, service, stack string, limit int, since time.Duration) ([][]observability.Span, error) {
+func (c *Client) searchByAttribute(attribute, value, service, workspace, stack string, limit int, since time.Duration) ([][]observability.Span, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/query_range", c.baseURL)
 
 	extraFilters := []filter{
@@ -531,6 +538,7 @@ func (c *Client) searchByAttribute(attribute, value, service, stack string, limi
 			Op:  "=", Value: "",
 		},
 	}
+	extraFilters = append(extraFilters, workspaceFilter(workspace)...)
 	extraFilters = append(extraFilters, stackFilter(stack)...)
 
 	fetchLimit := limit * 5
@@ -558,7 +566,7 @@ func (c *Client) searchByAttribute(attribute, value, service, stack string, limi
 	return result, nil
 }
 
-func (c *Client) fetchRootTraces(service, stack string, limit int, since time.Duration) ([][]observability.Span, error) {
+func (c *Client) fetchRootTraces(service, workspace, stack string, limit int, since time.Duration) ([][]observability.Span, error) {
 	fetchLimit := limit * 10
 	if fetchLimit > 500 {
 		fetchLimit = 500
@@ -568,7 +576,8 @@ func (c *Client) fetchRootTraces(service, stack string, limit int, since time.Du
 	}
 
 	apiURL := fmt.Sprintf("%s/api/v3/query_range", c.baseURL)
-	req := buildQueryRangeRequest("traces", service, fetchLimit, since, stackFilter(stack))
+	req := buildQueryRangeRequest("traces", service, fetchLimit, since,
+		append(workspaceFilter(workspace), stackFilter(stack)...))
 
 	var resp queryRangeResponse
 	if err := c.post(apiURL, req, &resp); err != nil {
@@ -616,6 +625,8 @@ func (c *Client) QueryLogs(ctx context.Context, req observability.LogQuery) ([]o
 	if limit == 0 {
 		limit = 30
 	}
+
+	extraFilters = append(extraFilters, workspaceFilter(req.Workspace)...)
 
 	queryReq := buildQueryRangeRequest("logs", req.Service, limit, since, extraFilters)
 
@@ -679,28 +690,48 @@ func (c *Client) QueryLogs(ctx context.Context, req observability.LogQuery) ([]o
 	return entries, nil
 }
 
-// ListServices implements observability.Backend.
-// Queries for unique serviceName values from traces in the given time window.
-func (c *Client) ListServices(ctx context.Context, since time.Duration) ([]string, error) {
+// ListVariants returns the variants that reported traces, qualified by whichever
+// devstack resource attributes the sampled spans carry.
+func (c *Client) ListVariants(ctx context.Context, req observability.ServiceQuery) ([]observability.ServiceVariant, error) {
 	// Fetch a broad sample of spans and collect unique service names
-	traces, err := c.fetchAllSpans(since, 500)
+	traces, err := c.fetchAllSpans(req.Workspace, req.Since, 500)
 	if err != nil {
 		return nil, err
 	}
 
-	seen := make(map[string]bool)
-	var services []string
+	counts := map[observability.ServiceVariant]int{}
+	var order []observability.ServiceVariant
 	for _, sp := range traces {
-		if sp.Service != "" && !seen[sp.Service] {
-			seen[sp.Service] = true
-			services = append(services, sp.Service)
+		if sp.Service == "" {
+			continue
 		}
+		v := observability.ServiceVariant{
+			Service:  sp.Service,
+			Devstack: sp.Attrs["devstack.service"],
+			Stack:    sp.Attrs["devstack.stack"],
+			Env:      sp.Attrs["devstack.env"],
+		}
+		if _, ok := counts[v]; !ok {
+			order = append(order, v)
+		}
+		counts[v]++
 	}
-	sort.Strings(services)
-	return services, nil
+
+	variants := make([]observability.ServiceVariant, 0, len(order))
+	for _, v := range order {
+		v.Spans = counts[v]
+		variants = append(variants, v)
+	}
+	sort.Slice(variants, func(i, j int) bool {
+		a, b := variants[i], variants[j]
+		if a.Service != b.Service {
+			return a.Service < b.Service
+		}
+		return a.Stack < b.Stack
+	})
+	return variants, nil
 }
 
-// traceIDForSpan searches for a span by its SpanId and returns the containing traceID.
 func (c *Client) traceIDForSpan(spanID string) (string, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/query_range", c.baseURL)
 	extraFilters := []filter{
@@ -725,9 +756,9 @@ func (c *Client) traceIDForSpan(spanID string) (string, error) {
 }
 
 // fetchAllSpans fetches a flat list of spans (not grouped by trace) for service enumeration.
-func (c *Client) fetchAllSpans(since time.Duration, limit int) ([]internalSpan, error) {
+func (c *Client) fetchAllSpans(workspace string, since time.Duration, limit int) ([]internalSpan, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/query_range", c.baseURL)
-	req := buildQueryRangeRequest("traces", "", limit, since, nil)
+	req := buildQueryRangeRequest("traces", "", limit, since, workspaceFilter(workspace))
 
 	var resp queryRangeResponse
 	if err := c.post(apiURL, req, &resp); err != nil {

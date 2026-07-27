@@ -11,8 +11,7 @@ import (
 	"github.com/spf13/viper"
 
 	nvxmcp "github.com/socialviolation/devstack/internal/mcp"
-	"github.com/socialviolation/devstack/internal/observability"
-	_ "github.com/socialviolation/devstack/internal/observability/signoz" // register signoz backend
+	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -86,10 +85,12 @@ func serveStdio() error {
 	defaultService := viper.GetString("default_service")
 	ws := resolveServeWorkspace(wsName)
 
-	obs := ws.LocalObservability()
-	backend, err := observability.NewBackend(obs.Backend, obs.URL, obs.APIKey)
+	// Resolved from the workspace's configured plugin — no backend name, URL or
+	// credential is ever asked of the caller. A workspace whose telemetry lives
+	// somewhere unqueryable (pure forwarding) serves its tools without one.
+	backend, err := otel.BackendFor(ws)
 	if err != nil {
-		log.Fatalf("failed to create observability backend: %v", err)
+		log.Printf("observability queries unavailable: %v", err)
 	}
 
 	tiltClient := tilt.NewDynamicClient(host, func() int {

@@ -88,7 +88,7 @@ func render() (string, error) {
 		gens = append(gens, tiltgen.WorkspaceGen{
 			Name:     ws.Name,
 			Base:     rw,
-			BaseOpts: tiltgen.Options{ManagedEnv: workspace.ManagedEnv(&ws, names)},
+			BaseOpts: tiltgen.Options{ManagedEnv: workspace.ManagedEnv(&ws, names, workspace.ActiveEnvNames(rw, ""))},
 			Stacks:   stackGens,
 		})
 	}

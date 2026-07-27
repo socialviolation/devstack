@@ -21,7 +21,8 @@ var downCmd = &cobra.Command{
 	Short: "Stop the dev daemon for the current workspace",
 	Long: `Stop the dev daemon and all locally running services for the current workspace.
 
-Also stops the managed SigNoz observability stack if it is running.
+Also drops this workspace from the shared observability stack, stopping it once
+no workspace is left using it.
 The PID file is removed. Run 'devstack workspace up' to start again.`,
 	RunE: runDown,
 }

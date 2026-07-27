@@ -19,7 +19,6 @@ import (
 	"github.com/socialviolation/devstack/internal/gitinfo"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/observability"
-	_ "github.com/socialviolation/devstack/internal/observability/signoz" // register signoz backend
 	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
@@ -44,7 +43,7 @@ func RegisterTools(
 ) {
 	var obsURL string
 	if ws != nil {
-		obsURL = ws.LocalObservability().URL
+		obsURL = otel.QueryEndpointFor(ws)
 	}
 
 	// The environment orientation tool is always available — it tells the agent
@@ -276,7 +275,7 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			}
 		}
 
-		if config.ObservabilityEnabled(ws.Path) && !otel.CollectorRunning(ws) {
+		if config.ObservabilityEnabled(ws.Path) && !otel.CollectorRunning() {
 			sb.WriteString("\n⚠ observability is enabled for this workspace but the collector is NOT running — telemetry is not being captured. Start it: devstack otel start\n")
 		}
 
@@ -589,17 +588,6 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, cfg 
 		}
 		return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("Stopped %d service(s).", len(targets))) + "\n" + sb.String()), nil
 	})
-}
-
-// filterErrorLines returns only lines matching the error regex.
-func filterErrorLines(raw string) []string {
-	var matched []string
-	for _, line := range strings.Split(raw, "\n") {
-		if errorRegex.MatchString(line) {
-			matched = append(matched, line)
-		}
-	}
-	return matched
 }
 
 func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
@@ -1123,9 +1111,12 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 
 	desc := fmt.Sprintf(
 		"Investigate distributed traces in the LOCAL dev environment (@ %s). "+
-			"Queries SignOz via ClickHouse — NOT a natural language search engine. Parameters are structured: exact service names, structured time ranges, and exact attribute key=value pairs. "+
+			"Queries this workspace's configured telemetry backend — NOT a natural language search engine. Parameters are structured: exact service names, structured time ranges, and exact attribute key=value pairs. "+
+			"Results are always confined to this workspace's telemetry, and an unqualified call narrows to the service the server is running in. "+
 			"Modes: (1) trace_id/span_id — look up a specific trace or span; (2) attribute+value — search by business attribute (e.g. attribute='portfolio.id' value='123'); (3) service — show recent executions for a service. "+
+			"One backend holds every workspace and every stack, so results are told apart by resource attributes: devstack.workspace (applied for you, always), devstack.service (the name devstack uses, which often differs from the name the service reports itself as — either matches), devstack.stack (base, or a feature stack's name), devstack.env (the config env that instance runs under). "+
 			"Results can be isolated to one stack's service: 'service' pins the service and 'stack' pins the devstack.stack resource attribute (a stack's short name, or 'stack'='base' to select base-workspace services). "+
+			"To compare a feature stack against base, run the same query twice with stack='<name>' and stack='base'. Use the observability tool's status action to see which variants are actually emitting before concluding a service is silent. "+
 			"Example: service='api-service' stack='perf' since_minutes=15 errors_only=true. "+
 			"Returns an ASCII span tree showing service calls, durations, and errors. Combine with process_logs and status for full debugging context.",
 		queryURL,
@@ -1140,7 +1131,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			mcp.Description("Specific span ID to look up. Finds the trace containing this span. Ignored if trace_id is given."),
 		),
 		mcp.WithString("service",
-			mcp.Description("Exact service name as registered in SignOz (e.g. 'api-service'). NOT a description or partial match. Only applied in mode 3 (no trace_id or attribute given); attribute searches and trace lookups span all services."),
+			mcp.Description("Exact service name (e.g. 'api-service'). NOT a description or partial match. Only applied in mode 3 (no trace_id or attribute given); attribute searches and trace lookups span all services."),
 		),
 		mcp.WithString("stack",
 			mcp.Description("Which instance's telemetry to query, via the devstack.stack resource attribute. ABSENT/empty = base only (the base-workspace services — the default an unqualified query means). A stack's short name (e.g. 'perf') = that stack only. 'all' (or '*') = every instance co-mingled (base + all stacks). Combine with 'service' to pin a single instance's service. Applied in mode 2 (attribute search) and mode 3 (recent executions)."),
@@ -1239,9 +1230,14 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			}
 			traceGroups = matched
 		} else {
-			// Mode 3: recent executions
+			// Mode 3: recent executions. Scoping to the service the agent is
+			// working in keeps an unqualified call from returning the whole
+			// workspace's traffic.
 			if service == "" {
 				service = defaultService
+			}
+			if service == "" {
+				service = serviceFromCwd()
 			}
 			recent, err := backend.QueryTraces(ctx, observability.TraceQuery{
 				Service: service,
@@ -1546,44 +1542,6 @@ type executionDetail struct {
 	tiltLogs map[string]string
 }
 
-// fetchExecutionDetails fetches the span tree and logs for a set of root trace summaries in parallel.
-// For each trace it fetches: full span tree (fetchTrace) + OTEL logs (fetchLogsForTrace).
-// If OTEL logs come back empty, it also fetches recent Tilt process logs from the services involved.
-func fetchExecutionDetails(roots []traceRecord, otelQueryURL string, tiltClient *tilt.Client, tailLines int, verbose bool) []executionDetail {
-	details := make([]executionDetail, len(roots))
-
-	var wg sync.WaitGroup
-	for i, r := range roots {
-		wg.Add(1)
-		go func(idx int, traceID string) {
-			defer wg.Done()
-			d := executionDetail{}
-
-			// Full span tree
-			if full, err := fetchTrace(otelQueryURL, traceID); err == nil && full != nil {
-				d.record = full
-			} else {
-				// Fall back to the root-only summary we already have
-				cp := roots[idx]
-				d.record = &cp
-			}
-
-			// OTEL correlated logs
-			d.otelLogs, _ = fetchLogsForTrace(otelQueryURL, traceID)
-
-			// If no OTEL logs, fetch recent Tilt process logs for each involved service
-			if len(d.otelLogs) == 0 && tiltClient != nil {
-				d.tiltLogs = fetchTiltProcessLogs(tiltClient, d.record, tailLines, verbose)
-			}
-
-			details[idx] = d
-		}(i, r.TraceID)
-	}
-	wg.Wait()
-	return details
-}
-
-// uniqueServices returns the unique service names from a traceRecord's spans.
 func uniqueServices(r *traceRecord) []string {
 	seen := make(map[string]bool)
 	var out []string
@@ -1659,4 +1617,19 @@ func formatExecutionDetailView(d *executionDetail, opts formatOptions) string {
 	}
 
 	return sb.String()
+}
+
+// serviceFromCwd returns the service whose repo the MCP server is running in,
+// or "" when it is not inside one. It narrows an unqualified investigate call to
+// the service being worked on.
+func serviceFromCwd() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	identity, err := config.ResolveIdentity(cwd)
+	if err != nil {
+		return ""
+	}
+	return identity.ServiceName
 }

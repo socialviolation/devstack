@@ -105,9 +105,13 @@ func (o WorkspaceManifestObservability) IsEnabled() bool {
 	return strings.TrimSpace(o.Backend) != ""
 }
 
+// DefaultObservabilityBackend is the backend a workspace gets when its manifest
+// names none: a single lightweight OpenObserve shared by the whole machine.
+const DefaultObservabilityBackend = "openobserve"
+
 // ResolvedBackend returns the backend plugin to use when observability is
-// enabled: the explicit backend if set, otherwise "signoz" as the default.
-// Returns "" when observability is disabled.
+// enabled: the explicit backend if set, otherwise the default. Returns "" when
+// observability is disabled.
 func (o WorkspaceManifestObservability) ResolvedBackend() string {
 	if !o.IsEnabled() {
 		return ""
@@ -115,7 +119,7 @@ func (o WorkspaceManifestObservability) ResolvedBackend() string {
 	if b := strings.TrimSpace(o.Backend); b != "" {
 		return b
 	}
-	return "signoz"
+	return DefaultObservabilityBackend
 }
 
 type WorkspaceManifestObservabilityLocal struct {

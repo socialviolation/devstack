@@ -24,9 +24,9 @@ WHAT IT DOES
   etc.) organised into workspaces — one workspace per product or organisation.
   It handles dependency-ordered startup, live status, and service restarts.
 
-  It also spins up a local OpenTelemetry observability stack (SigNoz) per
-  workspace, so every service ships traces and logs that AI agents can query
-  in real time. When something breaks during feature development, an AI agent
+  It also runs one lightweight OpenTelemetry stack (OpenObserve) for the whole
+  machine, shared by every workspace, so every service ships traces and logs
+  that AI agents can query in real time. When something breaks during feature development, an AI agent
   can call the MCP tools to pull correlated traces and logs and pinpoint the
   root cause without leaving the editor.
 
@@ -40,7 +40,8 @@ TYPICAL WORKFLOW
   devstack init --name=api ...        register a service and wire up observability
   devstack start <service>            start a service and all its dependencies
   devstack status                     live grouped view of every service
-  devstack otel open                  open the SigNoz trace UI in the browser
+  devstack otel traces                query traces from the configured backend
+  devstack otel open                  open the trace UI in the browser
 
 AI AGENT WORKFLOW
   devstack serve                      expose MCP tools to the AI agent

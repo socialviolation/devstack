@@ -88,7 +88,7 @@ func reportConfigDrift(workspacePath string) int {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	managed := workspace.ManagedEnv(ws, names)
+	managed := workspace.ManagedEnv(ws, names, workspace.ActiveEnvNames(rw, ""))
 
 	drifted := 0
 	for _, name := range names {

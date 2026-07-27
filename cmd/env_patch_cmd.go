@@ -302,7 +302,7 @@ func resolvedEnvLadder(ws *workspace.Workspace, rw *config.ResolvedWorkspace, sv
 			book = opts.Book
 		}
 	} else {
-		managed = workspace.ManagedEnv(ws, names)[svc.Name]
+		managed = workspace.ManagedEnv(ws, names, workspace.ActiveEnvNames(rw, stackEnv))[svc.Name]
 		book = config.BuildPortBook(rw)
 	}
 

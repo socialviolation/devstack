@@ -728,13 +728,32 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		stackLine = fmt.Sprintf("**You are in feature stack `%s`'s worktree.** Edits here stay on this stack's branch, not base. Target this instance with `--stack %s` (e.g. `devstack restart %s --stack %s`); without it, commands act on base.\n\n", stackName, stackName, svc, stackName)
 	}
 
-	observabilityBlock := "**Observability:** Not enabled for this workspace — services are not assumed to be OTEL-instrumented and no collector runs. " +
+	observabilityBlock := "### Observability\n\n" +
+		"Not enabled for this workspace — services are not assumed to be OTEL-instrumented and no collector runs. " +
 		"Turn it on with `devstack otel enable`, then `devstack otel start`.\n\n"
 	if config.ObservabilityEnabled(workspacePath) {
-		observabilityBlock = "**Observability:** Services ship traces and logs to the local collector (gRPC `localhost:4317`). " +
-			"Every signal is tagged with `devstack.workspace`, `devstack.service`, and `devstack.stack` resource attributes, " +
-			"so logs and traces can be isolated to one stack's instance of a service. " +
-			"Route telemetry upstream with `devstack otel configure`; open the UI with `devstack otel open`. " +
+		observabilityBlock = "### Observability\n\n" +
+			"Services ship traces and logs to one collector for the whole machine (gRPC `localhost:4317`), which stores them in one backend shared by every workspace and stack.\n\n" +
+			"**Every variant of a service reports to that one backend**, so telemetry is told apart by resource attributes rather than by where it is stored:\n\n" +
+			"| Attribute | What it identifies |\n" +
+			"|---|---|\n" +
+			"| `devstack.workspace` | the workspace — queries are scoped to it automatically, always |\n" +
+			"| `devstack.service` | the service as devstack names it (what you filter on) |\n" +
+			"| `devstack.stack` | which instance: `base`, or a feature stack's name |\n" +
+			"| `devstack.env` | the config env that instance runs under (e.g. `dev`, `perf`) |\n\n" +
+			"**Query it without configuring anything** — devstack resolves the backend, endpoint and credentials for you, and confines every query to this workspace:\n\n" +
+			"```bash\n" +
+			"devstack otel services                  # which variants are reporting, and their stack/env\n" +
+			"devstack otel traces                    # recent traces (defaults to the service you are in)\n" +
+			"devstack otel traces --stack <name>     # only that stack's instance\n" +
+			"devstack otel traces --service all      # every service in the workspace\n" +
+			"devstack otel traces <trace-id>         # full span tree for one trace\n" +
+			"devstack otel logs --trace <trace-id>   # logs correlated with that trace\n" +
+			"devstack otel status                    # per-variant evidence: which instances are actually emitting\n" +
+			"```\n\n" +
+			"**A service usually reports itself under a different name than devstack knows it by** (devstack `" + svc + "` may report as something else entirely). Filters accept either name, and `devstack otel services` prints both — check there before concluding a service is silent.\n\n" +
+			"**Comparing a stack against base** is the common debugging move: run the same query with `--stack <name>` and with `--stack base`, and diff what comes back. Without `--stack` you get the base instance only, so a stack's traffic will look missing if you forget it.\n\n" +
+			"Route telemetry upstream instead with `devstack otel configure`; open the UI with `devstack otel open`. " +
 			"Per-developer endpoint override: set `OTEL_EXPORTER_OTLP_ENDPOINT` in `.envrc`.\n\n"
 	}
 
@@ -789,7 +808,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"devstack stack rm <name>                     # tear down: remove worktrees, release ports, delete config\n" +
 		"devstack stack list                          # registered stacks and their ports\n" +
 		"devstack stack config " + svc + " --stack <name>    # effective config a stack's service runs with\n" +
-		"devstack tunnel push [--stacks]              # forward local service ports over SSH (--stacks includes stack instances)\n" +
+		"devstack tunnel push [--stacks] [--otel]     # forward local service ports over SSH (--stacks adds stack instances, --otel adds the observability UI)\n" +
 		"devstack env set <name> KEY=VALUE            # define an environment's config-patch values\n" +
 		"devstack env use <name> [--service|--stack]  # point base, a service, or a stack at env <name>\n" +
 		"devstack env which [--service|--stack]        # which env an instance resolves to, and its values\n" +
@@ -803,7 +822,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"`stack_create`, `stack_up`, `stack_down`, `stack_list`, `stack_rm`; and env tools `env_use`, `env_which`, `env_set` — " +
 		"so a stack or env can be driven entirely over MCP, no shell needed. The service-control tools (`status`, `restart`, `stop`, `process_logs`, `configure`) " +
 		"take an optional `stack` parameter to target a stack's instance rather than base (omit it, or pass `\"base\"`, for base). " +
-		"`investigate` takes `stack` as a telemetry filter: absent means the base instance only, a name means that stack, `\"all\"` means every instance. Treat them as discovery helpers, not hidden sources of truth.\n\n" +
+		"`investigate` takes `stack` as a telemetry filter: absent means the base instance only, a name means that stack, `\"all\"` means every instance — so an unqualified call will not show you a feature stack's traffic. It is always confined to this workspace, and an unqualified call narrows to the service being worked in. Treat them as discovery helpers, not hidden sources of truth.\n\n" +
 		"Rules:\n" +
 		"1. Check `topology` before making dependency claims.\n" +
 		"2. Prefer process logs and telemetry evidence over guessing about runtime state.\n" +

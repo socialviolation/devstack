@@ -10,6 +10,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -34,9 +35,9 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		otelOn := config.ObservabilityEnabled(workspacePath)
 		tunnelsOn := tailscaleInstalled()
 
-		backend := "signoz"
-		if !otelOn {
-			backend = "none"
+		backend := "none"
+		if otelOn {
+			backend = otel.For(ws).Name()
 		}
 		if otelOn {
 			fmt.Fprintf(&sb, "observability: %s@%s + local dev daemon — local dev only, ephemeral data\n", backend, obsURL)
