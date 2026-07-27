@@ -964,8 +964,33 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 		if len(failures) > 0 {
 			return mcp.NewToolResultError(fmt.Sprintf("Some services failed to stop:\n%s", sb.String())), nil
 		}
-		return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("Stopped %d service(s).", len(targets))) + "\n" + sb.String()), nil
+		return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("Stopped %d service(s).", len(targets))) + "\n" + sb.String() + coreStillRunning(ws, stopAll, request.GetString("stack", ""))), nil
 	})
+}
+
+// coreStillRunning names what a stop leaves behind. "Stop everything" is a
+// common ask that this tool cannot satisfy on its own: it is scoped to one
+// instance, and the daemon itself only goes down from the shell.
+func coreStillRunning(ws *workspace.Workspace, stoppedAll bool, stackName string) string {
+	if !stoppedAll || ws == nil {
+		return ""
+	}
+	var sb strings.Builder
+	if stackName == "" || stackName == "base" {
+		if recs, err := stack.LoadStore(ws.Name); err == nil {
+			var active []string
+			for _, rec := range recs {
+				if rec.Active {
+					active = append(active, rec.Name)
+				}
+			}
+			if len(active) > 0 {
+				fmt.Fprintf(&sb, "\nStill running: feature stack(s) %s — a base-wide stop does not touch them. Stop each with stack=<name> all=true, or stack_down.", strings.Join(active, ", "))
+			}
+		}
+	}
+	sb.WriteString("\nThe host daemon itself is still up; it only stops from the shell (devstack workspace down).")
+	return sb.String()
 }
 
 // coreLogFilters records the filters a process_logs call actually applied.
@@ -1363,12 +1388,12 @@ func applyGrep(lines []string, re *regexp.Regexp, contextLines int) []string {
 
 func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws *workspace.Workspace) {
 	tool := mcp.NewTool("configure",
-		mcp.WithDescription("Set a dev daemon runtime argument (key=value) that controls how services are configured. Use this to change feature flags, modes, or other runtime config. Affected services will restart automatically. "+
+		mcp.WithDescription("Read or set a dev daemon runtime argument. Call it with no key to read the arguments currently set, which you must do before setting one: setting an argument REPLACES the daemon's whole argument list, so anything previously set and not passed again is silently dropped. Use this to change feature flags, modes, or other runtime config. Affected services will restart automatically. "+
 			"Boundary: this sets arguments the daemon itself reads when it generates the stack — for config values a service reads, use env_use (point a scope at a named config env), env_set (edit a named env's vars) or service_env (edit one service's vars) instead. "+
 			"Setting an argument REPLACES the daemon's entire argument list: this tool sets one key, so every argument set earlier is silently dropped."),
 		mcp.WithString("key",
 			mcp.Required(),
-			mcp.Description("The argument key (e.g. 'env', 'debug', 'profile')."),
+			mcp.Description("The argument key (e.g. 'env', 'debug', 'profile'). Omit it to read the arguments currently set instead of writing one."),
 		),
 		mcp.WithString("value",
 			mcp.Required(),
@@ -1384,15 +1409,16 @@ func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client,
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		key := request.GetString("key", "")
 		value := request.GetString("value", "")
-		if key == "" {
-			return mcp.NewToolResultError("key must not be empty"), nil
-		}
 
 		t, err := resolveLocalTarget(ws, localTarget{client: tiltClient}, request.GetString("stack", ""))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		tiltClient := t.client
+
+		if key == "" {
+			return mcp.NewToolResultText(coreCurrentArgs(tiltClient)), nil
+		}
 
 		out, err := tiltClient.RunCLI("args", "--", fmt.Sprintf("%s=%s", key, value))
 		if err != nil {
@@ -1696,12 +1722,13 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 	}
 
 	desc := fmt.Sprintf(
-		"Investigate distributed traces in the LOCAL dev environment (@ %s). "+
+		"Investigate distributed traces in the LOCAL dev environment (backend resolved at server start: %s — the observability tool reports the current one, and can change it). "+
 			"Queries this workspace's configured telemetry backend — NOT a natural language search engine. Parameters are structured: exact service names, structured time ranges, and exact attribute key=value pairs. "+
 			"Results are always confined to this workspace's telemetry, and in mode 3 an unqualified call narrows to the service the server is running in. "+
 			"Modes, and what each one actually filters on: (1) trace_id/span_id — look up one trace or span by id; every other filter is ignored, including service, stack, since_minutes, limit and errors_only, so the trace comes back whichever instance emitted it and however old it is. "+
 			"(2) attribute+value — search by business attribute (e.g. attribute='portfolio.id' value='123'), filtered by stack, since_minutes, limit and errors_only, and by service when service is given (there is no default service in this mode). "+
 			"(3) service — recent executions, filtered by stack, since_minutes, limit, errors_only and service, where an omitted service falls back to this repo's default service. "+
+			"Querying an inactive stack is not an error but is rarely useful: it returns only what that stack emitted while it was last up, so an empty result there means it is down, not that it is healthy — stack_list reports which stacks are active. "+
 			"One backend holds every workspace and every stack, so results are told apart by resource attributes: devstack.workspace (applied for you, always), devstack.service (the name devstack uses, which often differs from the name the service reports itself as — either matches), devstack.stack (base, or a feature stack's name), devstack.env (the config env that instance runs under). "+
 			"In modes 2 and 3, results can be isolated to one stack's service: 'service' pins the service and 'stack' pins the devstack.stack resource attribute (a stack's short name, or 'stack'='base' to select base-workspace services). "+
 			"To compare a feature stack against base, run the same query twice with stack='<name>' and stack='base'. Use the observability tool's status action to see which variants are actually emitting before concluding a service is silent. "+
@@ -1731,10 +1758,10 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			mcp.Description("Exact value to match for the given attribute (e.g. '123'). NOT a pattern or description."),
 		),
 		mcp.WithNumber("since_minutes",
-			mcp.Description("Look-back window in minutes (integer). Defaults to 5. Use larger values (e.g. 60) to search further back."),
+			mcp.Description("Look-back window in minutes (integer). Defaults to 30. Use larger values (e.g. 60) to search further back."),
 		),
 		mcp.WithNumber("limit",
-			mcp.Description("Maximum number of executions to expand. Defaults to 3."),
+			mcp.Description("Maximum number of executions to expand. Defaults to 5."),
 		),
 		mcp.WithBoolean("errors_only",
 			mcp.Description("If true, only return executions where the root span has error status. Defaults to false."),
@@ -1764,8 +1791,8 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		stack := resolveInvestigateStack(request.GetString("stack", ""))
 		attribute := request.GetString("attribute", "")
 		value := request.GetString("value", "")
-		sinceMinutes := int(request.GetFloat("since_minutes", 5))
-		limit := int(request.GetFloat("limit", 3))
+		sinceMinutes := int(request.GetFloat("since_minutes", 30))
+		limit := int(request.GetFloat("limit", 5))
 		errorsOnly := request.GetBool("errors_only", false)
 		verbose := request.GetBool("verbose", false)
 
@@ -2242,4 +2269,40 @@ func serviceFromCwd() string {
 		return ""
 	}
 	return identity.ServiceName
+}
+
+// coreCurrentArgs reports the daemon's current Tiltfile arguments. Setting one
+// replaces the whole list, so a caller has to be able to read it first; `tilt
+// args` with no arguments opens an editor, which would hang the server, so the
+// list comes from the API object instead.
+func coreCurrentArgs(tiltClient *tilt.Client) string {
+	out, err := tiltClient.RunCLI("get", "tiltfiles", "-o", "json")
+	if err != nil {
+		return fmt.Sprintf("could not read the daemon's arguments: %v\n%s", err, out)
+	}
+
+	var payload struct {
+		Items []struct {
+			Spec struct {
+				Args []string `json:"args"`
+			} `json:"spec"`
+		} `json:"items"`
+		Spec struct {
+			Args []string `json:"args"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		return fmt.Sprintf("could not parse the daemon's arguments: %v", err)
+	}
+
+	args := payload.Spec.Args
+	for _, item := range payload.Items {
+		if len(item.Spec.Args) > 0 {
+			args = item.Spec.Args
+		}
+	}
+	if len(args) == 0 {
+		return "No arguments are set on the daemon. Setting one replaces the whole list, so with none set there is nothing to preserve.\n"
+	}
+	return fmt.Sprintf("Arguments currently set on the daemon: %s\nSetting one replaces this whole list — pass every argument you want to keep.\n", strings.Join(args, " "))
 }

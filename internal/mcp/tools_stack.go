@@ -16,7 +16,7 @@ import (
 
 // stackShortNameDesc states the short-name-vs-identity rule wherever a stack is
 // named: every parameter takes the short name, while output prints the identity.
-const stackShortNameDesc = "Feature stack SHORT name (e.g. 'import-review') — not the '<base>--<name>' full identity that stack_list and telemetry print."
+const stackShortNameDesc = "Feature stack SHORT name (e.g. 'import-review') — not the '<base>--<name>' full identity that stack_list and telemetry print. There is no stack called \"base\": base is the absence of a stack, so omit this rather than passing \"base\" (the service-control and telemetry tools accept \"base\" as a synonym for omitting it; the stack tools do not, and stack_rm would reject it)."
 
 // serviceLinksDesc defines the "service links" these tools return: one
 // http://localhost:<port> URL per port the stack allocated.
@@ -208,7 +208,7 @@ func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 
 func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_up",
-		mcp.WithDescription("Bring a feature stack up: mark it (and its base workspace) active, fold its <base>:<service>:<stack> resources into the one host Tilt daemon, and ensure that daemon is running so it hot-reloads them. Mirrors 'devstack stack up'. There is no per-stack daemon — its services run on their own ports inside the host daemon. Returns the stack's allocated service links and the daemon status. "+serviceLinksDesc),
+		mcp.WithDescription("Bring a feature stack up: mark it (and its base workspace) active, fold its <base>:<service>:<stack> resources into the one host Tilt daemon, and ensure that daemon is running so it hot-reloads them. Mirrors 'devstack stack up'. This is the remedy when another tool reports the stack is not up: status, process_logs, restart, start, stop and configure all refuse an inactive stack rather than falling through to base. There is no per-stack daemon — its services run on their own ports inside the host daemon. Returns the stack's allocated service links and the daemon status. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(stackShortNameDesc)),
 		mcp.WithReadOnlyHintAnnotation(false),

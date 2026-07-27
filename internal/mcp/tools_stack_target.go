@@ -85,7 +85,7 @@ func resolveLocalTarget(ws *workspace.Workspace, base localTarget, stackName str
 		return localTarget{}, err
 	}
 	if !stack.DaemonReachable(workspace.HostTiltPort) || !rec.Active {
-		return localTarget{}, fmt.Errorf("stack %q is not up — run: devstack stack up %s", stackName, rec.Name)
+		return localTarget{}, fmt.Errorf("stack %q is not up: its worktrees and record exist but none of its services run, so there is nothing here to act on. Bring it up first with the stack_up tool (CLI: devstack stack up %s), then retry", stackName, rec.Name)
 	}
 	cfg, _ := config.Load(rec.Root)
 	if cfg == nil {

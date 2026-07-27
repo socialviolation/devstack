@@ -274,3 +274,23 @@ func TestReloadModeResolvesPackageScripts(t *testing.T) {
 		t.Fatalf("an unresolvable script must stay %q, got %q", coreReloadManual, got)
 	}
 }
+
+// "Stop everything" is a common ask this tool cannot satisfy alone: it is scoped
+// to one instance, and the daemon only stops from the shell. Saying so is the
+// difference between a true report and a false one.
+func TestSafetyStopReportsWhatItLeavesRunning(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ws := &workspace.Workspace{Name: "navexa", Path: t.TempDir()}
+
+	if got := coreStillRunning(ws, false, ""); got != "" {
+		t.Errorf("a targeted stop should add no note, got %q", got)
+	}
+
+	got := coreStillRunning(ws, true, "")
+	if !strings.Contains(got, "host daemon itself is still up") {
+		t.Errorf("stop-all must say the daemon survives: %q", got)
+	}
+	if !strings.Contains(got, "devstack workspace down") {
+		t.Errorf("stop-all must name what does stop the daemon: %q", got)
+	}
+}
