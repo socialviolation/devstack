@@ -36,7 +36,7 @@ func registerObservabilityTool(mcpServer *server.MCPServer, ws *workspace.Worksp
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(true),
 		mcp.WithString("action", mcp.Required(),
-			mcp.Description("One of: status, variants, enable, disable, configure.")),
+			mcp.Description("One of: status, variants — read only, change nothing; enable, disable, configure — each writes this workspace's manifest.")),
 		mcp.WithString("backend",
 			mcp.Description("Backend/plugin to use (e.g. 'openobserve', 'signoz', 'forwarding'). Optional for enable/configure; defaults to openobserve — a single lightweight local stack shared by every workspace.")),
 		mcp.WithString("key",
@@ -139,6 +139,10 @@ func observabilityStatus(ws *workspace.Workspace, workspacePath string) string {
 	evidenceBackend, _ := otel.BackendFor(ws)
 	if statuses, err := telemetry.Status(workspacePath, evidenceBackend, telemetry.DefaultWindow); err == nil && len(statuses) > 0 {
 		fmt.Fprintf(&sb, "evidence (last %s, per variant):\n", telemetry.DefaultWindow)
+		fmt.Fprintf(&sb, "  confidence is one of high — spans arrived, so that service is instrumented and reaching the backend; "+
+			"partial — logs but no spans, or a scenario mode suppressing traces; "+
+			"low — expected telemetry never arrived, or the service declares no expectations; "+
+			"inconclusive — no queryable backend, or export deliberately degraded. Only high proves instrumentation.\n")
 		for _, s := range statuses {
 			fmt.Fprintf(&sb, "  %s: confidence=%s spans=%d mode=%s\n", s.Service, s.Confidence, s.TraceCount, s.Mode)
 			fmt.Fprintf(&sb, "    %s\n", s.Summary())

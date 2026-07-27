@@ -65,6 +65,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		fmt.Fprintf(&sb, "tools: %s\n", strings.Join(tools, ", "))
 		if otelOn {
 			fmt.Fprintf(&sb, "recommended order: environment -> status -> observability -> process_logs/investigate\n")
+			fmt.Fprintf(&sb, "query scope: telemetry results stay inside this workspace; investigate's recent-executions mode defaults to the base instance and to this repo's service (pass a stack's short name, or 'all'), its attribute search has no default service, and a trace_id/span_id lookup ignores service and stack entirely.\n")
 		} else {
 			fmt.Fprintf(&sb, "recommended order: environment -> status -> process_logs\n")
 			fmt.Fprintf(&sb, "note: observability disabled — no trace/telemetry tools. Turn it on with the observability tool (action=enable).\n")
@@ -73,10 +74,9 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 			fmt.Fprintf(&sb, "note: tunnel tool unavailable — tailscale is not installed on this machine.\n")
 		}
 
-		if otelOn {
-			fmt.Fprintf(&sb, "query scope: telemetry results are confined to this workspace; an absent 'stack' means the base instance only (pass a stack's short name for that stack, 'all' for every instance); an unqualified call narrows to the service this server runs in.\n")
+		if cfg, err := config.Load(workspacePath); err == nil && len(cfg.Groups) > 0 {
+			fmt.Fprintf(&sb, "groups: %s\n", availableGroups(cfg))
 		}
-
 		fmt.Fprintf(&sb, "envs: %s\n", envCatalog(workspacePath))
 		fmt.Fprintf(&sb, "config-patch env: services/workspace/stack are pointed at a named config env via env_use (devstack env use); status and env_which show where each instance points.\n")
 
@@ -143,13 +143,20 @@ func stacksSummary(ws *workspace.Workspace) string {
 		return fmt.Sprintf("workspace: %s — base only, no feature stacks in flight\n", ws.Name)
 	}
 	parts := make([]string, 0, len(stacks))
+	anyInactive := false
 	for _, s := range stacks {
 		short := strings.TrimPrefix(s.Name, s.BaseName+"--")
 		if s.Status == "active" {
 			parts = append(parts, fmt.Sprintf("%s (active, base :%d)", short, s.BasePort))
 		} else {
+			anyInactive = true
 			parts = append(parts, fmt.Sprintf("%s (%s)", short, s.Status))
 		}
 	}
-	return fmt.Sprintf("workspace: %s — base + %d feature stack(s) in flight: %s — those are the short names every 'stack' parameter takes (full identity is %s--<name>)\n", ws.Name, len(stacks), strings.Join(parts, ", "), ws.Name)
+	line := fmt.Sprintf("workspace: %s — base + %d feature stack(s) in flight: %s — those are the short names every 'stack' parameter takes (full identity is %s--<name>)\n", ws.Name, len(stacks), strings.Join(parts, ", "), ws.Name)
+	if anyInactive {
+		line += "inactive = the stack's worktrees and record exist but none of its services run: status/process_logs/restart/stop/configure against it error \"not up\" instead of falling through to base, " +
+			"service_env still reads and writes its worktree config, and investigate returns only what it emitted while it was last up.\n"
+	}
+	return line
 }

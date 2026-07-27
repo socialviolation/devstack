@@ -81,7 +81,7 @@ func TestEnvironmentStatesQueryScoping(t *testing.T) {
 	s := newEnvironmentToolWorkspace(t)
 	out := callTool(t, s, "environment", nil)
 
-	for _, want := range []string{"query scope:", "confined to this workspace", "base instance only"} {
+	for _, want := range []string{"query scope:", "stay inside this workspace", "defaults to the base instance", "attribute search has no default service"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("environment output must contain %q; got:\n%s", want, out)
 		}

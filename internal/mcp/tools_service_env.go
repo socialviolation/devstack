@@ -38,17 +38,19 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 				"it silently falls back to the code's default, so the service runs a different configuration than the one it is standing in for. "+
 				"A rung is one layer of the env precedence ladder, lowest first — .envrc, workspace env.files, service env.files, "+
 				"workspace env.values, service env.values, active env (workspace, then service, then stack), devstack-computed — "+
-				"and a higher rung overrides every rung below it.",
+				"and a higher rung overrides every rung below it. "+
+				"'get' resolves every rung — reach for it to answer 'what is KEY set to'; "+
+				"reach for env_which instead for the narrower question of which named config-patch env applies at each scope and what that patch alone contributes.",
 		),
 		mcp.WithString("action",
 			mcp.Required(),
-			mcp.Description("One of: get, diff, set, check, drift. Only 'set' writes; get, diff, check and drift are read-only."),
+			mcp.Description("One of: get, diff, check, drift — read only, change nothing; set — writes a file (the service's devstack.service.yaml or its .envrc)."),
 		),
 		mcp.WithString("service",
 			mcp.Description("Exact service name. For diff, may be comma-separated list of 2+ services."),
 		),
 		mcp.WithString("group",
-			mcp.Description("Group name — a named set of services declared under 'groups' in the workspace manifest; expands to its member services. Pass an unknown name to be told which groups exist, or read the groups summary from status."),
+			mcp.Description("Group name — a named set of services declared under 'groups' in the workspace manifest; expands to its member services. The environment tool lists this workspace's group names."),
 		),
 		mcp.WithString("filter",
 			mcp.Description("Substring filter on key names (case-insensitive). Applies to get and diff."),
@@ -430,8 +432,9 @@ func handleServiceEnvSet(ws *workspace.Workspace, workspacePath, stackEnv, servi
 	}
 
 	return mcp.NewToolResultText(fmt.Sprintf(
-		"wrote %s to %s (%s) — no higher rung overrides it. Takes effect for %s on next generate + restart.",
-		key, written, rung, serviceName)), nil
+		"wrote %s to %s (%s) — no higher rung overrides it. Takes effect for %s on its next restart: the restart tool "+
+			"(CLI: devstack restart %s) regenerates the Tiltfile from the manifests before triggering, so there is no separate generate step.",
+		key, written, rung, serviceName, serviceName)), nil
 }
 
 // reresolveLadder re-reads the workspace from disk so the ladder reflects a write

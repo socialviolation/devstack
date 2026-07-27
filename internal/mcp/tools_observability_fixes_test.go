@@ -55,7 +55,7 @@ func TestObservabilityToolAdvertisesVariantsAndHonestAnnotations(t *testing.T) {
 		`"destructiveHint":false`,
 		`"idempotentHint":true`,
 		`"openWorldHint":true`,
-		"One of: status, variants, enable, disable, configure.",
+		"status, variants — read only, change nothing",
 	} {
 		if !strings.Contains(listing, want) {
 			t.Errorf("tools/list missing %q; got %s", want, listing)

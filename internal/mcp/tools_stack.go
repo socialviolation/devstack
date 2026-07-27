@@ -116,7 +116,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 
 func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_list",
-		mcp.WithDescription("List the feature stacks of THIS workspace with their base, status (active/inactive), the base daemon port their services run in when active, and allocated service links. The STACK column prints each stack's full identity '<base>--<name>' (the form telemetry and daemon resources use); every stack parameter across these tools takes the short '<name>' half. "+serviceLinksDesc),
+		mcp.WithDescription("List the feature stacks of THIS workspace with their base, status (active = its services run in the host daemon; inactive = worktrees and record exist but nothing of it runs, so tools that act on running services error \"not up\" for it), the base daemon port their services run in when active, and allocated service links. The STACK column prints each stack's full identity '<base>--<name>' (the form telemetry and daemon resources use); every stack parameter across these tools takes the short '<name>' half. "+serviceLinksDesc),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -259,7 +259,7 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 
 func registerStackDownTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_down",
-		mcp.WithDescription("Stop a feature stack's services in the host daemon: mark it inactive and regenerate the host Tiltfile so the running daemon drops its <base>:<service>:<stack> resources. Mirrors 'devstack stack down'. Leaves the stack's worktrees and record intact (remove them with stack_rm)."),
+		mcp.WithDescription("Stop a feature stack's services in the host daemon: mark it inactive (nothing of it runs any more) and regenerate the host Tiltfile so the running daemon drops its <base>:<service>:<stack> resources. Mirrors 'devstack stack down'. Leaves the stack's worktrees and record intact (remove them with stack_rm)."),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(stackShortNameDesc)),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -289,7 +289,9 @@ func registerStackDownTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 		}
 
 		return mcp.NewToolResultText(fmt.Sprintf(
-			"Stack %q is now inactive; the host daemon will drop its resources. Worktrees and record kept (remove with stack_rm %s).",
+			"Stack %q is now inactive; the host daemon will drop its resources. Worktrees and record kept (remove with stack_rm %s).\n"+
+				"While inactive, status/process_logs/restart/stop/configure targeting it error \"not up\" instead of falling through to base; "+
+				"service_env still reads and writes its worktree config, and investigate returns only what it emitted while it was up.",
 			rec.Name, rec.Name)), nil
 	})
 }
