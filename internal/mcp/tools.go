@@ -1392,11 +1392,9 @@ func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client,
 			"Boundary: this sets arguments the daemon itself reads when it generates the stack — for config values a service reads, use env_use (point a scope at a named config env), env_set (edit a named env's vars) or service_env (edit one service's vars) instead. "+
 			"Setting an argument REPLACES the daemon's entire argument list: this tool sets one key, so every argument set earlier is silently dropped."),
 		mcp.WithString("key",
-			mcp.Required(),
-			mcp.Description("The argument key (e.g. 'env', 'debug', 'profile'). Omit it to read the arguments currently set instead of writing one."),
+			mcp.Description("The argument key (e.g. 'env', 'debug', 'profile'). Omit it, with no value, to read the arguments currently set instead of writing one."),
 		),
 		mcp.WithString("value",
-			mcp.Required(),
 			mcp.Description("The value to set (e.g. 'production', 'true', 'staging')."),
 		),
 		mcp.WithString("stack", mcp.Description(stackParamDesc)),
@@ -1417,7 +1415,13 @@ func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client,
 		tiltClient := t.client
 
 		if key == "" {
+			if value != "" {
+				return mcp.NewToolResultError("value given without key — pass both to set an argument, or neither to read the arguments currently set"), nil
+			}
 			return mcp.NewToolResultText(coreCurrentArgs(tiltClient)), nil
+		}
+		if value == "" {
+			return mcp.NewToolResultError(fmt.Sprintf("no value for %q — pass value to set it, or omit key to read the current arguments", key)), nil
 		}
 
 		out, err := tiltClient.RunCLI("args", "--", fmt.Sprintf("%s=%s", key, value))

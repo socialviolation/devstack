@@ -64,11 +64,11 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 		mcp.WithString("target",
 			mcp.Description(
 				"Where to write (required for set). "+
-					"'manifest' — the service's devstack.service.yaml env.values. Committed to git. "+
+					"'manifest' — the service's devstack.service.yaml env.values. devstack treats that file as machine-local and expects it gitignored (it holds absolute tool paths), but whether it is ignored is per-repo — check with git check-ignore -v devstack.service.yaml before trusting it. "+
 					"Use for devstack-managed config: service addresses, ports, URLs of other services, feature flags. "+
 					"'envrc' — the service's local .envrc. Not committed. "+
 					"Use for secrets and anything credential-bearing: API keys, tokens, passwords, DSNs with credentials. "+
-					"Never write a secret to 'manifest' — it would be committed.",
+					"Keep secrets out of 'manifest' regardless: .envrc is the conventional credential store, is never committed, and is what direnv loads.",
 			),
 		),
 		mcp.WithString("stack",

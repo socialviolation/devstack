@@ -294,3 +294,44 @@ func TestSafetyStopReportsWhatItLeavesRunning(t *testing.T) {
 		t.Errorf("stop-all must name what does stop the daemon: %q", got)
 	}
 }
+
+// configure's description orders a read before any write, because a write
+// replaces the whole argument list. The schema required key and value, so the
+// read it mandated could not be called.
+func TestSafetyConfigureReadNeedsNoArguments(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s := server.NewMCPServer("test", "0.0.0")
+	ws := &workspace.Workspace{Name: "navexa", Path: t.TempDir()}
+	registerConfigureTool(s, nil, ws)
+
+	resp := s.HandleMessage(context.Background(), json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	data, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listing struct {
+		Result struct {
+			Tools []struct {
+				Name        string `json:"name"`
+				InputSchema struct {
+					Required []string `json:"required"`
+				} `json:"inputSchema"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(data, &listing); err != nil {
+		t.Fatal(err)
+	}
+	for _, tl := range listing.Result.Tools {
+		if tl.Name != "configure" {
+			continue
+		}
+		for _, req := range tl.InputSchema.Required {
+			if req == "key" || req == "value" {
+				t.Errorf("configure requires %q, so the read its description mandates cannot be called", req)
+			}
+		}
+		return
+	}
+	t.Fatal("configure not registered")
+}

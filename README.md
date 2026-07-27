@@ -85,7 +85,7 @@ The devstack MCP server loads automatically from `.mcp.json`. Claude can now sta
 | **Dependency** | A declared ordering constraint: service A won't start until service B is running |
 | **Host daemon** | A single Tilt daemon (`:10300`) for the whole machine. Every active workspace's services and every active stack's overlay run inside it as `<workspace>:<service>[:<stack>]` resources. There is no daemon per workspace. |
 | **Feature stack** | A parallel version of one or more services, run from a git worktree on a feature branch on its own dynamic port, beside base — reusing base for everything it doesn't change. Lets you run several features live at once without cloning the world. |
-| **Base** | The workspace's own checkout and the instance it runs — what every command acts on when you pass no `--stack`, and spelled literally as `base` where a `stack` parameter or a telemetry filter wants a name |
+| **Base** | The workspace's own checkout and the instance it runs — what every command acts on when you pass no `--stack`, and spelled literally as `base` where the service-control and telemetry tools take a stack name (the stack tools have no such value — omit the parameter instead) |
 | **Environment** | A named config-var patch (`environments:` in the workspace manifest) applied at workspace / service / stack scope (most-specific wins). "Where a service points." |
 
 ---

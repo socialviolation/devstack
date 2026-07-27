@@ -777,7 +777,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"Every running service is a Tilt resource whose name tells you which instance you are touching:\n\n" +
 		"- Base service: `<workspace>:<service>` (e.g. `" + wsBaseName(workspacePath) + ":" + svc + "`).\n" +
 		"- A feature stack's copy of that service: `<workspace>:<service>:<stack>`.\n\n" +
-		"*Base* is the workspace's own checkout and the instance it runs — what every command acts on when you pass no `--stack`, and spelled literally as `base` wherever a tool parameter or a telemetry filter wants a stack name. " +
+		"*Base* is the workspace's own checkout and the instance it runs — what every command acts on when you pass no `--stack`, and spelled literally as `base` where the service-control and telemetry tools take a stack name; the stack tools (`stack_up`, `stack_down`, `stack_rm`, `env_use`, `env_which`, `service_env`) have no such value — omit the parameter instead. " +
 		"The base instance and each stack's instance listen on **different ports**, and every command names which instance it acted on (a `target:` line naming the stack, blank for base) — so ports plus that target line tell you which running copy you are inspecting or controlling.\n\n" +
 		hotReloadInstructions(defaultService, servicePath, stackName) +
 		"### Feature stacks\n\n" +
