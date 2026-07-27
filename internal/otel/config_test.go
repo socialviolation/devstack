@@ -225,3 +225,54 @@ func equalStrings(got any, want []string) bool {
 	}
 	return true
 }
+
+// Telemetry arriving without a devstack.workspace attribute cannot be tied to a
+// project. Sending it to every destination would push whatever emitted it into
+// someone's upstream account, so it falls back to the local store.
+func TestBuildConfigKeepsUnattributedTelemetryLocal(t *testing.T) {
+	forwarding := Contribution{
+		Exporters: map[string]any{"otlphttp": map[string]any{"endpoint": "https://otel.example.com"}},
+		Traces:    Pipeline{Exporters: []string{"otlphttp"}},
+	}
+	raw, err := BuildConfig(4317, 4318, []WorkspaceContribution{
+		{Workspace: "navexa", Plugin: "openobserve", Local: true,
+			Contribution: openobserveLike("http://localhost:5080/api/default")},
+		{Workspace: "roi", Plugin: "forwarding", Local: false, Contribution: forwarding},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := parse(t, raw)
+
+	routing := section(t, cfg, "connectors")["routing/traces"].(map[string]any)
+	defaults, ok := routing["default_pipelines"].([]any)
+	if !ok || len(defaults) != 1 {
+		t.Fatalf("default_pipelines = %v, want only the local pipeline", routing["default_pipelines"])
+	}
+	if defaults[0] != "traces/navexa" {
+		t.Errorf("unattributed telemetry falls back to %v, want the local backend", defaults[0])
+	}
+}
+
+// With nothing local, unattributed telemetry still has to land somewhere rather
+// than being dropped without trace.
+func TestBuildConfigFallsBackToAllWhenNoLocalBackend(t *testing.T) {
+	upstream := func(endpoint string) Contribution {
+		return Contribution{
+			Exporters: map[string]any{"otlphttp": map[string]any{"endpoint": endpoint}},
+			Traces:    Pipeline{Exporters: []string{"otlphttp"}},
+		}
+	}
+	raw, err := BuildConfig(4317, 4318, []WorkspaceContribution{
+		{Workspace: "a", Plugin: "forwarding", Contribution: upstream("https://a.example.com")},
+		{Workspace: "b", Plugin: "forwarding", Contribution: upstream("https://b.example.com")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := parse(t, raw)
+	routing := section(t, cfg, "connectors")["routing/traces"].(map[string]any)
+	if defaults, ok := routing["default_pipelines"].([]any); !ok || len(defaults) != 2 {
+		t.Errorf("default_pipelines = %v, want both pipelines", routing["default_pipelines"])
+	}
+}

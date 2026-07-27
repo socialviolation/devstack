@@ -147,7 +147,11 @@ func (c *Client) QueryTraces(ctx context.Context, req observability.TraceQuery) 
 		where = append(where, fmt.Sprintf("%s = %s", attrColumn("devstack.stack", "traces"), quote(req.Stack)))
 	}
 	if req.Attribute != "" {
-		where = append(where, fmt.Sprintf("%s = %s", attrColumn(req.Attribute, "traces"), quote(req.Value)))
+		col := attrColumn(req.Attribute, "traces")
+		if err := checkIdentifier(col); err != nil {
+			return nil, err
+		}
+		where = append(where, fmt.Sprintf("%s = %s", col, quote(req.Value)))
 	}
 
 	// Group rather than filtering on a null parent: OpenObserve's schema is
@@ -390,6 +394,24 @@ func attrColumn(key, streamType string) string {
 		return "service_" + col
 	}
 	return col
+}
+
+// checkIdentifier rejects a column name that is not a plain identifier. Values
+// are quoted before they reach the query, but an attribute key becomes a bare
+// SQL identifier — and callers include MCP tools driven by an agent, so a
+// crafted key must not be able to carry SQL of its own.
+func checkIdentifier(col string) error {
+	if col == "" {
+		return fmt.Errorf("empty attribute name")
+	}
+	for _, r := range col {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
+		default:
+			return fmt.Errorf("attribute %q is not a valid attribute name", col)
+		}
+	}
+	return nil
 }
 
 // isResourceAttr reports whether a key is one devstack stamps on the resource

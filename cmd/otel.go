@@ -128,8 +128,11 @@ func collectorContributions(include *workspace.Workspace, exclude ...string) ([]
 		}
 		seen[ws.Name] = true
 		contribs = append(contribs, otel.WorkspaceContribution{
-			Workspace:    ws.Name,
-			Plugin:       plugin.Name(),
+			Workspace: ws.Name,
+			Plugin:    plugin.Name(),
+			// A plugin with a local query UI stores telemetry on this machine;
+			// one without forwards it somewhere else.
+			Local:        plugin.QueryEndpoint(ws) != "",
 			Contribution: c,
 		})
 		return nil

@@ -312,3 +312,36 @@ func TestSearchErrorsStillReported(t *testing.T) {
 		t.Error("a genuine query error must not be swallowed")
 	}
 }
+
+// Attribute values are quoted, but an attribute key lands in the query as a bare
+// identifier. MCP hands that key straight to an agent, so a crafted one must be
+// refused rather than executed.
+func TestQueryTracesRejectsInjectedAttributeName(t *testing.T) {
+	srv, queries := captureServer(t, nil)
+	c := NewClient(srv.URL, "token")
+
+	_, err := c.QueryTraces(context.Background(), observability.TraceQuery{
+		Workspace: "navexa",
+		Attribute: "x' OR '1'='1",
+		Value:     "anything",
+	})
+	if err == nil {
+		t.Fatal("a crafted attribute name was accepted")
+	}
+	if len(*queries) != 0 {
+		t.Errorf("a query was sent despite the bad attribute: %v", *queries)
+	}
+}
+
+func TestQueryTracesAcceptsRealAttributeNames(t *testing.T) {
+	srv, _ := captureServer(t, nil)
+	c := NewClient(srv.URL, "token")
+
+	for _, attr := range []string{"portfolio.id", "http.status_code", "devstack.stack"} {
+		if _, err := c.QueryTraces(context.Background(), observability.TraceQuery{
+			Workspace: "navexa", Attribute: attr, Value: "1",
+		}); err != nil {
+			t.Errorf("attribute %q rejected: %v", attr, err)
+		}
+	}
+}

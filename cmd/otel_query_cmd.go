@@ -185,12 +185,19 @@ func printTrace(spans []observability.Span, full bool) {
 	for _, s := range spans[1:] {
 		children[s.ParentSpanID] = append(children[s.ParentSpanID], s)
 	}
-	printSpanTree(root, children, 1)
+	printSpanTree(root, children, 1, map[string]bool{root.SpanID: true})
 	fmt.Println()
 }
 
-func printSpanTree(span observability.Span, children map[string][]observability.Span, depth int) {
+// printSpanTree walks the span tree. seen guards the walk: parent links come
+// from stored data, and one pointing back up the tree would otherwise recurse
+// until the process dies.
+func printSpanTree(span observability.Span, children map[string][]observability.Span, depth int, seen map[string]bool) {
 	for _, child := range children[span.SpanID] {
+		if seen[child.SpanID] {
+			continue
+		}
+		seen[child.SpanID] = true
 		status := ""
 		if isErrorStatus(child.Status) {
 			status = color.New(color.FgRed).Sprint(" " + child.Status)
@@ -199,7 +206,7 @@ func printSpanTree(span observability.Span, children map[string][]observability.
 			strings.Repeat("  ", depth), color.New(color.Faint).Sprint("└"),
 			child.Service+"/"+child.Operation,
 			formatDuration(child.DurationNano), status)
-		printSpanTree(child, children, depth+1)
+		printSpanTree(child, children, depth+1, seen)
 	}
 }
 

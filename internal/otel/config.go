@@ -13,6 +13,11 @@ import (
 type WorkspaceContribution struct {
 	Workspace string
 	Plugin    string
+	// Local reports whether this workspace's telemetry stays on this machine.
+	// Telemetry that arrives without a workspace attribute falls back to the
+	// local destinations only: it cannot be attributed, so shipping it to
+	// someone's upstream account would leak whatever emitted it.
+	Local bool
 	Contribution
 }
 
@@ -62,6 +67,7 @@ type shapeGroup struct {
 	// key identifies the shape; workspaces with an identical key are merged.
 	key        string
 	workspaces []string
+	local      bool
 	Contribution
 }
 
@@ -81,7 +87,7 @@ func groupByShape(contribs []WorkspaceContribution) ([]shapeGroup, error) {
 			continue
 		}
 		index[key] = len(groups)
-		groups = append(groups, shapeGroup{key: key, workspaces: []string{c.Workspace}, Contribution: c.Contribution})
+		groups = append(groups, shapeGroup{key: key, workspaces: []string{c.Workspace}, local: c.Local, Contribution: c.Contribution})
 	}
 	return groups, nil
 }
@@ -127,7 +133,11 @@ func renderRouted(cfg map[string]any, groups []shapeGroup) error {
 
 	// routes[signal] holds the routing table entries for that signal.
 	routes := map[string][]any{}
+	// defaults[signal] holds the pipelines unattributed telemetry falls back to,
+	// preferring local destinations; allDefaults is the fallback when no shape is
+	// local, so unattributed telemetry is still stored rather than dropped.
 	defaults := map[string][]string{}
+	allDefaults := map[string][]string{}
 
 	for i, g := range groups {
 		suffix := routeSuffix(g, i)
@@ -158,7 +168,10 @@ func renderRouted(cfg map[string]any, groups []shapeGroup) error {
 					"pipelines": []string{name},
 				})
 			}
-			defaults[signal] = append(defaults[signal], name)
+			allDefaults[signal] = append(allDefaults[signal], name)
+			if g.local {
+				defaults[signal] = append(defaults[signal], name)
+			}
 		}
 
 		for name, p := range g.Extra {
@@ -170,12 +183,18 @@ func renderRouted(cfg map[string]any, groups []shapeGroup) error {
 		}
 	}
 
-	// Unrouted telemetry — a service that never got its workspace attribute —
-	// would vanish silently, so it falls through to every shape.
+	// Telemetry that never got a workspace attribute cannot be attributed to a
+	// project, so it goes to the local destinations rather than to someone's
+	// upstream account. With no local destination it goes everywhere, since
+	// dropping it silently is worse.
 	for signal, entries := range routes {
+		fallback := defaults[signal]
+		if len(fallback) == 0 {
+			fallback = allDefaults[signal]
+		}
 		connectors["routing/"+signal] = map[string]any{
 			"error_mode":        "ignore",
-			"default_pipelines": defaults[signal],
+			"default_pipelines": fallback,
 			"table":             entries,
 		}
 		pipelines[signal+"/in"] = pipelineMap(Pipeline{
