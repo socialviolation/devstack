@@ -17,7 +17,7 @@ import (
 
 // registerEnvironmentTool registers the "environment" tool which orients agents immediately.
 // This is the MOST IMPORTANT discoverability tool — calling it first reveals what's possible.
-func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName, workspacePath string, ws *workspace.Workspace) {
+func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName, workspacePath, defaultService string, ws *workspace.Workspace) {
 	tool := mcp.NewTool("environment",
 		mcp.WithDescription(
 			"Show the active workspace and available tools. "+
@@ -27,6 +27,10 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 				"The available tools depend on this workspace's configuration: trace/telemetry tools appear only when observability is enabled, tunnel tools only when tailscale is installed. "+
 				"Call this tool first to understand the context before using other tools.",
 		),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -48,7 +52,10 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		if line := stacksSummary(ws); line != "" {
 			sb.WriteString(line)
 		}
-		tools := []string{"status", "restart", "stop", "configure", "process_logs", "service_env", "observability", "stack_create", "stack_list", "stack_up", "stack_down", "stack_rm", "env_use", "env_which", "env_set"}
+		if line := servicesSummary(workspacePath, defaultService); line != "" {
+			sb.WriteString(line)
+		}
+		tools := []string{"status", "start", "restart", "stop", "topology", "configure", "process_logs", "service_env", "observability", "stack_create", "stack_list", "stack_up", "stack_down", "stack_rm", "env_use", "env_which", "env_set"}
 		if otelOn {
 			tools = append(tools, "investigate")
 		}
@@ -64,6 +71,10 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		}
 		if !tunnelsOn {
 			fmt.Fprintf(&sb, "note: tunnel tool unavailable — tailscale is not installed on this machine.\n")
+		}
+
+		if otelOn {
+			fmt.Fprintf(&sb, "query scope: telemetry results are confined to this workspace; an absent 'stack' means the base instance only (pass a stack's short name for that stack, 'all' for every instance); an unqualified call narrows to the service this server runs in.\n")
 		}
 
 		fmt.Fprintf(&sb, "envs: %s\n", envCatalog(workspacePath))
@@ -87,6 +98,37 @@ func envCatalog(workspacePath string) string {
 	return strings.Join(names, ", ")
 }
 
+// servicesSummary names the workspace's services, the exact vocabulary every
+// other tool's 'service' parameter demands, plus the default one this server
+// falls back to. Long service sets are capped so orientation stays cheap.
+func servicesSummary(workspacePath, defaultService string) string {
+	cfg, err := config.Load(workspacePath)
+	if err != nil || cfg == nil || len(cfg.ServicePaths) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(cfg.ServicePaths))
+	for name := range cfg.ServicePaths {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	listed := names
+	suffix := ""
+	if len(names) > servicesListCap {
+		listed = names[:servicesListCap]
+		suffix = fmt.Sprintf(" ... and %d more — devstack status lists all", len(names)-servicesListCap)
+	}
+
+	def := ""
+	if defaultService != "" {
+		def = fmt.Sprintf(" (default: %s)", defaultService)
+	}
+	return fmt.Sprintf("services: %s%s%s — exact names; other tools reject partial matches\n", strings.Join(listed, ", "), suffix, def)
+}
+
+// servicesListCap bounds how many service names orientation prints inline.
+const servicesListCap = 12
+
 // stacksSummary reports the workspace identity and its in-flight feature stacks,
 // so an agent bound to the base immediately sees the other versions in flight.
 func stacksSummary(ws *workspace.Workspace) string {
@@ -102,11 +144,12 @@ func stacksSummary(ws *workspace.Workspace) string {
 	}
 	parts := make([]string, 0, len(stacks))
 	for _, s := range stacks {
+		short := strings.TrimPrefix(s.Name, s.BaseName+"--")
 		if s.Status == "active" {
-			parts = append(parts, fmt.Sprintf("%s (active, base :%d)", s.Name, s.BasePort))
+			parts = append(parts, fmt.Sprintf("%s (active, base :%d)", short, s.BasePort))
 		} else {
-			parts = append(parts, fmt.Sprintf("%s (%s)", s.Name, s.Status))
+			parts = append(parts, fmt.Sprintf("%s (%s)", short, s.Status))
 		}
 	}
-	return fmt.Sprintf("workspace: %s — base + %d feature stack(s) in flight: %s\n", ws.Name, len(stacks), strings.Join(parts, ", "))
+	return fmt.Sprintf("workspace: %s — base + %d feature stack(s) in flight: %s — those are the short names every 'stack' parameter takes (full identity is %s--<name>)\n", ws.Name, len(stacks), strings.Join(parts, ", "), ws.Name)
 }

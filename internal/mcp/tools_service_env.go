@@ -21,26 +21,34 @@ import (
 func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	tool := mcp.NewTool("service_env",
 		mcp.WithDescription(
-			"Inspect and manage environment variables across local services. "+
+			"Inspect and manage environment variables across local services, by reading and writing the config FILES in a service's checkout — "+
+				"not the running process (a write takes effect on the next generate + restart). "+
+				"Its 'stack' parameter therefore picks which CHECKOUT to read/write, where every other tool's 'stack' picks which running instances to act on. "+
 				"Supports five actions: "+
 				"'get' — show the env a service actually resolves to, with the rung each value comes from; "+
 				"'diff' — compare resolved env across multiple services or a group side-by-side; "+
-				"'set' — write a key=value to a service's manifest (env.values) or .envrc, and report if a higher rung overrides it; "+
-				"'check' — audit resolved env for placeholder and asymmetric values; "+
-				"'drift' — compare the resolved env against what the service's own repo declares it needs (its deployment manifest / appsettings, via config.sources), "+
+				"'set' — write a key=value to ONE service's manifest (env.values) or .envrc, and report if a higher rung overrides it "+
+				"(to instead set a config-var for every service pointed at a named environment, use env_set); "+
+				"'check' — audit resolved env for placeholder values (empty, or containing TODO/CHANGEME/<replace>/your-/example.com) "+
+				"and asymmetry — a key set for some of the selected services but missing from the others; "+
+				"'drift' — compare the resolved env against what the service's own repo declares it needs: the files its "+
+				"devstack.service.yaml lists under config.sources (its deployment manifest / appsettings), "+
 				"reporting declared keys that are unset locally, secret-backed keys with no local value, and keys set to a different value. "+
 				"Use 'drift' before trusting a local run of a code path that reads config: a declared key that is unset locally does not error, "+
-				"it silently falls back to the code's default, so the service runs a different configuration than the one it is standing in for.",
+				"it silently falls back to the code's default, so the service runs a different configuration than the one it is standing in for. "+
+				"A rung is one layer of the env precedence ladder, lowest first — .envrc, workspace env.files, service env.files, "+
+				"workspace env.values, service env.values, active env (workspace, then service, then stack), devstack-computed — "+
+				"and a higher rung overrides every rung below it.",
 		),
 		mcp.WithString("action",
 			mcp.Required(),
-			mcp.Description("One of: get, diff, set, check, drift"),
+			mcp.Description("One of: get, diff, set, check, drift. Only 'set' writes; get, diff, check and drift are read-only."),
 		),
 		mcp.WithString("service",
 			mcp.Description("Exact service name. For diff, may be comma-separated list of 2+ services."),
 		),
 		mcp.WithString("group",
-			mcp.Description("Group name — expands to member services."),
+			mcp.Description("Group name — a named set of services declared under 'groups' in the workspace manifest; expands to its member services. Pass an unknown name to be told which groups exist, or read the groups summary from status."),
 		),
 		mcp.WithString("filter",
 			mcp.Description("Substring filter on key names (case-insensitive). Applies to get and diff."),
@@ -63,11 +71,17 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 		),
 		mcp.WithString("stack",
 			mcp.Description(
-				"Optional feature stack name. Absent (default) reads/writes the BASE workspace's service repos, unchanged. "+
+				"Optional. "+stackShortNameDesc+" "+
+					"Source-tree semantics, unlike the running-process semantics 'stack' has on every other tool: it names the checkout to read/write. "+
+					"Absent (default) reads/writes the BASE workspace's service repos, unchanged. "+
 					"When set, reads/writes the named stack's worktree of the service instead of base — so an agent edits its "+
 					"stack's config, never base's.",
 			),
 		),
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

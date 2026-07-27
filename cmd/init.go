@@ -93,8 +93,14 @@ func runInitRefresh(cmd *cobra.Command) error {
 	}
 
 	if defaultService == "" {
+		// The directory a service lives in is routinely not what the service is
+		// called, and every command example in the generated file names it.
 		if cwd, err := os.Getwd(); err == nil {
-			defaultService = filepath.Base(cwd)
+			if identity, ierr := config.ResolveIdentity(cwd); ierr == nil && identity.ServiceName != "" {
+				defaultService = identity.ServiceName
+			} else {
+				defaultService = filepath.Base(cwd)
+			}
 		}
 	}
 
@@ -734,7 +740,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 	if config.ObservabilityEnabled(workspacePath) {
 		observabilityBlock = "### Observability\n\n" +
 			"Services ship traces and logs to one collector for the whole machine (gRPC `localhost:4317`), which stores them in one backend shared by every workspace and stack.\n\n" +
-			"**Every variant of a service reports to that one backend**, so telemetry is told apart by resource attributes rather than by where it is stored:\n\n" +
+			"**Every instance of a service reports to that one backend** (telemetry output calls an instance a *variant*, which is the same thing), so telemetry is told apart by resource attributes rather than by where it is stored:\n\n" +
 			"| Attribute | What it identifies |\n" +
 			"|---|---|\n" +
 			"| `devstack.workspace` | the workspace — queries are scoped to it automatically, always |\n" +
@@ -743,13 +749,13 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 			"| `devstack.env` | the config env that instance runs under (e.g. `dev`, `perf`) |\n\n" +
 			"**Query it without configuring anything** — devstack resolves the backend, endpoint and credentials for you, and confines every query to this workspace:\n\n" +
 			"```bash\n" +
-			"devstack otel services                  # which variants are reporting, and their stack/env\n" +
+			"devstack otel services                  # which instances are reporting, and their stack/env\n" +
 			"devstack otel traces                    # recent traces (defaults to the service you are in)\n" +
 			"devstack otel traces --stack <name>     # only that stack's instance\n" +
 			"devstack otel traces --service all      # every service in the workspace\n" +
 			"devstack otel traces <trace-id>         # full span tree for one trace\n" +
 			"devstack otel logs --trace <trace-id>   # logs correlated with that trace\n" +
-			"devstack otel status                    # per-variant evidence: which instances are actually emitting\n" +
+			"devstack otel status                    # per-instance evidence: which ones are actually emitting\n" +
 			"```\n\n" +
 			"**A service usually reports itself under a different name than devstack knows it by** (devstack `" + svc + "` may report as something else entirely). Filters accept either name, and `devstack otel services` prints both — check there before concluding a service is silent.\n\n" +
 			"**Comparing a stack against base** is the common debugging move: run the same query with `--stack <name>` and with `--stack base`, and diff what comes back. Without `--stack` you get the base instance only, so a stack's traffic will look missing if you forget it.\n\n" +
@@ -771,6 +777,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"Every running service is a Tilt resource whose name tells you which instance you are touching:\n\n" +
 		"- Base service: `<workspace>:<service>` (e.g. `" + wsBaseName(workspacePath) + ":" + svc + "`).\n" +
 		"- A feature stack's copy of that service: `<workspace>:<service>:<stack>`.\n\n" +
+		"*Base* is the workspace's own checkout and the instance it runs — what every command acts on when you pass no `--stack`, and spelled literally as `base` wherever a tool parameter or a telemetry filter wants a stack name. " +
 		"The base instance and each stack's instance listen on **different ports**, and every command names which instance it acted on (a `target:` line naming the stack, blank for base) — so ports plus that target line tell you which running copy you are inspecting or controlling.\n\n" +
 		hotReloadInstructions(defaultService, servicePath, stackName) +
 		"### Feature stacks\n\n" +
@@ -813,23 +820,30 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"devstack env use <name> [--service|--stack]  # point base, a service, or a stack at env <name>\n" +
 		"devstack env which [--service|--stack]        # which env an instance resolves to, and its values\n" +
 		"```\n\n" +
-		"`--stack <name>` targets that stack's instance instead of base; without it commands operate on the base workspace.\n\n" +
+		"`--stack <name>` targets that stack's instance instead of base; without it commands operate on the base workspace. " +
+		"A *group* is a named set of services started and stopped together (`devstack groups list`); `start`, `restart`, `stop` and `process_logs` take a group name in place of a service.\n\n" +
 		"### Environments (where a service points)\n\n" +
 		"An **environment** (`environments:` in the workspace manifest) is a named bundle of config-var patches — DB URLs, feature flags, external endpoints — that repoints services without code changes. It applies at three scopes, most-specific winning: a **stack**'s env beats a **service**'s env beats the **workspace** default. So base can run against `local` while one stack runs against `prod`. `devstack status` shows each instance's active env (the ENV column / `env:<name>`), so you can see where every running copy is pointed. Set values with `devstack env set` — they are written into the workspace manifest in plaintext (masking is display-only), so if that manifest is committed keep real secrets out and declare them in `env.required` instead; point a scope with `devstack env use`.\n\n" +
 		"### MCP tools\n\n" +
-		"The `.mcp.json` in this repo wires up the devstack MCP server — the agent interface. Tools include " +
-		"`status`, `restart`, `stop`, `configure`, `process_logs`, `investigate`, and `environment`; stack tools " +
-		"`stack_create`, `stack_up`, `stack_down`, `stack_list`, `stack_rm`; and env tools `env_use`, `env_which`, `env_set` — " +
-		"so a stack or env can be driven entirely over MCP, no shell needed. The service-control tools (`status`, `restart`, `stop`, `process_logs`, `configure`) " +
+		"The `.mcp.json` in this repo wires up the devstack MCP server — the agent interface. The tools are " +
+		"`environment`, `status`, `start`, `stop`, `restart`, `topology`, `process_logs`, `configure`, `service_env`, `observability`, `tunnel` and `investigate`; " +
+		"the stack tools `stack_create`, `stack_up`, `stack_down`, `stack_list`, `stack_rm`; and the env tools `env_use`, `env_which`, `env_set`. " +
+		"Two are conditional: `investigate` is registered only while observability is enabled, `tunnel` only when Tailscale is installed. " +
+		"Call `environment` first: it reports what is actually registered here, and each tool's own description is more current than this file.\n\n" +
+		"Feature stacks and environments can be driven end to end over MCP. Some things still need the shell: `devstack workspace up` / `workspace down`, `devstack workspace doctor`, `devstack stack config`, " +
+		"and the otel commands past status, variants and trace queries (`otel traces`, `otel logs --trace`, `otel open`). What `otel services` prints is available over MCP as observability action=variants.\n\n" +
+		"The service-control tools (`status`, `start`, `restart`, `stop`, `process_logs`, `configure`) " +
 		"take an optional `stack` parameter to target a stack's instance rather than base (omit it, or pass `\"base\"`, for base). " +
-		"`investigate` takes `stack` as a telemetry filter: absent means the base instance only, a name means that stack, `\"all\"` means every instance — so an unqualified call will not show you a feature stack's traffic. It is always confined to this workspace, and an unqualified call narrows to the service being worked in. Treat them as discovery helpers, not hidden sources of truth.\n\n" +
+		"`investigate` takes `stack` as a telemetry filter: absent means the base instance only, a name means that stack, `\"all\"` means every instance — so an unqualified call will not show you a feature stack's traffic. It is always confined to this workspace, and an unqualified call narrows to the service being worked in. " +
+		"`service_env` reports a service's resolved env with the *rung* each value came from. A rung is one level of the precedence ladder: `.envrc`, then env files, then manifest `env.values`, then the active env, then devstack's computed values, each overriding the one before. " +
+		"`service_env` with `action=\"drift\"` compares that resolved env against what the service's own repo declares it needs. Run drift before you trust a local run of a code path that reads config: a key the repo declares but the machine has not set does not error, it silently falls back to the code's default.\n\n" +
+		"What these tools report is evidence: the daemon's live state, real process output, and what the backend actually received. Prefer it to guessing. An empty result is not proof — the service may not be instrumented, or the traffic may have gone to a stack you did not name.\n\n" +
 		"Rules:\n" +
 		"1. Check `topology` before making dependency claims.\n" +
-		"2. Prefer process logs and telemetry evidence over guessing about runtime state.\n" +
-		"3. When telemetry is partial or inconclusive, fall back to process logs and live status.\n" +
-		"4. Do not use devstack against staging or production.\n" +
-		"5. Never commit `devstack.service.yaml` — it is machine-local (absolute tool paths); gitignore it.\n" +
-		"6. `devstack env set` writes values into `devstack.workspace.yaml` in plaintext (masking is display-only). If that manifest is committed, keep real secrets out of it — declare them in `env.required` and supply them from `.envrc`. Check with `git check-ignore -v devstack.workspace.yaml`.\n\n" +
+		"2. Prefer what the tools observed (live status, process logs, telemetry) to guessing; when telemetry is partial, fall back to process logs and live status.\n" +
+		"3. Do not use devstack against staging or production.\n" +
+		"4. Never commit `devstack.service.yaml` — it is machine-local (absolute tool paths); gitignore it.\n" +
+		"5. `devstack env set` writes values into `devstack.workspace.yaml` in plaintext (masking is display-only). If that manifest is committed, keep real secrets out of it — declare them in `env.required` and supply them from `.envrc`. Check with `git check-ignore -v devstack.workspace.yaml`.\n\n" +
 		observabilityBlock
 }
 

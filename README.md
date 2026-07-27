@@ -85,6 +85,7 @@ The devstack MCP server loads automatically from `.mcp.json`. Claude can now sta
 | **Dependency** | A declared ordering constraint: service A won't start until service B is running |
 | **Host daemon** | A single Tilt daemon (`:10300`) for the whole machine. Every active workspace's services and every active stack's overlay run inside it as `<workspace>:<service>[:<stack>]` resources. There is no daemon per workspace. |
 | **Feature stack** | A parallel version of one or more services, run from a git worktree on a feature branch on its own dynamic port, beside base — reusing base for everything it doesn't change. Lets you run several features live at once without cloning the world. |
+| **Base** | The workspace's own checkout and the instance it runs — what every command acts on when you pass no `--stack`, and spelled literally as `base` where a `stack` parameter or a telemetry filter wants a name |
 | **Environment** | A named config-var patch (`environments:` in the workspace manifest) applied at workspace / service / stack scope (most-specific wins). "Where a service points." |
 
 ---
@@ -200,7 +201,7 @@ When enabled, `devstack workspace up` starts a local `otelcol-contrib` collector
 
 **One stack per machine.** The collector and the backend are machine-level, not per-workspace: one `otelcol-contrib` and one backend container serve every workspace, exactly as one Tilt daemon runs every workspace's services.
 
-Because every variant of a service reports to that one backend, each is stamped with the resource attributes that tell them apart — `devstack.workspace`, `devstack.service`, `devstack.stack`, and `devstack.env`. These are namespaced deliberately: `deployment.environment` belongs to whoever owns the destination, and the `forwarding` backend sets it per workspace. Telemetry is sliced at query time rather than by running a stack each:
+Because every instance of a service (base and each feature stack's copy, which the telemetry commands call *variants*) reports to that one backend, each is stamped with the resource attributes that tell them apart — `devstack.workspace`, `devstack.service`, `devstack.stack`, and `devstack.env`. These are namespaced deliberately: `deployment.environment` belongs to whoever owns the destination, and the `forwarding` backend sets it per workspace. Telemetry is sliced at query time rather than by running a stack each:
 
 ```bash
 devstack otel services               # which variants are reporting
@@ -260,11 +261,16 @@ This is what `.mcp.json` invokes. You don't run it directly.
 
 The tool set adapts to the active workspace: trace tools (`investigate`) appear only when observability is enabled, and the `tunnel` tool only when Tailscale is installed. Call `environment` first to see what's actually available.
 
+Some CLI commands have no tool and still need a shell: `workspace up` / `workspace down`, `workspace doctor`, `stack config`, and the `otel` commands past status and trace queries (`otel services`, `otel traces`, `otel logs --trace`, `otel open`).
+
 ### `environment`
 Orientation tool — shows the workspace's observability state, its in-flight feature stacks, and which tools exist in this context, and points at the [environments](#environments) a service can be aimed at via `env_use`. Call this first.
 
 ### `status`
 Show all services with state (`running` / `starting` / `building` / `stopped` / `erroring` / `disabled` / `unknown`), ports, source path, ENV (the active environment each instance points at), and last build error. Pass `stack` to see a feature stack's instances.
+
+### `start` / `topology`
+`start` brings a service up along with its dependencies, on base or on a stack's instance. `topology` shows services, their groups, dependencies and dependents — check it before making a dependency claim.
 
 ### `restart`
 Trigger a rebuild/restart for a service. Auto-enables the service first if it was disabled.
@@ -277,7 +283,7 @@ Disable one or all services.
 Parameters: `service` (optional — if omitted, stops everything), `stack` (optional — target a stack's instance).
 
 ### `stack_create` / `stack_up` / `stack_down` / `stack_list` / `stack_rm`
-Manage [feature stacks](#feature-stacks) over MCP — create a stack's worktrees, bring it up/down in the host daemon, list them, or tear one down. So an agent can spin up a parallel version of a service, work on it, and clean it up without shelling out.
+Manage [feature stacks](#feature-stacks) over MCP — create a stack's worktrees, bring it up/down in the host daemon, list them, or tear one down. So an agent can spin up a parallel version of a service, work on it, and clean it up without shelling out. `devstack stack config` has no tool: reading a stack's effective config is still CLI-only.
 
 ### `env_use` / `env_which` / `env_set`
 Manage [environments](#environments) over MCP — point a workspace/service/stack at an env (`env_use`), see which env an instance resolves to and its values (`env_which`), or set a config-var patch (`env_set`). Environments are defined once in the base workspace manifest and inherited by stacks; `env_use` with `stack` points a stack at one of the base's environments. Secrets are masked in output.
@@ -295,7 +301,7 @@ Parameters: `service` (optional), `lines` (default 100), `errors_only` (filter t
 If no service is given and no default is configured, fetches all services in parallel.
 
 ### `service_env`
-Inspect and edit a service's resolved env: `get` shows the value each key resolves to **and the rung/env it came from**, `diff` compares across services, `set` writes to the manifest or `.envrc`, `check` audits required keys. Takes an optional `stack` to inspect a stack's instance.
+Inspect and edit a service's resolved env: `get` shows the value each key resolves to and the rung it came from (a rung is one level of the precedence ladder — `.envrc`, env files, manifest `env.values`, the active env, then devstack's computed values, each overriding the one before), `diff` compares across services, `set` writes to the manifest or `.envrc`, `check` audits required keys, `drift` compares the resolved env against what the service's own repo declares it needs. Takes an optional `stack` to inspect a stack's instance.
 
 ### `observability`
 Inspect and change the workspace's OTEL config: `status` (enabled, backend, collector, + per-service telemetry evidence), `enable`, `disable`, `configure`. Always available locally, so an agent can discover and turn observability on.

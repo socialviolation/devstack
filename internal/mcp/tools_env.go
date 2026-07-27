@@ -33,7 +33,11 @@ func registerEnvUseTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 		mcp.WithString("service",
 			mcp.Description("Exact service name to point at the env (service scope). Cannot be combined with stack.")),
 		mcp.WithString("stack",
-			mcp.Description("Feature stack short name to point at the env (stack scope). Cannot be combined with service.")),
+			mcp.Description(stackShortNameDesc+" Points that stack at the env (stack scope). Cannot be combined with service.")),
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -96,7 +100,11 @@ func registerEnvWhichTool(mcpServer *server.MCPServer, ws *workspace.Workspace, 
 		mcp.WithString("service",
 			mcp.Description("Exact service name to resolve. If omitted, resolved from the current working directory.")),
 		mcp.WithString("stack",
-			mcp.Description("Feature stack short name whose stack-scope env to include in the merge.")),
+			mcp.Description(stackShortNameDesc+" Its stack-scope env is included in the merge.")),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -157,13 +165,17 @@ func registerEnvWhichTool(mcpServer *server.MCPServer, ws *workspace.Workspace, 
 
 func registerEnvSetTool(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	tool := mcp.NewTool("env_set",
-		mcp.WithDescription("Set a config-var (key=value) on one of the config-patch environments defined in the BASE workspace manifest. Mirrors 'devstack env set'. Environments are defined once in the base workspace and inherited by feature stacks. The confirmation output redacts credentials in place, keeping identifying parts of the value visible. Use env_use to point a scope at the environment."),
+		mcp.WithDescription("Set a config-var (key=value) on one of the config-patch environments defined in the BASE workspace manifest. Mirrors 'devstack env set'. Environments are defined once in the base workspace and inherited by feature stacks. NEVER set a secret here: this writes devstack.workspace.yaml, which is committed to git, and the value applies to every service and stack pointed at that environment (it lands on the 'active env' rung, above a service's own env.values). For one service's value use service_env action=set — target=envrc for anything credential-bearing, target=manifest for plain config. The confirmation output redacts credentials in place, keeping identifying parts of the value visible. Use env_use to point a scope at the environment."),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description("Named environment to modify (e.g. 'staging').")),
 		mcp.WithString("key", mcp.Required(),
 			mcp.Description("Config-var key to set.")),
 		mcp.WithString("value", mcp.Required(),
-			mcp.Description("Value to set.")),
+			mcp.Description("Value to set. Not for secrets — it is written to a committed file.")),
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

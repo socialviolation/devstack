@@ -14,6 +14,14 @@ import (
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
+// stackShortNameDesc states the short-name-vs-identity rule wherever a stack is
+// named: every parameter takes the short name, while output prints the identity.
+const stackShortNameDesc = "Feature stack SHORT name (e.g. 'import-review') — not the '<base>--<name>' full identity that stack_list and telemetry print."
+
+// serviceLinksDesc defines the "service links" these tools return: one
+// http://localhost:<port> URL per port the stack allocated.
+const serviceLinksDesc = "A service link is 'service/portKey=http://localhost:<port>': the localhost URL of one port that this stack allocated for one of its overlay services, portKey being a key from that service's manifest ports (e.g. 'http'). These are the stack's own ports — reach its instances here, not on base's."
+
 func registerStackTools(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	registerStackCreateTool(mcpServer, ws)
 	registerStackListTool(mcpServer, ws)
@@ -24,13 +32,17 @@ func registerStackTools(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 
 func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_create",
-		mcp.WithDescription("Create a feature stack overlaying THIS workspace (the base). A stack instantiates only the services it changes plus the services that call them, each in its own git worktree on a dynamically allocated port; every other service resolves to the base stack. Use this for the request 'I need a stack to work on X in services A and B'. The base workspace must be running — a stack reuses its services. Returns the overlay set with reasons, worktree paths, allocated ports/links, and any warnings (dirty base checkout, base daemon not running)."),
+		mcp.WithDescription("Create a feature stack overlaying THIS workspace (the base). A stack instantiates only the services it changes plus the services that call them, each in its own git worktree on a dynamically allocated port; every other service resolves to the base stack. Use this for the request 'I need a stack to work on X in services A and B'. The base workspace must be running — a stack reuses its services. Returns the overlay set with reasons, worktree paths, service links, and any warnings (dirty base checkout, base daemon not running). "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
-			mcp.Description("Short stack name (e.g. 'import-review'). The full stack identity becomes '<base>--<name>'.")),
+			mcp.Description("Short stack name (e.g. 'import-review'). The full stack identity becomes '<base>--<name>'; every stack parameter across these tools takes the short name.")),
 		mcp.WithString("repos", mcp.Required(),
 			mcp.Description("Comma-separated exact service names this stack changes (e.g. 'frontend,backend'). Services that call these are pulled into the overlay automatically.")),
 		mcp.WithString("branch",
 			mcp.Description("Git branch for the changed repos' worktrees. Created if absent, attached to if it already exists. Defaults to the stack name.")),
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(false),
+		mcp.WithOpenWorldHintAnnotation(false),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -104,7 +116,11 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 
 func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_list",
-		mcp.WithDescription("List the feature stacks of THIS workspace with their base, status (active/inactive), the base daemon port their services run in when active, and allocated service links."),
+		mcp.WithDescription("List the feature stacks of THIS workspace with their base, status (active/inactive), the base daemon port their services run in when active, and allocated service links. The STACK column prints each stack's full identity '<base>--<name>' (the form telemetry and daemon resources use); every stack parameter across these tools takes the short '<name>' half. "+serviceLinksDesc),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -139,9 +155,13 @@ func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 	tool := mcp.NewTool("stack_rm",
 		mcp.WithDescription("Tear down a feature stack of THIS workspace: stop its daemon, remove its worktrees, release its ports, delete its record, and delete its stack root. Refuses a worktree with uncommitted changes unless force is set."),
 		mcp.WithString("name", mcp.Required(),
-			mcp.Description("Stack name — the short feature name (e.g. 'import-review').")),
+			mcp.Description(stackShortNameDesc)),
 		mcp.WithBoolean("force",
 			mcp.Description("Remove worktrees even if they have uncommitted changes. Destroys uncommitted work. Defaults to false.")),
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithIdempotentHintAnnotation(false),
+		mcp.WithOpenWorldHintAnnotation(false),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -188,9 +208,13 @@ func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 
 func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_up",
-		mcp.WithDescription("Bring a feature stack up: mark it (and its base workspace) active, fold its <base>:<service>:<stack> resources into the one host Tilt daemon, and ensure that daemon is running so it hot-reloads them. Mirrors 'devstack stack up'. There is no per-stack daemon — its services run on their own ports inside the host daemon. Returns the stack's allocated service links and the daemon status."),
+		mcp.WithDescription("Bring a feature stack up: mark it (and its base workspace) active, fold its <base>:<service>:<stack> resources into the one host Tilt daemon, and ensure that daemon is running so it hot-reloads them. Mirrors 'devstack stack up'. There is no per-stack daemon — its services run on their own ports inside the host daemon. Returns the stack's allocated service links and the daemon status. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
-			mcp.Description("Stack name — the short feature name (e.g. 'import-review').")),
+			mcp.Description(stackShortNameDesc)),
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -237,7 +261,11 @@ func registerStackDownTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 	tool := mcp.NewTool("stack_down",
 		mcp.WithDescription("Stop a feature stack's services in the host daemon: mark it inactive and regenerate the host Tiltfile so the running daemon drops its <base>:<service>:<stack> resources. Mirrors 'devstack stack down'. Leaves the stack's worktrees and record intact (remove them with stack_rm)."),
 		mcp.WithString("name", mcp.Required(),
-			mcp.Description("Stack name — the short feature name (e.g. 'import-review').")),
+			mcp.Description(stackShortNameDesc)),
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
