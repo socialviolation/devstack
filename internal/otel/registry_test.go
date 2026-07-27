@@ -20,6 +20,7 @@ func (p *stubPlugin) Contribute(*workspace.Workspace) (Contribution, error) {
 func (p *stubPlugin) StartCompanion(*workspace.Workspace) error  { return nil }
 func (p *stubPlugin) StopCompanion(*workspace.Workspace) error   { return nil }
 func (p *stubPlugin) CompanionRunning(*workspace.Workspace) bool { return true }
+func (p *stubPlugin) CompanionStale(*workspace.Workspace) bool   { return false }
 func (p *stubPlugin) QueryEndpoint(*workspace.Workspace) string  { return "" }
 func (p *stubPlugin) Backend(*workspace.Workspace) (observability.Backend, error) {
 	return nil, nil

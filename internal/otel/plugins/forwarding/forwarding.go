@@ -115,6 +115,9 @@ func (p *ForwardingPlugin) StartCompanion(ws *workspace.Workspace) error { retur
 // StopCompanion is a no-op.
 func (p *ForwardingPlugin) StopCompanion(ws *workspace.Workspace) error { return nil }
 
+// CompanionStale is always false — there is no companion to go stale.
+func (p *ForwardingPlugin) CompanionStale(ws *workspace.Workspace) bool { return false }
+
 // CompanionRunning always returns true — no companion to check.
 func (p *ForwardingPlugin) CompanionRunning(ws *workspace.Workspace) bool { return true }
 

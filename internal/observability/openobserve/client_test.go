@@ -3,6 +3,7 @@ package openobserve
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -343,5 +344,86 @@ func TestQueryTracesAcceptsRealAttributeNames(t *testing.T) {
 		}); err != nil {
 			t.Errorf("attribute %q rejected: %v", attr, err)
 		}
+	}
+}
+
+// pagingServer replies with a full page until the requested offset passes total,
+// recording the offsets it was asked for.
+func pagingServer(t *testing.T, total int) (*httptest.Server, *[]int) {
+	t.Helper()
+	var offsets []int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Query struct {
+				From int `json:"from"`
+				Size int `json:"size"`
+			} `json:"query"`
+		}
+		json.Unmarshal(body, &req)
+		offsets = append(offsets, req.Query.From)
+
+		hits := []map[string]any{}
+		for i := req.Query.From; i < req.Query.From+req.Query.Size && i < total; i++ {
+			hits = append(hits, map[string]any{
+				"trace_id":   "abc",
+				"span_id":    fmt.Sprintf("span-%d", i),
+				"start_time": float64(1785097680480396800 + i),
+			})
+		}
+		json.NewEncoder(w).Encode(map[string]any{"hits": hits})
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &offsets
+}
+
+// A trace bigger than one page must come back whole: a truncated span set
+// renders as a tree with branches missing, which reads as a different trace.
+func TestSpansForTracesPagesThroughLargeTrace(t *testing.T) {
+	const total = 2300
+	srv, offsets := pagingServer(t, total)
+	c := NewClient(srv.URL, "token")
+
+	got, err := c.QueryTraces(context.Background(), observability.TraceQuery{
+		TraceID: "abc", Workspace: "navexa",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d traces, want 1", len(got))
+	}
+	if len(got[0]) != total {
+		t.Errorf("got %d spans, want all %d", len(got[0]), total)
+	}
+	if len(*offsets) < 3 {
+		t.Errorf("expected several pages, requested offsets: %v", *offsets)
+	}
+	if (*offsets)[0] != 0 || (*offsets)[1] != pageSize {
+		t.Errorf("offsets not advancing by page: %v", *offsets)
+	}
+}
+
+// A page boundary can repeat a row when spans share a start time; the same span
+// must not appear twice in the tree.
+func TestSpansForTracesDeduplicatesRepeatedSpans(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"hits": []map[string]any{
+			{"trace_id": "abc", "span_id": "dupe", "start_time": float64(1)},
+			{"trace_id": "abc", "span_id": "dupe", "start_time": float64(1)},
+			{"trace_id": "abc", "span_id": "other", "start_time": float64(2)},
+		}})
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(srv.URL, "token")
+
+	got, err := c.QueryTraces(context.Background(), observability.TraceQuery{
+		TraceID: "abc", Workspace: "navexa",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got[0]) != 2 {
+		t.Errorf("got %d spans, want the duplicate collapsed", len(got[0]))
 	}
 }

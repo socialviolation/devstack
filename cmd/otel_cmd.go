@@ -181,7 +181,9 @@ func runOtelStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no OTEL plugin registered — this is a bug")
 	}
 
-	if isOtelRunning(ws) {
+	// A stale companion is replaced even when everything is up: this is the
+	// command that applies a devstack upgrade.
+	if isOtelRunning(ws) && !plugin.CompanionStale(ws) {
 		queryEndpoint := plugin.QueryEndpoint(ws)
 		if queryEndpoint != "" {
 			fmt.Printf("OTEL stack already running for '%s' (plugin: %s) — %s\n", ws.Name, plugin.Name(), queryEndpoint)

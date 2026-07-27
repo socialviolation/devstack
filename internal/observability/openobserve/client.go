@@ -57,13 +57,45 @@ type searchResponse struct {
 	Total int              `json:"total"`
 }
 
-// search runs a SQL query against one stream type over a lookback window.
+// pageSize is how many rows one search request asks for. Bigger results are
+// walked page by page rather than truncated.
+const pageSize = 1000
+
+// search runs a SQL query against one stream type over a lookback window,
+// returning at most limit rows.
 func (c *Client) search(ctx context.Context, streamType, sql string, since time.Duration, limit int) ([]map[string]any, error) {
-	if since <= 0 {
-		since = 5 * time.Minute
-	}
 	if limit <= 0 {
 		limit = 100
+	}
+	return c.searchFrom(ctx, streamType, sql, since, 0, limit)
+}
+
+// searchAll walks every row a query matches, a page at a time. Callers that
+// need a whole trace use this: a truncated span set renders as a tree with
+// branches missing, which is worse than being slow.
+func (c *Client) searchAll(ctx context.Context, streamType, sql string, since time.Duration) ([]map[string]any, error) {
+	var all []map[string]any
+	for from := 0; ; from += pageSize {
+		page, err := c.searchFrom(ctx, streamType, sql, since, from, pageSize)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, page...)
+		// A short page means the result set is exhausted. OpenObserve caps how
+		// deep a scan may go, so stop there too rather than looping forever.
+		if len(page) < pageSize || len(all) >= maxScan {
+			return all, nil
+		}
+	}
+}
+
+// maxScan bounds a paged walk. Reaching it means something pathological (a
+// trace with a hundred thousand spans), and the caller gets what was read.
+const maxScan = 50000
+
+func (c *Client) searchFrom(ctx context.Context, streamType, sql string, since time.Duration, from, size int) ([]map[string]any, error) {
+	if since <= 0 {
+		since = 5 * time.Minute
 	}
 	now := time.Now()
 	body := searchRequest{
@@ -71,7 +103,8 @@ func (c *Client) search(ctx context.Context, streamType, sql string, since time.
 			SQL:       sql,
 			StartTime: now.Add(-since).UnixMicro(),
 			EndTime:   now.UnixMicro(),
-			Size:      limit,
+			From:      from,
+			Size:      size,
 		},
 		SearchType: "ui",
 	}
@@ -193,14 +226,23 @@ func (c *Client) spansForTraces(ctx context.Context, traceIDs []string, workspac
 		fmt.Sprintf("trace_id IN (%s)", strings.Join(quoted, ", ")))
 	sql := fmt.Sprintf(`SELECT * FROM %q%s ORDER BY start_time ASC`, stream, whereClause(where))
 
-	hits, err := c.search(ctx, "traces", sql, since, 2000)
+	hits, err := c.searchAll(ctx, "traces", sql, since)
 	if err != nil {
 		return nil, err
 	}
 
+	// Paging can repeat a row when spans share a start time and land on a page
+	// boundary, so span IDs are deduplicated as they are collected.
 	grouped := map[string][]observability.Span{}
+	seenSpans := map[string]bool{}
 	for _, h := range hits {
 		s := rowToSpan(h)
+		if s.SpanID != "" {
+			if seenSpans[s.SpanID] {
+				continue
+			}
+			seenSpans[s.SpanID] = true
+		}
 		grouped[s.TraceID] = append(grouped[s.TraceID], s)
 	}
 
@@ -285,7 +327,7 @@ func (c *Client) ListVariants(ctx context.Context, req observability.ServiceQuer
 	sql := fmt.Sprintf(`SELECT %s, count(*) AS span_count FROM %q%s GROUP BY %s`,
 		selected, stream, whereClause(workspaceFilter(req.Workspace, "traces")), selected)
 
-	hits, err := c.search(ctx, "traces", sql, req.Since, 500)
+	hits, err := c.searchAll(ctx, "traces", sql, req.Since)
 	if err != nil {
 		return nil, err
 	}

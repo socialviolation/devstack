@@ -25,6 +25,11 @@ type Plugin interface {
 	// CompanionRunning returns true if the companion infrastructure is running.
 	// Always true for plugins with no companion.
 	CompanionRunning(ws *workspace.Workspace) bool
+	// CompanionStale reports whether the companion that exists no longer matches
+	// what this build expects — a pinned image that has since moved, say. A
+	// running companion is otherwise left alone, so without this an upgrade
+	// would silently keep the old one.
+	CompanionStale(ws *workspace.Workspace) bool
 	// QueryEndpoint returns local observability UI URL, or "" if none.
 	QueryEndpoint(ws *workspace.Workspace) string
 	// Backend returns a query client for this plugin's telemetry store, already

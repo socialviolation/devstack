@@ -81,9 +81,14 @@ func (p *Plugin) Contribute(ws *workspace.Workspace) (otel.Contribution, error) 
 	}, nil
 }
 
-// StartCompanion ensures the one OpenObserve container is up and serving.
+// StartCompanion ensures the one OpenObserve container is up, serving, and
+// running the image this build pins. A container created by an older devstack
+// keeps its old image forever otherwise, so an upgrade would silently do
+// nothing — the data volume is separate, so replacing the container is safe.
 func (p *Plugin) StartCompanion(ws *workspace.Workspace) error {
-	if p.CompanionRunning(ws) {
+	stale := p.CompanionStale(ws)
+
+	if p.CompanionRunning(ws) && !stale {
 		return awaitReady()
 	}
 
@@ -92,7 +97,12 @@ func (p *Plugin) StartCompanion(ws *workspace.Workspace) error {
 		return err
 	}
 
-	if containerExists() {
+	if stale {
+		fmt.Fprintf(os.Stderr, "Upgrading OpenObserve from %s to %s (data is kept)...\n", containerImage(), image)
+		if out, err := exec.Command("docker", "rm", "-f", ContainerName).CombinedOutput(); err != nil {
+			return fmt.Errorf("failed to replace %s: %s", ContainerName, strings.TrimSpace(string(out)))
+		}
+	} else if containerExists() {
 		if out, err := exec.Command("docker", "start", ContainerName).CombinedOutput(); err != nil {
 			return fmt.Errorf("failed to start %s: %s", ContainerName, strings.TrimSpace(string(out)))
 		}
@@ -127,6 +137,12 @@ func (p *Plugin) StopCompanion(ws *workspace.Workspace) error {
 		return fmt.Errorf("failed to stop OpenObserve: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// CompanionStale reports whether the existing container was created from an
+// image other than the one this build pins.
+func (p *Plugin) CompanionStale(ws *workspace.Workspace) bool {
+	return containerExists() && containerImage() != image
 }
 
 func (p *Plugin) CompanionRunning(ws *workspace.Workspace) bool {
@@ -287,4 +303,14 @@ func awaitReady() error {
 func containerExists() bool {
 	err := exec.Command("docker", "inspect", ContainerName).Run()
 	return err == nil
+}
+
+// containerImage returns the image the existing container was created from, or
+// "" when there is no container.
+func containerImage() string {
+	out, err := exec.Command("docker", "inspect", "-f", "{{.Config.Image}}", ContainerName).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }

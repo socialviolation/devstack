@@ -146,6 +146,10 @@ func (p *SignozPlugin) StopCompanion(ws *workspace.Workspace) error {
 	return stopSignoz()
 }
 
+// CompanionStale is always false: the compose file pins its own images and
+// docker compose reconciles them on the next up.
+func (p *SignozPlugin) CompanionStale(ws *workspace.Workspace) bool { return false }
+
 // CompanionRunning returns true if the SigNoz signoz container is running.
 func (p *SignozPlugin) CompanionRunning(ws *workspace.Workspace) bool {
 	return isSignozRunning()

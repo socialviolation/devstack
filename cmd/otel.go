@@ -15,12 +15,15 @@ import (
 // enabled but it isn't running. Returns started=false with no error when there
 // is nothing to do (disabled, or already running).
 func ensureCollector(ws *workspace.Workspace) (started bool, err error) {
-	if !config.ObservabilityEnabled(ws.Path) || isOtelRunning(ws) {
+	if !config.ObservabilityEnabled(ws.Path) {
 		return false, nil
 	}
 	plugin := activePlugin(ws)
 	if plugin == nil {
 		return false, fmt.Errorf("no OTEL plugin configured")
+	}
+	if isOtelRunning(ws) && !plugin.CompanionStale(ws) {
+		return false, nil
 	}
 	if err := startOtelStack(ws, plugin); err != nil {
 		return false, err
