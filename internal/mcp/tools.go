@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -474,6 +475,7 @@ type coreWaitState struct {
 	name     string
 	status   string
 	deployed bool
+	found    bool
 }
 
 // coreSettled reports whether a status is one a wait stops on — anything but
@@ -487,6 +489,12 @@ func coreSettled(status string) bool {
 // resource to building, so a still-running old process would otherwise read as
 // a completed restart. States the daemon will not move on from are final.
 func coreResourceSettled(s coreWaitState) bool {
+	// A resource missing from the view has not settled: a restart regenerates
+	// the Tiltfile, so a resource can vanish mid-reload, and its absent deploy
+	// time otherwise reads as a fresh one.
+	if !s.found {
+		return false
+	}
 	switch s.status {
 	case "erroring", "disabled", "unknown":
 		return true
@@ -525,10 +533,12 @@ func coreWaitForSettled(fetch func() (*tilt.TiltView, error), names []string, ba
 		states := make([]coreWaitState, 0, len(names))
 		done := true
 		for _, n := range names {
-			s := coreWaitState{name: n, status: "unknown", deployed: now[n] != baseline[n]}
+			s := coreWaitState{name: n, status: "unknown"}
 			for _, r := range view.UiResources {
 				if r.Metadata.Name == n {
 					s.status = mcpServiceStatus(r)
+					s.found = true
+					s.deployed = now[n] != baseline[n]
 					break
 				}
 			}
@@ -551,7 +561,10 @@ func coreWaitReport(states []coreWaitState, settled bool, timeout time.Duration)
 	parts := make([]string, 0, len(states))
 	for _, s := range states {
 		part := fmt.Sprintf("%s=%s", s.name, s.status)
-		if !settled && !s.deployed && coreSettled(s.status) {
+		if !s.found {
+			part = s.name + "=not in the daemon (it may still be reloading)"
+		}
+		if !settled && s.found && !s.deployed && coreSettled(s.status) {
 			part += " (no new deploy yet)"
 		}
 		parts = append(parts, part)
@@ -1388,7 +1401,7 @@ func applyGrep(lines []string, re *regexp.Regexp, contextLines int) []string {
 
 func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws *workspace.Workspace) {
 	tool := mcp.NewTool("configure",
-		mcp.WithDescription("Read or set a dev daemon runtime argument. Call it with no key to read the arguments currently set, which you must do before setting one: setting an argument REPLACES the daemon's whole argument list, so anything previously set and not passed again is silently dropped. Use this to change feature flags, modes, or other runtime config. Affected services will restart automatically. "+
+		mcp.WithDescription("Read or set a dev daemon runtime argument. A Tiltfile only sees an argument if it calls config.parse or config.define_*, and the Tiltfile devstack generates calls neither — so on a devstack-managed daemon a write is refused rather than restarting every service to no effect. Where a Tiltfile does read arguments: call this with no key first to read the ones set, because setting one REPLACES the whole list and silently drops anything not passed again. Use this to change feature flags, modes, or other runtime config. Affected services will restart automatically. "+
 			"Boundary: this sets arguments the daemon itself reads when it generates the stack — for config values a service reads, use env_use (point a scope at a named config env), env_set (edit a named env's vars) or service_env (edit one service's vars) instead. "+
 			"Setting an argument REPLACES the daemon's entire argument list: this tool sets one key, so every argument set earlier is silently dropped."),
 		mcp.WithString("key",
@@ -1422,6 +1435,9 @@ func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client,
 		}
 		if value == "" {
 			return mcp.NewToolResultError(fmt.Sprintf("no value for %q — pass value to set it, or omit key to read the current arguments", key)), nil
+		}
+		if !coreTiltfileReadsArgs() {
+			return mcp.NewToolResultError("this daemon's Tiltfile declares no arguments, so setting one would restart services and change nothing. devstack generates that Tiltfile and it never calls config.define_string or config.parse, which is what a Tiltfile needs to read an argument. Configure a service through its env instead: env_use, env_set, or service_env."), nil
 		}
 
 		out, err := tiltClient.RunCLI("args", "--", fmt.Sprintf("%s=%s", key, value))
@@ -2273,6 +2289,19 @@ func serviceFromCwd() string {
 		return ""
 	}
 	return identity.ServiceName
+}
+
+// coreTiltfileReadsArgs reports whether the running Tiltfile declares any
+// arguments. Tilt only surfaces an argument to a Tiltfile through config.parse
+// or config.define_*, so a Tiltfile with neither ignores everything set on it —
+// and devstack generates a Tiltfile with neither.
+func coreTiltfileReadsArgs() bool {
+	data, err := os.ReadFile(filepath.Join(workspace.HostTiltDir(), "Tiltfile"))
+	if err != nil {
+		return true
+	}
+	src := string(data)
+	return strings.Contains(src, "config.define_") || strings.Contains(src, "config.parse")
 }
 
 // coreCurrentArgs reports the daemon's current Tiltfile arguments. Setting one

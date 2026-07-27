@@ -40,19 +40,29 @@ func coreReloadMode(m *config.ServiceManifest, repoPath string) string {
 // coreWatchCommand reports whether a run command self-watches its source and
 // reloads on change.
 func coreWatchCommand(cmd string) bool {
-	c := " " + strings.ToLower(cmd) + " "
-	for _, s := range []string{
-		"dotnet watch", "--watch", "--reload", "--hot", "nodemon", "next dev",
-		"vite", "ng serve", "webpack serve", "webpack-dev-server", "watchexec",
-		"cargo watch", "livereload", "npm run dev", "yarn dev", "pnpm dev",
-		"bun dev", "bun run dev",
+	c := strings.ToLower(cmd)
+	// Multi-word phrases are distinctive enough to match anywhere.
+	for _, phrase := range []string{
+		"dotnet watch", "next dev", "ng serve", "webpack serve", "webpack-dev-server",
+		"cargo watch", "npm run dev", "yarn dev", "pnpm dev", "bun dev", "bun run dev",
 	} {
-		if strings.Contains(c, s) {
+		if strings.Contains(c, phrase) {
 			return true
 		}
 	}
-	for _, w := range []string{"air", "reflex", "wgo", "gow", "modd", "watchman"} {
-		if strings.Contains(c, " "+w+" ") {
+	// Single tokens match only as whole words: "vite" would otherwise fire on
+	// vitess, and a wrong "auto" tells an agent its edit is live when the old
+	// code is still running.
+	tokens := map[string]bool{
+		"vite": true, "nodemon": true, "watchexec": true, "livereload": true,
+		"air": true, "reflex": true, "wgo": true, "gow": true, "modd": true,
+		"watchman": true, "--watch": true, "--reload": true, "--hot": true,
+		"-w": true,
+	}
+	for _, field := range strings.FieldsFunc(c, func(r rune) bool {
+		return r == ' ' || r == '\t' || r == '=' || r == '/' || r == '\\'
+	}) {
+		if tokens[field] {
 			return true
 		}
 	}
