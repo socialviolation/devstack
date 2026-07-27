@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/tunnel"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -39,7 +40,12 @@ Filter to specific services with --services:
 By default only this workspace's base service ports are forwarded. Add --stacks
 to also forward the ports of its active feature stacks:
 
-  devstack tunnel push my-box.ts.net --stacks`,
+  devstack tunnel push my-box.ts.net --stacks
+
+Add --otel to forward the observability UI as well, so the remote can read this
+machine's traces at the same address you use locally:
+
+  devstack tunnel push my-box.ts.net --otel`,
 }
 
 var (
@@ -47,6 +53,7 @@ var (
 	tunnelServicesFlag string
 	tunnelReclaimFlag  bool
 	tunnelStacksFlag   bool
+	tunnelOtelFlag     bool
 )
 
 func init() {
@@ -100,6 +107,10 @@ func init() {
 		c.Flags().BoolVar(&tunnelStacksFlag, "stacks", false,
 			"Also forward this workspace's active feature-stack service ports")
 	}
+	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, listCmd} {
+		c.Flags().BoolVar(&tunnelOtelFlag, "otel", false,
+			"Also forward the observability UI, so the remote can read this machine's traces")
+	}
 	restartCmd.Flags().String("mode", string(tunnel.ModePush), "Direction to re-establish: push or pull")
 	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, tunnelStopCmd, tunnelStatusCmd, listCmd} {
 		// Runtime failures (daemon down, unreachable remote) shouldn't dump the
@@ -148,8 +159,36 @@ func discoverTunnelServices(ws *workspace.Workspace) ([]tunnel.Service, error) {
 		}
 	}
 	svcs := tunnel.Discover(view, filter, ws.Name, tunnelStacksFlag)
+	if tunnelOtelFlag {
+		ui, reason, ok := otelUI(ws)
+		if ok {
+			svcs = append(svcs, ui)
+		} else {
+			fmt.Printf("  warning: %s.\n", reason)
+		}
+	}
 	sort.Slice(svcs, func(i, j int) bool { return svcs[i].Port < svcs[j].Port })
 	return svcs, nil
+}
+
+// otelUI resolves the observability UI as a forwardable port. It is not a Tilt
+// resource, so it is never discovered — it is added on --otel, and labelled
+// everywhere else so a live forward for it is always named. Quiet by design:
+// status and stop call this for labels and must not narrate.
+func otelUI(ws *workspace.Workspace) (svc tunnel.Service, reason string, ok bool) {
+	plugin := otel.For(ws)
+	if plugin == nil {
+		return tunnel.Service{}, "no observability backend configured", false
+	}
+	endpoint := plugin.QueryEndpoint(ws)
+	if endpoint == "" {
+		return tunnel.Service{}, fmt.Sprintf("backend %q has no local UI to forward — telemetry goes upstream instead", plugin.Name()), false
+	}
+	port := tunnel.PortFromURL(endpoint)
+	if port == 0 {
+		return tunnel.Service{}, fmt.Sprintf("could not read a port from the %s UI address %q", plugin.Name(), endpoint), false
+	}
+	return tunnel.Service{Name: "otel-ui (" + plugin.Name() + ")", Port: port, Runtime: "ok"}, "", true
 }
 
 // resolveRemote determines the ssh host/user from args/flags, falling back to the
@@ -296,12 +335,42 @@ func runTunnelStop(cmd *cobra.Command, args []string) error {
 	if !ok {
 		return nil
 	}
+	// Stop what is actually forwarding, not what happens to be discoverable now —
+	// a forward outlives its service, and the observability UI is never a Tilt
+	// resource at all.
+	ports := tunnel.TrackedPorts(ws.Name)
+	if len(ports) == 0 {
+		fmt.Println("No tunnels running for this workspace.")
+		return nil
+	}
+	names := portLabels(ws, svcs)
 	fmt.Println("Stopping tunnels...")
-	for _, s := range svcs {
-		tunnel.KillPort(ws.Name, s.Port)
-		fmt.Printf("  [stopped] %-30s :%d\n", s.Name, s.Port)
+	for _, port := range ports {
+		tunnel.KillPort(ws.Name, port)
+		fmt.Printf("  [stopped] %-30s :%d\n", portLabel(names, port), port)
 	}
 	return nil
+}
+
+// portLabels maps a forwarded port to the name to show for it. Ports whose
+// service is no longer discoverable still have a live forward, so they get a
+// placeholder rather than being dropped from the report.
+func portLabels(ws *workspace.Workspace, svcs []tunnel.Service) map[int]string {
+	labels := map[int]string{}
+	if ui, _, ok := otelUI(ws); ok {
+		labels[ui.Port] = ui.Name
+	}
+	for _, s := range svcs {
+		labels[s.Port] = s.Name
+	}
+	return labels
+}
+
+func portLabel(labels map[int]string, port int) string {
+	if name, ok := labels[port]; ok {
+		return name
+	}
+	return "(no longer discovered)"
 }
 
 func runTunnelRestart(cmd *cobra.Command, args []string) error {
@@ -328,14 +397,41 @@ func runTunnelStatus(cmd *cobra.Command, args []string) error {
 	if ws.TunnelHost != "" {
 		color.New(color.Faint).Printf("remote: %s@%s\n", ws.TunnelUser, ws.TunnelHost)
 	}
-	fmt.Println("Tunnel status:")
+	// Report every discovered service plus any port still forwarding that
+	// discovery no longer covers, so a live tunnel is never invisible.
+	runtimes := map[int]string{}
 	for _, s := range svcs {
-		if tunnel.IsUp(ws.Name, s.Port) {
+		runtimes[s.Port] = s.Runtime
+	}
+	labels := portLabels(ws, svcs)
+	seen := map[int]bool{}
+	var ports []int
+	add := func(port int) {
+		if !seen[port] {
+			seen[port] = true
+			ports = append(ports, port)
+		}
+	}
+	for _, s := range svcs {
+		add(s.Port)
+	}
+	for _, port := range tunnel.TrackedPorts(ws.Name) {
+		add(port)
+	}
+	sort.Ints(ports)
+
+	fmt.Println("Tunnel status:")
+	for _, port := range ports {
+		if tunnel.IsUp(ws.Name, port) {
 			color.New(color.FgGreen).Printf("  [up]   ")
 		} else {
 			color.New(color.Faint).Printf("  [down] ")
 		}
-		fmt.Printf("%-30s :%d  devstack:%s\n", s.Name, s.Port, s.Runtime)
+		runtime := runtimes[port]
+		if runtime == "" {
+			runtime = "-"
+		}
+		fmt.Printf("%-30s :%d  devstack:%s\n", portLabel(labels, port), port, runtime)
 	}
 	return nil
 }

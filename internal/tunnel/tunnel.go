@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -101,7 +102,7 @@ func Discover(view *tilt.TiltView, filter map[string]bool, wsName string, includ
 			continue
 		}
 		for _, link := range r.Status.EndpointLinks {
-			port := portFromURL(link.URL)
+			port := PortFromURL(link.URL)
 			if port == 0 || seen[port] {
 				continue
 			}
@@ -153,8 +154,8 @@ func PartitionServing(svcs []Service) (serving, idle []Service) {
 	return serving, idle
 }
 
-// portFromURL extracts the numeric port from an endpoint URL, or 0 if absent.
-func portFromURL(raw string) int {
+// PortFromURL extracts the numeric port from an endpoint URL, or 0 if absent.
+func PortFromURL(raw string) int {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return 0
@@ -268,6 +269,32 @@ func KillPort(wsName string, port int) {
 	for _, pid := range strayForwards(port) {
 		_ = syscall.Kill(pid, syscall.SIGTERM)
 	}
+}
+
+// TrackedPorts returns the ports this workspace has live forwards for, read from
+// its PID files. Stopping and reporting work from this rather than from service
+// discovery: a forward outlives the thing that created it, so anything not
+// currently discoverable — the observability UI, a service since removed —
+// would otherwise be left running with no way to reach it.
+func TrackedPorts(wsName string) []int {
+	files, err := os.ReadDir(Dir(wsName))
+	if err != nil {
+		return nil
+	}
+	var ports []int
+	for _, f := range files {
+		name := strings.TrimSuffix(f.Name(), ".pid")
+		if name == f.Name() {
+			continue
+		}
+		port, err := strconv.Atoi(name)
+		if err != nil {
+			continue
+		}
+		ports = append(ports, port)
+	}
+	sort.Ints(ports)
+	return ports
 }
 
 // trackedForwards returns every PID recorded in any workspace's tunnel PID
