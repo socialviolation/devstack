@@ -259,7 +259,7 @@ This is what `.mcp.json` invokes. You don't run it directly.
 
 ## MCP Tools (available to Claude Code)
 
-The tool set adapts to the active workspace: trace tools (`investigate`) appear only when observability is enabled, and the `tunnel` tool only when Tailscale is installed. Call `environment` first to see what's actually available.
+The tool set adapts to the active workspace: trace tools (`investigate`) appear only when observability is enabled, and the `tunnel` tool only when an ssh client is available. Call `environment` first to see what's actually available.
 
 Some CLI commands have no tool and still need a shell: `workspace up` / `workspace down`, `workspace doctor`, `stack config`, and the `otel` commands past status and trace queries (`otel services`, `otel traces`, `otel logs --trace`, `otel open`).
 
@@ -307,7 +307,7 @@ Inspect and edit a service's resolved env: `get` shows the value each key resolv
 Inspect and change the workspace's OTEL config: `status` (enabled, backend, collector, + per-service telemetry evidence), `enable`, `disable`, `configure`. Always available locally, so an agent can discover and turn observability on.
 
 ### `tunnel`
-Forward service ports to/from a remote host over SSH (push/pull/list/status/stop). Only registered when Tailscale is installed.
+Forward service ports to/from a remote host over SSH (push/pull/list/status/stop). Registered when an ssh client is available. Any host you can ssh to works, including a plain ssh-config alias; a tailnet address is one such host, not a requirement.
 
 From the CLI, `--stacks` also forwards active feature stacks' ports and `--otel` also forwards the observability UI, so the remote reads this machine's traces at the same address you use locally:
 

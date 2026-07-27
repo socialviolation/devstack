@@ -828,10 +828,11 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"The `.mcp.json` in this repo wires up the devstack MCP server — the agent interface. The tools are " +
 		"`environment`, `status`, `start`, `stop`, `restart`, `topology`, `process_logs`, `configure`, `service_env`, `observability`, `tunnel` and `investigate`; " +
 		"the stack tools `stack_create`, `stack_up`, `stack_down`, `stack_list`, `stack_rm`; and the env tools `env_use`, `env_which`, `env_set`. " +
-		"Two are conditional: `investigate` is registered only while observability is enabled, `tunnel` only when Tailscale is installed. " +
+		"Two are conditional: `investigate` is registered only while observability is enabled, `tunnel` only when an ssh client is available. " +
 		"Call `environment` first: it reports what is actually registered here, and each tool's own description is more current than this file.\n\n" +
 		"Feature stacks and environments can be driven end to end over MCP. Some things still need the shell: `devstack workspace up` / `workspace down`, `devstack workspace doctor`, `devstack stack config`, " +
 		"and the otel commands past status, variants and trace queries (`otel traces`, `otel logs --trace`, `otel open`). What `otel services` prints is available over MCP as observability action=variants.\n\n" +
+		"A bare `stop` acts on the default service, like `start` and `restart`; stopping every service takes `all=true`, so a forgotten parameter cannot take the workspace down. `status` reports each service's RELOAD mode — `auto` means source edits apply on their own, `manual` means restart it after editing or it keeps running the old code. `restart` takes `wait_seconds` to wait for the rebuild to settle rather than returning the moment it is triggered.\n\n" +
 		"The service-control tools (`status`, `start`, `restart`, `stop`, `process_logs`, `configure`) " +
 		"take an optional `stack` parameter to target a stack's instance rather than base (omit it, or pass `\"base\"`, for base). " +
 		"`investigate` takes `stack` as a telemetry filter: absent means the base instance only, a name means that stack, `\"all\"` means every instance — so an unqualified call will not show you a feature stack's traffic. It is always confined to this workspace, and an unqualified call narrows to the service being worked in. " +
