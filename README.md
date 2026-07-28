@@ -1,10 +1,8 @@
 <img width="1672" height="941" alt="ChatGPT Image Jul 22, 2026, 03_59_46 PM" src="https://github.com/user-attachments/assets/7b9c8b3e-5f8f-4298-9870-60073ee4f2db" />
 
-A CLI and [MCP](https://modelcontextprotocol.io) server that gives Claude Code programmatic control over any [Tilt](https://tilt.dev)-managed development stack.
+Devstack runs your team's local services in dependency order, across every repo, and hands the same controls to Claude Code over [MCP](https://modelcontextprotocol.io).
 
-Devstack sits on top of Tilt to handle workspace registration, service dependency ordering, group management, and observability. When running as an MCP server it exposes tools so Claude Code can start/stop/restart services, read logs, and investigate distributed traces — without you having to copy-paste output.
-
----
+It sits on [Tilt](https://tilt.dev): one daemon for the whole machine, one shared OpenTelemetry backend. An agent can start a service, read its logs and pull the trace that broke it without you pasting output.
 
 ## Install
 
@@ -12,355 +10,218 @@ Devstack sits on top of Tilt to handle workspace registration, service dependenc
 go install github.com/socialviolation/devstack@main
 ```
 
-Requires Go 1.25+ and [Tilt](https://docs.tilt.dev/install.html) on `$PATH`.
+Needs Go 1.25+ and [Tilt](https://docs.tilt.dev/install.html) on `$PATH`. Docker as well, if you turn on local observability.
 
----
-
-## Updating devstack
-
-Four steps, in order. Skipping one is how you get a devstack that looks updated and is not. Point an agent at this section and it can do the lot.
+## Quick start
 
 ```bash
-cd <devstack repo> && git pull   # 1. get the code
-go install ./...                 # 2. replace the binary on your PATH
-devstack init --all              # 3. per workspace: refresh AGENTS.md and .mcp.json
-                                 # 4. restart your MCP server / agent session
-devstack status                  # 5. check the daemon and services still answer
+devstack workspace add ~/dev/my-workspace   # register the directory holding your services
+devstack workspace up                       # start the dev daemon (and the collector, if enabled)
+devstack init --all                         # write .mcp.json + AGENTS.md into every registered service
+devstack status                             # what's running, on which port, pointing where
 ```
 
-What each step is for, and what breaks without it:
+Then open Claude Code in any service repo. It reads `.mcp.json` and picks up the devstack tools.
 
-Step 2 is the one that bites hardest. A stale binary does not know about backends or tools added since it was built, and it falls back rather than failing: an older devstack reading a workspace configured for OpenObserve silently started SigNoz instead. Newer builds warn when they meet a backend they do not know, and the warning tells you to run this.
-
-Step 3 rewrites the devstack section of `AGENTS.md` in every service repo, plus the pointer block in any `CLAUDE.md`, `GEMINI.md` or `.cursorrules` that already exists. Run it from inside the workspace, once per workspace. It writes files only — no daemon, no reload, nothing restarts. Expect a git diff in each service repo.
-
-Step 4 is invisible and easy to forget. MCP tool descriptions are read once at server startup, so a session that is already running keeps the old tool list: new tools do not appear and new parameters are rejected. Restart the agent session.
-
-If a workspace was mid-upgrade you may also want `devstack otel start`, which replaces the observability container when its pinned image has moved.
-
----
-
-## Getting Started
-
-### New developer setup
-
-If you're joining a team that already uses devstack, follow these steps once per machine. **Claude Code can run all of this for you** — open any repo, ask it to set up your workspace, and it will follow the steps below.
-
-**Prerequisites:** Go 1.25+, [Tilt](https://docs.tilt.dev/install.html), and Docker (only needed if you enable local observability)
-
-**1. Install devstack**
+To register a service that isn't in the workspace manifest yet:
 
 ```bash
-go install ./...
+devstack init --name=api --path=~/dev/my-workspace/api --cmd="go run ." --port=8080
 ```
 
-**2. Register a workspace**
-
-```bash
-devstack workspace add ~/dev/my-workspace   # register a workspace — a group of interlinked services under a directory
-```
-
-This writes the workspace path and a Tilt port to `~/.config/devstack/workspaces.json`. One-time, per machine.
-
-**3. Start the dev daemon**
-
-```bash
-devstack workspace up
-```
-
-Starts the dev daemon in the background. If observability is enabled for the workspace, the OTEL collector starts too. Leave it running during development.
-
-**4. Generate agent files for all services**
-
-If services are already declared in the workspace's `devstack.workspace.yaml` manifest (committed to the repo):
-
-```bash
-devstack init --all
-```
-
-This creates (or refreshes) `.mcp.json` and `AGENTS.md` in each service directory. Claude Code reads `.mcp.json` automatically and gains access to devstack MCP tools whenever you open a service repo.
-
-If you're registering services fresh (not yet in the manifest):
-
-```bash
-devstack init --name=<service> --path=~/dev/my-workspace/<service> --cmd="<start command>" --port=<port>
-```
-
-**5. Verify**
-
-```bash
-devstack status       # shows running services
-devstack otel status  # collector state, ports, and telemetry evidence
-```
-
-**6. Open Claude Code in any service repo**
-
-The devstack MCP server loads automatically from `.mcp.json`. Claude can now start/stop services, read logs, and investigate distributed traces without you pasting output.
-
----
+Language is detected from `go.mod`, `package.json`, `requirements.txt` or `*.csproj`. Override with `--language`.
 
 ## Concepts
 
 | Term | Meaning |
 |------|---------|
-| **Workspace** | A directory with a `devstack.workspace.yaml` manifest that groups one or more services |
-| **Service** | A process defined by a `devstack.service.yaml` manifest — an API, worker, importer, etc. |
-| **Group** | A named set of services you can start/stop together |
-| **Dependency** | A declared ordering constraint: service A won't start until service B is running |
-| **Host daemon** | A single Tilt daemon (`:10300`) for the whole machine. Every active workspace's services and every active stack's overlay run inside it as `<workspace>:<service>[:<stack>]` resources. There is no daemon per workspace. |
-| **Feature stack** | A parallel version of one or more services, run from a git worktree on a feature branch on its own dynamic port, beside base — reusing base for everything it doesn't change. Lets you run several features live at once without cloning the world. |
-| **Base** | The workspace's own checkout and the instance it runs — what every command acts on when you pass no `--stack`, and spelled literally as `base` where the service-control and telemetry tools take a stack name (the stack tools have no such value — omit the parameter instead) |
-| **Environment** | A named config-var patch (`environments:` in the workspace manifest) applied at workspace / service / stack scope (most-specific wins). "Where a service points." |
+| Workspace | A directory with a `devstack.workspace.yaml` manifest, grouping one or more services |
+| Service | A process defined by a `devstack.service.yaml` manifest: an API, worker, importer |
+| Group | A named set of services you start and stop together |
+| Host daemon | One Tilt daemon (`:10300`) for the whole machine. Every workspace's services and every active stack's overlay run inside it as `<workspace>:<service>[:<stack>]`. There is no daemon per workspace. |
+| Base | The workspace's own checkout and the instance it runs. What every command acts on when you pass no `--stack`, and spelled literally as `base` where a command takes a stack name |
+| Feature stack | A parallel version of one or more services, run from a git worktree on a feature branch on its own port, beside base, reusing base for everything it doesn't change |
+| Environment | A named config-var patch (`environments:` in the workspace manifest) applied at workspace, service or stack scope. Where a service points. |
 
----
-
-## CLI Commands
-
-### Workspaces
+## Workspaces
 
 ```bash
-devstack workspace list              # List all registered workspaces
-devstack workspace add [path]        # Register a directory as a workspace
-devstack workspace remove <name>     # Unregister a workspace
-devstack workspace up                # Start the dev daemon (background)
-devstack workspace down              # Stop the dev daemon and OTEL collector
+devstack workspace            # list registered workspaces
+devstack workspace add [path]
+devstack workspace remove <name>
+devstack workspace up         # start the dev daemon in the background
+devstack workspace down       # stop the daemon and the collector
+devstack workspace doctor     # check manifests and topology integrity
+devstack workspace open       # dev daemon dashboard
 ```
 
-`devstack ws` is an alias for `devstack workspace`.
+`devstack ws` is an alias. Registration is written to `~/.config/devstack/workspaces.json`, once per machine.
 
-### Services
+## Services
 
 ```bash
-devstack start [service] [--stack <name>]     # Start a service + deps (base, or a stack's instance)
-devstack start --group=<name>                 # Start all services in a group
-devstack restart [service] [--stack <name>]   # Rebuild/restart base, or a stack's instance
-devstack stop [service] [--stack <name>]      # Stop base, or a stack's instance
-devstack status [--stack <name>]              # Live service tree: state, ports, deps, and ENV (where each points)
+devstack start   [service|group] [--stack <name>]
+devstack restart [service|group] [--stack <name>]
+devstack stop    [service|group] [--stack <name>]
+devstack status  [--all] [--stack <name>]
+devstack topology [service]
 ```
 
-`start`/`restart`/`stop` auto-detect the current service from the working directory when no name is given. If the dev daemon isn't running, `start` boots it automatically. `--stack <name>` targets that stack's instance instead of base (see [Feature stacks](#feature-stacks)).
+Name nothing and devstack works out the service from your working directory. `start` resolves dependencies and brings them up first, and boots the dev daemon if it isn't already up. `restart` acts on the target alone. `status` collapses groups and stacks with nothing running, until you pass `--all`.
 
-### Service Registration
+States are `running`, `starting`, `building`, `stopped`, `erroring`, `disabled`, `unknown`. Stopped means registered but not started, which is not the same as broken.
 
-```bash
-devstack init --name=<n> --path=<p> --cmd=<c>   # Register a new service
-devstack init                                     # Refresh AGENTS.md for current service
-devstack init --all                               # Refresh AGENTS.md for all services
-```
-
-`devstack init` auto-detects the language (`go`, `python`, `node`, `dotnet`), writes `devstack.service.yaml`, registers the repo in the workspace manifest, creates `.mcp.json`, and writes `AGENTS.md` with tool instructions for Claude Code.
-
-Flags: `--language`, `--port` (for health checks), `--group`, `--force`.
-
-### Dependencies
+Dependencies and groups:
 
 ```bash
-devstack deps add <service> <dep>    # Declare that <service> depends on <dep>
+devstack deps add <service> <dep>       # <dep> starts first
 devstack deps remove <service> <dep>
-devstack deps list <service>         # Show full resolved startup sequence
-```
-
-### Groups
-
-```bash
+devstack deps list <service>            # full resolved startup sequence
 devstack groups list
 devstack groups add <group> <service> [service...]
 devstack groups remove <group> <service> [service...]
 ```
 
-### Feature stacks
+## Feature stacks
 
-A **feature stack** runs a parallel version of one or more services beside base, each changed service in its own **git worktree** on a feature branch and its own dynamically-allocated port, all folded into the one host daemon as `<workspace>:<service>:<stack>` resources. It reuses base for everything it doesn't change, so you can run several features live at once without cloning the world.
+A feature stack runs a parallel version of a few services beside base. Each changed service gets its own git worktree on a feature branch and its own dynamically allocated port, folded into the one host daemon as `<workspace>:<service>:<stack>`. Everything it doesn't change resolves to base, so several features can run live at once without cloning the world.
 
 ```bash
-devstack stack create <name> --repos <svc>[,<svc>]  # worktrees for the changed services (+ their callers)
-devstack stack up <name>                             # fold the stack's services into the host daemon
-devstack stack down <name>                           # stop the stack (keeps its worktrees)
-devstack stack list                                  # stacks, their ports, and active state
-devstack stack rm <name>                             # remove worktrees, release ports, delete the record
-devstack stack config <svc> --stack <name>           # effective config the stack's service runs with
+devstack stack create <name> --repos <svc>[,<svc>]  # worktrees for the changed services and their callers
+devstack stack up <name>                            # fold it into the host daemon
+devstack stack down <name>                          # stop it, keep the worktrees
+devstack stack list
+devstack stack rm <name>                            # remove worktrees, release ports, deregister
+devstack stack config <svc> --stack <name>          # effective config that instance runs with
+devstack stack note <name> [text]                   # what this stack is for
 ```
 
-Work on a stack by **`cd`-ing into its worktree** (path shown by `stack create`/`stack list`) and editing there — it's already on the stack's branch, so you never `git checkout`. Reload only that instance with `restart --stack <name>`. Base and other stacks are untouched; each edit stays on its own branch.
+Work on a stack by `cd`-ing into its worktree, the path `stack create` and `stack list` print. It's already on the stack's branch, so you never `git checkout`, and reloading that instance alone with `restart --stack <name>` leaves base and every other stack untouched.
 
-> **Shared state is not isolated.** Stacks isolate code and ports, not the database, queues, or caches — two stacks on one DB see each other's data. Point a service elsewhere with an [environment](#environments) if you need to.
+`create` also takes `--branch` (defaults to the stack name, attaches if it exists) and `--note`. A note is the part you can't reconstruct a week later: a branch says what changed, a note says why.
 
-### Environments
+> Shared state is not isolated. Stacks isolate code and ports, not the database, queues or caches. Two stacks on one DB see each other's data. Point one elsewhere with an [environment](#environments) if that matters.
 
-An **environment** is a named config-var patch in the workspace manifest that repoints services — DB URLs, feature flags, endpoints — without code changes. Environments are defined **once in the base workspace manifest** and inherited by feature stacks — a stack doesn't define its own; `env use --stack <name>` just points a stack at one of the base's environments. It applies at three scopes, most-specific winning: **stack > service > workspace**. So base can run against `local` while one stack runs against `prod`.
+The original design record is [docs/stacks-spec.md](docs/stacks-spec.md). Read it for the reuse and port model; its daemon topology predates the one-daemon-per-host change.
+
+## Environments
+
+An environment is a named config-var patch in the workspace manifest: DB URLs, feature flags, endpoints, repointed without touching code. Base can run against `local` while one stack runs against `staging`.
+
+Environments are defined once in the base workspace manifest and inherited. A stack doesn't define its own; `env use --stack <name>` just points it at one of base's. Three scopes, most-specific winning: stack, service, workspace.
 
 ```bash
-devstack env set <name> KEY=VALUE                    # set a config-var patch, creating the env if new (secrets: see note below)
-devstack env use <name> [--service <svc>] [--stack <name>]   # point base, a service, or a stack at <name>
-devstack env which [--service <svc>] [--stack <name>]        # which env an instance resolves to + its values
-devstack env show <name>                             # an environment's values (secrets masked)
-devstack env list                                    # environments and where each is applied
-devstack env remove <name>                           # drop an environment
+devstack env set <name> KEY=VALUE [KEY=VALUE ...]    # creates the env if it's new
+devstack env use <name> [--service <svc>] [--stack <name>]
+devstack env which [--service <svc>] [--stack <name>]   # what a service resolves to, key by key
+devstack env show <name>
+devstack env list
+devstack env remove <name>
 ```
 
-`devstack status` shows each instance's active env in the **ENV** column, so you can see where every running copy points. Env values live in the workspace manifest and are masked on display only — so whether `env set` is safe for a secret depends on whether you commit that manifest; see [what to commit](#files-written-by-devstack--and-what-to-commit).
+`env which` names the rung each value came from: `.envrc`, `env.files`, manifest `env.values`, the active env, then devstack's computed values, each overriding the one before. `--shadowed` lists what got overridden.
 
-### Observability (OTEL collector)
+Credentials are redacted in place, so a connection string still shows its server and database. `--reveal` prints them in the clear. Redaction is display-only. Read [what to commit](#files-and-what-to-commit) before you put a secret in an environment.
 
-Observability is **opt-in per workspace** — devstack does not assume your services are OTEL-instrumented. While it's off, no collector runs and nothing is injected into services. Turn it on when you want traces/logs:
+## Observability
+
+Opt-in per workspace. While it's off, no collector runs and nothing is injected into services.
 
 ```bash
-devstack otel enable                 # sets observability.enabled in the workspace manifest
-devstack otel enable --backend=forwarding   # enable with a specific backend
+devstack otel enable [--backend=openobserve|signoz|forwarding]
 devstack otel disable
 ```
 
-Or set it directly in `devstack.workspace.yaml`:
+With it on, `workspace up` starts one `otelcol-contrib` and one backend for the whole machine, shared by every workspace, the same way one daemon runs everyone's services. `OTEL_EXPORTER_OTLP_ENDPOINT` is pushed down to every service (gRPC 4317, HTTP 4318), so you never repeat it. If the collector dies while enabled, `devstack status` warns and tries to restart it.
 
-```yaml
-observability:
-  enabled: true
-  backend: openobserve   # default when enabled; "signoz" for the heavier local stack,
-                         # "forwarding" for collector-only / BYO backend
-```
+The collector needs `otelcol-contrib` on `$PATH`, or `OTELCOL_BIN` pointing at it. Without one the workspace still comes up, and `devstack otel start` fails until you install it from [opentelemetry-collector-releases](https://github.com/open-telemetry/opentelemetry-collector-releases/releases).
 
-When enabled, `devstack workspace up` starts a local `otelcol-contrib` collector (detached, logging to its own file) and the OTLP endpoint (`localhost:4317`, gRPC) is pushed down to every service automatically — you never repeat it. If the collector is ever down while enabled, `devstack status` warns and tries to restart it.
-
-> **Prereq:** the collector needs `otelcol-contrib` on `$PATH`. If it's missing, the workspace still comes up but `devstack otel start` fails until you install it — download the matching binary from [opentelemetry-collector-releases](https://github.com/open-telemetry/opentelemetry-collector-releases/releases), or point `OTELCOL_BIN=/path/to/otelcol-contrib`.
-
-**One stack per machine.** The collector and the backend are machine-level, not per-workspace: one `otelcol-contrib` and one backend container serve every workspace, exactly as one Tilt daemon runs every workspace's services.
-
-Because every instance of a service (base and each feature stack's copy, which the telemetry commands call *variants*) reports to that one backend, each is stamped with the resource attributes that tell them apart — `devstack.workspace`, `devstack.service`, `devstack.stack`, and `devstack.env`. These are namespaced deliberately: `deployment.environment` belongs to whoever owns the destination, and the `forwarding` backend sets it per workspace. Telemetry is sliced at query time rather than by running a stack each:
+OpenObserve is the default backend: one container, ~230 MB idle, UI on `localhost:5080`. SigNoz is available and far heavier, ClickHouse plus Zookeeper plus UI at ~1.5-2 GB idle. To ship to your own OTLP endpoint instead of storing locally:
 
 ```bash
-devstack otel services               # which variants are reporting
-# Navexa.API      (devstack: navexa-api)  stack=agent env=dev
-# Navexa.API      (devstack: navexa-api)  stack=base  env=dev
-# nxTradeImporter                         stack=base  env=dev
-
-devstack otel traces --stack=agent   # just that stack's variant
-```
-
-A service often reports itself under a different name than devstack knows it by (a repo devstack calls `navexa-api` reporting as `Navexa.API`). Filters match either name, and `otel services` shows both.
-
-**Backends.** The default is **OpenObserve** — a single container (~230 MB idle), no configuration, UI on `localhost:5080`. **SigNoz** remains available (`--plugin=signoz`) but is far heavier: ClickHouse + Zookeeper + UI, ~1.5–2 GB idle. To forward to your own OTLP endpoint instead of storing locally, use the `forwarding` backend:
-
-```bash
-# Forward to any OTLP endpoint via gRPC
 devstack otel configure --plugin=forwarding --set upstream=telemetry.example.com:443 --set protocol=grpc
-
-# Forward via HTTP
 devstack otel configure --plugin=forwarding --set upstream=https://otel.example.com:4318
 ```
 
-`--plugin` (the backend) is persisted to the workspace manifest, so the choice sticks — and workspaces may differ. When they do, the one collector routes each workspace's telemetry to its own backend on the `devstack.workspace` attribute, so nothing leaks between them. Per-developer endpoint override: set `OTEL_EXPORTER_OTLP_ENDPOINT` in `.envrc` in any service repo.
+The plugin choice is written to the workspace manifest and travels with the project, so workspaces can differ. When they do, the one collector routes each workspace's telemetry to its own backend on the `devstack.workspace` attribute. Per-developer override: set `OTEL_EXPORTER_OTLP_ENDPOINT` in a service repo's `.envrc`.
+
+Querying names no backend, URL or credential. Devstack resolves the workspace's own, and the same resolution backs the `investigate` MCP tool:
 
 ```bash
-devstack otel status                 # collector state, ports, upstream + per-service telemetry evidence
-devstack otel start                  # start the collector (and the backend if it runs locally)
-devstack otel stop
-devstack otel open                   # open the UI
-devstack otel plugins                # list available plugins and their config keys
-```
-
-**Querying, without naming a backend.** `devstack` resolves the workspace's configured backend, endpoint and credentials for you — no URLs, keys or backend names are ever passed in. The same resolution backs the `investigate` MCP tool:
-
-```bash
-devstack otel traces                 # recent traces
+devstack otel services               # which variants are reporting
+devstack otel traces                 # recent root spans
 devstack otel traces --service=api --since=15m
-devstack otel traces --stack=feat-x  # only this feature stack's traces
+devstack otel traces --stack=feat-x
 devstack otel traces <trace-id>      # full span tree
 devstack otel logs --trace=<trace-id>
-devstack otel services               # what's reporting telemetry
+devstack otel status                 # collector state, ports, per-service evidence
+devstack otel open                   # the UI
+devstack otel plugins                # backends and their config keys
 ```
 
-OTLP ingest is fixed machine-wide: gRPC on 4317, HTTP on 4318.
+Every instance reports to that one backend, stamped with `devstack.workspace`, `devstack.service`, `devstack.stack` and `devstack.env`. These are namespaced deliberately: `deployment.environment` belongs to whoever owns the destination, and the `forwarding` backend sets it per workspace. So you slice at query time rather than running a backend each. A service often reports itself under a different name than devstack knows it by; filters match either, and `otel services` prints both:
 
-### MCP Server
+```
+Navexa.API      (devstack: navexa-api)  stack=agent env=dev
+Navexa.API      (devstack: navexa-api)  stack=base  env=dev
+nxTradeImporter                         stack=base  env=dev
+```
+
+## Tunnels
+
+Forward this workspace's service ports over SSH. Any host you can ssh to works, including a plain config alias; a tailnet address is one such host, not a requirement. Key-based auth only. Run `push` where the services are, `pull` where you want to reach them from.
 
 ```bash
-devstack serve                       # Start the MCP server (stdio transport)
+devstack tunnel push my-box.ts.net --user alice        # first run saves the remote
+devstack tunnel push                                   # later runs reuse it
+devstack tunnel push --services navexa-api,navexa-frontend
+devstack tunnel push --stacks                          # every active stack, each on its own port
+devstack tunnel push --as-base agent                   # one stack, on the ports base normally serves
+devstack tunnel push --otel                            # also the observability UI
+devstack tunnel pull <host>
+devstack tunnel list [--stacks] [--as-base <name>]     # what would be forwarded, no SSH
+devstack tunnel status
+devstack tunnel stop [--services navexa-api]
+devstack tunnel restart [--mode push|pull]
 ```
 
-This is what `.mcp.json` invokes. You don't run it directly.
+`--services` takes exact names, the ones `tunnel list` prints, not partial matches. Only ports actually serving traffic get forwarded. With `--otel` the remote reads this machine's traces at the address you use locally.
 
----
+`--stacks` and `--as-base` do different jobs and can't be combined. `--stacks` gives every stack its own port on the far end. `--as-base <name>` puts one stack where base lives, so the far end reaches it at the address it already knows and nothing over there needs reconfiguring:
 
-## MCP Tools (available to Claude Code)
-
-The tool set adapts to the active workspace: trace tools (`investigate`) appear only when observability is enabled, and the `tunnel` tool only when an ssh client is available. Call `environment` first to see what's actually available.
-
-Some CLI commands have no tool and still need a shell: `workspace up` / `workspace down`, `workspace doctor`, `stack config`, and the `otel` commands past status and trace queries (`otel services`, `otel traces`, `otel logs --trace`, `otel open`).
-
-### `environment`
-Orientation tool — shows the workspace's observability state, its in-flight feature stacks, and which tools exist in this context, and points at the [environments](#environments) a service can be aimed at via `env_use`. Call this first.
-
-### `status`
-Show all services with state (`running` / `starting` / `building` / `stopped` / `erroring` / `disabled` / `unknown`), ports, source path, ENV (the active environment each instance points at), and last build error. Pass `stack` to see a feature stack's instances.
-
-### `start` / `topology`
-`start` brings a service up along with its dependencies, on base or on a stack's instance. `topology` shows services, their groups, dependencies and dependents — check it before making a dependency claim.
-
-### `restart`
-Trigger a rebuild/restart for a service. Auto-enables the service first if it was disabled.
-
-Parameters: `service` (optional — uses `DEVSTACK_DEFAULT_SERVICE` if omitted), `stack` (optional — target a stack's instance).
-
-### `stop`
-Disable one or all services.
-
-Parameters: `service` (optional — if omitted, stops everything), `stack` (optional — target a stack's instance).
-
-### `stack_create` / `stack_up` / `stack_down` / `stack_list` / `stack_rm`
-Manage [feature stacks](#feature-stacks) over MCP — create a stack's worktrees, bring it up/down in the host daemon, list them, or tear one down. So an agent can spin up a parallel version of a service, work on it, and clean it up without shelling out. `devstack stack config` has no tool: reading a stack's effective config is still CLI-only.
-
-### `env_use` / `env_which` / `env_set`
-Manage [environments](#environments) over MCP — point a workspace/service/stack at an env (`env_use`), see which env an instance resolves to and its values (`env_which`), or set a config-var patch (`env_set`). Environments are defined once in the base workspace manifest and inherited by stacks; `env_use` with `stack` points a stack at one of the base's environments. Secrets are masked in output.
-
-### `configure`
-Set a Tilt runtime argument (`key=value`). Tilt reloads affected services automatically. Useful for feature flags and environment switching.
-
-Parameters: `key` (required), `value` (required).
-
-### `process_logs`
-Fetch raw stdout/stderr from a service via Tilt. Use this for services that don't export OTEL logs, or when you need unstructured process output.
-
-Parameters: `service` (optional), `lines` (default 100), `errors_only` (filter to error/exception/panic/fatal/fail lines).
-
-If no service is given and no default is configured, fetches all services in parallel.
-
-### `service_env`
-Inspect and edit a service's resolved env: `get` shows the value each key resolves to and the rung it came from (a rung is one level of the precedence ladder — `.envrc`, env files, manifest `env.values`, the active env, then devstack's computed values, each overriding the one before), `diff` compares across services, `set` writes to the manifest or `.envrc`, `check` audits required keys, `drift` compares the resolved env against what the service's own repo declares it needs. Takes an optional `stack` to inspect a stack's instance.
-
-### `observability`
-Inspect and change the workspace's OTEL config: `status` (enabled, backend, collector, + per-service telemetry evidence), `enable`, `disable`, `configure`. Always available locally, so an agent can discover and turn observability on.
-
-### `tunnel`
-Forward service ports to/from a remote host over SSH (push/pull/list/status/stop). Registered when an ssh client is available. Any host you can ssh to works, including a plain ssh-config alias; a tailnet address is one such host, not a requirement.
-
-From the CLI, `--stacks` also forwards active feature stacks' ports and `--otel` also forwards the observability UI, so the remote reads this machine's traces at the same address you use locally:
-
-```bash
-devstack tunnel push my-box.ts.net --otel
+```
+devstack tunnel push my-box.ts.net --as-base agent
+# far end :4200 → here :20006, far end :63290 → here :20005
 ```
 
-`stop` and `status` work from the forwards that are actually running, not from what is currently discoverable — so the observability UI (never a Tilt resource) and any port whose service has since gone are still reported and still torn down.
+`stop` and `status` work off the forwards actually running rather than what's discoverable now, so the observability UI (never a Tilt resource) and any port whose service has since gone are still reported and still torn down.
 
-### `investigate`
-Primary trace tool — **only available when observability is enabled**. Queries whatever backend the workspace is configured with (OpenObserve by default) for distributed traces and correlated logs, then falls back to dev-daemon process logs if OTEL logs are unavailable.
+`restart` repeats the last push or pull — same direction, same services, same stack mapping — and says what it's repeating. Otherwise it would rebuild from the defaults: base back on the ports a mapped stack was serving, and a push on the machine you ran `pull` from. Any flag you pass overrides the saved one.
 
-Three modes:
+`--reclaim` kills whatever already holds those ports on the far host before forwarding. It may belong to a colleague. Check first: `ssh <host> 'ss -ltnp | grep <port>'`.
 
-| Mode | Trigger | What happens |
-|------|---------|-------------|
-| **Trace lookup** | `trace_id` given | Full span tree + logs for that specific trace |
-| **Attribute search** | `attribute` + `value` given | Find all root spans where e.g. `portfolio.id=57835`, then expand each trace |
-| **Recent executions** | Neither given | Most recent executions (scoped to default service if set) |
+## MCP
 
-Parameters: `trace_id`, `attribute`, `value`, `service`, `stack` (absent = base instance only, a name = that stack, `"all"` = every instance), `since_minutes` (default 5), `limit` (default 3), `errors_only`.
+`devstack serve` is the MCP server. `.mcp.json` invokes it over stdio; you don't run it yourself.
 
-Attribute search matches root spans only, so each result is a distinct trace entry point — no matter which service owns the root span.
+```
+environment  status  topology  start  stop  restart  process_logs  service_env
+configure    observability     investigate    tunnel
+stack_create stack_up  stack_down  stack_list  stack_rm  stack_note
+env_use      env_which env_set
+```
 
----
+The set adapts to the workspace: `investigate` appears only when observability is enabled, `tunnel` only when there's an ssh client. Call `environment` first. It reports the workspace's observability state, its in-flight stacks, and which tools actually exist here.
 
-## Per-repo setup (`.mcp.json`)
+`investigate` is the trace tool, and it has three modes. Give it a `trace_id` for one full span tree. Give it `attribute` and `value` to find every root span where, say, `portfolio.id=57835`, then expand each trace. Give it neither and you get the most recent executions. `stack` scopes it: absent means base, a name means that stack, `"all"` means every instance. When OTEL logs aren't available it falls back to dev-daemon process logs. Matching root spans only means each result is a distinct trace entry point, whichever service owns the root.
 
-`devstack init` creates this automatically. Each service repo gets its own `.mcp.json` pointing at the workspace and naming itself as the default service:
+`service_env` resolves and edits a service's env: `get` shows each key with the rung it came from, `diff` compares services, `set` writes to the manifest or `.envrc`, `check` audits required keys, `drift` compares what's resolved against what the repo declares it needs.
+
+Some commands have no tool and still need a shell: `workspace up` and `down`, `workspace doctor`, `stack config`, and every otel command the `observability` and `investigate` tools don't cover (`otel services`, `otel traces`, `otel logs`, `otel open`). Registration is CLI-only too: `init`, `deps`, `groups`, `workspace add`.
+
+## Per-repo setup
+
+`devstack init` writes one `.mcp.json` per service repo. It names the default service and nothing else, so it's machine-agnostic and safe to commit:
 
 ```json
 {
@@ -368,43 +229,38 @@ Attribute search matches root spans only, so each result is a distinct trace ent
     "devstack": {
       "type": "stdio",
       "command": "devstack",
-      "args": ["serve"],
+      "args": ["serve", "--transport=stdio"],
       "env": {
-        "DEVSTACK_WORKSPACE": "/path/to/workspace",
-        "DEVSTACK_DEFAULT_SERVICE": "my-api",
-        "TILT_PORT": "10350"
+        "DEVSTACK_DEFAULT_SERVICE": "my-api"
       }
     }
   }
 }
 ```
 
-Claude Code reads `.mcp.json` automatically and loads the MCP server when you open that repo.
-
----
+If an older copy still carries `DEVSTACK_WORKSPACE` or `TILT_PORT`, refresh it with `devstack init --all`.
 
 ## Configuration
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `DEVSTACK_WORKSPACE` | (auto-detected from cwd) | Root workspace directory |
-| `DEVSTACK_DEFAULT_SERVICE` | — | Default service when no name is given to a tool or command |
-| `TILT_PORT` | `10350` | Tilt API port |
-| `TILT_HOST` | `localhost` | Tilt API host |
+| `DEVSTACK_WORKSPACE` | auto-detected from cwd | Workspace name or path |
+| `DEVSTACK_DEFAULT_SERVICE` | — | Service used when a command or tool is given no name |
+| `DEVSTACK_DAEMON_PORT` | `10300` | Host daemon API port. Legacy alias: `TILT_PORT` |
+| `DEVSTACK_DAEMON_HOST` | `localhost` | Host daemon host. Legacy alias: `TILT_HOST` |
+| `OTELCOL_BIN` | found on `$PATH` | Path to the `otelcol-contrib` binary |
 
----
-
-## Files written by devstack — and what to commit
+## Files, and what to commit
 
 | Artefact | Location | Commit? | Why |
 |----------|----------|---------|-----|
-| `devstack.workspace.yaml` | workspace root | **Yes** | Source of truth: services, groups, dependencies, environments. Portable — no machine paths. |
-| `devstack.service.yaml` | service repo | **No** | Machine-local: it bakes absolute tool paths (e.g. `/home/you/.local/share/mise/installs/dotnet/8.0.418/dotnet run`). Gitignore it. |
-| `.mcp.json` | service repo | **Yes** | Generated to be machine-agnostic — no workspace path, no daemon port. If an older copy still contains `DEVSTACK_WORKSPACE`, refresh it with `devstack init --all`. |
-| `AGENTS.md` | service repo | **Yes** | Agent instructions. devstack owns only the block between its sentinels; the rest is yours. |
-| `CLAUDE.md` / `GEMINI.md` / `.cursorrules` / `.github/copilot-instructions.md` | service repo | **Yes** | Yours, with a devstack-managed block appended between sentinels. devstack updates these only if they already exist. |
-| `.devstack.json` | workspace root | **No** | Retired. devstack no longer reads or writes it; otel plugin config now lives under `observability.settings` in `devstack.workspace.yaml`. Safe to delete once `devstack otel status` shows the settings you expect. |
-| `Tiltfile` | anywhere | **No** | Generated build artifact, never hand-edited. |
+| `devstack.workspace.yaml` | workspace root | Yes | Source of truth: services, groups, dependencies, environments. Portable, no machine paths. |
+| `devstack.service.yaml` | service repo | No | Machine-local: it bakes absolute tool paths. Gitignore it. |
+| `.mcp.json` | service repo | Yes | Generated machine-agnostic. |
+| `AGENTS.md` | service repo | Yes | Agent instructions. devstack owns only the block between its sentinels; the rest is yours. |
+| `CLAUDE.md` / `GEMINI.md` / `.cursorrules` / `.github/copilot-instructions.md` | service repo | Yes | Yours, with a devstack-managed block appended between sentinels. Updated only if they already exist. |
+| `.devstack.json` | workspace root | No | Retired. Otel plugin config now lives under `observability` in the workspace manifest. Safe to delete once `devstack otel status` shows what you expect. |
+| `Tiltfile` | anywhere | No | Generated build artifact, never hand-edited. |
 | `~/.config/devstack/workspaces.json` | home | n/a | Machine-local registry of workspaces and their ports. |
 | `~/.local/share/devstack/**` | home | n/a | Host daemon state: pids, logs, `stacks.json`, the generated host Tiltfile. |
 
@@ -416,11 +272,30 @@ devstack.service.yaml
 Tiltfile
 ```
 
-> **⚠️ Secrets and `devstack env set`.** `env set <env> KEY=VALUE` writes the value **into `devstack.workspace.yaml`**, in plaintext. Values are masked on *display* only (`env show`, `env which`, `status`), never at rest. So it depends on how you treat that manifest:
->
-> - **You commit it** (the default recommended above): keep real secrets out. Declare them in a service's `env.required` and supply them at runtime from `.envrc` (direnv) or your own secret store, and use `env set` only for non-secret config — URLs, ports, feature flags. A secret written here is a committed secret.
-> - **It's machine-local** (you gitignore it, or the workspace root isn't a repo): `env set` is fine for secrets, including API keys — that is what it was built for. Just remember the file is plaintext on disk.
->
-> If you're unsure which you are, run `git check-ignore -v devstack.workspace.yaml` in the workspace root.
+Because `devstack.service.yaml` is machine-local and gitignored, a stack's worktree doesn't inherit one. That's why `devstack stack create` materialises ignored config into each worktree rather than relying on git.
 
-Because `devstack.service.yaml` is machine-local it is normally gitignored, which means a stack's git worktree does **not** inherit one — this is why `devstack stack create` materialises ignored config into each worktree rather than relying on git.
+### Secrets and `devstack env set`
+
+`env set <env> KEY=VALUE` writes the value into `devstack.workspace.yaml` in plaintext, and masking happens on display only, never at rest. So it depends on how you treat that file.
+
+If you commit it, which is the default recommended above, keep real secrets out. Declare them in a service's `env.required` and supply them at runtime from `.envrc` or your own secret store, and use `env set` only for URLs, ports and feature flags. A secret written here is a committed secret.
+
+If it's machine-local, either gitignored or the workspace root isn't a repo, `env set` is fine for API keys. That's what it was built for, though the file is still plaintext on disk.
+
+Unsure which you are: `git check-ignore -v devstack.workspace.yaml` in the workspace root.
+
+## Updating devstack
+
+```bash
+cd <devstack repo> && git pull
+go install ./...              # replace the binary on your PATH
+devstack init --all           # per workspace: refresh AGENTS.md and .mcp.json
+                              # then restart your MCP server / agent session
+devstack status               # check the daemon and services still answer
+```
+
+Two of those bite. A stale binary doesn't fail on config it doesn't understand, it falls back: an older devstack reading a workspace set to OpenObserve quietly started SigNoz instead. And MCP tool descriptions are read once at server startup, so a session already running keeps the old tool list. New tools don't appear, new parameters get rejected. Restart it.
+
+`devstack init --all` writes files only, nothing restarts. Run it from inside each workspace, and expect a git diff in every service repo.
+
+If a workspace was mid-upgrade, `devstack otel start` replaces the observability container when its pinned image has moved.

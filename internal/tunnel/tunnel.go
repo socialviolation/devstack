@@ -38,12 +38,38 @@ const (
 // Service is a discovered service and one of its exposed ports.
 type Service struct {
 	Name    string
-	Port    int
+	Service string // bare service name, without any :stack suffix
+	Port    int    // the port on this machine
 	Runtime string // Tilt runtimeStatus, e.g. "ok", "pending"
+
+	// RemotePort is the port to occupy on the other machine. Zero means the same
+	// port at both ends, which is the usual case; a stack pushed onto base's
+	// ports sets it so the far end reaches the stack at the address it expects.
+	RemotePort int
 }
+
+// Far returns the port this forward occupies on the other machine.
+func (s Service) Far() int {
+	if s.RemotePort != 0 {
+		return s.RemotePort
+	}
+	return s.Port
+}
+
+// Mapped reports whether the two ends use different ports.
+func (s Service) Mapped() bool { return s.RemotePort != 0 && s.RemotePort != s.Port }
 
 // sshBin is the ssh executable to invoke. Overridable in tests.
 var sshBin = "ssh"
+
+// SetSSHBin points forwards at a different ssh binary and returns a function
+// restoring the previous one. It exists so tests in other packages can drive a
+// stub rather than open a real connection.
+func SetSSHBin(path string) func() {
+	prev := sshBin
+	sshBin = path
+	return func() { sshBin = prev }
+}
 
 // sshOpts are the shared ssh flags for a resilient, non-interactive tunnel.
 var sshOpts = []string{
@@ -107,7 +133,7 @@ func Discover(view *tilt.TiltView, filter map[string]bool, wsName string, includ
 				continue
 			}
 			seen[port] = true
-			out = append(out, Service{Name: name, Port: port, Runtime: r.Status.RuntimeStatus})
+			out = append(out, Service{Name: name, Service: svc, Port: port, Runtime: r.Status.RuntimeStatus})
 		}
 	}
 	return out
@@ -219,14 +245,25 @@ func IsUp(wsName string, port int) bool {
 // It spawns a detached `ssh` child, writes a PID file, and verifies the process
 // survives an initial second (ExitOnForwardFailure makes ssh exit fast on a bind
 // clash). Returns the running PID.
-func Launch(wsName string, mode Mode, user, host string, port int) (int, error) {
+// Launch starts one forward. local is the port on this machine, remote the port
+// on the other; ssh orders those two differently for -L and -R, so the mode
+// decides which comes first. PID files are keyed on the local port, which is
+// unique here even when several stacks map onto the same remote port.
+func Launch(wsName string, mode Mode, user, host string, local, remote int) (int, error) {
+	port := local
 	KillPort(wsName, port)
 
+	if remote == 0 {
+		remote = local
+	}
 	flag := "-L"
+	// -L listens here and resolves the target on the far end; -R is the reverse,
+	// so the near and far ports swap between the two.
+	fwd := fmt.Sprintf("%d:localhost:%d", local, remote)
 	if mode == ModePush {
 		flag = "-R"
+		fwd = fmt.Sprintf("%d:localhost:%d", remote, local)
 	}
-	fwd := fmt.Sprintf("%d:localhost:%d", port, port)
 
 	args := append([]string{}, sshOpts...)
 	args = append(args, flag, fwd, fmt.Sprintf("%s@%s", user, host))

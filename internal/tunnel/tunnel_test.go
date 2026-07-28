@@ -255,7 +255,7 @@ func TestLaunchLifecycle(t *testing.T) {
 	defer func() { sshBin = orig }()
 
 	const port = 59321
-	pid, err := Launch("testws", ModePull, "user", "host", port)
+	pid, err := Launch("testws", ModePull, "user", "host", port, port)
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -319,5 +319,81 @@ func TestTrackedPortsNoForwards(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if got := TrackedPorts("navexa"); len(got) != 0 {
 		t.Errorf("TrackedPorts() = %v, want none", got)
+	}
+}
+
+// ssh orders the near and far ports differently for -L and -R, so a mapped
+// forward that got the order wrong would point the wrong way and still start.
+func TestLaunchMapsPortsPerMode(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	script := filepath.Join(dir, "ssh")
+	record := filepath.Join(dir, "args")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho \"$@\" >> "+record+"\nsleep 5\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	old := sshBin
+	sshBin = script
+	t.Cleanup(func() { sshBin = old })
+
+	if _, err := Launch("ws", ModePush, "u", "h", 20005, 63290); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if _, err := Launch("ws", ModePull, "u", "h", 4200, 20006); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	KillPort("ws", 20005)
+	KillPort("ws", 4200)
+
+	data, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	// -R listens on the far end and resolves here; -L is the reverse.
+	if !strings.Contains(got, "-R 63290:localhost:20005") {
+		t.Errorf("push should listen on the remote's port and land on ours: %s", got)
+	}
+	if !strings.Contains(got, "-L 4200:localhost:20006") {
+		t.Errorf("pull should listen on our port and reach the remote's: %s", got)
+	}
+}
+
+// --as-base and --stacks name adjacent-looking modes with opposite effects, so
+// the mapping has to come back keyed to base's ports, not the stack's.
+func TestStackOnBasePortsMapsOntoBase(t *testing.T) {
+	view := &tilt.TiltView{UiResources: []tilt.UIResource{
+		res("ws:api", "ok", "http://localhost:63290"),
+		res("ws:frontend", "ok", "http://localhost:4200"),
+		res("ws:api:agent", "ok", "http://localhost:20005"),
+		res("ws:frontend:agent", "ok", "http://localhost:20006"),
+	}}
+
+	basePorts := map[string]int{}
+	for _, s := range Discover(view, nil, "ws", false) {
+		basePorts[s.Service] = s.Port
+	}
+	if basePorts["api"] != 63290 || basePorts["frontend"] != 4200 {
+		t.Fatalf("base discovery wrong: %v", basePorts)
+	}
+
+	var mapped []Service
+	for _, s := range Discover(view, nil, "ws", true) {
+		if !strings.HasSuffix(s.Name, ":agent") {
+			continue
+		}
+		s.RemotePort = basePorts[s.Service]
+		mapped = append(mapped, s)
+	}
+	if len(mapped) != 2 {
+		t.Fatalf("got %d stack services, want 2: %+v", len(mapped), mapped)
+	}
+	for _, s := range mapped {
+		if !s.Mapped() {
+			t.Errorf("%s should map onto a base port: %+v", s.Name, s)
+		}
+		if s.Far() == s.Port {
+			t.Errorf("%s far port should differ from local: %+v", s.Name, s)
+		}
 	}
 }

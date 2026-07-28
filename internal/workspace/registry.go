@@ -36,6 +36,8 @@ type Workspace struct {
 	// they live in the per-user registry rather than the committed project config.
 	TunnelHost string `json:"tunnel_host,omitempty"`
 	TunnelUser string `json:"tunnel_user,omitempty"`
+	// TunnelLast is what the last successful push or pull forwarded.
+	TunnelLast *TunnelForward `json:"tunnel_last,omitempty"`
 
 	// Active reports whether this workspace's services are folded into the one
 	// host Tilt daemon. `devstack workspace up` sets it, `down` clears it.
@@ -402,6 +404,33 @@ func UpdateOtelPlugin(name, pluginName string, config map[string]string) error {
 			if config != nil {
 				workspaces[i].OtelPluginConfig = config
 			}
+			return Save(workspaces)
+		}
+	}
+	return fmt.Errorf("workspace %q not found", name)
+}
+
+// TunnelForward describes a forward that ran, in enough detail to repeat it.
+// `tunnel restart` reads it so a re-established tunnel matches what was up,
+// rather than what the flag defaults describe — the direction and the stack
+// mapping are otherwise lost the moment the command exits.
+type TunnelForward struct {
+	Mode     string `json:"mode"`
+	Services string `json:"services,omitempty"`
+	Stacks   bool   `json:"stacks,omitempty"`
+	AsBase   string `json:"as_base,omitempty"`
+	Otel     bool   `json:"otel,omitempty"`
+}
+
+// UpdateTunnelForward records what a workspace's last push or pull forwarded.
+func UpdateTunnelForward(name string, fwd TunnelForward) error {
+	workspaces, err := Load()
+	if err != nil {
+		return err
+	}
+	for i, ws := range workspaces {
+		if strings.EqualFold(ws.Name, name) {
+			workspaces[i].TunnelLast = &fwd
 			return Save(workspaces)
 		}
 	}
