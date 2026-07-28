@@ -62,6 +62,15 @@ func (s Service) Mapped() bool { return s.RemotePort != 0 && s.RemotePort != s.P
 // sshBin is the ssh executable to invoke. Overridable in tests.
 var sshBin = "ssh"
 
+// SetSSHBin points forwards at a different ssh binary and returns a function
+// restoring the previous one. It exists so tests in other packages can drive a
+// stub rather than open a real connection.
+func SetSSHBin(path string) func() {
+	prev := sshBin
+	sshBin = path
+	return func() { sshBin = prev }
+}
+
 // sshOpts are the shared ssh flags for a resilient, non-interactive tunnel.
 var sshOpts = []string{
 	"-N",
