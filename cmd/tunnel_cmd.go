@@ -85,9 +85,20 @@ func init() {
 	}
 	restartCmd := &cobra.Command{
 		Use:   "restart [host]",
-		Short: "Stop and re-establish all tunnels",
-		Args:  cobra.MaximumNArgs(1),
-		RunE:  runTunnelRestart,
+		Short: "Stop and re-establish the tunnels that were up",
+		Long: `Stop this workspace's tunnels and bring them back.
+
+With no flags it repeats the last successful push or pull — same direction, same
+services, same stack mapping — and says what it is repeating. Otherwise a
+restart after 'push --as-base agent' would quietly put base back on those ports,
+and a restart on the machine you ran 'pull' from would reverse the direction.
+
+Any flag you pass overrides the saved one:
+
+  devstack tunnel restart                     # whatever ran last
+  devstack tunnel restart --mode pull         # same services, other direction`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: runTunnelRestart,
 	}
 	tunnelStopCmd := &cobra.Command{
 		Use:   "stop",
@@ -136,7 +147,7 @@ ones you name to leave the rest up:
 		c.Flags().BoolVar(&tunnelOtelFlag, "otel", false,
 			"Also forward the observability UI, so the telemetry is readable from the other end at the same address you use here")
 	}
-	restartCmd.Flags().String("mode", string(tunnel.ModePush), "Direction to re-establish: push or pull")
+	restartCmd.Flags().String("mode", "", "Direction to re-establish: push or pull (default: the direction of the last run, else push)")
 	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, tunnelStopCmd, tunnelStatusCmd, listCmd} {
 		// Runtime failures (daemon down, unreachable remote) shouldn't dump the
 		// full usage block — the messages are self-explanatory.
@@ -367,6 +378,7 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 	}
 
 	var clashed bool
+	var started int
 	for _, s := range svcs {
 		pid, err := tunnel.Launch(ws.Name, mode, sshUser, host, s.Port, s.Far())
 		if err != nil {
@@ -374,7 +386,21 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 			color.New(color.FgRed).Printf("  [FAILED]  %-30s %s  (%v)\n", s.Name, tunnelPortLabel(s), err)
 			continue
 		}
+		started++
 		fmt.Printf("  [started] %-30s %s  (pid %d)\n", s.Name, tunnelPortLabel(s), pid)
+	}
+	// Record the shape of what is now up so `restart` re-establishes this rather
+	// than the flag defaults, which point the other way.
+	if started > 0 {
+		if serr := workspace.UpdateTunnelForward(ws.Name, workspace.TunnelForward{
+			Mode:     string(mode),
+			Services: tunnelServicesFlag,
+			Stacks:   tunnelStacksFlag,
+			AsBase:   tunnelAsBaseFlag,
+			Otel:     tunnelOtelFlag,
+		}); serr != nil {
+			fmt.Printf("  warning: could not save what was forwarded: %v\n", serr)
+		}
 	}
 	if clashed && mode == tunnel.ModePush && !tunnelReclaimFlag {
 		fmt.Printf("\n  See what holds it:  ssh %s 'ss -ltnp | grep <port>'\n"+
@@ -482,11 +508,61 @@ func portLabel(labels map[int]string, port int) string {
 	return "(no longer discovered)"
 }
 
-func runTunnelRestart(cmd *cobra.Command, args []string) error {
+// resumeLastForward fills in the flags the caller left off from the last
+// successful push or pull, so a bare restart re-establishes what was running.
+// Anything given on the command line wins, and --reclaim is never restored: it
+// kills whatever holds the port on the far host, which is a decision to take
+// each time rather than inherit. Returns the direction and a description of
+// what was restored, empty when nothing was.
+func resumeLastForward(cmd *cobra.Command, last *workspace.TunnelForward) (tunnel.Mode, string, error) {
 	modeStr, _ := cmd.Flags().GetString("mode")
+	var restored []string
+	if last != nil {
+		// The two stack modes exclude each other, so naming either one means the
+		// caller is choosing between them and neither should be inherited.
+		stackModeGiven := cmd.Flags().Changed("stacks") || cmd.Flags().Changed("as-base")
+		if modeStr == "" && last.Mode != "" {
+			modeStr = last.Mode
+			restored = append(restored, last.Mode)
+		}
+		if !cmd.Flags().Changed("services") && last.Services != "" {
+			tunnelServicesFlag = last.Services
+			restored = append(restored, "--services "+last.Services)
+		}
+		if !stackModeGiven && last.Stacks {
+			tunnelStacksFlag = true
+			restored = append(restored, "--stacks")
+		}
+		if !stackModeGiven && last.AsBase != "" {
+			tunnelAsBaseFlag = last.AsBase
+			restored = append(restored, "--as-base "+last.AsBase)
+		}
+		if !cmd.Flags().Changed("otel") && last.Otel {
+			tunnelOtelFlag = true
+			restored = append(restored, "--otel")
+		}
+	}
+	if modeStr == "" {
+		modeStr = string(tunnel.ModePush)
+	}
 	mode := tunnel.Mode(modeStr)
 	if mode != tunnel.ModePush && mode != tunnel.ModePull {
-		return fmt.Errorf("--mode must be push or pull, got %q", modeStr)
+		return "", "", fmt.Errorf("--mode must be push or pull, got %q", modeStr)
+	}
+	return mode, strings.Join(restored, " "), nil
+}
+
+func runTunnelRestart(cmd *cobra.Command, args []string) error {
+	ws, err := tunnelContext()
+	if err != nil {
+		return err
+	}
+	mode, restored, err := resumeLastForward(cmd, ws.TunnelLast)
+	if err != nil {
+		return err
+	}
+	if restored != "" {
+		color.New(color.Faint).Printf("  repeating last run: %s\n", restored)
 	}
 	if err := runTunnelStop(cmd, args); err != nil {
 		return err

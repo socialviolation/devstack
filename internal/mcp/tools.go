@@ -1468,6 +1468,25 @@ func coreOtelUIService(ws *workspace.Workspace) (svc tunnel.Service, reason stri
 	return tunnel.Service{Name: "otel-ui (" + plugin.Name() + ")", Port: port, Runtime: "ok"}, "", true
 }
 
+// portLabel renders a forward's ports, naming both ends when they differ. A
+// mapped forward reported as a single port would hand back the stack's own
+// port, which is the one address the far end must not be told to use.
+func portLabel(s tunnel.Service) string {
+	if !s.Mapped() {
+		return fmt.Sprintf(":%d", s.Port)
+	}
+	return fmt.Sprintf("far end :%d → here :%d", s.RemotePort, s.Port)
+}
+
+// portList renders ports for a one-line summary.
+func portList(ports []int) string {
+	out := make([]string, len(ports))
+	for i, p := range ports {
+		out[i] = fmt.Sprintf(":%d", p)
+	}
+	return strings.Join(out, " ")
+}
+
 func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws *workspace.Workspace) {
 	tool := mcp.NewTool("tunnel",
 		mcp.WithDescription("Forward this workspace's LOCAL service ports to/from a remote host over SSH, so a remote machine can reach services running on this dev box. "+
@@ -1558,11 +1577,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 				if tunnel.Listening(s.Port) {
 					state = "serving"
 				}
-				if s.Mapped() {
-					fmt.Fprintf(&sb, "  %-30s far end :%d → here :%d  (%s)\n", s.Name, s.RemotePort, s.Port, state)
-					continue
-				}
-				fmt.Fprintf(&sb, "  %-30s :%d  (%s)\n", s.Name, s.Port, state)
+				fmt.Fprintf(&sb, "  %-30s %s  (%s)\n", s.Name, portLabel(s), state)
 			}
 			return mcp.NewToolResultText(otelNote + sb.String()), nil
 
@@ -1571,20 +1586,56 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			if ws.TunnelHost != "" {
 				fmt.Fprintf(&sb, "remote: %s@%s\n", ws.TunnelUser, ws.TunnelHost)
 			}
+			// Every discovered service, plus any port still forwarding that
+			// discovery no longer covers, so a live tunnel is never invisible.
+			names := map[int]string{}
+			var ports []int
 			for _, s := range svcs {
+				names[s.Port] = s.Name
+				ports = append(ports, s.Port)
+			}
+			for _, port := range tunnel.TrackedPorts(ws.Name) {
+				if _, known := names[port]; !known {
+					names[port] = "(no longer discovered)"
+					ports = append(ports, port)
+				}
+			}
+			sort.Ints(ports)
+			for _, port := range ports {
 				state := "down"
-				if tunnel.IsUp(ws.Name, s.Port) {
+				if tunnel.IsUp(ws.Name, port) {
 					state = "up"
 				}
-				fmt.Fprintf(&sb, "  [%-4s] %-30s :%d\n", state, s.Name, s.Port)
+				fmt.Fprintf(&sb, "  [%-4s] %-30s :%d\n", state, names[port], port)
 			}
 			return mcp.NewToolResultText(otelNote + sb.String()), nil
 
 		case "stop":
-			for _, s := range svcs {
-				tunnel.KillPort(ws.Name, s.Port)
+			// Stop what is forwarding, not what discovery happens to cover now: a
+			// forward outlives its service, and the observability UI is never a
+			// daemon resource at all. Narrowing to the ones asked for is the only
+			// time discovery decides.
+			ports := tunnel.TrackedPorts(ws.Name)
+			if len(filter) > 0 {
+				wanted := map[int]bool{}
+				for _, s := range svcs {
+					wanted[s.Port] = true
+				}
+				var kept []int
+				for _, port := range ports {
+					if wanted[port] {
+						kept = append(kept, port)
+					}
+				}
+				ports = kept
 			}
-			return mcp.NewToolResultText(otelNote + fmt.Sprintf("Stopped tunnels for %d service(s).", len(svcs))), nil
+			if len(ports) == 0 {
+				return mcp.NewToolResultText(otelNote + "No tunnels running for this workspace."), nil
+			}
+			for _, port := range ports {
+				tunnel.KillPort(ws.Name, port)
+			}
+			return mcp.NewToolResultText(otelNote + fmt.Sprintf("Stopped %d tunnel(s): %s.", len(ports), portList(ports))), nil
 
 		case "push", "pull":
 			mode := tunnel.ModePush
@@ -1627,9 +1678,11 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 
 			reclaim := request.GetBool("reclaim", false)
 			if mode == tunnel.ModePush && reclaim {
+				// The port to free is the one the forward binds over there, which
+				// is base's port for a mapped stack, not the stack's own.
 				ports := make([]int, len(svcs))
 				for i, s := range svcs {
-					ports[i] = s.Port
+					ports[i] = s.Far()
 				}
 				tunnel.ReclaimRemote(ruser, rhost, ports)
 			}
@@ -1641,14 +1694,27 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 				fmt.Fprintf(&sb, "  [skip]    %-30s :%d  (not serving)\n", s.Name, s.Port)
 			}
 			var clashed bool
+			var started int
 			for _, s := range svcs {
 				pid, lerr := tunnel.Launch(ws.Name, mode, ruser, rhost, s.Port, s.Far())
 				if lerr != nil {
 					clashed = true
-					fmt.Fprintf(&sb, "  [FAILED]  %-30s :%d  (%v)\n", s.Name, s.Port, lerr)
+					fmt.Fprintf(&sb, "  [FAILED]  %-30s %s  (%v)\n", s.Name, portLabel(s), lerr)
 					continue
 				}
-				fmt.Fprintf(&sb, "  [started] %-30s :%d  (pid %d)\n", s.Name, s.Port, pid)
+				started++
+				fmt.Fprintf(&sb, "  [started] %-30s %s  (pid %d)\n", s.Name, portLabel(s), pid)
+			}
+			// Record the shape of what is now up, so a later `devstack tunnel
+			// restart` re-establishes this and not the flag defaults.
+			if started > 0 {
+				_ = workspace.UpdateTunnelForward(ws.Name, workspace.TunnelForward{
+					Mode:     string(mode),
+					Services: request.GetString("services", ""),
+					Stacks:   wantStacks,
+					AsBase:   asBase,
+					Otel:     request.GetBool("otel", false),
+				})
 			}
 			if clashed && mode == tunnel.ModePush && !reclaim {
 				fmt.Fprintf(&sb, "\nA forward fails when something already holds the port on %s. It may be a stale "+
