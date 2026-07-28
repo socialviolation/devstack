@@ -1494,9 +1494,11 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			"Only ports that are actually serving traffic are forwarded; dead/idle services are skipped. "+
 			"The remote host/user are remembered per-workspace after the first successful push, so later calls can omit them. "+
 			"Any host you can ssh to works, including a plain ssh-config alias; a tailnet address is one such host, not a requirement. "+
-			"Actions: 'list' (discovered services + whether each is serving), 'status' (which tunnels are currently up), "+
+			"Actions: 'list' (discovered services + whether each is serving), 'status' (every forward that is up, including any whose service is no longer discoverable), "+
 			"'push' (expose local ports on the remote via ssh -R — the common case), 'pull' (pull ports from a source machine to here via ssh -L), "+
-			"'stop' (tear down all tunnels). The remote is saved automatically on the first successful push/pull."),
+			"'stop' (tear down this workspace's forwards; narrow it with services). "+
+			"'status' and 'stop' work off the forwards actually running, not what discovery covers now, so the observability UI and a stack's forwards are reported and torn down whether or not this call asked for them. "+
+			"The remote is saved automatically on the first successful push/pull, along with the direction and stack mapping, so a later 'devstack tunnel restart' in a shell re-establishes the same thing."),
 		mcp.WithString("action", mcp.Required(),
 			mcp.Description("One of: list, status, push, pull, stop. Read-only, changes nothing: 'list', 'status'. Writes — they start or kill ssh forwards, and push/pull also save the remote: 'push', 'pull', 'stop'.")),
 		mcp.WithString("host",
@@ -1504,7 +1506,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 		mcp.WithString("user",
 			mcp.Description("SSH user. Optional — falls back to the saved user for this workspace.")),
 		mcp.WithString("services",
-			mcp.Description("Comma-separated exact service names to limit to. Optional; default is all serving services.")),
+			mcp.Description("Comma-separated exact service names to limit to, as printed by action=list. Optional; default is all serving services, and for 'stop' every forward this workspace has running.")),
 		mcp.WithBoolean("reclaim",
 			mcp.Description("Push only. Kill whatever already holds these ports on the remote before forwarding. Destructive: it tears down forwards belonging to other stacks, so leave it off unless a push failed to bind and you know the port is yours.")),
 		mcp.WithBoolean("stacks",

@@ -231,6 +231,15 @@ func discoverTunnelServices(ws *workspace.Workspace) ([]tunnel.Service, error) {
 	return svcs, nil
 }
 
+// serviceNames joins service names for a one-line summary.
+func serviceNames(svcs []tunnel.Service) string {
+	out := make([]string, len(svcs))
+	for i, s := range svcs {
+		out[i] = s.Name
+	}
+	return strings.Join(out, ", ")
+}
+
 // tunnelPortLabel renders a forward's ports, naming both ends when they differ
 // so a mapped forward does not read as a service on the wrong port.
 func tunnelPortLabel(s tunnel.Service) string {
@@ -341,8 +350,15 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 	// forward on the remote.
 	if mode == tunnel.ModePush {
 		serving, idle := tunnel.PartitionServing(svcs)
-		for _, s := range idle {
-			color.New(color.Faint).Printf("  [skip]    %-30s %s  (not serving)\n", s.Name, tunnelPortLabel(s))
+		// Naming every stopped service buries the forwards you asked for. A
+		// count is enough, unless you named services yourself, in which case a
+		// specific absence is the answer to the question you asked.
+		if len(idle) > 0 {
+			if tunnelServicesFlag != "" {
+				color.New(color.Faint).Printf("  not serving, skipped: %s\n", serviceNames(idle))
+			} else {
+				color.New(color.Faint).Printf("  %d not serving, skipped\n", len(idle))
+			}
 		}
 		svcs = serving
 		if len(svcs) == 0 {

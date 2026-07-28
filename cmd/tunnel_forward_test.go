@@ -226,3 +226,65 @@ func TestPushAsBaseBindsBasePortOnTheFarEnd(t *testing.T) {
 	}
 	resetTunnelFlags()
 }
+
+// deadPort returns a port nothing is listening on.
+func deadPort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	return port
+}
+
+// A workspace where most services are stopped used to print a line each before
+// the forwards you asked for. The count carries the same information.
+func TestPushSummarisesWhatItSkipped(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	if err := workspace.Save([]workspace.Workspace{{Name: "navexa", Path: root, TiltPort: workspace.HostTiltPort}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+
+	live, dead1, dead2 := servingPort(t), deadPort(t), deadPort(t)
+	serveDaemon(t, fmt.Sprintf(`{"uiResources":[
+		{"metadata":{"name":"navexa:api"},"status":{"runtimeStatus":"ok","endpointLinks":[{"url":"http://localhost:%d"}]}},
+		{"metadata":{"name":"navexa:importer"},"status":{"runtimeStatus":"none","endpointLinks":[{"url":"http://localhost:%d"}]}},
+		{"metadata":{"name":"navexa:worker"},"status":{"runtimeStatus":"none","endpointLinks":[{"url":"http://localhost:%d"}]}}
+	]}`, live, dead1, dead2))
+	stubSSH(t)
+
+	resetTunnelFlags()
+	out := captureFaint(t)
+	if err := runTunnelForward(tunnel.ModePush, []string{"testhost"}); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "2 not serving, skipped") {
+		t.Errorf("no summary of what was skipped: %q", got)
+	}
+	for _, name := range []string{"importer", "worker"} {
+		if strings.Contains(got, name) {
+			t.Errorf("still naming every stopped service (%s): %q", name, got)
+		}
+	}
+
+	// Naming them yourself makes their absence the answer to your question.
+	for _, port := range tunnel.TrackedPorts("navexa") {
+		tunnel.KillPort("navexa", port)
+	}
+	resetTunnelFlags()
+	tunnelServicesFlag = "importer,worker"
+	out2 := captureFaint(t)
+	if err := runTunnelForward(tunnel.ModePush, []string{"testhost"}); err != nil {
+		t.Fatalf("filtered push: %v", err)
+	}
+	if got := out2.String(); !strings.Contains(got, "not serving, skipped: importer, worker") {
+		t.Errorf("a named service that is down went unreported: %q", got)
+	}
+	resetTunnelFlags()
+}

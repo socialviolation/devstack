@@ -820,6 +820,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"devstack tunnel push [--stacks] [--otel]     # forward local service ports over SSH (--stacks adds stack instances, --otel adds the observability UI)\n" +
 		"devstack tunnel push --as-base <name>        # put one stack on base's ports, so the far end reaches it at the usual address\n" +
 		"devstack tunnel stop [--services <names>]    # stop all this workspace's tunnels, or just the named ones\n" +
+		"devstack tunnel restart                      # repeat the last push/pull: same direction, services and mapping\n" +
 		"devstack env set <name> KEY=VALUE            # define an environment's config-patch values\n" +
 		"devstack env use <name> [--service|--stack]  # point base, a service, or a stack at env <name>\n" +
 		"devstack env which [--service|--stack]        # which env an instance resolves to, and its values\n" +
@@ -831,7 +832,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"### MCP tools\n\n" +
 		"The `.mcp.json` in this repo wires up the devstack MCP server — the agent interface. The tools are " +
 		"`environment`, `status`, `start`, `stop`, `restart`, `topology`, `process_logs`, `configure`, `service_env`, `observability`, `tunnel` and `investigate`; " +
-		"the stack tools `stack_create`, `stack_up`, `stack_down`, `stack_list`, `stack_rm`; and the env tools `env_use`, `env_which`, `env_set`. " +
+		"the stack tools `stack_create`, `stack_up`, `stack_down`, `stack_list`, `stack_rm`, `stack_note`; and the env tools `env_use`, `env_which`, `env_set`. " +
 		"Two are conditional: `investigate` is registered only while observability is enabled, `tunnel` only when an ssh client is available. " +
 		"Call `environment` first: it reports what is actually registered here, and each tool's own description is more current than this file.\n\n" +
 		"Feature stacks and environments can be driven end to end over MCP. Some things still need the shell: `devstack workspace up` / `workspace down`, `devstack workspace doctor`, `devstack stack config`, " +
