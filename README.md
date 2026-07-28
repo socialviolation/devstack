@@ -246,9 +246,10 @@ If an older copy still carries `DEVSTACK_WORKSPACE` or `TILT_PORT`, refresh it w
 |----------|---------|---------|
 | `DEVSTACK_WORKSPACE` | auto-detected from cwd | Workspace name or path |
 | `DEVSTACK_DEFAULT_SERVICE` | — | Service used when a command or tool is given no name |
-| `DEVSTACK_DAEMON_PORT` | `10300` | Host daemon API port. Legacy alias: `TILT_PORT` |
 | `DEVSTACK_DAEMON_HOST` | `localhost` | Host daemon host. Legacy alias: `TILT_HOST` |
 | `OTELCOL_BIN` | found on `$PATH` | Path to the `otelcol-contrib` binary |
+
+The daemon's port is not configurable. One daemon serves the machine on `:10300`, and every command reaches it there.
 
 ## Files, and what to commit
 

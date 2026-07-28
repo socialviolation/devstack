@@ -16,8 +16,8 @@ var depsCmd = &cobra.Command{
 can start. When you run 'devstack start api', devstack resolves the full dependency
 graph and starts everything in the correct order automatically.
 
-Dependencies are stored in <workspace>/.devstack.json and visualised inline in
-the output of 'devstack groups' and 'devstack status'.
+Dependencies are stored in <workspace>/devstack.workspace.yaml and visualised
+inline in the output of 'devstack groups' and 'devstack status'.
 
 Example: if 'api' depends on 'postgres' and 'redis':
   devstack deps add api postgres

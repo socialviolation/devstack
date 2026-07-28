@@ -23,8 +23,8 @@ Running 'devstack groups' (or 'devstack groups list') shows a rich tree of all
 groups, their members, and the dependencies each member declares — colour-coded
 by group so cross-group dependencies are immediately visible.
 
-Groups are declared in <workspace>/.devstack.json and are used by:
-  devstack start --group=<name>    start all services in a group (respects deps)
+Groups are declared in <workspace>/devstack.workspace.yaml and are used by:
+  devstack start <name>            start all services in a group (respects deps)
   devstack status                  groups are the top-level sections in the tree
 
 SUBCOMMANDS
