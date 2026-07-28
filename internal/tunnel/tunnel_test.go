@@ -255,7 +255,7 @@ func TestLaunchLifecycle(t *testing.T) {
 	defer func() { sshBin = orig }()
 
 	const port = 59321
-	pid, err := Launch("testws", ModePull, "user", "host", port)
+	pid, err := Launch("testws", ModePull, "user", "host", port, port)
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -319,5 +319,42 @@ func TestTrackedPortsNoForwards(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if got := TrackedPorts("navexa"); len(got) != 0 {
 		t.Errorf("TrackedPorts() = %v, want none", got)
+	}
+}
+
+// ssh orders the near and far ports differently for -L and -R, so a mapped
+// forward that got the order wrong would point the wrong way and still start.
+func TestLaunchMapsPortsPerMode(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	script := filepath.Join(dir, "ssh")
+	record := filepath.Join(dir, "args")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho \"$@\" >> "+record+"\nsleep 5\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	old := sshBin
+	sshBin = script
+	t.Cleanup(func() { sshBin = old })
+
+	if _, err := Launch("ws", ModePush, "u", "h", 20005, 63290); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if _, err := Launch("ws", ModePull, "u", "h", 4200, 20006); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	KillPort("ws", 20005)
+	KillPort("ws", 4200)
+
+	data, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	// -R listens on the far end and resolves here; -L is the reverse.
+	if !strings.Contains(got, "-R 63290:localhost:20005") {
+		t.Errorf("push should listen on the remote's port and land on ours: %s", got)
+	}
+	if !strings.Contains(got, "-L 4200:localhost:20006") {
+		t.Errorf("pull should listen on our port and reach the remote's: %s", got)
 	}
 }

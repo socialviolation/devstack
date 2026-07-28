@@ -1617,7 +1617,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			}
 			var clashed bool
 			for _, s := range svcs {
-				pid, lerr := tunnel.Launch(ws.Name, mode, ruser, rhost, s.Port)
+				pid, lerr := tunnel.Launch(ws.Name, mode, ruser, rhost, s.Port, s.Far())
 				if lerr != nil {
 					clashed = true
 					fmt.Fprintf(&sb, "  [FAILED]  %-30s :%d  (%v)\n", s.Name, s.Port, lerr)

@@ -333,7 +333,7 @@ Inspect and change the workspace's OTEL config: `status` (enabled, backend, coll
 ### `tunnel`
 Forward service ports to/from a remote host over SSH (push/pull/list/status/stop). Registered when an ssh client is available. Any host you can ssh to works, including a plain ssh-config alias; a tailnet address is one such host, not a requirement.
 
-From the CLI, `--stacks` also forwards active feature stacks' ports and `--otel` also forwards the observability UI, so the remote reads this machine's traces at the same address you use locally:
+From the CLI, `--stacks` forwards each active stack instance on its own port, `--stack <name>` puts one stack on the ports base normally serves (so the remote reaches it at the address it already knows, without reconfiguring anything there), and `--otel` also forwards the observability UI, so the remote reads this machine's traces at the same address you use locally:
 
 ```bash
 devstack tunnel push my-box.ts.net --otel

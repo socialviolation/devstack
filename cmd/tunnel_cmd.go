@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/otel"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/tunnel"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -45,7 +46,15 @@ to also forward the ports of its active feature stacks:
 Add --otel to forward the observability UI as well, so the remote can read this
 machine's traces at the same address you use locally:
 
-  devstack tunnel push my-box.ts.net --otel`,
+  devstack tunnel push my-box.ts.net --otel
+
+--stacks forwards each stack instance on its own allocated port. --stack <name>
+does something different: it puts ONE stack on the ports base normally serves,
+so the remote reaches that stack at the address it already knows, without
+reconfiguring anything over there:
+
+  devstack tunnel push my-box.ts.net --stack agent
+  # remote :4200 → local :20006, remote :63290 → local :20005`,
 }
 
 var (
@@ -53,6 +62,7 @@ var (
 	tunnelServicesFlag string
 	tunnelReclaimFlag  bool
 	tunnelStacksFlag   bool
+	tunnelStackFlag    string
 	tunnelOtelFlag     bool
 )
 
@@ -105,7 +115,11 @@ func init() {
 		c.Flags().BoolVar(&tunnelReclaimFlag, "reclaim", false,
 			"Kill whatever already holds these ports on the remote before forwarding (destructive: will tear down other stacks' forwards)")
 		c.Flags().BoolVar(&tunnelStacksFlag, "stacks", false,
-			"Also forward this workspace's active feature-stack service ports")
+			"Also forward this workspace's active feature-stack service ports, each on its own port")
+	}
+	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, listCmd} {
+		c.Flags().StringVar(&tunnelStackFlag, "stack", "",
+			"Forward one feature stack onto the base ports: the remote reaches the stack's instances at the addresses base normally uses")
 	}
 	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, listCmd} {
 		c.Flags().BoolVar(&tunnelOtelFlag, "otel", false,
@@ -158,6 +172,10 @@ func discoverTunnelServices(ws *workspace.Workspace) ([]tunnel.Service, error) {
 			filter[s] = true
 		}
 	}
+	if tunnelStackFlag != "" {
+		return stackOnBasePorts(view, filter, ws, tunnelStackFlag)
+	}
+
 	svcs := tunnel.Discover(view, filter, ws.Name, tunnelStacksFlag)
 	if tunnelOtelFlag {
 		ui, reason, ok := otelUI(ws)
@@ -169,6 +187,57 @@ func discoverTunnelServices(ws *workspace.Workspace) ([]tunnel.Service, error) {
 	}
 	sort.Slice(svcs, func(i, j int) bool { return svcs[i].Port < svcs[j].Port })
 	return svcs, nil
+}
+
+// tunnelPortLabel renders a forward's ports, naming both ends when they differ
+// so a mapped forward does not read as a service on the wrong port.
+func tunnelPortLabel(s tunnel.Service) string {
+	if !s.Mapped() {
+		return fmt.Sprintf(":%d", s.Port)
+	}
+	return fmt.Sprintf("remote :%d → local :%d", s.RemotePort, s.Port)
+}
+
+// stackOnBasePorts maps one stack's instances onto the ports base normally
+// serves, so the far end reaches the stack at the address it already knows. Each
+// forward listens on base's port over there and lands on the stack's port here;
+// a service the stack does not overlay is left out, since base already serves it.
+func stackOnBasePorts(view *tilt.TiltView, filter map[string]bool, ws *workspace.Workspace, stackName string) ([]tunnel.Service, error) {
+	rec, err := stack.FindStack(ws.Name, stackName)
+	if err != nil {
+		return nil, err
+	}
+
+	basePorts := map[string]int{}
+	for _, s := range tunnel.Discover(view, nil, ws.Name, false) {
+		if _, seen := basePorts[s.Service]; !seen {
+			basePorts[s.Service] = s.Port
+		}
+	}
+
+	var out []tunnel.Service
+	var unmapped []string
+	for _, s := range tunnel.Discover(view, filter, ws.Name, true) {
+		if !strings.HasSuffix(s.Name, ":"+rec.Name) {
+			continue
+		}
+		base, ok := basePorts[s.Service]
+		if !ok {
+			unmapped = append(unmapped, s.Service)
+			continue
+		}
+		s.RemotePort = base
+		out = append(out, s)
+	}
+
+	if len(unmapped) > 0 {
+		color.New(color.Faint).Printf("  skipped (no base port to map onto): %s\n", strings.Join(unmapped, ", "))
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("stack %q has no running services to forward — bring it up with: devstack stack up %s", rec.Name, rec.Name)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].RemotePort < out[j].RemotePort })
+	return out, nil
 }
 
 // otelUI resolves the observability UI as a forwardable port. It is not a Tilt
@@ -273,7 +342,7 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 	if mode == tunnel.ModePush {
 		serving, idle := tunnel.PartitionServing(svcs)
 		for _, s := range idle {
-			color.New(color.Faint).Printf("  [skip]    %-30s :%d  (not serving)\n", s.Name, s.Port)
+			color.New(color.Faint).Printf("  [skip]    %-30s %s  (not serving)\n", s.Name, tunnelPortLabel(s))
 		}
 		svcs = serving
 		if len(svcs) == 0 {
@@ -302,7 +371,7 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 	if mode == tunnel.ModePush && tunnelReclaimFlag {
 		ports := make([]int, len(svcs))
 		for i, s := range svcs {
-			ports[i] = s.Port
+			ports[i] = s.Far()
 		}
 		fmt.Printf("  Reclaiming ports on %s...\n", host)
 		tunnel.ReclaimRemote(sshUser, host, ports)
@@ -310,13 +379,13 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 
 	var clashed bool
 	for _, s := range svcs {
-		pid, err := tunnel.Launch(ws.Name, mode, sshUser, host, s.Port)
+		pid, err := tunnel.Launch(ws.Name, mode, sshUser, host, s.Port, s.Far())
 		if err != nil {
 			clashed = true
-			color.New(color.FgRed).Printf("  [FAILED]  %-30s :%d  (%v)\n", s.Name, s.Port, err)
+			color.New(color.FgRed).Printf("  [FAILED]  %-30s %s  (%v)\n", s.Name, tunnelPortLabel(s), err)
 			continue
 		}
-		fmt.Printf("  [started] %-30s :%d  (pid %d)\n", s.Name, s.Port, pid)
+		fmt.Printf("  [started] %-30s %s  (pid %d)\n", s.Name, tunnelPortLabel(s), pid)
 	}
 	if clashed && mode == tunnel.ModePush && !tunnelReclaimFlag {
 		fmt.Printf("\n  A forward fails when something already holds the port on %s — often a stale\n"+
@@ -359,6 +428,20 @@ func portLabels(ws *workspace.Workspace, svcs []tunnel.Service) map[int]string {
 	labels := map[int]string{}
 	if ui, _, ok := otelUI(ws); ok {
 		labels[ui.Port] = ui.Name
+	}
+	// A stack's allocated ports are recorded, so a forward of one stays
+	// identifiable even when the tool was called without --stack, or with the
+	// daemon down.
+	if recs, err := stack.LoadStore(ws.Name); err == nil {
+		for _, rec := range recs {
+			for key, port := range rec.Ports {
+				svc := key
+				if i := strings.IndexByte(key, '/'); i >= 0 {
+					svc = key[:i]
+				}
+				labels[port] = svc + ":" + rec.Name
+			}
+		}
 	}
 	for _, s := range svcs {
 		labels[s.Port] = s.Name
@@ -447,7 +530,7 @@ func runTunnelList(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println("Devstack services:")
 	for _, s := range svcs {
-		fmt.Printf("  %-30s :%d  (%s)\n", s.Name, s.Port, s.Runtime)
+		fmt.Printf("  %-30s %s  (%s)\n", s.Name, tunnelPortLabel(s), s.Runtime)
 	}
 	return nil
 }
