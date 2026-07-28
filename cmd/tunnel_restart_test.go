@@ -111,6 +111,43 @@ func TestRestartRepeatsTheLastForward(t *testing.T) {
 	restartCommand(t)
 }
 
+// What a push recorded has to survive the trip back out of the registry and
+// through workspace resolution, or restart reads nothing and the flags it was
+// meant to remember are gone anyway.
+func TestRecordedForwardSurvivesWorkspaceResolution(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := t.TempDir()
+	if err := workspace.Save([]workspace.Workspace{{Name: "navexa", Path: root, TiltPort: 10300}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := workspace.UpdateTunnelForward("navexa", workspace.TunnelForward{Mode: "pull", AsBase: "agent"}); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(root)
+	ws, err := tunnelContext()
+	if err != nil {
+		t.Fatalf("tunnelContext: %v", err)
+	}
+	if ws.TunnelLast == nil {
+		t.Fatal("the recorded forward did not survive workspace resolution")
+	}
+
+	cmd := restartCommand(t)
+	mode, said, err := resumeLastForward(cmd, ws.TunnelLast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != tunnel.ModePull {
+		t.Errorf("mode = %q, want pull", mode)
+	}
+	if said != "pull --as-base agent" {
+		t.Errorf("reported %q, want \"pull --as-base agent\"", said)
+	}
+	restartCommand(t)
+}
+
 func TestRestartRejectsAnUnknownDirection(t *testing.T) {
 	cmd := restartCommand(t)
 	if err := cmd.Flags().Set("mode", "sideways"); err != nil {
