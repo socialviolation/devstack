@@ -5,7 +5,9 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
@@ -80,12 +82,14 @@ func init() {
 	stackCmd.AddCommand(stackCreateCmd)
 	stackCmd.AddCommand(stackRemoveCmd)
 	stackCmd.AddCommand(stackListCmd)
+	stackCmd.AddCommand(stackNoteCmd)
 	stackCmd.AddCommand(stackConfigCmd)
 	stackCmd.AddCommand(stackUpCmd)
 	stackCmd.AddCommand(stackDownCmd)
 
 	stackCreateCmd.Flags().String("repos", "", "Comma-separated service names that this stack changes")
 	stackCreateCmd.Flags().String("branch", "", "Branch for the changed repos (default: the stack name). Attaches if it already exists.")
+	stackCreateCmd.Flags().String("note", "", "What this stack is for — a ticket URL, an issue key, a sentence. Shown by 'devstack stack list'.")
 	stackRemoveCmd.Flags().Bool("force", false, "Remove worktrees even if they have uncommitted changes")
 	stackConfigCmd.Flags().String("stack", "", "Stack name (default: the stack containing the current directory)")
 }
@@ -103,7 +107,8 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	branchFlag, _ := cmd.Flags().GetString("branch")
-	res, err := stack.Create(stack.CreateInput{Base: base, Name: args[0], Repos: changed, Branch: branchFlag})
+	noteFlag, _ := cmd.Flags().GetString("note")
+	res, err := stack.Create(stack.CreateInput{Base: base, Name: args[0], Repos: changed, Branch: branchFlag, Note: noteFlag})
 	if err != nil {
 		return err
 	}
@@ -201,20 +206,109 @@ func runStackList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Println("Active stacks' services run in the one host daemon (RUNS ON), namespaced <workspace>:<service>:<stack>.")
-	fmt.Printf("%-24s %-14s %-9s %-9s %s\n", "STACK", "BASE", "STATUS", "RUNS ON", "LINKS")
-	fmt.Println(strings.Repeat("-", 90))
+	fmt.Println("Active stacks' services run in the one host daemon, namespaced <workspace>:<service>:<stack>.")
+	fmt.Printf("%-16s %-8s %-34s %-30s %s\n", "STACK", "STATUS", "SERVICES", "BRANCH", "AGE")
+	fmt.Println(strings.Repeat("-", 100))
 	for _, s := range stacks {
-		links := make([]string, 0, len(s.Ports))
+		fmt.Printf("%-16s %-8s %-34s %-30s %s\n",
+			shortStackName(s.Name, s.BaseName), s.Status,
+			truncateCell(strings.Join(s.Services, ", "), 34),
+			truncateCell(s.Branch, 30), stackAge(s.Created))
+		if s.Note != "" {
+			color.New(color.Faint).Printf("  %s\n", s.Note)
+		}
+		var links []string
 		for _, k := range sortedKeys(s.Ports) {
 			links = append(links, fmt.Sprintf("%s=http://localhost:%d", k, s.Ports[k]))
 		}
-		linkStr := "-"
 		if len(links) > 0 {
-			linkStr = strings.Join(links, " ")
+			color.New(color.Faint).Printf("  %s\n", strings.Join(links, "  "))
 		}
-		fmt.Printf("%-24s %-14s %-9s :%-8d %s\n", s.Name, s.BaseName, s.Status, s.BasePort, linkStr)
 	}
+	fmt.Println()
+	color.New(color.Faint).Println("SERVICES is the overlay: the services this stack runs its own copy of. Everything else it borrows from base.")
+	color.New(color.Faint).Println("Set what a stack is for with: devstack stack note <name> \"...\"")
+	return nil
+}
+
+// shortStackName trims the '<base>--' prefix, since every parameter takes the
+// short half.
+func shortStackName(full, base string) string {
+	return strings.TrimPrefix(full, base+"--")
+}
+
+func truncateCell(s string, n int) string {
+	if s == "" {
+		return "-"
+	}
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-1] + "…"
+}
+
+// stackAge is how long a stack has been open. A stack nobody has touched in
+// weeks is usually one that was finished and never removed.
+func stackAge(created time.Time) string {
+	if created.IsZero() {
+		return "-"
+	}
+	d := time.Since(created)
+	switch {
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
+}
+
+var stackNoteCmd = &cobra.Command{
+	Use:   "note <name> [text]",
+	Short: "Show or set what a stack is for",
+	Long: `Record what a stack is for, in your words — a ticket URL, an issue key, a
+sentence. devstack never derives this: a branch says what changed, a note says
+why, and a week later the note is the part you cannot reconstruct.
+
+With no text, prints the current note. Pass an empty string to clear it.
+
+Examples:
+  devstack stack note perf "NAV-412 daily value spike"
+  devstack stack note perf https://linear.app/navexa/issue/NAV-412
+  devstack stack note perf`,
+	Args:         cobra.RangeArgs(1, 2),
+	SilenceUsage: true,
+	RunE:         runStackNote,
+}
+
+func runStackNote(cmd *cobra.Command, args []string) error {
+	base, err := resolveWorkspace(viper.GetString("workspace"))
+	if err != nil {
+		return err
+	}
+	rec, err := stack.FindStack(base.Name, args[0])
+	if err != nil {
+		return err
+	}
+
+	if len(args) == 1 {
+		if rec.Note == "" {
+			fmt.Printf("No note on stack %q. Set one with: devstack stack note %s \"...\"\n", rec.Name, rec.Name)
+			return nil
+		}
+		fmt.Println(rec.Note)
+		return nil
+	}
+
+	if err := stack.SetNote(base.Name, rec.Name, args[1]); err != nil {
+		return err
+	}
+	if args[1] == "" {
+		fmt.Printf("✓ Cleared the note on %q.\n", rec.Name)
+		return nil
+	}
+	fmt.Printf("✓ %s: %s\n", rec.Name, args[1])
 	return nil
 }
 
