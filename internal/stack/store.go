@@ -24,6 +24,7 @@ type Record struct {
 	Root       string            `json:"root"`                  // synthesised stack root dir (sibling of base)
 	Branch     string            `json:"branch"`                // branch the changed repos' worktrees are on
 	Env        string            `json:"env,omitempty"`         // active env name applied at the stack scope
+	Note       string            `json:"note,omitempty"`        // what this stack is for, in the author's words
 	Overlay    []string          `json:"overlay"`               // overlay service names, sorted
 	Worktrees  map[string]string `json:"worktrees"`             // service -> worktree path
 	Ports      map[string]int    `json:"ports"`                 // service/portKey -> allocated port
@@ -95,6 +96,22 @@ func FindStack(workspaceName, name string) (*Record, error) {
 		}
 	}
 	return nil, fmt.Errorf("stack %q not found in workspace %q", name, workspaceName)
+}
+
+// SetNote records what a stack is for. A branch name says what changed; this
+// says why, and is the only field devstack never derives.
+func SetNote(base, name, note string) error {
+	recs, err := LoadStore(base)
+	if err != nil {
+		return err
+	}
+	for i := range recs {
+		if recs[i].Name == name {
+			recs[i].Note = note
+			return saveStore(base, recs)
+		}
+	}
+	return fmt.Errorf("stack %q not found in workspace %q", name, base)
 }
 
 // SetActive marks a base workspace's stack active or inactive and persists it. An

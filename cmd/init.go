@@ -784,6 +784,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"A feature stack is a parallel version of one or more services, run from a git worktree on a feature branch, " +
 		"on its own dynamically-allocated port, beside the base — reusing the base stack for every service it does not change. " +
 		"Two stacks means two worktrees, two branches, and two extra ports, all live at once in the one host daemon. " +
+		"`devstack stack list` says what each one overlays, what branch it is on, how old it is, and its note — set the note with `devstack stack note <name>` so a stack you come back to next week still explains itself. " +
 		"A shared database is **not** isolated per stack — stacks write to the same DB as base unless the service itself points elsewhere.\n\n" +
 		"### Working on a stack (branch + worktree)\n\n" +
 		"Each stack's changed service lives in its **own git worktree** — a separate folder checked out on the stack's branch, created by `devstack stack create` (path shown in its output and by `devstack stack list`). To work on the feature, **`cd` into that worktree folder and edit there.** Do NOT `git checkout` the feature branch in the base checkout: a stack is *already* its own folder on its own branch, so you switch context by changing directory, never by switching branches. Edits in a stack's worktree stay on that stack's branch; base and every other stack are untouched. After editing, reload only that instance with `devstack restart " + svc + " --stack <name>` (or `devstack start " + svc + " --stack <name>`), then verify against that instance's own port.\n\n" +
@@ -813,7 +814,8 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"devstack stack up <name>                     # bring the stack's services up on their own ports\n" +
 		"devstack stack down <name>                   # stop the stack (keeps its worktrees)\n" +
 		"devstack stack rm <name>                     # tear down: remove worktrees, release ports, delete config\n" +
-		"devstack stack list                          # registered stacks and their ports\n" +
+		"devstack stack list                          # what each stack overlays, its branch, age and note\n" +
+		"devstack stack note <name> \"...\"             # record what a stack is for (ticket URL, issue key, a sentence)\n" +
 		"devstack stack config " + svc + " --stack <name>    # effective config a stack's service runs with\n" +
 		"devstack tunnel push [--stacks] [--otel]     # forward local service ports over SSH (--stacks adds stack instances, --otel adds the observability UI)\n" +
 		"devstack env set <name> KEY=VALUE            # define an environment's config-patch values\n" +

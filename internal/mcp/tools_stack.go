@@ -37,6 +37,8 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			mcp.Description("Short stack name (e.g. 'import-review'). The full stack identity becomes '<base>--<name>'; every stack parameter across these tools takes the short name.")),
 		mcp.WithString("repos", mcp.Required(),
 			mcp.Description("Comma-separated exact service names this stack changes (e.g. 'frontend,backend'). Services that call these are pulled into the overlay automatically.")),
+		mcp.WithString("note",
+			mcp.Description("What this stack is for, in the author's words — a ticket URL, an issue key, a sentence. devstack never derives this: the branch says what changed, the note says why. Shown by stack_list. Optional, and editable later with the CLI: devstack stack note <name> \"...\"")),
 		mcp.WithString("branch",
 			mcp.Description("Git branch for the changed repos' worktrees. Created if absent, attached to if it already exists. Defaults to the stack name.")),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -64,6 +66,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		}
 
 		res, err := stack.Create(stack.CreateInput{
+			Note:   request.GetString("note", ""),
 			Base:   ws,
 			Name:   name,
 			Repos:  repos,
@@ -116,7 +119,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 
 func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_list",
-		mcp.WithDescription("List the feature stacks of THIS workspace with their base, status (active = its services run in the host daemon; inactive = worktrees and record exist but nothing of it runs, so tools that act on running services error \"not up\" for it), the base daemon port their services run in when active, and allocated service links. The STACK column prints each stack's full identity '<base>--<name>' (the form telemetry and daemon resources use); every stack parameter across these tools takes the short '<name>' half. "+serviceLinksDesc),
+		mcp.WithDescription("List the feature stacks of THIS workspace: which services each one overlays (runs its own copy of), its branch, its env, the note saying what it is for, its allocated links, and its base, status (active = its services run in the host daemon; inactive = worktrees and record exist but nothing of it runs, so tools that act on running services error \"not up\" for it), the base daemon port their services run in when active, and allocated service links. The STACK column prints each stack's full identity '<base>--<name>' (the form telemetry and daemon resources use); every stack parameter across these tools takes the short '<name>' half. "+serviceLinksDesc),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -135,18 +138,30 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			return mcp.NewToolResultText(fmt.Sprintf("No stacks in workspace %q.", ws.Name)), nil
 		}
 		var sb strings.Builder
-		fmt.Fprintf(&sb, "%-24s %-14s %-9s %-9s %s\n", "STACK", "BASE", "STATUS", "RUNS ON", "LINKS")
 		for _, s := range stacks {
+			short := strings.TrimPrefix(s.Name, s.BaseName+"--")
+			fmt.Fprintf(&sb, "%s (%s, base :%d)\n", short, s.Status, s.BasePort)
+			services := "-"
+			if len(s.Services) > 0 {
+				services = strings.Join(s.Services, ", ")
+			}
+			fmt.Fprintf(&sb, "  overlays: %s\n", services)
+			fmt.Fprintf(&sb, "  branch:   %s\n", s.Branch)
+			if s.Env != "" {
+				fmt.Fprintf(&sb, "  env:      %s\n", s.Env)
+			}
+			if s.Note != "" {
+				fmt.Fprintf(&sb, "  note:     %s\n", s.Note)
+			}
 			links := make([]string, 0, len(s.Ports))
 			for _, k := range sortedPortKeys(s.Ports) {
 				links = append(links, fmt.Sprintf("%s=http://localhost:%d", k, s.Ports[k]))
 			}
-			linkStr := "-"
 			if len(links) > 0 {
-				linkStr = strings.Join(links, " ")
+				fmt.Fprintf(&sb, "  links:    %s\n", strings.Join(links, " "))
 			}
-			fmt.Fprintf(&sb, "%-24s %-14s %-9s :%-8d %s\n", s.Name, s.BaseName, s.Status, s.BasePort, linkStr)
 		}
+		sb.WriteString("\noverlays are the services this stack runs its own copy of; every other service it borrows from base.\n")
 		return mcp.NewToolResultText(sb.String()), nil
 	})
 }

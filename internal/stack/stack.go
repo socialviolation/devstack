@@ -22,6 +22,7 @@ type CreateInput struct {
 	Name   string
 	Repos  []string
 	Branch string
+	Note   string
 }
 
 type OverlayMember struct {
@@ -67,6 +68,11 @@ type StackInfo struct {
 	BasePort int
 	Status   string
 	Ports    map[string]int
+	Services []string
+	Branch   string
+	Env      string
+	Note     string
+	Created  time.Time
 }
 
 func Create(in CreateInput) (*CreateResult, error) {
@@ -213,6 +219,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 		Base:      base.Name,
 		Root:      stackRoot,
 		Branch:    branch,
+		Note:      in.Note,
 		Overlay:   overlayNames,
 		Worktrees: worktrees,
 		Ports:     res.Ports,
@@ -299,6 +306,11 @@ func List(workspaceName string) ([]StackInfo, error) {
 			BasePort: basePort,
 			Status:   stackStatus(rec),
 			Ports:    ports,
+			Services: rec.Overlay,
+			Branch:   rec.Branch,
+			Env:      rec.Env,
+			Note:     rec.Note,
+			Created:  rec.CreatedAt,
 		})
 	}
 	return stacks, nil
