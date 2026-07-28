@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	osuser "os/user"
 	"sort"
@@ -22,11 +23,11 @@ var tunnelCmd = &cobra.Command{
 	Short: "Forward workspace service ports over SSH to/from a remote host",
 	Long: `Discover the running services in this workspace and forward their ports over SSH.
 
-Two modes:
-  push   Run on THIS machine. Exposes local service ports on a remote host
-         (ssh -R), so the remote can reach them on localhost:<port>.
-  pull   Run on a REMOTE machine. Pulls ports from a source machine back to
-         here (ssh -L).
+Both commands run where you are sitting. What differs is which way the ports move:
+  push   Run it on the machine the services are running on. Exposes those ports
+         on the far host (ssh -R), which reaches them at localhost:<port>.
+  pull   Run it on the machine you want to reach the services FROM. Brings the
+         far host's ports back to this one (ssh -L).
 
 The remote host/user are remembered per-workspace after the first run, so later
 invocations can omit them:
@@ -34,27 +35,28 @@ invocations can omit them:
   devstack tunnel push my-box.ts.net --user alice   # first time
   devstack tunnel push                              # reuses saved remote
 
-Filter to specific services with --services:
+Filter to specific services with --services. These are exact service names —
+the ones 'devstack tunnel list' prints, not partial matches:
 
-  devstack tunnel push my-box.ts.net --services api,frontend
+  devstack tunnel push my-box.ts.net --services navexa-api,navexa-frontend
 
-By default only this workspace's base service ports are forwarded. Add --stacks
-to also forward the ports of its active feature stacks:
+By default only this workspace's base service ports are forwarded. The two stack
+modes do different things and cannot be combined:
 
-  devstack tunnel push my-box.ts.net --stacks
+  devstack tunnel push my-box.ts.net --stacks          # every stack, each on its own port
+  devstack tunnel push my-box.ts.net --as-base agent   # one stack, on base's ports
 
 Add --otel to forward the observability UI as well, so the remote can read this
 machine's traces at the same address you use locally:
 
   devstack tunnel push my-box.ts.net --otel
 
---stacks forwards each stack instance on its own allocated port. --stack <name>
-does something different: it puts ONE stack on the ports base normally serves,
-so the remote reaches that stack at the address it already knows, without
-reconfiguring anything over there:
+--as-base puts one stack on the ports base normally serves, so the far end
+reaches that stack at the address it already knows and nothing over there needs
+reconfiguring:
 
-  devstack tunnel push my-box.ts.net --stack agent
-  # remote :4200 → local :20006, remote :63290 → local :20005`,
+  devstack tunnel push my-box.ts.net --as-base agent
+  # far end :4200 → here :20006, far end :63290 → here :20005`,
 }
 
 var (
@@ -62,7 +64,7 @@ var (
 	tunnelServicesFlag string
 	tunnelReclaimFlag  bool
 	tunnelStacksFlag   bool
-	tunnelStackFlag    string
+	tunnelAsBaseFlag   string
 	tunnelOtelFlag     bool
 )
 
@@ -89,9 +91,16 @@ func init() {
 	}
 	tunnelStopCmd := &cobra.Command{
 		Use:   "stop",
-		Short: "Stop all tunnels for this workspace",
-		Args:  cobra.NoArgs,
-		RunE:  runTunnelStop,
+		Short: "Stop this workspace's tunnels, all of them or named ones",
+		Long: `Stop forwards this workspace started.
+
+With no --services, every tunnel for the workspace is stopped. Narrow it to the
+ones you name to leave the rest up:
+
+  devstack tunnel stop --services navexa-api
+  devstack tunnel stop`,
+		Args: cobra.NoArgs,
+		RunE: runTunnelStop,
 	}
 	tunnelStatusCmd := &cobra.Command{
 		Use:   "status",
@@ -108,22 +117,24 @@ func init() {
 	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd} {
 		c.Flags().StringVar(&tunnelUserFlag, "user", "", "SSH user (default: saved user or current user)")
 	}
-	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd} {
-		c.Flags().StringVar(&tunnelServicesFlag, "services", "", "Comma-separated service names to forward (default: all)")
+	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, listCmd} {
+		c.Flags().StringVar(&tunnelServicesFlag, "services", "", "Comma-separated exact service names to forward, as printed by 'devstack tunnel list' (default: all)")
 	}
+	listCmd.Flags().BoolVar(&tunnelStacksFlag, "stacks", false, "Include every active feature stack, each on its own port — previews what push --stacks would forward")
+	tunnelStopCmd.Flags().StringVar(&tunnelServicesFlag, "services", "", "Comma-separated exact service names whose tunnels to stop (default: all of this workspace's)")
 	for _, c := range []*cobra.Command{pushCmd, restartCmd} {
 		c.Flags().BoolVar(&tunnelReclaimFlag, "reclaim", false,
-			"Kill whatever already holds these ports on the remote before forwarding (destructive: will tear down other stacks' forwards)")
+			"Kill whatever already holds these ports on the far host before forwarding. Destructive: it may belong to a colleague or another stack, not you. Check first with: ssh <host> 'ss -ltnp | grep <port>'")
 		c.Flags().BoolVar(&tunnelStacksFlag, "stacks", false,
-			"Also forward this workspace's active feature-stack service ports, each on its own port")
+			"Also forward every active feature stack, each on its OWN allocated port. Cannot be combined with --as-base.")
 	}
 	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, listCmd} {
-		c.Flags().StringVar(&tunnelStackFlag, "stack", "",
-			"Forward one feature stack onto the base ports: the remote reaches the stack's instances at the addresses base normally uses")
+		c.Flags().StringVar(&tunnelAsBaseFlag, "as-base", "",
+			"Put ONE feature stack on base's ports, so the far end reaches that stack at the addresses base normally uses. Cannot be combined with --stacks.")
 	}
 	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, listCmd} {
 		c.Flags().BoolVar(&tunnelOtelFlag, "otel", false,
-			"Also forward the observability UI, so the remote can read this machine's traces")
+			"Also forward the observability UI, so the telemetry is readable from the other end at the same address you use here")
 	}
 	restartCmd.Flags().String("mode", string(tunnel.ModePush), "Direction to re-establish: push or pull")
 	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, tunnelStopCmd, tunnelStatusCmd, listCmd} {
@@ -150,21 +161,34 @@ func tunnelContext() (*workspace.Workspace, error) {
 // caller can exit cleanly (no raw Tilt error, no usage dump).
 func tunnelServices(ws *workspace.Workspace) (svcs []tunnel.Service, ok bool) {
 	svcs, err := discoverTunnelServices(ws)
-	if err != nil {
+	if err == nil {
+		return svcs, true
+	}
+	// Only a failure to reach the daemon means the daemon is down; anything else
+	// is the caller's answer to give, not a stale diagnosis.
+	if errors.Is(err, errTunnelDaemon) {
 		fmt.Printf("%s  ·  ", color.New(color.Bold).Sprint(ws.Name))
 		color.New(color.FgYellow).Println("dev daemon not running")
 		fmt.Println("  Run: devstack workspace up")
 		return nil, false
 	}
-	return svcs, true
+	color.New(color.FgRed).Printf("  %v\n", err)
+	return nil, false
 }
+
+// errTunnelDaemon marks the one failure that means "start the daemon".
+var errTunnelDaemon = errors.New("dev daemon unreachable")
 
 // discoverTunnelServices queries Tilt and returns the services/ports to forward,
 // honouring the --services filter. Results are sorted by port for stable output.
 func discoverTunnelServices(ws *workspace.Workspace) ([]tunnel.Service, error) {
+	if tunnelAsBaseFlag != "" && tunnelStacksFlag {
+		return nil, fmt.Errorf("--as-base and --stacks ask for different things: --as-base %s puts that one stack on base's ports, --stacks forwards every stack on its own ports. Pick one", tunnelAsBaseFlag)
+	}
+
 	view, err := tilt.NewClient("localhost", ws.TiltPort).GetView()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", errTunnelDaemon, err)
 	}
 	filter := map[string]bool{}
 	for _, s := range strings.Split(tunnelServicesFlag, ",") {
@@ -172,11 +196,18 @@ func discoverTunnelServices(ws *workspace.Workspace) ([]tunnel.Service, error) {
 			filter[s] = true
 		}
 	}
-	if tunnelStackFlag != "" {
-		return stackOnBasePorts(view, filter, ws, tunnelStackFlag)
+	if tunnelAsBaseFlag != "" {
+		mapped, unmapped, err := tunnel.StackOnBasePorts(view, filter, ws.Name, tunnelAsBaseFlag)
+		if len(unmapped) > 0 {
+			color.New(color.Faint).Printf("  not mapped (no base port to map onto): %s\n", strings.Join(unmapped, ", "))
+		}
+		return mapped, err
 	}
 
 	svcs := tunnel.Discover(view, filter, ws.Name, tunnelStacksFlag)
+	if len(filter) > 0 && len(svcs) == 0 {
+		return nil, fmt.Errorf("no service matches %s. Names must be exact; 'devstack tunnel list' prints the ones this workspace has", tunnelServicesFlag)
+	}
 	if tunnelOtelFlag {
 		ui, reason, ok := otelUI(ws)
 		if ok {
@@ -196,48 +227,6 @@ func tunnelPortLabel(s tunnel.Service) string {
 		return fmt.Sprintf(":%d", s.Port)
 	}
 	return fmt.Sprintf("remote :%d → local :%d", s.RemotePort, s.Port)
-}
-
-// stackOnBasePorts maps one stack's instances onto the ports base normally
-// serves, so the far end reaches the stack at the address it already knows. Each
-// forward listens on base's port over there and lands on the stack's port here;
-// a service the stack does not overlay is left out, since base already serves it.
-func stackOnBasePorts(view *tilt.TiltView, filter map[string]bool, ws *workspace.Workspace, stackName string) ([]tunnel.Service, error) {
-	rec, err := stack.FindStack(ws.Name, stackName)
-	if err != nil {
-		return nil, err
-	}
-
-	basePorts := map[string]int{}
-	for _, s := range tunnel.Discover(view, nil, ws.Name, false) {
-		if _, seen := basePorts[s.Service]; !seen {
-			basePorts[s.Service] = s.Port
-		}
-	}
-
-	var out []tunnel.Service
-	var unmapped []string
-	for _, s := range tunnel.Discover(view, filter, ws.Name, true) {
-		if !strings.HasSuffix(s.Name, ":"+rec.Name) {
-			continue
-		}
-		base, ok := basePorts[s.Service]
-		if !ok {
-			unmapped = append(unmapped, s.Service)
-			continue
-		}
-		s.RemotePort = base
-		out = append(out, s)
-	}
-
-	if len(unmapped) > 0 {
-		color.New(color.Faint).Printf("  skipped (no base port to map onto): %s\n", strings.Join(unmapped, ", "))
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("stack %q has no running services to forward — bring it up with: devstack stack up %s", rec.Name, rec.Name)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].RemotePort < out[j].RemotePort })
-	return out, nil
 }
 
 // otelUI resolves the observability UI as a forwardable port. It is not a Tilt
@@ -388,9 +377,10 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 		fmt.Printf("  [started] %-30s %s  (pid %d)\n", s.Name, tunnelPortLabel(s), pid)
 	}
 	if clashed && mode == tunnel.ModePush && !tunnelReclaimFlag {
-		fmt.Printf("\n  A forward fails when something already holds the port on %s — often a stale\n"+
+		fmt.Printf("\n  See what holds it:  ssh %s 'ss -ltnp | grep <port>'\n"+
+			"  A forward fails when something already holds the port on %s — often a stale\n"+
 			"  forward of your own, but it may belong to another stack. Check the remote, or\n"+
-			"  re-run with --reclaim to kill whatever holds these ports there.\n", host)
+			"  re-run with --reclaim to kill whatever holds these ports there.\n", host, host)
 	}
 	return nil
 }
@@ -413,12 +403,48 @@ func runTunnelStop(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	names := portLabels(ws, svcs)
+
+	if wanted := tunnelServiceFilter(); len(wanted) > 0 {
+		var kept []int
+		for _, port := range ports {
+			if wanted[bareServiceName(names[port])] {
+				kept = append(kept, port)
+			}
+		}
+		if len(kept) == 0 {
+			return fmt.Errorf("no running tunnel matches %s — 'devstack tunnel status' lists what is up", tunnelServicesFlag)
+		}
+		ports = kept
+	}
 	fmt.Println("Stopping tunnels...")
 	for _, port := range ports {
 		tunnel.KillPort(ws.Name, port)
 		fmt.Printf("  [stopped] %-30s :%d\n", portLabel(names, port), port)
 	}
 	return nil
+}
+
+// tunnelServiceFilter parses --services into a set, or nil when unset.
+func tunnelServiceFilter() map[string]bool {
+	out := map[string]bool{}
+	for _, name := range strings.Split(tunnelServicesFlag, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			out[name] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// bareServiceName strips a label's ':stack' suffix so a stack's forward matches
+// the service it is a copy of.
+func bareServiceName(label string) string {
+	if i := strings.IndexByte(label, ':'); i >= 0 {
+		return label[:i]
+	}
+	return label
 }
 
 // portLabels maps a forwarded port to the name to show for it. Ports whose

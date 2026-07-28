@@ -358,3 +358,42 @@ func TestLaunchMapsPortsPerMode(t *testing.T) {
 		t.Errorf("pull should listen on our port and reach the remote's: %s", got)
 	}
 }
+
+// --as-base and --stacks name adjacent-looking modes with opposite effects, so
+// the mapping has to come back keyed to base's ports, not the stack's.
+func TestStackOnBasePortsMapsOntoBase(t *testing.T) {
+	view := &tilt.TiltView{UiResources: []tilt.UIResource{
+		res("ws:api", "ok", "http://localhost:63290"),
+		res("ws:frontend", "ok", "http://localhost:4200"),
+		res("ws:api:agent", "ok", "http://localhost:20005"),
+		res("ws:frontend:agent", "ok", "http://localhost:20006"),
+	}}
+
+	basePorts := map[string]int{}
+	for _, s := range Discover(view, nil, "ws", false) {
+		basePorts[s.Service] = s.Port
+	}
+	if basePorts["api"] != 63290 || basePorts["frontend"] != 4200 {
+		t.Fatalf("base discovery wrong: %v", basePorts)
+	}
+
+	var mapped []Service
+	for _, s := range Discover(view, nil, "ws", true) {
+		if !strings.HasSuffix(s.Name, ":agent") {
+			continue
+		}
+		s.RemotePort = basePorts[s.Service]
+		mapped = append(mapped, s)
+	}
+	if len(mapped) != 2 {
+		t.Fatalf("got %d stack services, want 2: %+v", len(mapped), mapped)
+	}
+	for _, s := range mapped {
+		if !s.Mapped() {
+			t.Errorf("%s should map onto a base port: %+v", s.Name, s)
+		}
+		if s.Far() == s.Port {
+			t.Errorf("%s far port should differ from local: %+v", s.Name, s)
+		}
+	}
+}

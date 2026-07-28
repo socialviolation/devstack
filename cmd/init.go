@@ -818,7 +818,8 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"devstack stack note <name> \"...\"             # record what a stack is for (ticket URL, issue key, a sentence)\n" +
 		"devstack stack config " + svc + " --stack <name>    # effective config a stack's service runs with\n" +
 		"devstack tunnel push [--stacks] [--otel]     # forward local service ports over SSH (--stacks adds stack instances, --otel adds the observability UI)\n" +
-		"devstack tunnel push --stack <name>          # put one stack on base's ports, so the remote reaches it at the usual address\n" +
+		"devstack tunnel push --as-base <name>        # put one stack on base's ports, so the far end reaches it at the usual address\n" +
+		"devstack tunnel stop [--services <names>]    # stop all this workspace's tunnels, or just the named ones\n" +
 		"devstack env set <name> KEY=VALUE            # define an environment's config-patch values\n" +
 		"devstack env use <name> [--service|--stack]  # point base, a service, or a stack at env <name>\n" +
 		"devstack env which [--service|--stack]        # which env an instance resolves to, and its values\n" +

@@ -1489,7 +1489,9 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 		mcp.WithBoolean("reclaim",
 			mcp.Description("Push only. Kill whatever already holds these ports on the remote before forwarding. Destructive: it tears down forwards belonging to other stacks, so leave it off unless a push failed to bind and you know the port is yours.")),
 		mcp.WithBoolean("stacks",
-			mcp.Description("Also forward this workspace's active feature-stack service ports. Default false — only the workspace's base services are forwarded.")),
+			mcp.Description("Also forward every active feature stack, each on its OWN allocated port — the far end reaches them at those ports, not the usual ones. Default false. Cannot be combined with as_base.")),
+		mcp.WithString("as_base",
+			mcp.Description("Put ONE feature stack on base's ports: name the stack, and the far end reaches that stack's instances at the addresses base normally serves, with nothing to reconfigure over there. This is what \"let them test my stack on the usual URLs\" means. Cannot be combined with stacks.")),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(false),
@@ -1516,8 +1518,27 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 				filter[s] = true
 			}
 		}
-		svcs := tunnel.Discover(view, filter, ws.Name, request.GetBool("stacks", false))
-		var otelNote string
+		asBase := strings.TrimSpace(request.GetString("as_base", ""))
+		wantStacks := request.GetBool("stacks", false)
+		if asBase != "" && wantStacks {
+			return mcp.NewToolResultError("as_base and stacks ask for different things: as_base puts that one stack on base's ports, stacks forwards every stack on its own ports. Pick one"), nil
+		}
+
+		var svcs []tunnel.Service
+		var otelNotePrefix string
+		if asBase != "" {
+			mapped, unmapped, aerr := tunnel.StackOnBasePorts(view, filter, ws.Name, asBase)
+			if aerr != nil {
+				return mcp.NewToolResultError(aerr.Error()), nil
+			}
+			svcs = mapped
+			if len(unmapped) > 0 {
+				otelNotePrefix = fmt.Sprintf("not mapped (no base port to map onto): %s\n", strings.Join(unmapped, ", "))
+			}
+		} else {
+			svcs = tunnel.Discover(view, filter, ws.Name, wantStacks)
+		}
+		otelNote := otelNotePrefix
 		if request.GetBool("otel", false) {
 			ui, reason, ok := coreOtelUIService(ws)
 			if ok {
@@ -1536,6 +1557,10 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 				state := "not serving"
 				if tunnel.Listening(s.Port) {
 					state = "serving"
+				}
+				if s.Mapped() {
+					fmt.Fprintf(&sb, "  %-30s far end :%d → here :%d  (%s)\n", s.Name, s.RemotePort, s.Port, state)
+					continue
 				}
 				fmt.Fprintf(&sb, "  %-30s :%d  (%s)\n", s.Name, s.Port, state)
 			}
