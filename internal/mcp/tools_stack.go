@@ -25,6 +25,7 @@ const serviceLinksDesc = "A service link is 'service/portKey=http://localhost:<p
 func registerStackTools(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	registerStackCreateTool(mcpServer, ws)
 	registerStackListTool(mcpServer, ws)
+	registerStackNoteTool(mcpServer, ws)
 	registerStackRemoveTool(mcpServer, ws)
 	registerStackUpTool(mcpServer, ws)
 	registerStackDownTool(mcpServer, ws)
@@ -163,6 +164,51 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 		}
 		sb.WriteString("\noverlays are the services this stack runs its own copy of; every other service it borrows from base.\n")
 		return mcp.NewToolResultText(sb.String()), nil
+	})
+}
+
+func registerStackNoteTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
+	tool := mcp.NewTool("stack_note",
+		mcp.WithDescription("Read or set what a feature stack is for. devstack derives everything else about a stack — which services it overlays, its branch, its age — but not why it exists, and a week later that is the part nobody can reconstruct. Free text: a ticket URL, an issue key, a sentence. Omit note to read the current one; pass an empty string to clear it. Shown by stack_list. Mirrors 'devstack stack note'."),
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
+		mcp.WithString("name", mcp.Required(),
+			mcp.Description(stackShortNameDesc)),
+		mcp.WithString("note",
+			mcp.Description("What the stack is for. Omit to read the current note instead of writing one; pass \"\" to clear it.")),
+	)
+
+	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		name := strings.TrimSpace(request.GetString("name", ""))
+		if name == "" {
+			return mcp.NewToolResultError("name is required"), nil
+		}
+		rec, err := stack.FindStack(ws.Name, name)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		note, given := request.GetArguments()["note"]
+		if !given {
+			if rec.Note == "" {
+				return mcp.NewToolResultText(fmt.Sprintf("Stack %q has no note. Set one so the next reader knows what it is for.", rec.Name)), nil
+			}
+			return mcp.NewToolResultText(rec.Note), nil
+		}
+
+		text := strings.TrimSpace(fmt.Sprintf("%v", note))
+		if note == nil {
+			text = ""
+		}
+		if err := stack.SetNote(ws.Name, rec.Name, text); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if text == "" {
+			return mcp.NewToolResultText(fmt.Sprintf("Cleared the note on %q.", rec.Name)), nil
+		}
+		return mcp.NewToolResultText(fmt.Sprintf("%s: %s", rec.Name, text)), nil
 	})
 }
 

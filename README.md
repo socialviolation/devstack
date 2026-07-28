@@ -16,6 +16,30 @@ Requires Go 1.25+ and [Tilt](https://docs.tilt.dev/install.html) on `$PATH`.
 
 ---
 
+## Updating devstack
+
+Four steps, in order. Skipping one is how you get a devstack that looks updated and is not. Point an agent at this section and it can do the lot.
+
+```bash
+cd <devstack repo> && git pull   # 1. get the code
+go install ./...                 # 2. replace the binary on your PATH
+devstack init --all              # 3. per workspace: refresh AGENTS.md and .mcp.json
+                                 # 4. restart your MCP server / agent session
+devstack status                  # 5. check the daemon and services still answer
+```
+
+What each step is for, and what breaks without it:
+
+Step 2 is the one that bites hardest. A stale binary does not know about backends or tools added since it was built, and it falls back rather than failing: an older devstack reading a workspace configured for OpenObserve silently started SigNoz instead. Newer builds warn when they meet a backend they do not know, and the warning tells you to run this.
+
+Step 3 rewrites the devstack section of `AGENTS.md` in every service repo, plus the pointer block in any `CLAUDE.md`, `GEMINI.md` or `.cursorrules` that already exists. Run it from inside the workspace, once per workspace. It writes files only — no daemon, no reload, nothing restarts. Expect a git diff in each service repo.
+
+Step 4 is invisible and easy to forget. MCP tool descriptions are read once at server startup, so a session that is already running keeps the old tool list: new tools do not appear and new parameters are rejected. Restart the agent session.
+
+If a workspace was mid-upgrade you may also want `devstack otel start`, which replaces the observability container when its pinned image has moved.
+
+---
+
 ## Getting Started
 
 ### New developer setup
