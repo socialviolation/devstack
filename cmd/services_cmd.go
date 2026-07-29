@@ -197,10 +197,14 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 	} else if running < len(allServices) {
 		healthColor = color.New(color.FgYellow)
 	}
-	fmt.Printf("%s  ·  %s\n",
+	header := fmt.Sprintf("%s  ·  %s",
 		color.New(color.Bold).Sprint(ws.Name),
 		healthColor.Sprintf("%d of %d running", running, len(allServices)),
 	)
+	if summary := stackRunningSummary(stackInstancesRunning(view, ws.Name)); summary != "" {
+		header += "  ·  " + color.New(color.FgMagenta).Sprint(summary)
+	}
+	fmt.Println(header)
 
 	// Header — line 2: infrastructure ports (faint, secondary)
 	var infraParts []string

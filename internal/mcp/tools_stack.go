@@ -11,6 +11,7 @@ import (
 
 	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/stack"
+	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -269,7 +270,7 @@ func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 
 func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_up",
-		mcp.WithDescription("Bring a feature stack up: mark it (and its base workspace) active, fold its <base>:<service>:<stack> resources into the one host Tilt daemon, and ensure that daemon is running so it hot-reloads them. Mirrors 'devstack stack up'. This is the remedy when another tool reports the stack is not up: status, process_logs, restart, start, stop and configure all refuse an inactive stack rather than falling through to base. There is no per-stack daemon — its services run on their own ports inside the host daemon. Returns the stack's allocated service links and the daemon status. "+serviceLinksDesc),
+		mcp.WithDescription("Bring a feature stack up: mark it (and its base workspace) active, fold its <base>:<service>:<stack> resources into the one host Tilt daemon, then enable and trigger them so its services actually start (registering a resource does not run it). Reports which services it started; they are starting, not started, so confirm with status before drawing conclusions. Mirrors 'devstack stack up'. This is the remedy when another tool reports the stack is not up: status, process_logs, restart, start, stop and configure all refuse an inactive stack rather than falling through to base. There is no per-stack daemon — its services run on their own ports inside the host daemon. Returns the stack's allocated service links and the daemon status. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(stackShortNameDesc)),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -305,15 +306,28 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		tiltClient := tilt.NewClient("localhost", workspace.HostTiltPort)
+		for _, note := range hostdaemon.SyncAndReload(tiltClient) {
+			daemonMsg += "\n" + note
+		}
+		started, err := stack.StartServices(tiltClient, ws.Name, rec)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if len(started) == 0 {
+			return mcp.NewToolResultError(fmt.Sprintf("stack %q has no services in the host daemon, so nothing was started — recreate it with stack_rm then stack_create", rec.Name)), nil
+		}
+
 		var sb strings.Builder
-		fmt.Fprintf(&sb, "Stack %q is active in base %q; its services run in the host daemon on :%d as %s:<service>:%s.\n",
-			rec.Name, ws.Name, workspace.HostTiltPort, ws.Name, rec.Name)
+		fmt.Fprintf(&sb, "Stack %q started: %s. Its services run in the host daemon on :%d as %s:<service>:%s.\n",
+			rec.Name, strings.Join(started, ", "), workspace.HostTiltPort, ws.Name, rec.Name)
 		if daemonMsg != "" {
 			fmt.Fprintf(&sb, "%s\n", daemonMsg)
 		}
 		for _, k := range sortedPortKeys(rec.Ports) {
 			fmt.Fprintf(&sb, "  %-24s http://localhost:%d\n", k, rec.Ports[k])
 		}
+		fmt.Fprintf(&sb, "\nThey are starting, not yet started — check with status stack=%q before concluding anything about them.\n", rec.Name)
 		return mcp.NewToolResultText(sb.String()), nil
 	})
 }

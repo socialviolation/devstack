@@ -14,6 +14,7 @@ import (
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/svcconfig"
+	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/tiltgen"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -432,11 +433,30 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("Stack %q is active in base %q; its services run in the host daemon on :%d as %s:<service>:%s.\n", rec.Name, base.Name, workspace.HostTiltPort, base.Name, rec.Name)
-	for _, k := range sortedKeys(rec.Ports) {
-		fmt.Printf("  %-24s http://localhost:%d\n", k, rec.Ports[k])
+	tiltClient := tilt.NewClient("localhost", workspace.HostTiltPort)
+	syncHostTiltfile(tiltClient)
+
+	started, err := stack.StartServices(tiltClient, base.Name, rec)
+	if err != nil {
+		return err
 	}
+	if len(started) == 0 {
+		return fmt.Errorf("stack %q has no services in the host daemon — recreate it: devstack stack rm %s && devstack stack create %s --repos <svc>", rec.Name, rec.Name, rec.Name)
+	}
+
+	fmt.Printf("✓ Stack %q started: %s\n", rec.Name, strings.Join(started, ", "))
+	for _, k := range sortedKeys(rec.Ports) {
+		fmt.Printf("  %-24s http://localhost:%d\n", stackPortLabel(k), rec.Ports[k])
+	}
+	fmt.Printf("\n  devstack status --stack %s   ·   devstack restart <service> --stack %s\n", rec.Name, rec.Name)
 	return nil
+}
+
+// stackPortLabel drops the "/http" port key, which repeats on every line and names
+// nothing the reader picked. Any other key stays: it is the only thing telling
+// two of a service's ports apart.
+func stackPortLabel(key string) string {
+	return strings.TrimSuffix(key, "/http")
 }
 
 func runStackDown(cmd *cobra.Command, args []string) error {
