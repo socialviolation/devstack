@@ -15,12 +15,13 @@ import (
 
 var upCmd = &cobra.Command{
 	Use:   "up",
-	Short: "Start the dev daemon for the current workspace",
-	Long: `Start the dev daemon as a detached background process for the current workspace.
+	Short: "Start this workspace's services in the dev daemon",
+	Long: `Fold this workspace's services into the dev daemon, starting the daemon as a
+detached background process if it isn't already up.
 
-The dev daemon is responsible for running all local services, watching source
-files for changes, and hot-reloading services when code is modified. It must
-be running before you can start, stop, or restart individual services.
+One daemon serves the whole machine. It runs every workspace's services, watches
+their source files, and hot-reloads them when code changes. 'devstack start' also
+brings it up on demand, so you rarely need this command first.
 
 The shared observability stack is also started automatically so services can
 begin shipping traces and logs immediately.

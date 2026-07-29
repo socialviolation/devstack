@@ -15,17 +15,16 @@ var svcStartCmd = &cobra.Command{
 	Short: "Start a service or group and all its dependencies",
 	Long: `Start a service or group by name, automatically resolving and starting its dependencies first.
 
-devstack reads the dependency graph from .devstack.json and computes the correct
-startup order. Dependencies are enabled and triggered before the requested service,
-so you never have to think about ordering.
+devstack reads the dependency graph from the workspace manifest and computes the
+correct startup order. Dependencies are enabled and triggered before the requested
+service, so you never have to think about ordering.
 
 If no service name is given, devstack will auto-detect it from the current directory
-by matching against registered service paths in .devstack.json.
+by matching against the service paths in the workspace manifest.
 
 Accepts a service name or group name. Run 'devstack groups' to see available groups.
 
-Requires the dev daemon to be running first:
-  devstack workspace up`,
+The dev daemon is started for you if it isn't already running.`,
 	RunE: runEnable,
 }
 

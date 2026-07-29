@@ -283,8 +283,16 @@ func TestPushSummarisesWhatItSkipped(t *testing.T) {
 	if err := runTunnelForward(tunnel.ModePush, []string{"testhost"}); err != nil {
 		t.Fatalf("filtered push: %v", err)
 	}
-	if got := out2.String(); !strings.Contains(got, "not serving, skipped: importer, worker") {
-		t.Errorf("a named service that is down went unreported: %q", got)
+	// Discovery sorts by port and the ports come from the OS, so the two names
+	// arrive in either order.
+	got2 := out2.String()
+	if !strings.Contains(got2, "not serving, skipped:") {
+		t.Errorf("a named service that is down went unreported: %q", got2)
+	}
+	for _, name := range []string{"importer", "worker"} {
+		if !strings.Contains(got2, name) {
+			t.Errorf("%s was named on the command line and went unreported: %q", name, got2)
+		}
 	}
 	resetTunnelFlags()
 }

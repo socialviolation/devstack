@@ -21,17 +21,17 @@ product or organisation. For example, ~/dev/navexa is a workspace containing
 every microservice and worker that makes up that product.
 
 devstack maintains a global registry of workspaces (~/.config/devstack/workspaces.json)
-so it knows where each one lives and which port its dev daemon is running on.
+so it knows where each one lives.
 
-Each workspace has its own:
-  - dev daemon   (the background process that runs and hot-reloads services)
-  - service list (declared in <workspace>/.devstack.json)
-  - a share of the machine-wide observability stack (started with 'workspace up')
+One dev daemon serves the whole machine, not one per workspace: every workspace's
+services run inside it, namespaced as <workspace>:<service>. Each workspace has its
+own service list (declared in <workspace>/devstack.workspace.yaml) and its own share
+of the machine-wide observability stack.
 
 SUBCOMMANDS
   devstack workspace            show all registered workspaces and service counts
-  devstack workspace up         start the dev daemon for the current workspace
-  devstack workspace down       stop the dev daemon
+  devstack workspace up         start this workspace's services in the dev daemon
+  devstack workspace down       stop them, and the daemon if no workspace needs it
   devstack workspace add        register a directory as a workspace
   devstack workspace remove     unregister a workspace`,
 	// Default action: list

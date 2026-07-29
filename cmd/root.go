@@ -6,8 +6,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-
-	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 var cfgFile string
@@ -64,9 +62,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./config.json)")
 	_ = rootCmd.PersistentFlags().MarkHidden("config")
 
-	// Dev daemon connection
-	rootCmd.PersistentFlags().Int("daemon-port", workspace.HostTiltPort, "Dev daemon API port")
-	_ = rootCmd.PersistentFlags().MarkHidden("daemon-port")
+	// Dev daemon connection. There is no port knob: one daemon serves the whole
+	// machine on a fixed port, and every command reaches it there.
 	rootCmd.PersistentFlags().String("daemon-host", "localhost", "Dev daemon host")
 	_ = rootCmd.PersistentFlags().MarkHidden("daemon-host")
 
@@ -77,7 +74,6 @@ func init() {
 	rootCmd.PersistentFlags().String("workspace", "", "Workspace name or path (env: DEVSTACK_WORKSPACE)")
 
 	// Bind flags to viper (keep internal keys stable)
-	viper.BindPFlag("tilt.port", rootCmd.PersistentFlags().Lookup("daemon-port"))
 	viper.BindPFlag("tilt.host", rootCmd.PersistentFlags().Lookup("daemon-host"))
 	viper.BindPFlag("default_service", rootCmd.PersistentFlags().Lookup("default-service"))
 	viper.BindPFlag("workspace", rootCmd.PersistentFlags().Lookup("workspace"))
@@ -94,7 +90,6 @@ func initConfig() {
 	}
 
 	// Environment variable bindings (new devstack names, with legacy TILT_* fallback)
-	viper.BindEnv("tilt.port", "DEVSTACK_DAEMON_PORT", "TILT_PORT")
 	viper.BindEnv("tilt.host", "DEVSTACK_DAEMON_HOST", "TILT_HOST")
 	viper.BindEnv("default_service", "DEVSTACK_DEFAULT_SERVICE")
 	viper.BindEnv("workspace", "DEVSTACK_WORKSPACE")

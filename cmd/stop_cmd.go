@@ -18,7 +18,7 @@ var stopCmd = &cobra.Command{
 explicitly started again with 'devstack start'.
 
 If no service name is given, devstack auto-detects the service from the current
-directory by matching against registered service paths in .devstack.json.
+directory by matching against the service paths in the workspace manifest.
 
 Accepts a service name or group name. Run 'devstack groups' to see available groups.`,
 	Args: cobra.MaximumNArgs(1),

@@ -1941,9 +1941,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 				}
 				d.tiltLogs = fetchTiltProcessLogs(tiltClient, record, tailLines, verbose)
 			}
-			out := formatExecutionDetailView(&d, opts)
-			out += buildServiceMapSection(ctx, backend, workspacePath, traces[0])
-			return mcp.NewToolResultText(out), nil
+			return mcp.NewToolResultText(formatExecutionDetailView(&d, opts)), nil
 		}
 
 		// Mode 2: attribute search
@@ -2048,15 +2046,6 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			sb.WriteString(formatExecutionDetailView(&details[i], opts))
 		}
 
-		// Async: persist service map edges from all observed spans
-		var allObsSpans []observability.Span
-		for _, tg := range traceGroups {
-			allObsSpans = append(allObsSpans, tg...)
-		}
-		if len(allObsSpans) > 0 {
-			go persistServiceMapEdges(allObsSpans, workspacePath)
-		}
-
 		return mcp.NewToolResultText(sb.String()), nil
 	})
 }
@@ -2142,146 +2131,6 @@ func fetchExecutionDetailsViaBackend(ctx context.Context, roots []traceRecord, b
 	}
 	wg.Wait()
 	return details
-}
-
-// buildServiceMapSection returns a service map summary string (after async edge persistence).
-// This is a no-op placeholder; actual persistence happens async via persistServiceMapEdges.
-func buildServiceMapSection(ctx context.Context, backend observability.Backend, workspacePath string, spans []observability.Span) string {
-	return ""
-}
-
-// persistServiceMapEdges extracts service edges from spans and merges into .devstack.json.
-// Called async from the investigate tool handler.
-func persistServiceMapEdges(spans []observability.Span, workspacePath string) {
-	if workspacePath == "" || len(spans) == 0 {
-		return
-	}
-	newEdges := extractEdgesFromSpans(spans)
-	if len(newEdges) == 0 {
-		return
-	}
-	cfg, err := loadWorkspaceConfig(workspacePath)
-	if err != nil {
-		return
-	}
-	existing := cfg.ServiceMapEdges
-	merged := mergeServiceEdges(existing, newEdges)
-	cfg.ServiceMapEdges = merged
-	cfg.ServiceMapUpdatedAt = time.Now()
-	saveWorkspaceConfig(workspacePath, cfg)
-}
-
-// serviceMapEdge is a simple directed edge between two services.
-type serviceMapEdge struct {
-	From string
-	To   string
-}
-
-// extractEdgesFromSpans derives service call edges from a set of spans.
-func extractEdgesFromSpans(spans []observability.Span) []serviceMapEdge {
-	spanService := map[string]string{}
-	for _, s := range spans {
-		spanService[s.SpanID] = s.Service
-	}
-	seen := map[string]bool{}
-	var edges []serviceMapEdge
-	for _, s := range spans {
-		if s.ParentSpanID == "" {
-			continue
-		}
-		parentService, ok := spanService[s.ParentSpanID]
-		if !ok || parentService == s.Service {
-			continue
-		}
-		key := parentService + "→" + s.Service
-		if !seen[key] {
-			seen[key] = true
-			edges = append(edges, serviceMapEdge{From: parentService, To: s.Service})
-		}
-	}
-	return edges
-}
-
-// mergeServiceEdges deduplicates edges.
-func mergeServiceEdges(existing, newEdges []serviceMapEdge) []serviceMapEdge {
-	seen := map[string]bool{}
-	result := make([]serviceMapEdge, 0, len(existing)+len(newEdges))
-	for _, e := range existing {
-		key := e.From + "→" + e.To
-		if !seen[key] {
-			seen[key] = true
-			result = append(result, e)
-		}
-	}
-	for _, e := range newEdges {
-		key := e.From + "→" + e.To
-		if !seen[key] {
-			seen[key] = true
-			result = append(result, e)
-		}
-	}
-	return result
-}
-
-// mutableWorkspaceConfig is a minimal struct for reading/writing the service map portion of .devstack.json.
-type mutableWorkspaceConfig struct {
-	raw                 map[string]interface{}
-	ServiceMapEdges     []serviceMapEdge
-	ServiceMapUpdatedAt time.Time
-}
-
-func loadWorkspaceConfig(workspacePath string) (*mutableWorkspaceConfig, error) {
-	// This is a lightweight bridge; we use the config package for actual loading
-	// to avoid an import cycle risk. We only care about service_map here.
-	// We keep it simple and just re-read the JSON directly.
-	import_path := workspacePath + "/.devstack.json"
-	data, err := os.ReadFile(import_path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &mutableWorkspaceConfig{raw: map[string]interface{}{}}, nil
-		}
-		return nil, err
-	}
-	var raw map[string]interface{}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, err
-	}
-	cfg := &mutableWorkspaceConfig{raw: raw}
-	// Parse existing service_map
-	if sm, ok := raw["service_map"].(map[string]interface{}); ok {
-		if edges, ok := sm["edges"].([]interface{}); ok {
-			for _, e := range edges {
-				if em, ok := e.(map[string]interface{}); ok {
-					from, _ := em["from"].(string)
-					to, _ := em["to"].(string)
-					if from != "" && to != "" {
-						cfg.ServiceMapEdges = append(cfg.ServiceMapEdges, serviceMapEdge{From: from, To: to})
-					}
-				}
-			}
-		}
-	}
-	return cfg, nil
-}
-
-func saveWorkspaceConfig(workspacePath string, cfg *mutableWorkspaceConfig) {
-	raw := cfg.raw
-	if raw == nil {
-		raw = map[string]interface{}{}
-	}
-	edges := make([]map[string]string, 0, len(cfg.ServiceMapEdges))
-	for _, e := range cfg.ServiceMapEdges {
-		edges = append(edges, map[string]string{"from": e.From, "to": e.To})
-	}
-	raw["service_map"] = map[string]interface{}{
-		"edges":      edges,
-		"updated_at": cfg.ServiceMapUpdatedAt.UTC().Format(time.RFC3339),
-	}
-	data, err := json.MarshalIndent(raw, "", "  ")
-	if err != nil {
-		return
-	}
-	os.WriteFile(workspacePath+"/.devstack.json", data, 0644)
 }
 
 // executionDetail holds a fully fetched execution: span tree + correlated logs.
