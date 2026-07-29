@@ -164,6 +164,44 @@ func hostResourceMap(resources []tilt.UIResource, wsName, stackName string) map[
 	return out
 }
 
+// stackInstancesRunning reports what the base count leaves out: how many of the
+// workspace's feature-stack instances are up, and which stacks they belong to.
+// The header counts base resources only, so without this the table shows
+// running rows the header never accounts for.
+func stackInstancesRunning(view *tilt.TiltView, wsName string) (running int, stacks []string) {
+	if view == nil {
+		return 0, nil
+	}
+	prefix := wsName + ":"
+	seen := map[string]bool{}
+	for _, r := range view.UiResources {
+		_, ns, ok := splitHostResource(r.Metadata.Name, prefix)
+		if !ok || ns == "" || serviceStatus(r) != "running" {
+			continue
+		}
+		running++
+		if !seen[ns] {
+			seen[ns] = true
+			stacks = append(stacks, ns)
+		}
+	}
+	sort.Strings(stacks)
+	return running, stacks
+}
+
+// stackRunningSummary phrases the stack half of the header, naming the stack
+// while there is only one to name.
+func stackRunningSummary(running int, stacks []string) string {
+	switch {
+	case running == 0:
+		return ""
+	case len(stacks) == 1:
+		return fmt.Sprintf("%d more in stack %s", running, stacks[0])
+	default:
+		return fmt.Sprintf("%d more across %d stacks", running, len(stacks))
+	}
+}
+
 // otelSegment returns the status header's otel segment for the states decidable
 // without touching the collector. decided is false only for the enabled but not
 // running case, which the caller resolves with an auto-start attempt.
@@ -265,6 +303,7 @@ const (
 	colServiceMax = 34
 	colGroup      = 12
 	colState      = 10
+	colBranchMax  = 28
 	colPorts      = 14
 	colEnv        = 7
 	colNeeds      = 36
@@ -380,21 +419,11 @@ func countRunning(members []string, resources map[string]tilt.UIResource) int {
 
 // renderStatusTable prints every row of the workspace under one header row,
 // colouring each row by the group it belongs to while the STATE cell keeps its
-// own state colour. Source paths, and the git checkout each one is on, only
-// print when the caller asked for them.
+// own state colour. Source paths only print when the caller asked for them.
 func renderStatusTable(rows []statusRow, svcGroupColor map[string]*color.Color, showDirs bool) {
-	checkouts := map[string]gitinfo.Info{}
-	if showDirs {
-		dirs := map[string]string{}
-		for _, r := range rows {
-			if r.dir != "" {
-				dirs[r.dir] = r.dir
-			}
-		}
-		checkouts = gitinfo.ReadAll(dirs)
-	}
+	branches := readBranchLabels(rows)
 
-	svcWidth, groupWidth := colService, colGroup
+	svcWidth, groupWidth, branchWidth := colService, colGroup, len("BRANCH")
 	for _, r := range rows {
 		if len(r.service) > svcWidth {
 			svcWidth = len(r.service)
@@ -402,25 +431,32 @@ func renderStatusTable(rows []statusRow, svcGroupColor map[string]*color.Color, 
 		if len(r.group) > groupWidth {
 			groupWidth = len(r.group)
 		}
+		if n := len(branches[r.dir]); n > branchWidth && n <= colBranchMax {
+			branchWidth = n
+		} else if n > colBranchMax {
+			branchWidth = colBranchMax
+		}
 	}
 	if svcWidth > colServiceMax {
 		svcWidth = colServiceMax
 	}
-	needsIndent := strings.Repeat(" ", len(statusIndent)+svcWidth+2+groupWidth+2+colState+2+colPorts+2+colEnv+2)
+	needsIndent := strings.Repeat(" ", len(statusIndent)+svcWidth+2+groupWidth+2+colState+2+branchWidth+2+colPorts+2+colEnv+2)
 
 	faint := color.New(color.Faint)
-	faint.Printf("%s%-*s  %-*s  %-*s  %-*s  %-*s  %s\n", statusIndent,
-		svcWidth, "SERVICE", groupWidth, "GROUP", colState, "STATE", colPorts, "PORTS", colEnv, "ENV", "NEEDS")
+	faint.Printf("%s%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %s\n", statusIndent,
+		svcWidth, "SERVICE", groupWidth, "GROUP", colState, "STATE", branchWidth, "BRANCH", colPorts, "PORTS", colEnv, "ENV", "NEEDS")
 
 	for _, r := range rows {
 		hasNeeds := len(r.needs) > 0
 
 		fmt.Print(statusIndent)
-		r.rowColor.Printf("%-*s", svcWidth, r.service)
+		r.rowColor.Printf("%-*s", svcWidth, fitCell(r.service, svcWidth))
 		fmt.Print("  ")
 		r.rowColor.Printf("%-*s", groupWidth, r.group)
 		fmt.Print("  ")
 		r.stateColor.Printf("%-*s", colState, r.state)
+		fmt.Print("  ")
+		faint.Printf("%-*s", branchWidth, fitCell(branches[r.dir], branchWidth))
 		fmt.Print("  ")
 		if hasNeeds || r.env != "" {
 			printPorts(r.ports, colPorts)
@@ -441,13 +477,39 @@ func renderStatusTable(rows []statusRow, svcGroupColor map[string]*color.Color, 
 		fmt.Println()
 
 		if showDirs && r.dir != "" {
-			if branch := checkouts[r.dir].Label(); branch != "" {
-				faint.Printf("%s  %s  on %s\n", statusIndent, shortDir(r.dir), branch)
-			} else {
-				faint.Printf("%s  %s\n", statusIndent, shortDir(r.dir))
-			}
+			faint.Printf("%s  %s\n", statusIndent, shortDir(r.dir))
 		}
 	}
+}
+
+// truncateCell shortens a value to its column width, keeping a trailing "*"
+// where a branch label carries one: uncommitted work is the part of the label
+// that changes what you do next.
+func fitCell(v string, width int) string {
+	if len(v) <= width {
+		return v
+	}
+	suffix := ".."
+	if strings.HasSuffix(v, "*") {
+		suffix = "..*"
+	}
+	return string([]rune(v)[:width-len(suffix)]) + suffix
+}
+
+// readBranchLabels reports the checkout label for each row's source directory,
+// keyed by that directory so services sharing a repo cost one git call.
+func readBranchLabels(rows []statusRow) map[string]string {
+	dirs := map[string]string{}
+	for _, r := range rows {
+		if r.dir != "" {
+			dirs[r.dir] = r.dir
+		}
+	}
+	labels := make(map[string]string, len(dirs))
+	for dir, info := range gitinfo.ReadAll(dirs) {
+		labels[dir] = info.Label()
+	}
+	return labels
 }
 
 // printNeeds prints a service's dependencies, wrapping onto continuation lines
