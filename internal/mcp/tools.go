@@ -18,6 +18,7 @@ import (
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/gitinfo"
+	"github.com/socialviolation/devstack/internal/hooks"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/observability"
 	"github.com/socialviolation/devstack/internal/otel"
@@ -90,6 +91,10 @@ func RegisterTools(
 
 	// Feature stacks overlay this workspace as their base.
 	registerStackTools(mcpServer, ws)
+
+	// Lifecycle hooks: discovery and manual re-run. The lifecycle tools above
+	// fire their own events; this is how an agent sees what is wired up.
+	registerHooksTool(mcpServer, ws)
 
 	// Config-patch environments: point scopes at named envs and inspect them.
 	registerEnvTools(mcpServer, ws, workspacePath)
@@ -854,7 +859,14 @@ func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, def
 		if len(failures) > 0 {
 			return mcp.NewToolResultError(sb.String() + "\nfailures: " + strings.Join(failures, "; ")), nil
 		}
-		return mcp.NewToolResultText(sb.String() + coreWaitFor(tiltClient, waited, deployedBefore, waitSeconds)), nil
+		var hookOut strings.Builder
+		hookErr := hooks.Fire(ws, t.namespace, config.EventServiceStart, started, &hookOut)
+		sb.WriteString(coreWaitFor(tiltClient, waited, deployedBefore, waitSeconds))
+		appendHookOutput(&sb, config.EventServiceStart, hookOut.String(), hookErr)
+		if hookErr != nil {
+			return mcp.NewToolResultError(sb.String()), nil
+		}
+		return mcp.NewToolResultText(sb.String()), nil
 	})
 }
 
@@ -943,8 +955,13 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 				return mcp.NewToolResultError(fmt.Sprintf("stopped %d/%d services in group %q: %s\nfailures: %s",
 					len(successes), len(members), groupName, strings.Join(successes, ", "), strings.Join(failures, "; "))), nil
 			}
-			return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("stopped %d services in group %s: %s",
-				len(members), groupName, strings.Join(successes, ", ")))), nil
+			var hookOut strings.Builder
+			hookErr := hooks.Fire(ws, t.namespace, config.EventServiceStop, successes, &hookOut)
+			var gsb strings.Builder
+			gsb.WriteString(onTarget(t.label, fmt.Sprintf("stopped %d services in group %s: %s",
+				len(members), groupName, strings.Join(successes, ", "))))
+			appendHookOutput(&gsb, config.EventServiceStop, hookOut.String(), hookErr)
+			return mcp.NewToolResultText(gsb.String()), nil
 		}
 
 		// Single service stop.
@@ -957,7 +974,12 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 			if err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("failed to stop %q: %v\n%s", resolved, err, out)), nil
 			}
-			return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("Stopped %q.", resolved))), nil
+			var hookOut strings.Builder
+			hookErr := hooks.Fire(ws, t.namespace, config.EventServiceStop, []string{name}, &hookOut)
+			var ssb strings.Builder
+			ssb.WriteString(onTarget(t.label, fmt.Sprintf("Stopped %q.", resolved)))
+			appendHookOutput(&ssb, config.EventServiceStop, hookOut.String(), hookErr)
+			return mcp.NewToolResultText(ssb.String()), nil
 		}
 
 		// Stop all — only ever reached via an explicit all=true, and scoped to
@@ -977,7 +999,12 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 		if len(failures) > 0 {
 			return mcp.NewToolResultError(fmt.Sprintf("Some services failed to stop:\n%s", sb.String())), nil
 		}
-		return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("Stopped %d service(s).", len(targets))) + "\n" + sb.String() + coreStillRunning(ws, stopAll, request.GetString("stack", ""))), nil
+		var hookOut strings.Builder
+		hookErr := hooks.Fire(ws, t.namespace, config.EventServiceStop, nil, &hookOut)
+		var asb strings.Builder
+		asb.WriteString(onTarget(t.label, fmt.Sprintf("Stopped %d service(s).", len(targets))) + "\n" + sb.String() + coreStillRunning(ws, stopAll, request.GetString("stack", "")))
+		appendHookOutput(&asb, config.EventServiceStop, hookOut.String(), hookErr)
+		return mcp.NewToolResultText(asb.String()), nil
 	})
 }
 

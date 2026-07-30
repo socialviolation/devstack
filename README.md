@@ -123,6 +123,50 @@ devstack env remove <name>
 
 Credentials are redacted in place, so a connection string still shows its server and database. `--reveal` prints them in the clear. Redaction is display-only. Read [what to commit](#files-and-what-to-commit) before you put a secret in an environment.
 
+## Hooks
+
+A hook is a shell command devstack runs when a lifecycle event fires. Stacks are meant to be disposable, and disposable only works if the state a stack needs outside this machine gets provisioned when it appears and removed when it goes.
+
+```bash
+devstack hooks list [--stack <name>] [--event <event>]
+devstack hooks run <event> [--stack <name>] [--services a,b]
+```
+
+`hooks run` fires an event's hooks without doing the lifecycle action, which is how you test one and how you retry after a failure.
+
+Declare them in the workspace manifest, where the team shares them:
+
+```yaml
+hooks:
+  - name: auth0-callbacks
+    on: [stack.up]
+    services: [navexa-frontend]
+    run: ./scripts/auth0.sh add
+    env:
+      CALLBACK_URL: ${self.url}/callback
+```
+
+A stack's ports are allocated when it is created, so a hook cannot hardcode them. `${self.url}`, `${self.port.http}` and `${<service>.port.<key>}` resolve against the ports that instance actually got. The command also receives `DEVSTACK_*` variables (`DEVSTACK_STACK`, `DEVSTACK_SERVICE_URL`, `DEVSTACK_ENV` and the rest) and the whole event as JSON on stdin.
+
+`services:` scopes a hook to named services, and it then runs once per service with that one as `${self}`. Leave it out and it runs once for the event. A service's own `devstack.service.yaml` declares hooks too, scoped to that service, and rejects a `services:` key. A feature stack inherits the workspace's hooks the same way it inherits its environments.
+
+| Event | Fires |
+|---|---|
+| `stack.create` | after the worktrees exist, the ports are allocated and the record is written |
+| `stack.up` | after the stack's services are triggered in the host daemon |
+| `stack.down` | before the host Tiltfile drops the stack's resources |
+| `stack.destroy` | before any worktree, port or record is removed |
+| `service.start` | after a service and its dependencies are triggered |
+| `service.stop` | after a service is disabled |
+| `workspace.up` | after the daemon is up and the workspace's services are folded in |
+| `workspace.down` | before the workspace's services are torn down |
+
+Failure means opposite things in each direction. A setup hook that fails stops the rest and fails the command, because a half-provisioned stack that looks healthy is worse than one that failed loudly. A teardown hook that fails is reported and skipped, and the teardown carries on. Otherwise one broken hook leaves you a worktree, a branch and a port you cannot reclaim. Override either with `onError: abort` or `onError: continue`, and bound a hook that talks to a slow API with `timeout: 90s`.
+
+The lifecycle action is never rolled back. If a `stack.create` hook fails the stack still exists, unprovisioned, and the error says so. Fix the hook and run `devstack hooks run stack.create --stack <name>` rather than recreating it.
+
+Agents get the same behaviour: `stack_create`, `stack_up`, `stack_down`, `stack_rm`, `start` and `stop` fire their events over [MCP](#mcp) and report what ran, and the `hooks` tool lists and re-runs them.
+
 ## Observability
 
 Opt-in per workspace. While it's off, no collector runs and nothing is injected into services.
@@ -206,7 +250,7 @@ devstack tunnel push my-box.ts.net --as-base agent
 
 ```
 environment  status  topology  start  stop  restart  process_logs  service_env
-configure    observability     investigate    tunnel
+configure    observability     investigate    tunnel      hooks
 stack_create stack_up  stack_down  stack_list  stack_rm  stack_note
 env_use      env_which env_set
 ```

@@ -9,6 +9,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/hooks"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
@@ -78,6 +80,13 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		overlay := make([]string, 0, len(res.Overlay))
+		for _, m := range res.Overlay {
+			overlay = append(overlay, m.Service)
+		}
+		var hookOut strings.Builder
+		hookErr := hooks.Fire(ws, name, config.EventStackCreate, overlay, &hookOut)
+
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "Stack %q created (base %s).\n", res.StackName, res.BaseName)
 		fmt.Fprintf(&sb, "Stack root: %s\n\n", res.StackRoot)
@@ -112,6 +121,11 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			for _, w := range res.Warnings {
 				fmt.Fprintf(&sb, "  - %s\n", w)
 			}
+		}
+
+		appendHookOutput(&sb, config.EventStackCreate, hookOut.String(), hookErr)
+		if hookErr != nil {
+			return mcp.NewToolResultError(sb.String()), nil
 		}
 
 		fmt.Fprintf(&sb, "\nStart it: (cd %s && devstack workspace up)\n", res.StackRoot)
@@ -236,9 +250,16 @@ func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		}
 		force := request.GetBool("force", false)
 
+		// Before anything is taken away, while the record, worktrees and ports
+		// are all still readable — a teardown hook de-provisions what create
+		// provisioned, and cannot do that once the allocation is gone.
+		var hookOut strings.Builder
+		hookErr := hooks.Fire(ws, name, config.EventStackDestroy, nil, &hookOut)
+
 		res, err := stack.Remove(ws, name, force)
 
 		var sb strings.Builder
+		appendHookOutput(&sb, config.EventStackDestroy, hookOut.String(), hookErr)
 		if res != nil {
 			fmt.Fprintf(&sb, "Removing stack %q (base %s)\n", res.Name, res.BaseName)
 			for _, p := range res.RemovedWorktrees {
@@ -318,6 +339,9 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 			return mcp.NewToolResultError(fmt.Sprintf("stack %q has no services in the host daemon, so nothing was started — recreate it with stack_rm then stack_create", rec.Name)), nil
 		}
 
+		var hookOut strings.Builder
+		hookErr := hooks.Fire(ws, rec.Name, config.EventStackUp, started, &hookOut)
+
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "Stack %q started: %s. Its services run in the host daemon on :%d as %s:<service>:%s.\n",
 			rec.Name, strings.Join(started, ", "), workspace.HostTiltPort, ws.Name, rec.Name)
@@ -326,6 +350,10 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 		}
 		for _, k := range sortedPortKeys(rec.Ports) {
 			fmt.Fprintf(&sb, "  %-24s http://localhost:%d\n", k, rec.Ports[k])
+		}
+		appendHookOutput(&sb, config.EventStackUp, hookOut.String(), hookErr)
+		if hookErr != nil {
+			return mcp.NewToolResultError(sb.String()), nil
 		}
 		fmt.Fprintf(&sb, "\nThey are starting, not yet started — check with status stack=%q before concluding anything about them.\n", rec.Name)
 		return mcp.NewToolResultText(sb.String()), nil
@@ -356,6 +384,9 @@ func registerStackDownTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		var hookOut strings.Builder
+		hookErr := hooks.Fire(ws, rec.Name, config.EventStackDown, nil, &hookOut)
+
 		if err := stack.SetActive(ws.Name, rec.Name, false); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -363,7 +394,9 @@ func registerStackDownTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			return mcp.NewToolResultError(fmt.Sprintf("failed to regenerate host Tiltfile: %v", err)), nil
 		}
 
-		return mcp.NewToolResultText(fmt.Sprintf(
+		var sb strings.Builder
+		appendHookOutput(&sb, config.EventStackDown, hookOut.String(), hookErr)
+		return mcp.NewToolResultText(sb.String() + fmt.Sprintf(
 			"Stack %q is now inactive; the host daemon will drop its resources. Worktrees and record kept (remove with stack_rm %s).\n"+
 				"While inactive, status/process_logs/restart/stop/configure targeting it error \"not up\" instead of falling through to base; "+
 				"service_env still reads and writes its worktree config, and investigate returns only what it emitted while it was up.",
@@ -378,4 +411,26 @@ func sortedPortKeys(m map[string]int) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// appendHookOutput folds a lifecycle event's hook output into a tool result. An
+// agent that cannot see a hook ran, or failed, has no way to tell a stack that
+// was provisioned from one that only looks provisioned.
+func appendHookOutput(sb *strings.Builder, event, output string, err error) {
+	if strings.TrimSpace(output) == "" && err == nil {
+		return
+	}
+	fmt.Fprintf(sb, "\nHooks (%s):\n", event)
+	if strings.TrimSpace(output) != "" {
+		for _, line := range strings.Split(strings.TrimRight(output, "\n"), "\n") {
+			fmt.Fprintf(sb, "  %s\n", line)
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(sb, "  FAILED: %v\n", err)
+		if !config.IsTeardownEvent(event) {
+			fmt.Fprintf(sb, "  The lifecycle action itself succeeded, but setup hooks did not finish — this is NOT fully provisioned.\n")
+			fmt.Fprintf(sb, "  Fix the hook, then re-run just the hooks with the 'hooks' tool (action=run, event=%s).\n", event)
+		}
+	}
 }

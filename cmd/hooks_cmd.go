@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/fatih/color"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/hooks"
-	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -63,88 +61,10 @@ func init() {
 	hooksRunCmd.Flags().String("services", "", "Comma-separated service set for the event (default: the stack's overlay, or every service)")
 }
 
-// hookContext is the event context and hook sources for one workspace or stack,
-// resolved once and shared by every firing point.
-type hookContext struct {
-	Event  hooks.Event
-	Source hooks.Source
-}
-
-// buildHookContext resolves everything a hook reads. For a stack it resolves the
-// stack's worktree workspace and its allocated ports, so a service hook runs in
-// the worktree and ${self.url} names the port that instance is actually on.
-// Workspace-level hooks always come from the base manifest: a stack inherits
-// them, exactly as it inherits base's environments.
-func buildHookContext(ws *workspace.Workspace, stackName string, event string, services []string) (*hookContext, error) {
-	baseRW, err := config.ResolveWorkspace(ws.Path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve workspace %q: %w", ws.Name, err)
-	}
-
-	ev := hooks.Event{
-		Name:          event,
-		WorkspaceName: ws.Name,
-		StackRoot:     ws.Path,
-		EnvName:       baseRW.Manifest.Workspace.Env,
-	}
-	rw := baseRW
-	ev.Book = config.BuildPortBook(baseRW)
-
-	if stackName != "" && stackName != "base" {
-		rec, err := stack.Resolve(ws.Name, stackName)
-		if err != nil {
-			return nil, err
-		}
-		rw, err = stack.ResolveWorktree(rec)
-		if err != nil {
-			return nil, err
-		}
-		names := make([]string, 0, len(rw.Services))
-		for n := range rw.Services {
-			names = append(names, n)
-		}
-		opts, err := stack.GenerateOptions(rec, names)
-		if err != nil {
-			return nil, err
-		}
-		ev.Stack = rec.Name
-		ev.StackRoot = rec.Root
-		ev.Branch = rec.Branch
-		ev.Book = opts.Book
-		if rec.Env != "" {
-			ev.EnvName = rec.Env
-		}
-		if len(services) == 0 {
-			services = append([]string(nil), rec.Overlay...)
-		}
-	}
-
-	if len(services) == 0 {
-		for n := range rw.Services {
-			services = append(services, n)
-		}
-	}
-	sort.Strings(services)
-	ev.Services = services
-
-	return &hookContext{Event: ev, Source: hooks.BuildSource(baseRW.Manifest, ws.Path, rw)}, nil
-}
-
 // fireHooks runs an event's hooks, writing their output to stderr so a command's
-// own stdout stays parseable. A setup event's failure is returned and fails the
-// command that fired it; a teardown event's is reported and swallowed, so a
-// broken hook can never leave a stack that will not come down.
+// own stdout stays parseable.
 func fireHooks(ws *workspace.Workspace, stackName, event string, services []string) error {
-	ctx, err := buildHookContext(ws, stackName, event, services)
-	if err != nil {
-		if config.IsTeardownEvent(event) {
-			fmt.Fprintf(os.Stderr, "warning: could not resolve hooks for %s: %v\n", event, err)
-			return nil
-		}
-		return fmt.Errorf("could not resolve hooks for %s: %w", event, err)
-	}
-	_, err = hooks.Run(ctx.Event, ctx.Source, os.Stderr)
-	return err
+	return hooks.Fire(ws, stackName, event, services, os.Stderr)
 }
 
 func runHooksList(cmd *cobra.Command, args []string) error {
@@ -171,11 +91,11 @@ func runHooksList(cmd *cobra.Command, args []string) error {
 
 	total := 0
 	for _, event := range events {
-		ctx, err := buildHookContext(ws, stackName, event, nil)
+		ev, src, err := hooks.Context(ws, stackName, event, nil)
 		if err != nil {
 			return err
 		}
-		invocations := hooks.Resolve(ctx.Event, ctx.Source)
+		invocations := hooks.Resolve(ev, src)
 		if len(invocations) == 0 {
 			continue
 		}
@@ -213,18 +133,18 @@ func runHooksRun(cmd *cobra.Command, args []string) error {
 	stackName, _ := cmd.Flags().GetString("stack")
 	servicesFlag, _ := cmd.Flags().GetString("services")
 
-	ctx, err := buildHookContext(ws, stackName, event, splitCSV(servicesFlag))
+	ev, src, err := hooks.Context(ws, stackName, event, splitCSV(servicesFlag))
 	if err != nil {
 		return err
 	}
-	invocations := hooks.Resolve(ctx.Event, ctx.Source)
+	invocations := hooks.Resolve(ev, src)
 	if len(invocations) == 0 {
-		fmt.Printf("No hooks fire on %s for %s. See: devstack hooks list\n", event, ctx.Event.StackLabel())
+		fmt.Printf("No hooks fire on %s for %s. See: devstack hooks list\n", event, ev.StackLabel())
 		return nil
 	}
 
-	fmt.Printf("Firing %s for %s (services: %s)\n", event, ctx.Event.StackLabel(), strings.Join(ctx.Event.Services, ", "))
-	results, runErr := hooks.Run(ctx.Event, ctx.Source, os.Stdout)
+	fmt.Printf("Firing %s for %s (services: %s)\n", event, ev.StackLabel(), strings.Join(ev.Services, ", "))
+	results, runErr := hooks.Run(ev, src, os.Stdout)
 	failed := 0
 	for _, r := range results {
 		if r.Err != nil {

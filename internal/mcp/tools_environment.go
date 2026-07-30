@@ -10,6 +10,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/hooks"
 	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -55,7 +56,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		if line := servicesSummary(workspacePath, defaultService); line != "" {
 			sb.WriteString(line)
 		}
-		tools := []string{"status", "start", "restart", "stop", "topology", "configure", "process_logs", "service_env", "observability", "stack_create", "stack_list", "stack_note", "stack_up", "stack_down", "stack_rm", "env_use", "env_which", "env_set"}
+		tools := []string{"status", "start", "restart", "stop", "topology", "configure", "process_logs", "service_env", "observability", "hooks", "stack_create", "stack_list", "stack_note", "stack_up", "stack_down", "stack_rm", "env_use", "env_which", "env_set"}
 		if otelOn {
 			tools = append(tools, "investigate")
 		}
@@ -73,6 +74,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		if !tunnelsOn {
 			fmt.Fprintf(&sb, "note: tunnel tool unavailable — no ssh client on this machine.\n")
 		}
+		sb.WriteString(hooksSummary(ws))
 
 		if cfg, err := config.Load(workspacePath); err == nil && len(cfg.Groups) > 0 {
 			fmt.Fprintf(&sb, "groups: %s\n", availableGroups(cfg))
@@ -159,4 +161,40 @@ func stacksSummary(ws *workspace.Workspace) string {
 			"service_env still reads and writes its worktree config, and investigate returns only what it emitted while it was last up.\n"
 	}
 	return line
+}
+
+// hooksSummary orients an agent on lifecycle hooks before it creates or destroys
+// anything. Creating a stack in a workspace with hooks can run someone's shell
+// command against external state, so whether any exist belongs in the first tool
+// an agent calls, not in a tool it might never reach.
+func hooksSummary(ws *workspace.Workspace) string {
+	if ws == nil {
+		return ""
+	}
+	events := map[string][]string{}
+	total := 0
+	for _, event := range config.HookEvents() {
+		ev, src, err := hooks.Context(ws, "", event, nil)
+		if err != nil {
+			return ""
+		}
+		for _, inv := range hooks.Resolve(ev, src) {
+			events[event] = append(events[event], inv.Label())
+			total++
+		}
+	}
+	if total == 0 {
+		return "hooks: none declared — no lifecycle automation runs in this workspace\n"
+	}
+
+	var parts []string
+	for _, event := range config.HookEvents() {
+		if names := events[event]; len(names) > 0 {
+			parts = append(parts, fmt.Sprintf("%s (%s)", event, strings.Join(names, ", ")))
+		}
+	}
+	return fmt.Sprintf("hooks: %d declared, firing on %s\n"+
+		"  These run automatically on stack_create/stack_up/stack_down/stack_rm/start/stop and can change state outside this machine. "+
+		"List them with the hooks tool before creating or tearing down a stack. A failed SETUP hook means the thing exists but is not provisioned; a failed TEARDOWN hook means teardown finished but external cleanup probably did not.\n",
+		total, strings.Join(parts, ", "))
 }

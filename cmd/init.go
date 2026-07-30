@@ -795,6 +795,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"3. If merging: merge the stack's branch into the base branch, then `git branch -d <branch>` to prune it (`stack rm` does NOT delete the branch).\n" +
 		"4. `devstack stack rm <name>` — stops the stack, removes its worktree(s), releases its ports, and deletes its config/record. It refuses if a worktree has uncommitted changes; commit or discard first (`--force` discards).\n" +
 		"5. Periodically run `devstack stack list` and prune stacks whose work has landed or been abandoned.\n\n" +
+		hooksInstructions(workspacePath) +
 		"### Service states\n\n" +
 		"`devstack status` reports one of: `running` (process up), `starting` (coming up), `building` (daemon is building/updating it), " +
 		"`stopped` (registered but not started), `erroring` (the service or its build failed — check logs), `disabled` (switched off in the daemon), " +
@@ -831,7 +832,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"An **environment** (`environments:` in the workspace manifest) is a named bundle of config-var patches — DB URLs, feature flags, external endpoints — that repoints services without code changes. It applies at three scopes, most-specific winning: a **stack**'s env beats a **service**'s env beats the **workspace** default. So base can run against `local` while one stack runs against `prod`. `devstack status` shows each instance's active env (the ENV column / `env:<name>`), so you can see where every running copy is pointed. Set values with `devstack env set` — they are written into the workspace manifest in plaintext (masking is display-only), so if that manifest is committed keep real secrets out and declare them in `env.required` instead; point a scope with `devstack env use`.\n\n" +
 		"### MCP tools\n\n" +
 		"The `.mcp.json` in this repo wires up the devstack MCP server — the agent interface. The tools are " +
-		"`environment`, `status`, `start`, `stop`, `restart`, `topology`, `process_logs`, `configure`, `service_env`, `observability`, `tunnel` and `investigate`; " +
+		"`environment`, `status`, `start`, `stop`, `restart`, `topology`, `process_logs`, `configure`, `service_env`, `observability`, `hooks`, `tunnel` and `investigate`; " +
 		"the stack tools `stack_create`, `stack_up`, `stack_down`, `stack_list`, `stack_rm`, `stack_note`; and the env tools `env_use`, `env_which`, `env_set`. " +
 		"Two are conditional: `investigate` is registered only while observability is enabled, `tunnel` only when an ssh client is available. " +
 		"Call `environment` first: it reports what is actually registered here, and each tool's own description is more current than this file.\n\n" +
@@ -858,4 +859,49 @@ func wsBaseName(workspacePath string) string {
 		return "<workspace>"
 	}
 	return filepath.Base(workspacePath)
+}
+
+// hooksInstructions renders the lifecycle-hook guidance. The point an agent has
+// to take away is that creating or destroying a stack can run someone's shell
+// command against external state — so "what will this fire" is worth checking
+// before the action, and "did it actually finish" after it.
+func hooksInstructions(workspacePath string) string {
+	general := "### Lifecycle hooks (automation that runs when you create or destroy things)\n\n" +
+		"A **hook** is a shell command devstack runs automatically when a lifecycle event fires. They exist so ephemeral stacks can provision and de-provision real external state — registering a callback URL when a stack is created, removing it when the stack is destroyed. " +
+		"**They fire on their own.** `stack_create`, `stack_up`, `stack_down`, `stack_rm`, `start` and `stop` each fire their event and report what ran; you do not call anything extra to trigger them.\n\n" +
+		"Events, each with a fixed firing point: `" + strings.Join(config.HookEvents(), "`, `") + "`. " +
+		"`stack.create` fires once ports are allocated and the record written, so a hook sees the stack's final ports. `stack.destroy` fires *before* worktrees, ports or the record are removed, so a teardown hook can still read what the stack was allocated.\n\n" +
+		"**Failure means different things in each direction, and you must read the result rather than assume:**\n\n" +
+		"- A **setup** hook (`stack.create`, `stack.up`, `service.start`, `workspace.up`) that fails **aborts the remaining hooks and is reported as an error, but the action itself already happened**. The stack exists and is *not* fully provisioned. Do not report success. Fix the hook, then re-run just the hooks with the `hooks` tool (`action=\"run\"`, `event=...`) — you do not recreate the stack.\n" +
+		"- A **teardown** hook (`stack.destroy`, `stack.down`, `service.stop`, `workspace.down`) that fails is reported and skipped, and the teardown still completes. This is deliberate: a broken hook must never leave a stack that cannot be removed. But the external state it was meant to clean up is probably still out there — say so rather than assuming it was cleaned.\n\n" +
+		"**Before creating or destroying a stack in a workspace you do not know, run the `hooks` tool with `action=\"list\"`.** It shows what will fire and what command it runs. Hooks can call external APIs and change state outside this machine; that is what they are for, and it is not something to discover afterwards.\n\n" +
+		"Hooks are declared in `devstack.workspace.yaml` (shared with the team; a `services:` list scopes one to named services) and in a service's `devstack.service.yaml` (that service only). A feature stack **inherits** the workspace's hooks, the same way it inherits its environments. " +
+		"Because a stack's ports are allocated at create time, a hook cannot hardcode them — it writes `${self.url}`, `${self.port.http}` or `${<service>.port.<key>}`, which resolve against the ports that instance actually got. A hook also receives `DEVSTACK_*` context variables (`DEVSTACK_STACK`, `DEVSTACK_SERVICE`, `DEVSTACK_SERVICE_URL`, `DEVSTACK_ENV`, ...) and the full event as JSON on stdin.\n\n"
+
+	if !workspaceDeclaresHooks(workspacePath) {
+		return general + "**This workspace currently declares no hooks**, so no lifecycle automation runs here. Confirm with the `hooks` tool (`action=\"list\"`) rather than assuming it is still true.\n\n"
+	}
+	return general + "**This workspace declares hooks** — list them with the `hooks` tool (`action=\"list\"`) before you create or tear down a stack.\n\n"
+}
+
+// workspaceDeclaresHooks reports whether anything in the workspace declares a
+// hook, so the generated instructions can say whether automation actually runs
+// here rather than describing a feature nobody uses.
+func workspaceDeclaresHooks(workspacePath string) bool {
+	if workspacePath == "" {
+		return false
+	}
+	rw, err := config.ResolveWorkspace(workspacePath)
+	if err != nil || rw == nil || rw.Manifest == nil {
+		return false
+	}
+	if len(rw.Manifest.Hooks) > 0 {
+		return true
+	}
+	for _, svc := range rw.Services {
+		if svc.Manifest != nil && len(svc.Manifest.Hooks) > 0 {
+			return true
+		}
+	}
+	return false
 }
