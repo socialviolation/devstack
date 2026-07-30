@@ -6,6 +6,7 @@ package tiltgen
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/socialviolation/devstack/internal/config"
@@ -165,11 +166,11 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	b.WriteString("local_resource(\n")
 	fmt.Fprintf(&b, "    %s,\n", starStr(hostName(prefix, svc.Name, namespace)))
 
-	if m.Runtime.Prep.Command != "" {
-		prep, err := config.ResolveRefs(m.Runtime.Prep.Command, svc.Name, book)
-		if err != nil {
-			return "", err
-		}
+	prep, err := prepCommand(m, svc.Name, book)
+	if err != nil {
+		return "", err
+	}
+	if prep != "" {
 		fmt.Fprintf(&b, "    cmd=%s,\n", starStr(prep))
 	}
 
@@ -398,4 +399,41 @@ func sortedKeys(m map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// prepCommand builds the one-shot command Tilt runs before starting a service:
+// devstack's own port reclaim (when the service asks for it) followed by the
+// service's own prep.
+//
+// The reclaim is generated from the ports THIS instance resolved to, never from
+// a literal in the manifest. A hand-written `fuser -k 63290/tcp` is copied
+// verbatim into every stack's worktree, where it names base's port and kills
+// base each time the stack starts. Deriving it here means a stack can only ever
+// free what it was allocated.
+func prepCommand(m *config.ServiceManifest, service string, book config.PortBook) (string, error) {
+	var parts []string
+
+	if m.Runtime.Prep.FreePorts.Enabled() {
+		targets, err := m.Runtime.Prep.FreePorts.Resolve(service, book[service])
+		if err != nil {
+			return "", err
+		}
+		if len(targets) > 0 {
+			args := make([]string, 0, len(targets))
+			for _, p := range targets {
+				args = append(args, strconv.Itoa(p))
+			}
+			parts = append(parts, "devstack ports free --quiet "+strings.Join(args, " "))
+		}
+	}
+
+	if cmd := strings.TrimSpace(m.Runtime.Prep.Command); cmd != "" {
+		resolved, err := config.ResolveRefs(cmd, service, book)
+		if err != nil {
+			return "", err
+		}
+		parts = append(parts, resolved)
+	}
+
+	return strings.Join(parts, " && "), nil
 }
