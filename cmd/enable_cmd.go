@@ -155,5 +155,5 @@ func runEnable(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("✓ Started: %s\n", strings.Join(toTrigger, ", "))
 
-	return nil
+	return fireHooks(ws, stackName, config.EventServiceStart, toTrigger)
 }

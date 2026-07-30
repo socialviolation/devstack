@@ -95,7 +95,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	return nil
+	return fireHooks(ws, "", config.EventWorkspaceUp, nil)
 }
 
 // ensureHostDaemon starts the one host Tilt daemon if it is not already running,

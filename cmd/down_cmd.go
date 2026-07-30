@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/infra"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
@@ -43,6 +44,10 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 	ws, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
+		return err
+	}
+
+	if err := fireHooks(ws, "", config.EventWorkspaceDown, nil); err != nil {
 		return err
 	}
 

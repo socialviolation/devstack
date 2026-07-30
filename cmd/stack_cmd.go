@@ -145,6 +145,14 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "WARNING: %s\n", w)
 	}
 
+	overlay := make([]string, 0, len(res.Overlay))
+	for _, m := range res.Overlay {
+		overlay = append(overlay, m.Service)
+	}
+	if err := fireHooks(base, args[0], config.EventStackCreate, overlay); err != nil {
+		return fmt.Errorf("%w\nStack %q was created but its setup hooks did not finish. Fix the hook, then either re-run them:\n  devstack hooks run stack.create --stack %s\nor discard the stack:\n  devstack stack rm %s", err, res.StackName, args[0], args[0])
+	}
+
 	fmt.Printf("\nStack %q ready. Start it: devstack stack up %s\n", res.StackName, args[0])
 	return nil
 }
@@ -154,6 +162,12 @@ func runStackRemove(cmd *cobra.Command, args []string) error {
 
 	base, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
+		return err
+	}
+
+	// Before anything is taken away: worktrees, ports and the record are all
+	// still readable, so a teardown hook can de-provision what create provisioned.
+	if err := fireHooks(base, args[0], config.EventStackDestroy, nil); err != nil {
 		return err
 	}
 
@@ -448,6 +462,10 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 	for _, k := range sortedKeys(rec.Ports) {
 		fmt.Printf("  %-24s http://localhost:%d\n", stackPortLabel(k), rec.Ports[k])
 	}
+
+	if err := fireHooks(base, rec.Name, config.EventStackUp, started); err != nil {
+		return fmt.Errorf("%w\nStack %q is running but its setup hooks did not finish. Fix the hook, then re-run them:\n  devstack hooks run stack.up --stack %s", err, rec.Name, rec.Name)
+	}
 	fmt.Printf("\n  devstack status --stack %s   ·   devstack restart <service> --stack %s\n", rec.Name, rec.Name)
 	return nil
 }
@@ -466,6 +484,10 @@ func runStackDown(cmd *cobra.Command, args []string) error {
 	}
 	rec, err := stack.Resolve(base.Name, args[0])
 	if err != nil {
+		return err
+	}
+
+	if err := fireHooks(base, rec.Name, config.EventStackDown, nil); err != nil {
 		return err
 	}
 

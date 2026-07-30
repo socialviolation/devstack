@@ -89,5 +89,5 @@ func runStop(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("✓ Stopped: %s\n", strings.Join(stopped, ", "))
-	return nil
+	return fireHooks(ws, stackName, config.EventServiceStop, services)
 }

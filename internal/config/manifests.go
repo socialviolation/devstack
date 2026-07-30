@@ -36,6 +36,7 @@ type WorkspaceManifest struct {
 	Calls         map[string][]string             `yaml:"calls,omitempty"`
 	StartsAfter   map[string][]string             `yaml:"startsAfter,omitempty"`
 	Environments  map[string]WorkspaceEnvironment `yaml:"environments,omitempty"`
+	Hooks         []Hook                          `yaml:"hooks,omitempty"`
 }
 
 // ResourceDeps returns the effective startup ordering for svc: the deduped,
@@ -147,6 +148,7 @@ type ServiceManifest struct {
 	Config    ServiceConfig          `yaml:"config,omitempty"`
 	Links     []ServiceLink          `yaml:"links,omitempty"`
 	Telemetry ServiceTelemetry       `yaml:"telemetry,omitempty"`
+	Hooks     []Hook                 `yaml:"hooks,omitempty"`
 	Dev       map[string]any         `yaml:"dev,omitempty"`
 }
 
@@ -336,7 +338,7 @@ func (m *WorkspaceManifest) Validate() error {
 	if mode == RepoDiscoveryModeScan && len(m.Workspace.RepoDiscovery.Roots) == 0 {
 		return errors.New("workspace.repoDiscovery.roots is required for scan mode")
 	}
-	return nil
+	return validateHooks(m.Hooks, WorkspaceManifestFileName, true)
 }
 
 func LoadServiceManifest(repoPath string) (*ServiceManifest, error) {
@@ -369,7 +371,7 @@ func (m *ServiceManifest) Validate() error {
 	if strings.TrimSpace(m.Runtime.Run.Command) == "" {
 		return errors.New("runtime.run.command is required")
 	}
-	return nil
+	return validateHooks(m.Hooks, ServiceManifestFileName, false)
 }
 
 func ResolveWorkspace(workspacePath string) (*ResolvedWorkspace, error) {
