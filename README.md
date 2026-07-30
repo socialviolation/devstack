@@ -163,7 +163,17 @@ A stack's ports are allocated when it is created, so a hook cannot hardcode them
 
 Failure means opposite things in each direction. A setup hook that fails stops the rest and fails the command, because a half-provisioned stack that looks healthy is worse than one that failed loudly. A teardown hook that fails is reported and skipped, and the teardown carries on. Otherwise one broken hook leaves you a worktree, a branch and a port you cannot reclaim. Override either with `onError: abort` or `onError: continue`, and bound a hook that talks to a slow API with `timeout: 90s`.
 
-The lifecycle action is never rolled back. If a `stack.create` hook fails the stack still exists, unprovisioned, and the error says so. Fix the hook and run `devstack hooks run stack.create --stack <name>` rather than recreating it.
+The lifecycle action is never rolled back. If a `stack.create` hook fails the stack still exists, unprovisioned, and the error says so. Fix the hook and run `devstack hooks run stack.create --stack <name>` rather than recreating it. `devstack hooks run` re-fires every hook on the event, including ones that already succeeded, so a hook that provisions external state should tolerate being run twice.
+
+`stack.destroy` is the one failure with no retry, and it is the cost of guaranteeing a stack can always be removed. Removing the stack deletes the record its `${self...}` references resolve against, so by the time you read the failure there is nothing left to resolve. devstack prints the resolved URLs at the point of failure instead:
+
+```
+warning: hook "auth0-cleanup/api" failed on stack.destroy, continuing: exit status 1
+  whatever "auth0-cleanup/api" was cleaning up outside this machine is probably still there.
+  this CANNOT be retried: removing the stack deletes the record that ${self...} resolves against.
+  clean it up by hand. Stack "login-fix" was serving:
+    api                      http://localhost:20016
+```
 
 Agents get the same behaviour: `stack_create`, `stack_up`, `stack_down`, `stack_rm`, `start` and `stop` fire their events over [MCP](#mcp) and report what ran, and the `hooks` tool lists and re-runs them.
 

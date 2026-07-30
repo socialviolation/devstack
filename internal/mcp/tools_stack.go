@@ -36,7 +36,7 @@ func registerStackTools(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 
 func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_create",
-		mcp.WithDescription("Create a feature stack overlaying THIS workspace (the base). A stack instantiates only the services it changes plus the services that call them, each in its own git worktree on a dynamically allocated port; every other service resolves to the base stack. Use this for the request 'I need a stack to work on X in services A and B'. The base workspace must be running — a stack reuses its services. Returns the overlay set with reasons, worktree paths, service links, and any warnings (dirty base checkout, base daemon not running). "+serviceLinksDesc),
+		mcp.WithDescription("Create a feature stack overlaying THIS workspace (the base). A stack instantiates only the services it changes plus the services that call them, each in its own git worktree on a dynamically allocated port; every other service resolves to the base stack. Use this for the request 'I need a stack to work on X in services A and B'. The base workspace must be running — a stack reuses its services. Returns the overlay set with reasons, worktree paths, service links, and any warnings (dirty base checkout, base daemon not running). This workspace may declare lifecycle HOOKS: shell commands devstack runs automatically on this action, which can change state outside this machine (registering callback URLs, provisioning resources). They fire on their own and their output is included below. A hook failure is returned as an error and means the stack exists but is NOT fully provisioned — do not report success; see the hooks tool. Run the hooks tool with action=\"list\" first if you do not know what this workspace fires. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description("Short stack name (e.g. 'import-review'). The full stack identity becomes '<base>--<name>'; every stack parameter across these tools takes the short name.")),
 		mcp.WithString("repos", mcp.Required(),
@@ -229,7 +229,7 @@ func registerStackNoteTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 
 func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_rm",
-		mcp.WithDescription("Tear down a feature stack of THIS workspace: stop its daemon, remove its worktrees, release its ports, delete its record, and delete its stack root. Refuses a worktree with uncommitted changes unless force is set."),
+		mcp.WithDescription("Tear down a feature stack of THIS workspace: stop its daemon, remove its worktrees, release its ports, delete its record, and delete its stack root. Refuses a worktree with uncommitted changes unless force is set. This workspace may declare lifecycle HOOKS that de-provision external state on stack.destroy; they fire before anything is removed, while the ports and record can still be read. A hook failure does NOT block the teardown, so it means the external cleanup probably did not happen — and it cannot be retried afterwards, because removing the stack deletes the record its ${self...} references resolve against. devstack prints the resolved URLs at the point of failure; pass those on instead of reporting a clean teardown."),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(stackShortNameDesc)),
 		mcp.WithBoolean("force",
@@ -291,7 +291,7 @@ func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 
 func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_up",
-		mcp.WithDescription("Bring a feature stack up: mark it (and its base workspace) active, fold its <base>:<service>:<stack> resources into the one host Tilt daemon, then enable and trigger them so its services actually start (registering a resource does not run it). Reports which services it started; they are starting, not started, so confirm with status before drawing conclusions. Mirrors 'devstack stack up'. This is the remedy when another tool reports the stack is not up: status, process_logs, restart, start, stop and configure all refuse an inactive stack rather than falling through to base. There is no per-stack daemon — its services run on their own ports inside the host daemon. Returns the stack's allocated service links and the daemon status. "+serviceLinksDesc),
+		mcp.WithDescription("Bring a feature stack up: mark it (and its base workspace) active, fold its <base>:<service>:<stack> resources into the one host Tilt daemon, then enable and trigger them so its services actually start (registering a resource does not run it). Reports which services it started; they are starting, not started, so confirm with status before drawing conclusions. Mirrors 'devstack stack up'. This is the remedy when another tool reports the stack is not up: status, process_logs, restart, start, stop and configure all refuse an inactive stack rather than falling through to base. There is no per-stack daemon — its services run on their own ports inside the host daemon. Returns the stack's allocated service links and the daemon status. This workspace may declare lifecycle HOOKS: shell commands devstack runs automatically on this action, which can change state outside this machine. They fire on their own and their output is included in the result. A hook failure is returned as an error and means the action succeeded but the stack is NOT fully provisioned — do not report success; retry with the hooks tool (action=\"run\"). Call the hooks tool with action=\"list\" first if you do not know what this workspace fires. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(stackShortNameDesc)),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -362,7 +362,7 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 
 func registerStackDownTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_down",
-		mcp.WithDescription("Stop a feature stack's services in the host daemon: mark it inactive (nothing of it runs any more) and regenerate the host Tiltfile so the running daemon drops its <base>:<service>:<stack> resources. Mirrors 'devstack stack down'. Leaves the stack's worktrees and record intact (remove them with stack_rm)."),
+		mcp.WithDescription("Stop a feature stack's services in the host daemon: mark it inactive (nothing of it runs any more) and regenerate the host Tiltfile so the running daemon drops its <base>:<service>:<stack> resources. Mirrors 'devstack stack down'. Leaves the stack's worktrees and record intact (remove them with stack_rm). This workspace may declare lifecycle HOOKS on stack.down; they fire on their own and a failure does not block the stack coming down, so it means the external cleanup probably did not happen. Retry with the hooks tool (action=\"run\", event=\"stack.down\")."),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(stackShortNameDesc)),
 		mcp.WithReadOnlyHintAnnotation(false),

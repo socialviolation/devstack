@@ -259,3 +259,73 @@ func mustRead(t *testing.T, path string) string {
 	}
 	return strings.TrimRight(string(data), "\n")
 }
+
+// A failed stack.destroy hook is the one failure with no retry: the record its
+// ${self...} references resolve against is deleted moments later. The output is
+// the only surviving record of what needs cleaning by hand, so it has to carry
+// the resolved values and say plainly that re-running is not an option.
+func TestFailedDestroyHookPrintsUnretryableCleanupContext(t *testing.T) {
+	dir := t.TempDir()
+	src := Source{
+		WorkspaceRoot:  dir,
+		WorkspaceHooks: []config.Hook{{Name: "deprovision", On: []string{config.EventStackDestroy}, Run: "exit 1"}},
+		Services:       map[string]ServiceRef{"frontend": {Path: dir}, "api": {Path: dir}},
+	}
+	ev := stackUpEvent("frontend", "api")
+	ev.Name = config.EventStackDestroy
+
+	var out bytes.Buffer
+	if _, err := Run(ev, src, &out); err != nil {
+		t.Fatalf("Run() = %v, want teardown to survive", err)
+	}
+	got := out.String()
+
+	for _, want := range []string{
+		"probably still there",
+		"CANNOT be retried",
+		"http://localhost:20006",
+		"http://localhost:20005",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "devstack hooks run stack.destroy") {
+		t.Errorf("must not offer a retry that cannot work:\n%s", got)
+	}
+}
+
+// Every other teardown event keeps its record, so its failure names the retry.
+func TestFailedStackDownHookOffersARetry(t *testing.T) {
+	dir := t.TempDir()
+	src := Source{
+		WorkspaceRoot:  dir,
+		WorkspaceHooks: []config.Hook{{Name: "detach", On: []string{config.EventStackDown}, Run: "exit 1"}},
+		Services:       map[string]ServiceRef{"frontend": {Path: dir}},
+	}
+	ev := stackUpEvent("frontend")
+	ev.Name = config.EventStackDown
+
+	var out bytes.Buffer
+	if _, err := Run(ev, src, &out); err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "devstack hooks run stack.down --stack feat") {
+		t.Errorf("output missing the retry command:\n%s", got)
+	}
+}
+
+// A setup failure aborts and is returned as an error; it must not also print the
+// teardown unwind advice, which would contradict it.
+func TestSetupFailureDoesNotPrintUnwindHint(t *testing.T) {
+	dir := t.TempDir()
+	src := sourceWriting(t, dir, config.Hook{Name: "boom", On: []string{config.EventStackUp}, Run: "exit 1"})
+
+	var out bytes.Buffer
+	if _, err := Run(stackUpEvent("frontend"), src, &out); err == nil {
+		t.Fatal("Run() = nil, want abort")
+	}
+	if strings.Contains(out.String(), "probably still there") {
+		t.Errorf("setup failure printed teardown advice:\n%s", out.String())
+	}
+}

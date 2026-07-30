@@ -58,10 +58,42 @@ func Run(ev Event, src Source, w io.Writer) ([]Result, error) {
 		}
 		if err != nil {
 			fmt.Fprintf(w, "warning: hook %q (%s) failed on %s, continuing: %v\n", inv.Label(), inv.Origin, ev.Name, err)
+			writeUnwindHint(w, ev, inv)
 		}
 		results = append(results, res)
 	}
 	return results, firstFatal
+}
+
+// writeUnwindHint says what a failed teardown hook leaves behind and whether it
+// can still be retried. stack.destroy is the one event with no retry: the record
+// it resolves ${self...} against is deleted moments later, so by the time anyone
+// reads the failure the context is gone. Printing the resolved values here is
+// the only chance to make the cleanup mechanical rather than archaeological.
+func writeUnwindHint(w io.Writer, ev Event, inv Invocation) {
+	if !config.IsTeardownEvent(ev.Name) {
+		return
+	}
+	fmt.Fprintf(w, "  whatever %q was cleaning up outside this machine is probably still there.\n", inv.Label())
+
+	if ev.Name != config.EventStackDestroy {
+		fmt.Fprintf(w, "  retry it once fixed: devstack hooks run %s%s\n", ev.Name, stackFlag(ev))
+		return
+	}
+	fmt.Fprintf(w, "  this CANNOT be retried: removing the stack deletes the record that ${self...} resolves against.\n")
+	fmt.Fprintf(w, "  clean it up by hand. Stack %q was serving:\n", ev.StackLabel())
+	for _, name := range sortedCopy(ev.Services) {
+		if port, ok := ev.Book[name]["http"]; ok {
+			fmt.Fprintf(w, "    %-24s http://%s:%d\n", name, ev.Book.Host(name), port)
+		}
+	}
+}
+
+func stackFlag(ev Event) string {
+	if strings.TrimSpace(ev.Stack) == "" {
+		return ""
+	}
+	return " --stack " + ev.Stack
 }
 
 func execute(ev Event, src Source, inv Invocation, w io.Writer) error {
