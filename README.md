@@ -71,6 +71,25 @@ Name nothing and devstack works out the service from your working directory. `st
 
 States are `running`, `starting`, `building`, `stopped`, `erroring`, `disabled`, `unknown`. Stopped means registered but not started, which is not the same as broken.
 
+A service that will not start because its last process is still holding the port can reclaim it, without naming the port:
+
+```yaml
+runtime:
+  prep:
+    freePorts: true              # every port this service declares
+    # freePorts: [http, grpc]    # or just some
+    command: "dotnet build ..."  # your own prep still runs, after
+```
+
+devstack resolves the ports the same way it resolves `${self.port.http}`, so base frees the port it pins and a stack frees the port it was allocated, from that one line. Never write the port as a literal: a stack's worktree copies the literal, and `fuser -k 63290/tcp` in a stack kills base.
+
+An instance can only free ports it owns. Reclaiming names the process before killing it, and sends `SIGTERM` before `SIGKILL` so a dev server takes its own children down instead of orphaning them.
+
+```bash
+devstack ports check 4200      # what holds a port, IPv4 or IPv6
+devstack ports free 4200       # kill it (refuses anything below 1024)
+```
+
 Dependencies and groups:
 
 ```bash

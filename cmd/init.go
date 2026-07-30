@@ -685,7 +685,8 @@ func hotReloadInstructions(serviceName, servicePath, stackName string) string {
 		"A running service keeps executing its **old** code until it is reloaded. A service reloads automatically only if it **self-watches** — a hot-reload run command such as `dotnet watch run`, `air`, `vite` / `next dev`, or `uvicorn --reload` — or has **`runtime.watch`** set in its `devstack.service.yaml`, which has devstack watch those paths and restart it on change (debounced). " +
 		"If a service has neither, after editing its source you **must** run `devstack restart <service>` (add `--stack <name>` for a stack instance) or your change has no effect. " +
 		"Prefer hot-reloading run commands; when a service can't self-reload, add `runtime.watch: [<source dirs>]` so devstack reloads it for you. " +
-		"Config/env changes (`devstack env set` / `env use`) always need a restart, even for a self-reloading service — they change the launch environment, not the watched source.\n\n"
+		"Config/env changes (`devstack env set` / `env use`) always need a restart, even for a self-reloading service — they change the launch environment, not the watched source.\n\n" +
+		"**If a service will not start because its port is still held**, set `runtime.prep.freePorts: true` in its `devstack.service.yaml` rather than writing a `fuser -k <port>/tcp` prep. devstack resolves that instance's own ports, so base frees what it pins and a stack frees what it was allocated. A literal port is a bug: a stack's worktree copies it verbatim, so a hardcoded base port makes the stack kill base every time it starts. To look or act by hand: `devstack ports check <port>` and `devstack ports free <port>`.\n\n"
 
 	if serviceName == "" {
 		return general
