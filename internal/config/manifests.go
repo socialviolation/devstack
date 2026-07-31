@@ -136,7 +136,14 @@ type WorkspaceManifestObservabilityDefaults struct {
 // devstack versions may still carry type/observability keys under an
 // environment; they are ignored.
 type WorkspaceEnvironment struct {
-	Values map[string]string `yaml:"values,omitempty"`
+	// Description says what this environment is for and what makes it
+	// different from the others, in the author's words. A name and a list of
+	// keys say what an environment sets; only this says why you would select
+	// it, or why selecting it is dangerous. devstack never derives it, and it
+	// travels with the definition rather than sitting in a YAML comment that
+	// nothing reads.
+	Description string            `yaml:"description,omitempty"`
+	Values      map[string]string `yaml:"values,omitempty"`
 }
 
 type ServiceManifest struct {

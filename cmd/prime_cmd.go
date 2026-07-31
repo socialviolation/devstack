@@ -212,8 +212,29 @@ func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, re
 func writePrimeApplies(b *strings.Builder, ws *workspace.Workspace, rw *config.ResolvedWorkspace) {
 	var lines []string
 	if envs := sortedEnvNames(rw); len(envs) > 0 {
-		lines = append(lines, fmt.Sprintf("  environments  %s (active: %s) — devstack env which",
-			strings.Join(envs, ", "), orDash(rw.Manifest.Workspace.Env)))
+		// An environment name alone says nothing about what selecting it does.
+		// "fx-prod" reads as another local variant until its description says it
+		// points at production, which is the fact that changes what you do.
+		described := 0
+		for _, n := range envs {
+			if strings.TrimSpace(rw.Manifest.Environments[n].Description) != "" {
+				described++
+			}
+		}
+		if described == 0 {
+			lines = append(lines, fmt.Sprintf("  environments  %s (active: %s) — devstack env which",
+				strings.Join(envs, ", "), orDash(rw.Manifest.Workspace.Env)))
+		} else {
+			lines = append(lines, fmt.Sprintf("  environments  active: %s. Each one sets different config values:", orDash(rw.Manifest.Workspace.Env)))
+			for _, n := range envs {
+				marker := " "
+				if n == rw.Manifest.Workspace.Env {
+					marker = "▸"
+				}
+				lines = append(lines, fmt.Sprintf("              %s %-10s %s", marker, n,
+					firstLine(rw.Manifest.Environments[n].Description, 84)))
+			}
+		}
 	}
 	if n := countHooks(ws, rw); n > 0 {
 		lines = append(lines, fmt.Sprintf("  hooks         %d declared, run automatically on stack/service lifecycle — devstack hooks list", n))

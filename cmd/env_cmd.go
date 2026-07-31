@@ -97,6 +97,9 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 			label = color.New(color.FgCyan).Sprint(label)
 		}
 		fmt.Printf("  %-*s   %s   %s\n", nameW, name, label, formatEnvKeys(env.Values, 6))
+		if d := strings.TrimSpace(env.Description); d != "" {
+			color.New(color.Faint).Printf("  %-*s   %s\n", nameW, "", d)
+		}
 	}
 
 	fmt.Printf("\nValues: devstack env show <name>\n")

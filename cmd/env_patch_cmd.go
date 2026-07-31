@@ -163,6 +163,9 @@ func runEnvShow(cmd *cobra.Command, args []string) error {
 	reveal, _ := cmd.Flags().GetBool("reveal")
 
 	fmt.Printf("Environment %q:\n", name)
+	if d := strings.TrimSpace(env.Description); d != "" {
+		fmt.Printf("  %s\n", d)
+	}
 
 	fmt.Printf("\nConfig-var values (%s):\n\n", redactionNote(reveal))
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
