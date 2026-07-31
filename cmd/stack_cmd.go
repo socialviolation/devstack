@@ -270,10 +270,7 @@ func truncateCell(s string, n int) string {
 	if s == "" {
 		return "-"
 	}
-	if len(s) <= n {
-		return s
-	}
-	return s[:n-1] + "…"
+	return clipRunes(s, n)
 }
 
 // stackAge is how long a stack has been open. A stack nobody has touched in

@@ -53,10 +53,6 @@ func detectServiceFromCwd(workspacePath string, cfg *config.WorkspaceConfig) (st
 // 2. Exact match in cfg.Groups → returns the group's member list
 // 3. Returns error with helpful message
 // If name is empty, falls back to cwd auto-detection (detectServicesFromCwd).
-func resolveTarget(workspacePath, name string, cfg *config.WorkspaceConfig) ([]string, error) {
-	return resolveTargetKind(workspacePath, name, cfg, targetAny)
-}
-
 // A target kind says whether a name must be read as a service, as a group, or as
 // whichever matches. It exists because one name can legitimately be both: navexa
 // has a group "roi" and a service aliased "roi", and the inferring form silently

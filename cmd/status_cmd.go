@@ -464,14 +464,18 @@ func renderStatusTable(rows []statusRow, showDirs bool) {
 // where a branch label carries one: uncommitted work is the part of the label
 // that changes what you do next.
 func fitCell(v string, width int) string {
-	if len(v) <= width {
+	r := []rune(v)
+	if len(r) <= width {
 		return v
 	}
 	suffix := ".."
 	if strings.HasSuffix(v, "*") {
 		suffix = "..*"
 	}
-	return string([]rune(v)[:width-len(suffix)]) + suffix
+	if width <= len(suffix) {
+		return string(r[:max(width, 0)])
+	}
+	return string(r[:width-len(suffix)]) + suffix
 }
 
 // readBranchLabels reports the checkout label for each row's source directory,

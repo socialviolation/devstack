@@ -640,9 +640,20 @@ func firstLine(s string, n int) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
 	}
-	s = strings.TrimSpace(s)
-	if len(s) <= n {
+	return strings.TrimSpace(clipRunes(strings.TrimSpace(s), n))
+}
+
+// clipRunes shortens s to n printed characters. It counts runes, because
+// comparing len(s) in bytes and then slicing []rune panics on any string that
+// is longer in bytes than in runes — which is every non-ASCII string. A stack
+// note or a branch name with an accent in it crashed the command printing it.
+func clipRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
-	return strings.TrimSpace(string([]rune(s)[:n-1])) + "…"
+	if n <= 1 {
+		return string(r[:max(n, 0)])
+	}
+	return string(r[:n-1]) + "…"
 }
