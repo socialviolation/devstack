@@ -198,7 +198,9 @@ func stackRunningSummary(running int, stacks []string) string {
 	case len(stacks) == 1:
 		return fmt.Sprintf("%d more in stack %s", running, stacks[0])
 	default:
-		return fmt.Sprintf("%d more across %d stacks", running, len(stacks))
+		// "across N stacks" was read as a count of the workspace's stacks. It
+		// counts only the ones with something running, which is fewer.
+		return fmt.Sprintf("%d more running, in %d stacks — devstack stack list", running, len(stacks))
 	}
 }
 
@@ -238,20 +240,28 @@ func hostOtelLine(running, enabled []string) string {
 }
 
 // condenseSection reports whether a section renders as a single summary line
-// instead of a full table: nothing running, nothing failing, and the user did
+// instead of a full table: nothing running, nothing in flight, and the user did
 // not ask for everything expanded.
 //
-// A failing service keeps its section expanded. Collapsing it hid the one row
-// worth reading behind a line that said only that nothing was up, which is the
-// answer to "the frontend is down" that sends the reader looking anywhere else.
-func condenseSection(running int, expand bool, erroring bool) bool {
-	return running == 0 && !erroring && !expand
+// A service that is failing or on its way up keeps its section expanded.
+// Collapsing hid the one row worth reading behind a line saying only that
+// nothing was up — which is how "the frontend is down" got answered, and how a
+// service wedged in `starting` disappeared from the default view entirely.
+func condenseSection(running int, expand bool, inFlight bool) bool {
+	return running == 0 && !inFlight && !expand
 }
 
-// sectionErroring reports whether any member of a section failed.
-func sectionErroring(s serviceSection) bool {
+// sectionInFlight reports whether any member of a section is failing or is on
+// its way up: the states whose row a reader needs and a summary line cannot
+// carry.
+func sectionInFlight(s serviceSection) bool {
 	for _, svc := range s.members {
-		if r, ok := s.resources[svc]; ok && serviceStatus(r) == "erroring" {
+		r, ok := s.resources[svc]
+		if !ok {
+			continue
+		}
+		switch serviceStatus(r) {
+		case "erroring", "starting", "building":
 			return true
 		}
 	}
@@ -389,7 +399,7 @@ func sortSections(sections []serviceSection) []serviceSection {
 // the ones collapsed to a single idle line, preserving table order.
 func partitionSections(sections []serviceSection, expand bool) (table, condensed []serviceSection) {
 	for _, s := range sortSections(sections) {
-		if condenseSection(s.running, expand, sectionErroring(s)) {
+		if condenseSection(s.running, expand, sectionInFlight(s)) {
 			condensed = append(condensed, s)
 		} else {
 			table = append(table, s)

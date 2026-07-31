@@ -29,7 +29,10 @@ allocated port; the rest resolve to base's copies.
 
 "base" is the workspace running without any stack: your normal checkouts and the
 copies started from them. It is not itself a stack, and no stack may be named
-"base" — a command with no --stack is already acting on base.`,
+"base" — a command that starts, stops or writes, given no --stack, acts on base.
+
+The telemetry queries are the exception: 'devstack otel traces' with no --stack
+searches every copy, base and stacks together. Pass --stack base for base alone.`,
 	RunE: runStackList,
 }
 

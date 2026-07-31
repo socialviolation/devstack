@@ -14,6 +14,7 @@ import (
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/observability"
 	"github.com/socialviolation/devstack/internal/otel"
+	"github.com/socialviolation/devstack/internal/stack"
 )
 
 var otelTracesCmd = &cobra.Command{
@@ -69,7 +70,7 @@ func init() {
 	}
 
 	otelTracesCmd.Flags().String("service", "", "Only traces from this service (default: the service you are standing in; \"all\" for the whole workspace)")
-	otelTracesCmd.Flags().String("stack", "", "Only traces from this stack (\"base\" for the base workspace)")
+	otelTracesCmd.Flags().String("stack", "", "Only traces from this stack. Omit and every copy is searched, base and stacks together; \"base\" for base alone")
 	otelTracesCmd.Flags().String("attr", "", "Only traces with this attribute (format: key=value)")
 	otelTracesCmd.Flags().Int("limit", 10, "Maximum traces to return")
 
@@ -113,6 +114,62 @@ func resolveQueryService(cmd *cobra.Command) string {
 	return identity.ServiceName
 }
 
+// resolveStackFlag rejects a --stack naming no stack of this workspace, and
+// returns the stack's canonical name.
+//
+// A telemetry query used to accept any string and answer "No traces", so
+// --stack with a typo, the wrong case, or the '<base>--<name>' identity that
+// telemetry itself prints all returned a clean bill of health for a stack that
+// was never queried. `devstack status --stack` had always errored on the same
+// input; one flag behaving two ways is how a misspelling becomes "no errors".
+//
+// The name is canonicalised because lookup is case-insensitive while the stored
+// telemetry attribute is not: --stack Perf resolved to the perf record and then
+// filtered on "Perf", which matches nothing.
+func resolveStackFlag(cmd *cobra.Command, name string) (string, error) {
+	if name == "" || name == "base" || name == "all" || name == "*" {
+		return name, nil
+	}
+	ws, err := resolveOtelWorkspace(cmd)
+	if err != nil {
+		return name, nil
+	}
+	rec, err := stack.Resolve(ws.Name, name)
+	if err != nil {
+		return "", err
+	}
+	return rec.Name, nil
+}
+
+// explainEmptyTraceResult says why nothing came back when the reason is knowable
+// from local state. An empty result reads as "healthy" unless something says
+// otherwise, and the commonest cause is that the copy asked about is not running.
+func explainEmptyTraceResult(cmd *cobra.Command, stackName string) {
+	faint := color.New(color.Faint)
+	faint.Println("Empty means nothing matched — not that the service is healthy.")
+
+	if stackName == "" {
+		faint.Println("  This searched every copy, base and stacks. Narrow it with --stack <name>, or --stack base.")
+		return
+	}
+	if stackName == "base" {
+		return
+	}
+	ws, err := resolveOtelWorkspace(cmd)
+	if err != nil {
+		return
+	}
+	rec, err := stack.Resolve(ws.Name, stackName)
+	if err != nil || rec == nil {
+		return
+	}
+	if !rec.Active {
+		faint.Printf("  Stack %q is down, so nothing of it is running to emit. Bring it up: devstack stack up %s\n", stackName, stackName)
+		return
+	}
+	faint.Printf("  Stack %q is up. Check the copy is running, and that it emits: devstack status --stack %s · devstack otel status\n", stackName, stackName)
+}
+
 func runOtelTraces(cmd *cobra.Command, args []string) error {
 	backend, err := queryBackend(cmd)
 	if err != nil {
@@ -121,8 +178,13 @@ func runOtelTraces(cmd *cobra.Command, args []string) error {
 
 	since, _ := cmd.Flags().GetDuration("since")
 	limit, _ := cmd.Flags().GetInt("limit")
-	stack, _ := cmd.Flags().GetString("stack")
+	stackName, _ := cmd.Flags().GetString("stack")
 	attr, _ := cmd.Flags().GetString("attr")
+
+	stackName, err = resolveStackFlag(cmd, stackName)
+	if err != nil {
+		return err
+	}
 
 	// A trace lookup or attribute search deliberately spans services — only the
 	// recent-traces listing narrows to the service the caller is standing in.
@@ -133,7 +195,7 @@ func runOtelTraces(cmd *cobra.Command, args []string) error {
 
 	req := observability.TraceQuery{
 		Service: service,
-		Stack:   stack,
+		Stack:   stackName,
 		Since:   since,
 		Limit:   limit,
 	}
@@ -154,6 +216,7 @@ func runOtelTraces(cmd *cobra.Command, args []string) error {
 	}
 	if len(traces) == 0 {
 		fmt.Printf("No traces in the last %s.\n", since)
+		explainEmptyTraceResult(cmd, stackName)
 		return nil
 	}
 

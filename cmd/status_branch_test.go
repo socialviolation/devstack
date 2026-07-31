@@ -144,7 +144,11 @@ func TestStackRunningSummaryNamesTheOnlyStack(t *testing.T) {
 	if got := stackRunningSummary(3, []string{"fx-rates"}); got != "3 more in stack fx-rates" {
 		t.Errorf("summary = %q, want 3 more in stack fx-rates", got)
 	}
-	if got := stackRunningSummary(4, []string{"agent", "fx-rates"}); got != "4 more across 2 stacks" {
-		t.Errorf("summary = %q, want 4 more across 2 stacks", got)
+	// "across 2 stacks" was read as the workspace having 2 stacks. It counts
+	// only the ones with something running, so the phrasing says so and points
+	// at the command that lists them all.
+	want := "4 more running, in 2 stacks — devstack stack list"
+	if got := stackRunningSummary(4, []string{"agent", "fx-rates"}); got != want {
+		t.Errorf("summary = %q, want %q", got, want)
 	}
 }

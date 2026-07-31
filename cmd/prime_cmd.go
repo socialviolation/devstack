@@ -530,9 +530,10 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 	if suggested != "" {
 		fmt.Fprintf(b, "  The marker ? shows a guess. %s is the only stack that runs %s, but you are not in it.\n  Ask the user before you work on it.\n", suggested, service)
 	}
-	b.WriteString("  To make a command act on the copy of a stack, add `--stack <name>`. This is the only way.\n")
-	b.WriteString("  Your directory does not select the copy. In the worktree of a stack, `devstack service restart <svc>`\n")
-	b.WriteString("  still restarts the copy of base. To reach a copy over the network, use the port of that copy.\n")
+	b.WriteString("  To make a command change the copy of a stack, add `--stack <name>`. Your directory does not do this.\n")
+	b.WriteString("  In the worktree of a stack, `devstack service restart <svc>` restarts the copy of base.\n")
+	b.WriteString("  Some read-only commands do read your directory: `stack config` and `env which` name the stack you\n")
+	b.WriteString("  are in. No command that starts, stops or writes does. To reach a copy over the network, use its port.\n")
 }
 
 // pluralCopy keeps the count grammatical. "1 copy(s)" makes a reader stop and

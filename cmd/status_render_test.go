@@ -159,23 +159,30 @@ func TestCondenseSection(t *testing.T) {
 	}
 }
 
-// sectionErroring is what decides that, so it has to see a failing member
-// through the same status mapping the table uses.
-func TestSectionErroringFindsAFailingMember(t *testing.T) {
-	s := serviceSection{
-		members: []string{"api", "frontend"},
-		resources: map[string]tilt.UIResource{
-			"api":      {Status: tilt.UIResourceStatus{RuntimeStatus: "ok"}},
-			"frontend": {Status: tilt.UIResourceStatus{RuntimeStatus: "error"}},
-		},
-	}
-	if !sectionErroring(s) {
-		t.Error("a section with a failing member must not be condensed away")
-	}
-
-	delete(s.resources, "frontend")
-	if sectionErroring(s) {
-		t.Error("no member is failing, so the section may condense")
+// sectionInFlight is what decides that, so it has to see a failing member — and
+// a member on its way up — through the same status mapping the table uses. A
+// service wedged in `starting` was collapsed behind "none up", a phrase that
+// means the opposite of what was happening.
+func TestSectionInFlightFindsAMemberWorthShowing(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		runtime string
+		want    bool
+	}{
+		{"erroring", "error", true},
+		{"starting", "pending", true},
+		{"stopped", "none", false},
+	} {
+		s := serviceSection{
+			members: []string{"api", "frontend"},
+			resources: map[string]tilt.UIResource{
+				"api":      {Status: tilt.UIResourceStatus{RuntimeStatus: "ok"}},
+				"frontend": {Status: tilt.UIResourceStatus{RuntimeStatus: tc.runtime}},
+			},
+		}
+		if got := sectionInFlight(s); got != tc.want {
+			t.Errorf("sectionInFlight() with a %s member = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
 
