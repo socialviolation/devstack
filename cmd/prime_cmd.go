@@ -163,50 +163,62 @@ func buildPrime() (string, error) {
 		branch = gitinfo.ReadAll(map[string]string{repo: repo})[repo].Label()
 	}
 
-	working := inferWorkingStack(ws, service, branch)
-	if working != nil && working.Certain {
-		if wt, ok := working.Rec.Worktrees[service]; ok && wt != "" {
+	// Where the caller physically is, read from the filesystem and nothing else.
+	// Everything below distinguishes this from what devstack infers the session
+	// is about: a stack whose branch matches, or the only stack that runs this
+	// service, is a guess about intent and says nothing about the directory.
+	here := "base"
+	if _, rec, derr := stack.DetectFromCwd(); derr == nil && rec != nil {
+		here = rec.Name
+		if wt, ok := rec.Worktrees[service]; ok && wt != "" {
 			repo = wt
 			branch = gitinfo.ReadAll(map[string]string{wt: wt})[wt].Label()
 		}
 	}
 
+	working := inferWorkingStack(ws, service, branch)
+
 	var b strings.Builder
 	writePrimeWhatThisIs(&b)
-	writePrimeIdentity(&b, ws, service, repo, branch, working)
-	writePrimeInstances(&b, ws, rw, service, working)
+	writePrimeIdentity(&b, ws, service, repo, branch, here, working)
+	writePrimeInstances(&b, ws, rw, service, here, working)
 	writePrimeApplies(&b, ws, rw)
 	writePrimeReload(&b, rw, service, working)
 	b.WriteString("\nreference: devstack status · devstack help <command> · devstack stack list\n")
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
-func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, repo, branch string, working *workingStack) {
+func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, repo, branch, here string, working *workingStack) {
 	fmt.Fprintf(b, "devstack · workspace %s", ws.Name)
 	if service != "" {
 		fmt.Fprintf(b, " · service %s", service)
 	}
-	if working != nil && working.Certain {
-		fmt.Fprintf(b, " · stack %s\n", working.Rec.Name)
+	if here == "base" {
+		b.WriteString(" · base (not a stack)\n")
 	} else {
-		b.WriteString(" · base\n")
+		fmt.Fprintf(b, " · stack %s\n", here)
 	}
-	if working == nil {
+	if here != "base" {
+		// Standing in a stack. The fact that matters is that commits land on its
+		// branch and not on base — the copies table below carries the rest.
+		if rec, err := stack.Resolve(ws.Name, here); err == nil {
+			if note := firstLine(rec.Note, 110); note != "" {
+				fmt.Fprintf(b, "  purpose %s\n", note)
+			}
+		}
+		b.WriteString("  Your changes here go on the branch of this stack, not on base.\n")
 		return
 	}
-	fmt.Fprintf(b, "  working on  %s (%s)\n", working.Rec.Name, working.Reason)
+
+	if working == nil || working.Rec == nil || working.Rec.Name == here {
+		return
+	}
+	fmt.Fprintf(b, "  possibly for  %s (%s)\n", working.Rec.Name, working.Reason)
 	if note := firstLine(working.Rec.Note, 120); note != "" {
 		fmt.Fprintf(b, "  purpose %s\n", note)
 	}
-	if !working.Certain {
-		fmt.Fprintf(b, "  This is NOT confirmed. The worktree of this stack is %s.\n  Ask the user before you start this task.\n",
-			working.Rec.Worktrees[service])
-		return
-	}
-	if service != "" {
-		fmt.Fprintf(b, "  Your changes here stay on the branch of this stack. To restart this copy, run:\n    devstack service restart %s --stack %s\n",
-			service, working.Rec.Name)
-	}
+	fmt.Fprintf(b, "  You are NOT in that stack. Its directory is %s.\n  Ask the user which one this session is for before you change any code.\n",
+		orDash(working.Rec.Worktrees[service]))
 }
 
 func writePrimeApplies(b *strings.Builder, ws *workspace.Workspace, rw *config.ResolvedWorkspace) {
@@ -334,7 +346,7 @@ func writePrimeReload(b *strings.Builder, rw *config.ResolvedWorkspace, service 
 // what is that copy for. Base and every stack are the same kind of thing — an
 // instance — so splitting them across two blocks made the reader join them up,
 // and left base's own port stated nowhere at all.
-func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config.ResolvedWorkspace, service string, working *workingStack) {
+func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config.ResolvedWorkspace, service, here string, working *workingStack) {
 	view, err := tilt.NewClient("localhost", workspace.HostTiltPort).GetView()
 	if err != nil {
 		b.WriteString("\nThe daemon is not started. To start it, run: `devstack workspace up`\n")
@@ -406,12 +418,22 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 	}
 
 	fmt.Fprintf(b, "\n%s runs as %s:\n", service, pluralCopy(len(rows)))
+	suggested := ""
+	if working != nil && working.Rec != nil && working.Rec.Name != here {
+		suggested = working.Rec.Name
+	}
+
 	for _, r := range rows {
+		// ▸ is a filesystem fact: the directory this command ran in. ? is a
+		// guess about intent. Marking a guess with ▸ told an agent it was
+		// standing somewhere it was not, and the worktree path beside it made
+		// the claim look verified.
 		marker := " "
-		if working != nil && working.Rec != nil && working.Rec.Name == r.name {
+		switch r.name {
+		case here:
 			marker = "▸"
-		} else if r.name == "base" && working == nil {
-			marker = "▸"
+		case suggested:
+			marker = "?"
 		}
 		fmt.Fprintf(b, "  %s %-12s %-8s %-9s branch %s\n", marker, r.name, r.port, r.state, orDash(truncateCell(r.branch, 46)))
 		if r.dir != "" {
@@ -421,7 +443,11 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 			fmt.Fprintf(b, "      %s\n", r.note)
 		}
 	}
-	b.WriteString("  ▸ is the checkout that you are in. To use the copy from a stack, connect to its port,\n  or add `--stack <name>` to a command.\n")
+	fmt.Fprintf(b, "  ▸ is the copy whose directory you are in right now: %s.\n", here)
+	if suggested != "" {
+		fmt.Fprintf(b, "  ? is a guess, not a fact: %s is the only stack that runs %s. You are NOT in it. Ask before you work on it.\n", suggested, service)
+	}
+	b.WriteString("  To use the copy from a stack, change to its directory, connect to its port,\n  or add `--stack <name>` to a command.\n")
 }
 
 // pluralRun and pluralCopy keep the count grammatical. "1 service(s)" makes a
