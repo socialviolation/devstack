@@ -14,9 +14,9 @@ import (
 
 // stackParamDesc is the shared description for the optional `stack` parameter the
 // local tools accept. Absent = the base workspace this daemon is bound to.
-const stackParamDesc = "Optional feature stack name to target instead of base. " +
-	"Absent (or the literal \"base\") operates on the base workspace's service instances. When set to a stack name, the tool " +
-	"operates on that stack's instances, which run in the one host daemon as <workspace>:<service>:<stack> resources, plus its worktree config."
+const stackParamDesc = "Optional feature stack name to target instead of base. " + baseTermDesc +
+	"Absent (or the literal \"base\") operates on base's service copies. When set to a stack name, the tool " +
+	"operates on that stack's copies, which run in the one host daemon as <workspace>:<service>:<stack> resources, plus its worktree config."
 
 // resolveStackRecord looks up a feature stack by short name within the bound
 // (base) workspace, returning a clear error that lists the available stack names

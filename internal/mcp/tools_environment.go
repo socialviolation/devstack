@@ -145,19 +145,19 @@ func stacksSummary(ws *workspace.Workspace) string {
 		return fmt.Sprintf("workspace: %s — base only, no feature stacks in flight\n", ws.Name)
 	}
 	parts := make([]string, 0, len(stacks))
-	anyInactive := false
+	anyDown := false
 	for _, s := range stacks {
 		short := strings.TrimPrefix(s.Name, s.BaseName+"--")
-		if s.Status == "active" {
-			parts = append(parts, fmt.Sprintf("%s (active, base :%d)", short, s.BasePort))
+		if s.Status == stack.StatusUp {
+			parts = append(parts, fmt.Sprintf("%s (%s, base :%d)", short, stack.StatusUp, s.BasePort))
 		} else {
-			anyInactive = true
+			anyDown = true
 			parts = append(parts, fmt.Sprintf("%s (%s)", short, s.Status))
 		}
 	}
 	line := fmt.Sprintf("workspace: %s — base + %d feature stack(s) in flight: %s — those are the short names every 'stack' parameter takes (full identity is %s--<name>)\n", ws.Name, len(stacks), strings.Join(parts, ", "), ws.Name)
-	if anyInactive {
-		line += "inactive = the stack's worktrees and record exist but none of its services run: status/process_logs/restart/stop/configure against it error \"not up\" instead of falling through to base, " +
+	if anyDown {
+		line += "down = the stack's worktrees and record exist but none of its services run: status/process_logs/restart/stop/configure against it error \"not up\" instead of falling through to base, " +
 			"service_env still reads and writes its worktree config, and investigate returns only what it emitted while it was last up.\n"
 	}
 	return line

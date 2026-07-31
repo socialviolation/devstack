@@ -138,19 +138,44 @@ func TestHostOtelLine(t *testing.T) {
 
 func TestCondenseSection(t *testing.T) {
 	tests := []struct {
-		running int
-		expand  bool
-		want    bool
+		running  int
+		expand   bool
+		erroring bool
+		want     bool
 	}{
 		{running: 0, expand: false, want: true},
 		{running: 1, expand: false, want: false},
 		{running: 0, expand: true, want: false},
 		{running: 3, expand: true, want: false},
+		// A failing service is the row worth reading. Collapsing its section
+		// answers "the frontend is down" with "nothing is up here" and hides
+		// the reason one keystroke away.
+		{running: 0, expand: false, erroring: true, want: false},
 	}
 	for _, tt := range tests {
-		if got := condenseSection(tt.running, tt.expand); got != tt.want {
-			t.Fatalf("condenseSection(%d, %v) = %v, want %v", tt.running, tt.expand, got, tt.want)
+		if got := condenseSection(tt.running, tt.expand, tt.erroring); got != tt.want {
+			t.Fatalf("condenseSection(%d, %v, erroring=%v) = %v, want %v", tt.running, tt.expand, tt.erroring, got, tt.want)
 		}
+	}
+}
+
+// sectionErroring is what decides that, so it has to see a failing member
+// through the same status mapping the table uses.
+func TestSectionErroringFindsAFailingMember(t *testing.T) {
+	s := serviceSection{
+		members: []string{"api", "frontend"},
+		resources: map[string]tilt.UIResource{
+			"api":      {Status: tilt.UIResourceStatus{RuntimeStatus: "ok"}},
+			"frontend": {Status: tilt.UIResourceStatus{RuntimeStatus: "error"}},
+		},
+	}
+	if !sectionErroring(s) {
+		t.Error("a section with a failing member must not be condensed away")
+	}
+
+	delete(s.resources, "frontend")
+	if sectionErroring(s) {
+		t.Error("no member is failing, so the section may condense")
 	}
 }
 

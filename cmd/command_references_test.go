@@ -118,8 +118,12 @@ func TestEveryReferencedCommandExists(t *testing.T) {
 	// A line of prose can begin with "devstack", so the English verbs that
 	// follow it there are excluded by name. The guard is for command
 	// references; it does not try to parse sentences.
+	// "help" is deliberately absent. root.go replaces cobra's help command with
+	// a hidden one, so `devstack help <command>` does not resolve — excluding it
+	// is what let the session briefing send every agent to a command that does
+	// not exist. The working form is `devstack <command> --help`.
 	notCommands := map[string]bool{
-		"": true, "help": true,
+		"":   true,
 		"is": true, "runs": true, "manages": true, "inspects": true,
 		"will": true, "capabilities": true, "tunnels": true, "sets": true,
 		"resolves": true, "reads": true, "writes": true, "detects": true, "maintains": true,

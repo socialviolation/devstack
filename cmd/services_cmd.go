@@ -61,15 +61,7 @@ var groupPalette = []*color.Color{
 func runStatus(cmd *cobra.Command, args []string) error {
 	ws, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
-		// A stack's worktree is a sibling of its base and is never registered, so
-		// workspace detection misses it — and a worktree is exactly where an agent
-		// is told to work. Resolve the owning base rather than dumping the
-		// every-workspace summary at someone standing in one service.
-		if base, _, derr := stack.DetectFromCwd(); derr == nil && base != nil {
-			ws = base
-		} else {
-			return runStatusAll()
-		}
+		return runStatusAll()
 	}
 	if stackName, _ := cmd.Flags().GetString("stack"); stackName != "" {
 		rec, err := stack.Resolve(ws.Name, stackName)
@@ -343,7 +335,7 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 	color.New(color.Faint).Printf("  within a group, top-to-bottom = startup order   ·   blank ENV = no env\n")
 	color.New(color.Faint).Printf("  devstack service start <service>   ·   devstack group start <group>\n")
 	color.New(color.Faint).Printf("  devstack stack up <name>   ·   devstack stack config <svc> --stack <name>\n")
-	color.New(color.Faint).Printf("  idle groups are condensed   ·   devstack status --all shows every service and its source path\n")
+	color.New(color.Faint).Printf("  groups with nothing running are condensed   ·   devstack status --all shows every service and its source path\n")
 
 	return nil
 }
@@ -397,7 +389,7 @@ func stackSections(ws *workspace.Workspace, view *tilt.TiltView, baseDeps map[st
 		stackRunning := countRunning(names, resourceMap)
 		tag := fmt.Sprintf("[%d/%d]", stackRunning, len(names))
 		if !rec.Active {
-			tag += " inactive"
+			tag += " down"
 		}
 
 		// A stack runs its own worktree of each service, so its rows must report
@@ -542,7 +534,7 @@ func printServiceOrientation(ws *workspace.Workspace, rw *config.ResolvedWorkspa
 		}
 		row := serviceOrientation{
 			stack:  rec.Name,
-			state:  "inactive",
+			state:  "down",
 			port:   "-",
 			branch: rec.Branch,
 			note:   rec.Note,
@@ -554,8 +546,6 @@ func printServiceOrientation(ws *workspace.Workspace, rw *config.ResolvedWorkspa
 		if rec.Active && view != nil {
 			if r, ok := hostResourceMap(view.UiResources, ws.Name, rec.Name)[service]; ok {
 				row.state = serviceStatus(r)
-			} else {
-				row.state = "active"
 			}
 		}
 		rows = append(rows, row)

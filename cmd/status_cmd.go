@@ -238,10 +238,24 @@ func hostOtelLine(running, enabled []string) string {
 }
 
 // condenseSection reports whether a section renders as a single summary line
-// instead of a full table: nothing running, and the user did not ask for
-// everything expanded.
-func condenseSection(running int, expand bool) bool {
-	return running == 0 && !expand
+// instead of a full table: nothing running, nothing failing, and the user did
+// not ask for everything expanded.
+//
+// A failing service keeps its section expanded. Collapsing it hid the one row
+// worth reading behind a line that said only that nothing was up, which is the
+// answer to "the frontend is down" that sends the reader looking anywhere else.
+func condenseSection(running int, expand bool, erroring bool) bool {
+	return running == 0 && !erroring && !expand
+}
+
+// sectionErroring reports whether any member of a section failed.
+func sectionErroring(s serviceSection) bool {
+	for _, svc := range s.members {
+		if r, ok := s.resources[svc]; ok && serviceStatus(r) == "erroring" {
+			return true
+		}
+	}
+	return false
 }
 
 // wrapCommaList joins names into comma-separated lines no wider than width,
@@ -270,14 +284,18 @@ func wrapCommaList(names []string, width int) []string {
 	return append(lines, cur)
 }
 
-// printCondensedSection prints a section with nothing running as one line: an
-// idle marker, the section's coloured name, a count or state tag, then the
-// member names wrapped under the first name.
+// printCondensedSection prints a section with nothing running as one line: the
+// marker, the section's coloured name, a count or state tag, then the member
+// names wrapped under the first name.
+//
+// The marker says "none up" and not "idle" because "idle" is a word no other
+// devstack surface uses, so a reader cannot map it onto any state in the legend.
+// One stack read "active" here, "idle" there and "stopped" in the briefing.
 func printCondensedSection(hdrColor *color.Color, label, tag string, names []string) {
-	head := statusIndent + "idle  " + label
+	head := statusIndent + condensedMarker + label
 	suffix := " " + tag + " "
 	faint := color.New(color.Faint)
-	faint.Print(statusIndent + "idle  ")
+	faint.Print(statusIndent + condensedMarker)
 	hdrColor.Print(label)
 	faint.Print(suffix)
 
@@ -298,6 +316,11 @@ func printCondensedSection(hdrColor *color.Color, label, tag string, names []str
 const (
 	condenseWidth = 100
 	statusIndent  = "  "
+
+	// condensedMarker labels a section collapsed because none of its members
+	// run. It is not a state a service is in — the members' own states are what
+	// the expanded table shows.
+	condensedMarker = "none up  "
 
 	colService    = 22
 	colServiceMax = 34
@@ -366,7 +389,7 @@ func sortSections(sections []serviceSection) []serviceSection {
 // the ones collapsed to a single idle line, preserving table order.
 func partitionSections(sections []serviceSection, expand bool) (table, condensed []serviceSection) {
 	for _, s := range sortSections(sections) {
-		if condenseSection(s.running, expand) {
+		if condenseSection(s.running, expand, sectionErroring(s)) {
 			condensed = append(condensed, s)
 		} else {
 			table = append(table, s)
@@ -502,7 +525,7 @@ func runStatusAll() error {
 	}
 
 	if len(workspaces) == 0 {
-		fmt.Println("No workspaces registered. Run: devstack register")
+		fmt.Println("No workspaces registered. Run: devstack workspace add")
 		return nil
 	}
 
@@ -558,22 +581,22 @@ func runStatusAll() error {
 
 			prefix := w.Name + ":"
 			total := 0
-			active := 0
+			running := 0
 			for _, res := range view.UiResources {
 				if !strings.HasPrefix(res.Metadata.Name, prefix) {
 					continue
 				}
 				total++
 				if res.Status.RuntimeStatus == "ok" {
-					active++
+					running++
 				}
 			}
 			if total == 0 {
-				r.status = "inactive"
+				r.status = "down"
 				r.services = "0 services"
 			} else {
 				r.status = "running"
-				r.services = fmt.Sprintf("%d services (%d active)", total, active)
+				r.services = fmt.Sprintf("%d services (%d running)", total, running)
 			}
 			results[idx] = r
 		}(i, ws)

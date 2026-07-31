@@ -438,15 +438,28 @@ func Resolve(workspaceName, name string) (*Record, error) {
 }
 
 // stackStatus reports whether a stack's overlay services are folded into the base
-// workspace's Tiltfile. An active stack's resources are present (and run in base's
-// one daemon); an inactive stack's are not. Per-resource running state is read from
-// the base daemon by the caller, not here.
+// workspace's Tiltfile. An up stack's resources are present (and run in base's one
+// daemon); a down stack's are not. Per-resource running state is read from the base
+// daemon by the caller, not here.
+//
+// The words are "up" and "down" because `devstack stack up` and `devstack stack
+// down` are what set them. Calling the same state "active" here while `status`
+// called it "idle" and the briefing called it "stopped" left one stack described
+// three ways in three places, and no way to tell they meant the same thing.
 func stackStatus(rec Record) string {
 	if rec.Active {
-		return "active"
+		return StatusUp
 	}
-	return "inactive"
+	return StatusDown
 }
+
+// StatusUp and StatusDown are the only two states a stack has. They are
+// constants because a caller in another package compared against the literal
+// "active" and silently took the wrong branch the moment the word changed.
+const (
+	StatusUp   = "up"
+	StatusDown = "down"
+)
 
 // DaemonReachable reports whether a dev daemon is serving its API on the given
 // port. Callers use it to fail fast with a clear message instead of hanging when

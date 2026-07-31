@@ -130,7 +130,7 @@ func resolveServeWorkspace(nameOrPath string) *workspace.Workspace {
 		}
 		log.Printf("Warning: workspace %q not found in registry, falling back to cwd detection", nameOrPath)
 	}
-	ws, err := workspace.DetectFromCwd()
+	ws, err := resolveWorkspace("")
 	if err != nil {
 		log.Fatalf("Cannot resolve workspace: DEVSTACK_WORKSPACE=%q and cwd detection failed: %v\nRun 'devstack workspace add' to register this workspace.", nameOrPath, err)
 	}

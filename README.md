@@ -38,7 +38,7 @@ Language is detected from `go.mod`, `package.json`, `requirements.txt` or `*.csp
 | Workspace | A directory with a `devstack.workspace.yaml` manifest, grouping one or more services |
 | Service | A process defined by a `devstack.service.yaml` manifest: an API, worker, importer |
 | Group | A named set of services you start and stop together |
-| Host daemon | One Tilt daemon (`:10300`) for the whole machine. Every workspace's services and every active stack's overlay run inside it as `<workspace>:<service>[:<stack>]`. There is no daemon per workspace. |
+| Host daemon | One Tilt daemon (`:10300`) for the whole machine. Every workspace's services and the overlay of every stack that is up run inside it as `<workspace>:<service>[:<stack>]`. There is no daemon per workspace. |
 | Base | The workspace's own checkout and the instance it runs. What every command acts on when you pass no `--stack`, and spelled literally as `base` where a command takes a stack name |
 | Feature stack | A parallel version of one or more services, run from a git worktree on a feature branch on its own port, beside base, reusing base for everything it doesn't change |
 | Environment | A named config-var patch (`environments:` in the workspace manifest) applied at workspace, service or stack scope. Where a service points. |
@@ -267,7 +267,7 @@ Forward this workspace's service ports over SSH. Any host you can ssh to works, 
 devstack tunnel push my-box.ts.net --user alice        # first run saves the remote
 devstack tunnel push                                   # later runs reuse it
 devstack tunnel push --service navexa-api,navexa-frontend
-devstack tunnel push --stacks                          # every active stack, each on its own port
+devstack tunnel push --stacks                          # every stack that is up, each on its own port
 devstack tunnel push --as-base agent                   # one stack, on the ports base normally serves
 devstack tunnel push --otel                            # also the observability UI
 devstack tunnel pull <host>

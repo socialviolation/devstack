@@ -23,9 +23,13 @@ var stackCmd = &cobra.Command{
 	Use:   "stack",
 	Short: "Create and manage feature stacks that overlay a base workspace",
 	Long: `A feature stack runs a subset of a base workspace's services from their own
-git worktrees, reusing the base stack for everything else. Only the services you
+git worktrees, reusing base's copies for everything else. Only the services you
 change (and the services that call them) get a worktree and a dynamically
-allocated port; the rest resolve to the base stack.`,
+allocated port; the rest resolve to base's copies.
+
+"base" is the workspace running without any stack: your normal checkouts and the
+copies started from them. It is not itself a stack, and no stack may be named
+"base" — a command with no --stack is already acting on base.`,
 	RunE: runStackList,
 }
 
@@ -38,9 +42,26 @@ var stackCreateCmd = &cobra.Command{
 }
 
 var stackRemoveCmd = &cobra.Command{
-	Use:          "rm <name>",
-	Aliases:      []string{"remove"},
-	Short:        "Stop a stack, remove its worktrees, release its ports, and deregister it",
+	Use:     "rm <name>",
+	Aliases: []string{"remove"},
+	Short:   "Stop a stack, remove its worktrees, release its ports, and deregister it",
+	Long: `Tear down a feature stack: stop its services, delete its worktrees, release
+its ports, and delete its record and its stack root.
+
+The branch stays. Commits you pushed stay. Work that is only in a worktree does
+not: deleting the worktree deletes it.
+
+CAUTION: this command cannot be undone.
+
+  --force  Deletes worktrees that have uncommitted changes, and destroys those
+           changes. Without it the command refuses and names the dirty
+           worktrees, which is your chance to commit them.
+
+If this workspace declares stack.destroy hooks, they fire first, while the ports
+and the record can still be read. A hook failure does not stop the teardown, so
+it means the external cleanup probably did not happen — and you cannot retry it
+afterwards, because the record its ${self...} references resolve against is gone.
+The resolved URLs are printed at the point of failure. Keep them.`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackRemove,
@@ -105,7 +126,7 @@ func init() {
 	stackCreateCmd.Flags().String("repos", "", "Comma-separated service names that this stack changes")
 	stackCreateCmd.Flags().String("branch", "", "Branch for the changed repos (default: the stack name). Attaches if it already exists.")
 	stackCreateCmd.Flags().String("note", "", "What this stack is for — a ticket URL, an issue key, a sentence. Shown by 'devstack stack list'.")
-	stackRemoveCmd.Flags().Bool("force", false, "Remove worktrees even if they have uncommitted changes")
+	stackRemoveCmd.Flags().Bool("force", false, "Remove worktrees even if they have uncommitted changes. Destroys that work; it cannot be recovered")
 	stackConfigCmd.Flags().String("stack", "", "Stack name (default: the stack containing the current directory)")
 }
 
@@ -149,7 +170,7 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 	fmt.Printf("  ✓ generated %s\n", res.ManifestPath)
-	fmt.Printf("  ✓ recorded stack %q (base %q, inactive)\n", res.StackName, res.BaseName)
+	fmt.Printf("  ✓ recorded stack %q (base %q, down)\n", res.StackName, res.BaseName)
 	fmt.Printf("Allocated service ports (key scheme: service/portKey):\n")
 	for _, k := range sortedKeys(res.Ports) {
 		fmt.Printf("  %-24s http://localhost:%d\n", k, res.Ports[k])
@@ -241,7 +262,7 @@ func runStackList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Println("Active stacks' services run in the one host daemon, namespaced <workspace>:<service>:<stack>.")
+	fmt.Println("A stack that is up has its services registered in the one host daemon, namespaced <workspace>:<service>:<stack>.")
 	fmt.Printf("%-16s %-8s %-34s %-30s %s\n", "STACK", "STATUS", "SERVICES", "BRANCH", "AGE")
 	fmt.Println(strings.Repeat("-", 100))
 	for _, s := range stacks {
@@ -262,6 +283,7 @@ func runStackList(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 	color.New(color.Faint).Println("SERVICES is the overlay: the services this stack runs its own copy of. Everything else it borrows from base.")
+	color.New(color.Faint).Println("STATUS up means registered, not running. Each copy has its own state — see it with: devstack status --stack <name>")
 	color.New(color.Faint).Println("Set what a stack is for with: devstack stack note <name> \"...\"")
 	return nil
 }
@@ -527,7 +549,7 @@ func runStackDown(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("✓ Regenerated host Tiltfile — host daemon will drop stack %q's resources.\n", rec.Name)
 
-	fmt.Printf("✓ Stack %q is now inactive (worktrees and record kept; remove with: devstack stack rm %s).\n", rec.Name, rec.Name)
+	fmt.Printf("✓ Stack %q is now down (worktrees and record kept; remove with: devstack stack rm %s).\n", rec.Name, rec.Name)
 	return nil
 }
 

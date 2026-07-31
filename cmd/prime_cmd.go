@@ -20,7 +20,7 @@ import (
 // primeCharBudget is the ceiling a SessionStart hook will accept before Claude
 // Code truncates the output to a file and shows a preview instead. Everything
 // here is generated per session, so it earns its place against that budget or it
-// belongs behind `devstack help`.
+// belongs behind `devstack <command> --help`.
 const primeCharBudget = 9000
 
 var primeCmd = &cobra.Command{
@@ -136,11 +136,7 @@ func runPrime(cmd *cobra.Command, args []string) error {
 func buildPrime() (string, error) {
 	ws, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
-		if base, _, derr := stack.DetectFromCwd(); derr == nil && base != nil {
-			ws = base
-		} else {
-			return "", err
-		}
+		return "", err
 	}
 	rw, err := config.ResolveWorkspace(ws.Path)
 	if err != nil {
@@ -196,7 +192,7 @@ func buildPrime() (string, error) {
 	writePrimeApplies(&b, ws, rw)
 
 	section(&b, "REFERENCE")
-	b.WriteString("devstack status · devstack help <command> · devstack stack list · devstack hooks list\n")
+	b.WriteString("devstack status · devstack <command> --help · devstack stack list · devstack hooks list\n")
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
@@ -237,9 +233,13 @@ func writePrimeApplies(b *strings.Builder, ws *workspace.Workspace, rw *config.R
 	var lines []string
 	if envs := sortedEnvNames(rw); len(envs) > 0 {
 		// A name says nothing about what selecting an environment does, so each
-		// one carries its own description. An environment with none is listed
-		// saying so, because the gap is the thing to fix.
-		lines = append(lines, fmt.Sprintf("  environments  active: %s. Each environment sets different configuration values:", orDash(rw.Manifest.Workspace.Env)))
+		// one carries its own description. The column is labelled because an
+		// unlabelled "unset" beside an environment reads as "this environment
+		// sets nothing" — which is the opposite of the truth, and was read that
+		// way while an environment was live on a stack. What is unset is the
+		// description, and the column heading is what says so.
+		lines = append(lines, fmt.Sprintf("  environments  active: %s. Each environment sets different configuration values.", orDash(rw.Manifest.Workspace.Env)))
+		lines = append(lines, fmt.Sprintf("                %-10s %s", "NAME", "PURPOSE"))
 		for _, n := range envs {
 			marker := " "
 			if n == rw.Manifest.Workspace.Env {
@@ -247,10 +247,12 @@ func writePrimeApplies(b *strings.Builder, ws *workspace.Workspace, rw *config.R
 			}
 			desc := firstLine(rw.Manifest.Environments[n].Description, 84)
 			if desc == "" {
-				desc = "unset"
+				desc = "(no purpose recorded)"
 			}
 			lines = append(lines, fmt.Sprintf("              %s %-10s %s", marker, n, desc))
 		}
+		lines = append(lines, "                Every environment sets values. A blank PURPOSE means only that nobody wrote down why.")
+		lines = append(lines, "                To see the values one sets, run: devstack env which --service <svc>")
 	}
 
 	if n := countHooks(ws, rw); n > 0 {
@@ -303,7 +305,8 @@ func countHooks(ws *workspace.Workspace, rw *config.ResolvedWorkspace) int {
 // conclusion it prevents, not by describing a feature: that a service has
 // several running copies, that "stopped" is a registration state rather than a
 // fault, and that none of this is safe to point at production. Everything else
-// about devstack is a `devstack help` away and does not belong in every session.
+// about devstack is a `devstack <command> --help` away and does not belong in
+// every session.
 func writePrimeWhatThisIs(b *strings.Builder) {
 	b.WriteString("## DEVSTACK\n")
 	b.WriteString("devstack manages the local development services on this machine. It starts and stops the services,\n")
@@ -311,8 +314,9 @@ func writePrimeWhatThisIs(b *strings.Builder) {
 	b.WriteString("CAUTION: Use devstack only for local development. Do not use it with a staging or a production system.\n\n")
 	b.WriteString("devstack is a CLI and an MCP server. The tools do the same work as the commands, and they share their names:\n")
 	b.WriteString("status, start, stop, restart, stack_up, env_use. Use the one that your session has. Call the `environment` tool\n")
-	b.WriteString("first. It lists the tools that this workspace has. Six things have no tool, and they need the shell:\n")
-	b.WriteString("workspace up and down, ports, dependencies, group add and remove, stack config, and init.\n")
+	b.WriteString("first. It lists the tools that this workspace has. The tools do not cover every command. If there is no tool\n")
+	b.WriteString("for what you want, run the command in the shell. These have no tool: workspace up and down, ports,\n")
+	b.WriteString("dependencies, group add and remove, stack config, and init.\n")
 }
 
 // writePrimeTerms defines the words the rest of the briefing uses. It is its own
@@ -325,28 +329,54 @@ func writePrimeTerms(b *strings.Builder) {
 	b.WriteString("  base       your normal checkout. If you do not give --stack, a command uses base\n")
 	b.WriteString("  stack      a parallel copy of some services. Each stack has its own branch, its own directory, and its own ports\n")
 	b.WriteString("  worktree   the directory of a stack. Git checks out the branch of the stack in this directory\n")
-	b.WriteString("One service can run more than one time. base runs one copy, and each stack runs another copy.\n")
+	b.WriteString("  copy       one running instance of a service. base runs one copy, and each stack runs another copy\n")
 	b.WriteString("Each copy has a different port. Run `devstack status` before you decide that a service is down.\n")
-	b.WriteString("The state \"stopped\" means that the service is registered but not started. It does not mean that the service is broken.\n")
 	b.WriteString("To work on a stack, change to the directory of that stack. The branch is already checked out there.\n")
 	b.WriteString("Do not use `git checkout` in your normal checkout. That command changes base, and it does not change the stack.\n")
+	writePrimeStates(b)
 }
 
-// writePrimeLiveCount reports how much of the workspace is up, so a briefing
-// that lists five copies of a service is not read as five running processes.
+// writePrimeStates defines every state word devstack prints, in one place. The
+// same stack was reported "active" by one command, "idle" by another and
+// "stopped" by this briefing, and nothing said the three were one state. A word
+// that appears on no surface, or a surface that prints a word absent from here,
+// is the drift returning — TestStateWordsAreDefinedOnce fails on both.
+func writePrimeStates(b *strings.Builder) {
+	b.WriteString("\nSTATES. A stack is up or down. A copy has one of these states:\n")
+	b.WriteString("  running    the process is up and healthy\n")
+	b.WriteString("  starting   devstack started it and it is not ready yet\n")
+	b.WriteString("  building   its build step runs now\n")
+	b.WriteString("  erroring   it failed. Read its logs\n")
+	b.WriteString("  stopped    it is registered but not started. This is not a fault\n")
+	b.WriteString("  disabled   somebody stopped it on purpose\n")
+	b.WriteString("  down       the copy is not registered in the daemon. Usually its stack is down: run `devstack stack up <name>`\n")
+}
+
+// writePrimeLiveCount reports how much of the workspace is up. The daemon runs
+// one resource per copy, so the total counts copies and not services — a
+// workspace of 16 services reporting "17 running" was read as more services than
+// it has. The base and stack halves are split because they are the two numbers a
+// reader is about to act on, and because `devstack status` prints the same split.
 func writePrimeLiveCount(b *strings.Builder, ws *workspace.Workspace) {
 	view, err := tilt.NewClient("localhost", workspace.HostTiltPort).GetView()
 	if err != nil {
 		b.WriteString("  daemon        not started. To start it, run: `devstack workspace up`\n")
 		return
 	}
-	running := 0
+	base, stacked := 0, 0
 	for _, r := range view.UiResources {
-		if strings.HasPrefix(r.Metadata.Name, ws.Name+":") && serviceStatus(r) == "running" {
-			running++
+		name := r.Metadata.Name
+		if !strings.HasPrefix(name, ws.Name+":") || serviceStatus(r) != "running" {
+			continue
+		}
+		if strings.Count(name, ":") > 1 {
+			stacked++
+		} else {
+			base++
 		}
 	}
-	fmt.Fprintf(b, "  live          %s in the daemon on port %d\n", pluralRun(running), workspace.HostTiltPort)
+	fmt.Fprintf(b, "  live          %s in the daemon on port %d: %d in base, %d in stacks\n",
+		pluralCopy(base+stacked), workspace.HostTiltPort, base, stacked)
 }
 
 // writePrimeReload gives the reload verdict for the service in hand rather than
@@ -430,7 +460,7 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 		if !containsString(rec.Overlay, service) {
 			continue
 		}
-		row := instance{name: rec.Name, port: "-", state: "inactive", note: firstLine(rec.Note, 74)}
+		row := instance{name: rec.Name, port: "-", state: "down", note: firstLine(rec.Note, 74)}
 		if p, ok := rec.Ports[stack.QualifyPortKey(service, "http")]; ok {
 			row.port = fmt.Sprintf(":%d", p)
 		}
@@ -491,15 +521,8 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 	b.WriteString("  To use the copy from a stack, do one of these:\n    change to the directory of that stack\n    connect to the port of that stack\n    add `--stack <name>` to a command\n")
 }
 
-// pluralRun and pluralCopy keep the count grammatical. "1 service(s)" makes a
-// reader stop and parse, which is the opposite of what a briefing is for.
-func pluralRun(n int) string {
-	if n == 1 {
-		return "1 service runs"
-	}
-	return fmt.Sprintf("%d services run", n)
-}
-
+// pluralCopy keeps the count grammatical. "1 copy(s)" makes a reader stop and
+// parse, which is the opposite of what a briefing is for.
 func pluralCopy(n int) string {
 	if n == 1 {
 		return "1 copy"

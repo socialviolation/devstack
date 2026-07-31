@@ -378,7 +378,7 @@ func DetectFromCwd() (*Workspace, error) {
 		w := workspaces[best]
 		return &w, nil
 	}
-	return nil, fmt.Errorf("not inside a registered devstack workspace. Run: devstack register")
+	return nil, fmt.Errorf("not inside a registered devstack workspace. Run: devstack workspace add")
 }
 
 // OTLP ingestion is machine-level: one collector serves every workspace, which

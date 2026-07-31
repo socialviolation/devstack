@@ -5,7 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/stack"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 func recs() []stack.Record {
@@ -120,6 +122,58 @@ func TestPrimeJSONEnvelopeShape(t *testing.T) {
 	}
 	if back.HookSpecificOutput.AdditionalContext != "body" {
 		t.Errorf("additionalContext = %q", back.HookSpecificOutput.AdditionalContext)
+	}
+}
+
+// The briefing used to count the operations that have no tool ("Six things have
+// no tool"). The list beside it names the ones worth naming, not all of them —
+// there are far more — so the count was wrong the day it was written and nothing
+// could tell. A count is only safe if it is generated, and the number helps
+// nobody, so the briefing states the rule instead. This fails if a count returns.
+//
+// It lives here rather than beside TestBriefingParityClaimHolds because the text
+// is written in this package, and internal/mcp cannot import it.
+func TestBriefingCountsNoOperations(t *testing.T) {
+	var b strings.Builder
+	writePrimeWhatThisIs(&b)
+	text := strings.ToLower(b.String())
+
+	for _, n := range []string{"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"} {
+		if strings.Contains(text, n+" thing") || strings.Contains(text, n+" command") || strings.Contains(text, n+" operation") {
+			t.Errorf("the briefing counts the operations with no tool (%q); nothing verifies the count, so state the rule", n)
+		}
+	}
+	if !strings.Contains(text, "no tool") {
+		t.Error("the briefing must still say the tools do not cover every command")
+	}
+}
+
+// The environments block prints a description per environment, and prints
+// something for the ones that have none. Unlabelled, that filler sits under a
+// nameless column and reads as "this environment sets nothing" — a reviewer drew
+// exactly that conclusion while an environment was live on a stack. The heading
+// is what says the missing thing is the description, not the values.
+func TestEnvironmentsBlockLabelsItsDescriptionColumn(t *testing.T) {
+	rw := &config.ResolvedWorkspace{Manifest: &config.WorkspaceManifest{
+		Environments: map[string]config.WorkspaceEnvironment{
+			"dev":     {},
+			"fx-prod": {Description: "points nx-api at the production FX database"},
+		},
+	}}
+	rw.Manifest.Workspace.Env = "dev"
+
+	var b strings.Builder
+	writePrimeApplies(&b, &workspace.Workspace{Name: "navexa"}, rw)
+	out := b.String()
+
+	if !strings.Contains(out, "PURPOSE") {
+		t.Errorf("the description column is unlabelled:\n%s", out)
+	}
+	if strings.Contains(out, "unset") {
+		t.Errorf("a bare \"unset\" beside an environment reads as \"it sets nothing\":\n%s", out)
+	}
+	if !strings.Contains(out, "fx-prod") || !strings.Contains(out, "production FX database") {
+		t.Errorf("an environment's recorded purpose is missing:\n%s", out)
 	}
 }
 

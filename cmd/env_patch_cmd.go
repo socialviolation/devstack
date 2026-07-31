@@ -22,9 +22,22 @@ import (
 var envSetCmd = &cobra.Command{
 	Use:   "set <name> KEY=VALUE [KEY=VALUE ...]",
 	Short: "Set config-var values on a named environment",
-	Long:  "Set config-var values on one of the base workspace's named environments.\nEnvironments are defined once in the base workspace manifest and inherited by feature stacks.",
-	Args:  cobra.MinimumNArgs(2),
-	RunE:  runEnvSet,
+	Long: `Set config-var values on one of the base workspace's named environments.
+Environments are defined once in the base workspace manifest and inherited by
+feature stacks.
+
+CAUTION: do not put a secret here. This writes devstack.workspace.yaml, which is
+committed to git, and the value reaches every service and every stack pointed at
+that environment.
+
+A value set here lands on the 'active env' rung, which is second from the top of
+the ladder. It overrides a service's own env.values, its env files, and its
+.envrc — .envrc is the lowest rung, not the highest. So a credential you put in
+.envrc is silently outranked by any key this command sets. Run
+'devstack env which --service <svc> --shadowed' to see which rung each key
+actually came from.`,
+	Args: cobra.MinimumNArgs(2),
+	RunE: runEnvSet,
 }
 
 var envUseCmd = &cobra.Command{
@@ -200,6 +213,22 @@ func orNoneDefined(keys []string) string {
 	return strings.Join(keys, ", ")
 }
 
+// printStackScopeHint names the stack the working directory belongs to when the
+// caller did not ask for one. Without it a report reading "stack.env (none)" is
+// printed to someone standing in a stack that sets an env, and the honest answer
+// to "does anything override this?" is read as "no".
+func printStackScopeHint(rec *stack.Record, svcName string) {
+	if rec != nil {
+		return
+	}
+	_, here, err := stack.DetectFromCwd()
+	if err != nil || here == nil {
+		return
+	}
+	color.New(color.Faint).Printf("\nThis report is for base. Your directory is in stack %q, whose env is %s.\n  For that instance: devstack env which --service %s --stack %s\n",
+		here.Name, orDash(here.Env), svcName, here.Name)
+}
+
 func runEnvWhich(cmd *cobra.Command, args []string) error {
 	ws, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
@@ -272,6 +301,7 @@ func runEnvWhich(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  workspace.env  %s\n", orDash(target.Manifest.Workspace.Env))
 	fmt.Printf("  service.env    %s\n", orDash(svc.Manifest.Service.Env))
 	fmt.Printf("  stack.env      %s\n", orDash(stackEnv))
+	printStackScopeHint(rec, svcName)
 
 	layers, err := resolvedEnvLadder(ws, target, svc, rec)
 	if err != nil {
