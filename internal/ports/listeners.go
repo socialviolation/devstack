@@ -21,12 +21,12 @@ type Listener struct {
 	Stack string
 }
 
-// procNetTCP files hold every TCP socket on the machine, one per address
-// family. Both are read: a listener on one is invisible in the other, and a
+// procNetTCP names the TCP socket tables, one per address family, relative to
+// procRoot. Both are read: a listener on one is invisible in the other, and a
 // process bound only to ::1 does not appear in the IPv4 table at all.
 var procNetTCP = map[string]string{
-	"ipv4": "/proc/net/tcp",
-	"ipv6": "/proc/net/tcp6",
+	"ipv4": "net/tcp",
+	"ipv6": "net/tcp6",
 }
 
 // procRoot is the proc mount, overridden in tests.
@@ -39,8 +39,8 @@ const tcpStateListen = "0A"
 // families. An empty result means nothing holds the port.
 func Find(port int) ([]Listener, error) {
 	inodes := map[string]string{}
-	for family, path := range procNetTCP {
-		found, err := listenInodes(filepath.Join(procRoot, strings.TrimPrefix(path, "/proc/")), port)
+	for family, rel := range procNetTCP {
+		found, err := listenInodes(filepath.Join(procRoot, rel), port)
 		if err != nil {
 			continue // a kernel without IPv6 has no tcp6 table; not an error
 		}
