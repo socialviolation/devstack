@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -22,7 +23,18 @@ type Listener struct {
 	// bound IPv6-only (Vite's default) is distinguishable from an absent one
 	// rather than silently reading as "nothing there".
 	Stack string
+	// Unidentified marks a port the socket tables show as LISTEN while no owning
+	// process could be resolved. /proc/<pid>/fd is unreadable for another user's
+	// process, so a root-owned listener resolves to no owner at all. PID is 0 on
+	// such a record and it must never be killed: "nothing holds this port" and
+	// "something holds it that devstack cannot identify" are different answers.
+	Unidentified bool
 }
+
+// Privileged is the boundary below which a listener is far more likely to be a
+// system service than a dev server someone forgot to stop. devstack refuses to
+// reclaim below it.
+const Privileged = 1024
 
 // procNetTCP names the TCP socket tables, one per address family, relative to
 // procRoot. Both are read: a listener on one is invisible in the other, and a
@@ -84,10 +96,40 @@ func FindAll(want []int) ([]Listener, error) {
 	if err != nil {
 		return nil, err
 	}
+	identified := map[int]bool{}
 	for i := range owners {
 		owners[i].Port = inodes[owners[i].inode].port
+		identified[owners[i].Port] = true
+	}
+	// Only root reads another user's /proc/<pid>/fd, so a port held by a system
+	// daemon resolves to no owner. Reporting it as free tells the caller to bind
+	// it, and the bind then fails.
+	stray := map[int]string{}
+	for _, f := range inodes {
+		// One port can appear in both tables, so keep the lower family name and
+		// report the same answer on every run.
+		if !identified[f.port] && (stray[f.port] == "" || f.family < stray[f.port]) {
+			stray[f.port] = f.family
+		}
+	}
+	for _, port := range sortedInts(stray) {
+		owners = append(owners, Listener{
+			Port:         port,
+			Stack:        stray[port],
+			Unidentified: true,
+			Command:      "unidentified — another user owns the process",
+		})
 	}
 	return owners, nil
+}
+
+func sortedInts(m map[int]string) []int {
+	out := make([]int, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Ints(out)
+	return out
 }
 
 // listenInodes returns the socket inodes listening on port in one /proc/net
@@ -137,13 +179,17 @@ func listenInodesFor(path string, wanted map[int]bool) (map[string]int, error) {
 
 // inodeOwners maps socket inodes back to the processes holding them by scanning
 // every process's open file descriptors for a socket:[inode] link.
+//
+// It yields one Listener per (pid, socket) pair, not one per pid. A batch lookup
+// asks about several ports at once, and one process commonly listens on more
+// than one of them — stopping at that process's first matching descriptor
+// attributed it to one port and left the others reading as free.
 func inodeOwners(inodes map[string]string) ([]Listener, error) {
 	entries, err := os.ReadDir(procRoot)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read %s: %w", procRoot, err)
 	}
 
-	seen := map[int]bool{}
 	var out []Listener
 	for _, e := range entries {
 		pid, err := strconv.Atoi(e.Name())
@@ -155,6 +201,10 @@ func inodeOwners(inodes map[string]string) ([]Listener, error) {
 		if err != nil {
 			continue // process gone, or not ours to read
 		}
+		// A process may hold the same socket on several descriptors, so record
+		// each socket once per process.
+		seen := map[string]bool{}
+		command := ""
 		for _, fd := range fds {
 			link, err := os.Readlink(filepath.Join(fdDir, fd.Name()))
 			if err != nil {
@@ -165,12 +215,14 @@ func inodeOwners(inodes map[string]string) ([]Listener, error) {
 			}
 			inode := strings.TrimSuffix(strings.TrimPrefix(link, "socket:["), "]")
 			family, ok := inodes[inode]
-			if !ok || seen[pid] {
+			if !ok || seen[inode] {
 				continue
 			}
-			seen[pid] = true
-			out = append(out, Listener{PID: pid, Command: commandName(pid), Stack: family, inode: inode})
-			break
+			seen[inode] = true
+			if command == "" {
+				command = commandName(pid)
+			}
+			out = append(out, Listener{PID: pid, Command: command, Stack: family, inode: inode})
 		}
 	}
 	return out, nil

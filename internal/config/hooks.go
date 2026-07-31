@@ -97,8 +97,13 @@ func (h Hook) ResolvedOnError(event string) string {
 
 // DefaultOnError is the error policy an event applies to a hook that names
 // none. Setup events abort: a stack whose provisioning failed is worse than no
-// stack. Teardown events continue: you must never be unable to remove a stack
-// because a hook is broken, or every failure leaks a worktree and a port.
+// stack. Teardown events continue, so the remaining hooks still run.
+//
+// On a teardown event the policy governs the hook chain only. It never governs
+// the lifecycle action. A teardown always proceeds, even when a hook sets
+// onError "abort" and stops the hooks behind it — you must never be unable to
+// remove a stack because a hook is broken, or every failure leaks a worktree, a
+// port and a record.
 func DefaultOnError(event string) string {
 	switch event {
 	case EventStackDestroy, EventStackDown, EventServiceStop, EventWorkspaceDown:

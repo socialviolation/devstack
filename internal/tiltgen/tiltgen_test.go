@@ -11,11 +11,13 @@ import (
 )
 
 func generate(rw *config.ResolvedWorkspace, opts Options) (string, error) {
-	return GenerateHost([]WorkspaceGen{{Base: rw, BaseOpts: opts}})
+	out, _, err := GenerateHost([]WorkspaceGen{{Base: rw, BaseOpts: opts}})
+	return out, err
 }
 
 func generateCombined(base *config.ResolvedWorkspace, opts Options, stacks []StackGen) (string, error) {
-	return GenerateHost([]WorkspaceGen{{Base: base, BaseOpts: opts, Stacks: stacks}})
+	out, _, err := GenerateHost([]WorkspaceGen{{Base: base, BaseOpts: opts, Stacks: stacks}})
+	return out, err
 }
 
 func TestGenerate(t *testing.T) {
@@ -1052,7 +1054,7 @@ func TestGenerateHostPrefixesDisambiguatesCollisions(t *testing.T) {
 	ws1 := writeAPIWorkspace(t, 8080)
 	ws2 := writeAPIWorkspace(t, 8090)
 
-	out, err := GenerateHost([]WorkspaceGen{
+	out, _, err := GenerateHost([]WorkspaceGen{
 		{Name: "ws1", Base: ws1},
 		{Name: "ws2", Base: ws2},
 	})
@@ -1081,7 +1083,7 @@ func TestGenerateHostStackSuffixWithPrefix(t *testing.T) {
 	stack := writeFEBEWorkspace(t, 4200, 8080)
 	stackBook := config.PortBook{"frontend": {"http": 14200}, "backend": {"http": 18080}}
 
-	out, err := GenerateHost([]WorkspaceGen{{
+	out, _, err := GenerateHost([]WorkspaceGen{{
 		Name: "ws",
 		Base: base,
 		Stacks: []StackGen{{
@@ -1115,7 +1117,7 @@ func TestGenerateHostResourceDepsPrefixedAndSuffixed(t *testing.T) {
 	stack := writeFEBEWorkspace(t, 4200, 8080)
 	stackBook := config.PortBook{"frontend": {"http": 14200}, "backend": {"http": 18080}}
 
-	out, err := GenerateHost([]WorkspaceGen{{
+	out, _, err := GenerateHost([]WorkspaceGen{{
 		Name: "ws",
 		Base: base,
 		Stacks: []StackGen{{
@@ -1156,7 +1158,7 @@ func TestGenerateHostLabelsCarryWorkspace(t *testing.T) {
 	stack := writeFEBEWorkspace(t, 4200, 8080)
 	stackBook := config.PortBook{"frontend": {"http": 14200}, "backend": {"http": 18080}}
 
-	out, err := GenerateHost([]WorkspaceGen{{
+	out, _, err := GenerateHost([]WorkspaceGen{{
 		Name: "ws",
 		Base: base,
 		Stacks: []StackGen{{

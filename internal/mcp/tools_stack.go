@@ -250,6 +250,13 @@ func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		}
 		force := request.GetBool("force", false)
 
+		// A refusal must come before the hooks, not after. A removal that
+		// de-provisions external state and then refuses leaves the stack alive
+		// and already de-provisioned, and the next attempt fires the hooks again.
+		if err := stack.CheckRemovable(ws, name, force); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
 		// Before anything is taken away, while the record, worktrees and ports
 		// are all still readable — a teardown hook de-provisions what create
 		// provisioned, and cannot do that once the allocation is gone.
@@ -319,12 +326,17 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 		if err := stack.SetActive(ws.Name, rec.Name, true); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		if _, err := hostdaemon.Regenerate(); err != nil {
+		_, genWarnings, err := hostdaemon.Regenerate()
+		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to regenerate host Tiltfile: %v", err)), nil
 		}
 		daemonMsg, err := hostdaemon.EnsureDaemon()
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		for _, w := range genWarnings {
+			daemonMsg += "\nWARNING: " + w
 		}
 
 		tiltClient := tilt.NewClient("localhost", workspace.HostTiltPort)
@@ -390,11 +402,15 @@ func registerStackDownTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 		if err := stack.SetActive(ws.Name, rec.Name, false); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		if _, err := hostdaemon.Regenerate(); err != nil {
+		_, genWarnings, err := hostdaemon.Regenerate()
+		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to regenerate host Tiltfile: %v", err)), nil
 		}
 
 		var sb strings.Builder
+		for _, w := range genWarnings {
+			fmt.Fprintf(&sb, "WARNING: %s\n", w)
+		}
 		appendHookOutput(&sb, config.EventStackDown, hookOut.String(), hookErr)
 		return mcp.NewToolResultText(sb.String() + fmt.Sprintf(
 			"Stack %q is now inactive; the host daemon will drop its resources. Worktrees and record kept (remove with stack_rm %s).\n"+

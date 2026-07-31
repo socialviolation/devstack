@@ -29,11 +29,11 @@ func TestFreePortsUsesTheInstancesOwnPortNotTheManifestLiteral(t *testing.T) {
 	baseBook := config.PortBook{"api": {"http": 63290}}
 	stackBook := config.PortBook{"api": {"http": 20000}}
 
-	basePrep, err := prepCommand(m, "api", baseBook)
+	basePrep, err := prepCommand(m, "api", baseBook, nil)
 	if err != nil {
 		t.Fatalf("base prepCommand(): %v", err)
 	}
-	stackPrep, err := prepCommand(m, "api", stackBook)
+	stackPrep, err := prepCommand(m, "api", stackBook, nil)
 	if err != nil {
 		t.Fatalf("stack prepCommand(): %v", err)
 	}
@@ -51,7 +51,7 @@ func TestFreePortsUsesTheInstancesOwnPortNotTheManifestLiteral(t *testing.T) {
 
 func TestFreePortsRunsBeforeTheServicesOwnPrep(t *testing.T) {
 	m := manifestWithFreePorts(config.FreePortsSpec{All: true}, "dotnet build ./api.csproj")
-	got, err := prepCommand(m, "api", config.PortBook{"api": {"http": 63290}})
+	got, err := prepCommand(m, "api", config.PortBook{"api": {"http": 63290}}, nil)
 	if err != nil {
 		t.Fatalf("prepCommand(): %v", err)
 	}
@@ -64,7 +64,7 @@ func TestFreePortsRunsBeforeTheServicesOwnPrep(t *testing.T) {
 func TestFreePortsNamedKeysOnly(t *testing.T) {
 	m := manifestWithFreePorts(config.FreePortsSpec{Keys: []string{"grpc"}}, "")
 	m.Ports = map[string]int{"http": 8080, "grpc": 9090}
-	got, err := prepCommand(m, "api", config.PortBook{"api": {"http": 8080, "grpc": 9090}})
+	got, err := prepCommand(m, "api", config.PortBook{"api": {"http": 8080, "grpc": 9090}}, nil)
 	if err != nil {
 		t.Fatalf("prepCommand(): %v", err)
 	}
@@ -77,7 +77,7 @@ func TestFreePortsNamedKeysOnly(t *testing.T) {
 // identical to working right up until a port is held and the service won't bind.
 func TestFreePortsRejectsAnUnknownPortKey(t *testing.T) {
 	m := manifestWithFreePorts(config.FreePortsSpec{Keys: []string{"htp"}}, "")
-	_, err := prepCommand(m, "api", config.PortBook{"api": {"http": 63290}})
+	_, err := prepCommand(m, "api", config.PortBook{"api": {"http": 63290}}, nil)
 	if err == nil || !strings.Contains(err.Error(), `"htp"`) {
 		t.Fatalf("prepCommand() = %v, want an error naming the bad key", err)
 	}
@@ -85,7 +85,7 @@ func TestFreePortsRejectsAnUnknownPortKey(t *testing.T) {
 
 func TestPrepUnchangedWhenFreePortsIsOff(t *testing.T) {
 	m := manifestWithFreePorts(config.FreePortsSpec{}, "dotnet build")
-	got, err := prepCommand(m, "api", config.PortBook{"api": {"http": 63290}})
+	got, err := prepCommand(m, "api", config.PortBook{"api": {"http": 63290}}, nil)
 	if err != nil {
 		t.Fatalf("prepCommand(): %v", err)
 	}
@@ -96,11 +96,43 @@ func TestPrepUnchangedWhenFreePortsIsOff(t *testing.T) {
 
 func TestNoPrepAtAllStaysEmpty(t *testing.T) {
 	m := manifestWithFreePorts(config.FreePortsSpec{}, "")
-	got, err := prepCommand(m, "api", config.PortBook{"api": {"http": 63290}})
+	got, err := prepCommand(m, "api", config.PortBook{"api": {"http": 63290}}, nil)
 	if err != nil {
 		t.Fatalf("prepCommand(): %v", err)
 	}
 	if got != "" {
 		t.Fatalf("prep = %q, want empty", got)
+	}
+}
+
+// 'devstack ports free' refuses a port below 1024, and the generated prep joins
+// the reclaim to the service's own prep with &&. A refusal there took the
+// service's prep with it, so the service could never start. Generation says so
+// instead, while the manifest that declares it is still in hand.
+func TestFreePortsRejectsAPrivilegedPort(t *testing.T) {
+	m := manifestWithFreePorts(config.FreePortsSpec{All: true}, "dotnet build")
+	m.Ports = map[string]int{"http": 80}
+
+	_, err := prepCommand(m, "api", config.PortBook{"api": {"http": 80}}, nil)
+	if err == nil {
+		t.Fatal("prepCommand() = nil, want a refusal for port 80")
+	}
+	for _, want := range []string{"80", `"api"`, "freePorts"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q:\n%v", want, err)
+		}
+	}
+}
+
+// A suppressed reclaim must leave the service's own prep intact, and must not
+// emit a 'ports free' with no ports at all.
+func TestASuppressedReclaimLeavesTheServicePrepAlone(t *testing.T) {
+	m := manifestWithFreePorts(config.FreePortsSpec{All: true}, "dotnet build")
+	got, err := prepCommand(m, "api", config.PortBook{"api": {"http": 63290}}, map[int]bool{63290: true})
+	if err != nil {
+		t.Fatalf("prepCommand(): %v", err)
+	}
+	if got != "dotnet build" {
+		t.Fatalf("prep = %q, want only the service's own prep", got)
 	}
 }

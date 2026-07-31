@@ -30,7 +30,7 @@ func detectServicesFromCwd(workspacePath string, cfg *config.WorkspaceConfig) ([
 	}
 
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("must specify a service name or group name\nUsage: devstack service start <service>\n       devstack service start <group>")
+		return nil, fmt.Errorf("must specify a service name or group name\nUsage: devstack service start <service>\n       devstack group start <group>")
 	}
 	return matches, nil
 }

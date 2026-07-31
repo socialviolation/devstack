@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -55,7 +56,7 @@ func init() {
 
 // privilegedPort is the boundary below which a listener is far more likely to be
 // a system service than a dev server someone forgot to stop.
-const privilegedPort = 1024
+const privilegedPort = ports.Privileged
 
 func parsePorts(args []string) ([]int, error) {
 	out := make([]int, 0, len(args))
@@ -91,6 +92,10 @@ func runPortsCheck(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		for _, l := range byPort[p] {
+			if l.Unidentified {
+				fmt.Printf("%-6d held, owner unknown %-5s see it with: sudo ss -ltnp | grep :%d\n", p, l.Stack, p)
+				continue
+			}
 			fmt.Printf("%-6d pid %-8d %-5s %s\n", p, l.PID, l.Stack, l.Command)
 		}
 	}
@@ -111,11 +116,18 @@ func runPortsFree(cmd *cobra.Command, args []string) error {
 	}
 
 	held := map[int]bool{}
+	var kill []ports.Listener
+	var blocked []int
 	for _, l := range listeners {
+		held[l.Port] = true
+		if l.Unidentified {
+			blocked = append(blocked, l.Port)
+			continue
+		}
 		// Say what is being killed before killing it. A silent reclaim of
 		// someone else's process is indistinguishable from a crash.
 		fmt.Printf("port %d held by pid %d (%s) — terminating\n", l.Port, l.PID, l.Command)
-		held[l.Port] = true
+		kill = append(kill, l)
 	}
 	if !quiet {
 		for _, p := range wanted {
@@ -126,8 +138,23 @@ func runPortsFree(cmd *cobra.Command, args []string) error {
 	}
 
 	// One grace period for the whole set, not one for each port.
-	for _, err := range ports.KillAll(listeners, func() { time.Sleep(grace) }) {
+	for _, err := range ports.KillAll(kill, func() { time.Sleep(grace) }) {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
+
+	// A port devstack cannot reclaim must fail loudly. Reporting success here
+	// hands a caller a port that is still busy, and the bind fails later with
+	// nothing to connect it to.
+	if len(blocked) > 0 {
+		return fmt.Errorf("could not free port(s) %s — another user owns the process that holds them.\nFind the owner with: sudo ss -ltnp | grep -E ':(%s) '", joinPorts(blocked, ", "), joinPorts(blocked, "|"))
+	}
 	return nil
+}
+
+func joinPorts(ports []int, sep string) string {
+	out := make([]string, 0, len(ports))
+	for _, p := range ports {
+		out = append(out, strconv.Itoa(p))
+	}
+	return strings.Join(out, sep)
 }

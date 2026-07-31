@@ -420,7 +420,7 @@ func InspectRemote(user, host string, ports []int) ([]RemoteHolder, error) {
 	}
 	var b strings.Builder
 	for _, p := range ports {
-		fmt.Fprintf(&b, "printf '%d\\t'; (lsof -nP -iTCP:%d -sTCP:LISTEN 2>/dev/null || ss -ltnp 2>/dev/null | grep ':%d ') | tail -n +2 | head -1; echo; ", p, p, p)
+		b.WriteString(remoteInspectCommand(p))
 	}
 	cmd := exec.Command(sshBin,
 		"-o", "BatchMode=yes",
@@ -454,6 +454,17 @@ func InspectRemote(user, host string, ports []int) ([]RemoteHolder, error) {
 		holders = append(holders, RemoteHolder{Port: p, Info: byPort[p]})
 	}
 	return holders, nil
+}
+
+// remoteInspectCommand is the shell devstack runs on the far host for one port:
+// it prints the port, a tab, and one line naming what holds it, or nothing.
+//
+// Each tool strips its own header. lsof prints a header, so its branch drops the
+// first line; ss prints a header that the grep already removes, so its branch
+// drops nothing. Stripping one line from the pair discarded the ss branch's only
+// line, and every port then read as free on a host without lsof.
+func remoteInspectCommand(port int) string {
+	return fmt.Sprintf("printf '%d\\t'; { lsof -nP -iTCP:%d -sTCP:LISTEN 2>/dev/null | tail -n +2; ss -ltnp 2>/dev/null | grep ':%d '; } | head -1; echo; ", port, port, port)
 }
 
 // ReclaimRemote frees the given ports on the remote host, killing whatever is

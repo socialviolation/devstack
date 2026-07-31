@@ -179,11 +179,17 @@ func runStackRemove(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Before anything is taken away: worktrees, ports and the record are all
-	// still readable, so a teardown hook can de-provision what create provisioned.
-	if err := fireHooks(base, args[0], config.EventStackDestroy, nil); err != nil {
+	// A refusal must come before the hooks, not after. stack.destroy hooks
+	// de-provision state outside this machine, so a removal that then refuses
+	// leaves the stack alive and already de-provisioned, and the next attempt
+	// fires them a second time.
+	if err := stack.CheckRemovable(base, args[0], force); err != nil {
 		return err
 	}
+
+	// Before anything is taken away: worktrees, ports and the record are all
+	// still readable, so a teardown hook can de-provision what create provisioned.
+	fireTeardownHooks(base, args[0], config.EventStackDestroy, nil)
 
 	if err := stack.SetActive(base.Name, args[0], false); err != nil {
 		return err
@@ -510,9 +516,7 @@ func runStackDown(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := fireHooks(base, rec.Name, config.EventStackDown, nil); err != nil {
-		return err
-	}
+	fireTeardownHooks(base, rec.Name, config.EventStackDown, nil)
 
 	if err := stack.SetActive(base.Name, rec.Name, false); err != nil {
 		return err

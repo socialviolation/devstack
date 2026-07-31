@@ -264,3 +264,36 @@ func TestCreateUnknownService(t *testing.T) {
 		t.Fatal("expected error for unknown service")
 	}
 }
+
+// The pre-flight probe must agree with Remove: it refuses a dirty worktree and
+// --force still gets through. A probe that refuses more than Remove does would
+// make a removable stack unremovable.
+func TestCheckRemovableMatchesRemovesRefusal(t *testing.T) {
+	base := newBase(t)
+
+	orig := daemonReachable
+	daemonReachable = func(int) bool { return false }
+	defer func() { daemonReachable = orig }()
+
+	res, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"backend"}})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := CheckRemovable(base, "feat", false); err != nil {
+		t.Fatalf("CheckRemovable() = %v on a clean stack, want nil", err)
+	}
+
+	writeFile(t, filepath.Join(res.StackRoot, "backend", "scratch.txt"), "wip\n")
+
+	err = CheckRemovable(base, "feat", false)
+	if err == nil {
+		t.Fatal("CheckRemovable() = nil for a dirty worktree, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "uncommitted changes") {
+		t.Errorf("refusal should name the reason: %v", err)
+	}
+	if err := CheckRemovable(base, "feat", true); err != nil {
+		t.Fatalf("CheckRemovable(force) = %v, want nil", err)
+	}
+}

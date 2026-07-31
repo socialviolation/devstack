@@ -34,9 +34,13 @@ var shell = "/bin/sh"
 // one's output to w prefixed with its label.
 //
 // A hook that fails under the "abort" policy stops the run and is returned as an
-// error, so the command that fired the event fails too. Under "continue" the
-// failure is reported and the next hook runs — which is the default for teardown
-// events, because a broken hook must never leave a stack that cannot be removed.
+// error. Under "continue" the failure is reported and the next hook runs, which
+// is the default for teardown events.
+//
+// The returned error says the hook chain stopped. It does not say the lifecycle
+// action must stop. A setup caller fails on it, because a stack whose
+// provisioning failed is worse than no stack. A teardown caller reports it and
+// proceeds: a broken hook must never leave a stack that cannot be removed.
 func Run(ev Event, src Source, w io.Writer) ([]Result, error) {
 	invocations := Resolve(ev, src)
 	if len(invocations) == 0 {

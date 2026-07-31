@@ -67,6 +67,20 @@ func fireHooks(ws *workspace.Workspace, stackName, event string, services []stri
 	return hooks.Fire(ws, stackName, event, services, os.Stderr)
 }
 
+// fireTeardownHooks runs a teardown event's hooks and never stops the caller.
+//
+// A teardown action always proceeds. A hook that sets onError "abort" stops the
+// hooks that follow it, and it does not stop the removal — a stack you cannot
+// remove because a hook is broken leaks a worktree, a port and a record every
+// time. The failure is reported, because it means the external cleanup probably
+// did not happen.
+func fireTeardownHooks(ws *workspace.Workspace, stackName, event string, services []string) {
+	if err := fireHooks(ws, stackName, event, services); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: the teardown continues. Clean up outside this machine by hand.\n")
+	}
+}
+
 func runHooksList(cmd *cobra.Command, args []string) error {
 	ws, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {

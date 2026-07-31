@@ -236,6 +236,46 @@ func Create(in CreateInput) (*CreateResult, error) {
 	return res, nil
 }
 
+// CheckRemovable reports the refusal Remove will raise, before anything runs.
+//
+// Remove fires teardown hooks first, and those hooks de-provision state outside
+// this machine. A refusal after they run leaves the stack alive and already
+// de-provisioned, and a second attempt runs them again. Callers pre-flight with
+// this and stop before the hooks.
+//
+// It probes only the documented refusal: a worktree holding uncommitted work. A
+// worktree it cannot read is left to Remove, which reports it in context.
+func CheckRemovable(base *workspace.Workspace, name string, force bool) error {
+	if force {
+		return nil
+	}
+	if base == nil {
+		return fmt.Errorf("no base workspace resolved")
+	}
+	rec, err := FindStack(base.Name, name)
+	if err != nil {
+		return err
+	}
+	rw, err := config.ResolveWorkspace(rec.Root)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(rw.Services))
+	for n := range rw.Services {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		p := rw.Services[n].RepoPath
+		dirty, err := worktree.HasUncommittedChanges(p)
+		if err != nil || !dirty {
+			continue
+		}
+		return fmt.Errorf("remove worktree %s: worktree %s has uncommitted changes; refusing to remove without force\n(use --force to discard uncommitted work)", p, p)
+	}
+	return nil
+}
+
 func Remove(base *workspace.Workspace, name string, force bool) (*RemoveResult, error) {
 	if base == nil {
 		return nil, fmt.Errorf("no base workspace resolved")

@@ -35,22 +35,37 @@ func init() {
 }
 
 func runStart(cmd *cobra.Command, args []string) error {
-	ws, err := resolveWorkspace(viper.GetString("workspace"))
+	ws, err := bringWorkspaceUp()
 	if err != nil {
 		return err
 	}
+	return fireHooks(ws, "", config.EventWorkspaceUp, nil)
+}
+
+// bringWorkspaceUp does everything 'workspace up' does except fire the
+// workspace.up hooks, and returns the workspace it acted on.
+//
+// The two are separated because a caller that only wanted the daemon must be
+// able to tell a daemon failure from a hook failure. Reporting a broken hook as
+// "failed to auto-start dev daemon" names a problem that does not exist, and
+// abandons a service start whose daemon is up and waiting.
+func bringWorkspaceUp() (*workspace.Workspace, error) {
+	ws, err := resolveWorkspace(viper.GetString("workspace"))
+	if err != nil {
+		return nil, err
+	}
 	if !config.HasWorkspaceManifest(ws.Path) {
-		return fmt.Errorf("no %s in %s — this workspace isn't manifest-based yet", config.WorkspaceManifestFileName, ws.Path)
+		return nil, fmt.Errorf("no %s in %s — this workspace isn't manifest-based yet", config.WorkspaceManifestFileName, ws.Path)
 	}
 
 	if err := workspace.SetWorkspaceActive(ws.Name, true); err != nil {
-		return fmt.Errorf("failed to mark workspace active: %w", err)
+		return nil, fmt.Errorf("failed to mark workspace active: %w", err)
 	}
 	if _, err := regenerateHostTiltfile(); err != nil {
-		return fmt.Errorf("failed to generate host Tiltfile: %w", err)
+		return nil, fmt.Errorf("failed to generate host Tiltfile: %w", err)
 	}
 	if err := ensureHostDaemon(); err != nil {
-		return err
+		return nil, err
 	}
 	fmt.Printf("Service(s) for '%s' run in the host daemon on :%d as %s:<svc>.\n", ws.Name, workspace.HostTiltPort, ws.Name)
 
@@ -95,7 +110,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	return fireHooks(ws, "", config.EventWorkspaceUp, nil)
+	return ws, nil
 }
 
 // ensureHostDaemon starts the one host Tilt daemon if it is not already running,

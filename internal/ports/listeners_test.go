@@ -350,6 +350,106 @@ func TestKillAllOnAnEmptySetDoesNotWait(t *testing.T) {
 	}
 }
 
+// A port whose LISTEN socket resolves to no owner is held, not free. Only root
+// reads another user's /proc/<pid>/fd, so a root-owned listener yields no owner
+// — and reporting it free tells the caller to bind a port that is busy.
+func TestFindReportsAPortWhoseOwnerCannotBeIdentified(t *testing.T) {
+	root := fakeProc(t,
+		tcpTable([3]string{"00000000:20E4", "0A", "551122"}),
+		"",
+		nil, // no readable /proc/<pid>/fd holds inode 551122
+		nil,
+	)
+	withProcRoot(t, root)
+
+	got, err := Find(8420)
+	if err != nil {
+		t.Fatalf("Find(): %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Find() = %#v, want the port reported as held", got)
+	}
+	if !got[0].Unidentified {
+		t.Errorf("listener = %+v, want Unidentified", got[0])
+	}
+	if got[0].Port != 8420 || got[0].PID != 0 {
+		t.Errorf("listener = %+v, want port 8420 and no pid", got[0])
+	}
+}
+
+// An identified owner must not also produce an unidentified record for the same
+// port, or every reclaim would report a port it just freed as unreclaimable.
+func TestFindDoesNotDoubleReportAnIdentifiedPort(t *testing.T) {
+	root := fakeProc(t,
+		tcpTable([3]string{"00000000:20E4", "0A", "551122"}),
+		"",
+		map[int][]string{4242: {"551122"}},
+		nil,
+	)
+	withProcRoot(t, root)
+
+	got, err := Find(8420)
+	if err != nil {
+		t.Fatalf("Find(): %v", err)
+	}
+	if len(got) != 1 || got[0].Unidentified {
+		t.Fatalf("Find() = %#v, want exactly one identified listener", got)
+	}
+}
+
+// The regression the batch lookup introduced: FindAll walks /proc once for every
+// requested port, and one process listening on two of them was recorded against
+// the first descriptor found, so the other port read as free.
+func TestFindAllReportsOneProcessOnTwoPorts(t *testing.T) {
+	root := fakeProc(t,
+		tcpTable(
+			[3]string{"00000000:20E4", "0A", "111"}, // 8420
+			[3]string{"00000000:20E5", "0A", "222"}, // 8421
+		),
+		"",
+		map[int][]string{10: {"111", "222"}},
+		map[int]string{10: "node\x00server.js\x00"},
+	)
+	withProcRoot(t, root)
+
+	got, err := FindAll([]int{8420, 8421})
+	if err != nil {
+		t.Fatalf("FindAll(): %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("FindAll() = %#v, want one listener per port", got)
+	}
+	byPort := map[int]int{}
+	for _, l := range got {
+		if l.Unidentified {
+			t.Fatalf("port %d read as unidentified, but pid 10 owns it", l.Port)
+		}
+		byPort[l.Port] = l.PID
+	}
+	if byPort[8420] != 10 || byPort[8421] != 10 {
+		t.Fatalf("both ports must be attributed to pid 10: %#v", byPort)
+	}
+}
+
+// The same socket opened on several descriptors is one listener, not several.
+func TestFindAllDeduplicatesADuplicatedDescriptor(t *testing.T) {
+	root := fakeProc(t,
+		tcpTable([3]string{"00000000:20E4", "0A", "111"}),
+		"",
+		map[int][]string{10: {"111", "111", "111"}},
+		nil,
+	)
+	withProcRoot(t, root)
+
+	got, err := FindAll([]int{8420})
+	if err != nil {
+		t.Fatalf("FindAll(): %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("FindAll() = %#v, want one listener", got)
+	}
+}
+
 // One walk of /proc for every port, not one per port: the walk opens every
 // process's file descriptors, so per-port cost multiplied by ports held.
 func TestFindAllAttributesEachListenerToItsOwnPort(t *testing.T) {

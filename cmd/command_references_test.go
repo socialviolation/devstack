@@ -38,6 +38,76 @@ func registeredPaths(root *cobra.Command) map[string]bool {
 	return paths
 }
 
+// registeredKinds maps a command path to the target kind it is pinned to. A
+// pinned command rejects any other kind of name, so an example that names one is
+// an invocation that cannot run.
+func registeredKinds(root *cobra.Command) map[string]string {
+	kinds := map[string]string{}
+	var walk func(*cobra.Command)
+	walk = func(c *cobra.Command) {
+		for _, sub := range c.Commands() {
+			parent := ""
+			if c != root {
+				parent = c.Name() + " "
+			}
+			if kind := sub.Annotations["targetKind"]; kind != "" {
+				for _, n := range append([]string{sub.Name()}, sub.Aliases...) {
+					kinds[parent+n] = kind
+				}
+			}
+			walk(sub)
+		}
+	}
+	walk(root)
+	return kinds
+}
+
+// commandExample matches a two-word command reference followed by a placeholder,
+// e.g. `devstack service start <group>`.
+var commandExample = regexp.MustCompile("devstack ([a-z][a-z-]*) ([a-z][a-z-]*) <([a-z][a-z-]*)>")
+
+// A command pinned to one target kind rejects a name of any other kind, so help
+// text that pairs it with the wrong placeholder names an invocation that cannot
+// run. TestEveryReferencedCommandExists only asks whether the command path
+// resolves, so `devstack service start <group>` passed it while the command
+// itself refuses a group name.
+func TestNoReferencedCommandContradictsItsTargetKind(t *testing.T) {
+	kinds := registeredKinds(rootCmd)
+	if len(kinds) == 0 {
+		t.Fatal("no command declares a targetKind annotation — this guard checks nothing")
+	}
+
+	roots := []string{".", filepath.Join("..", "internal")}
+	for _, root := range roots {
+		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return err
+			}
+			data, rerr := os.ReadFile(path)
+			if rerr != nil {
+				return rerr
+			}
+			for i, line := range strings.Split(string(data), "\n") {
+				for _, m := range commandExample.FindAllStringSubmatch(line, -1) {
+					want, ok := kinds[m[1]+" "+m[2]]
+					if !ok || m[3] == want {
+						continue
+					}
+					if _, isKind := map[string]bool{"service": true, "group": true}[m[3]]; !isKind {
+						continue
+					}
+					t.Errorf("%s:%d shows `devstack %s %s <%s>`, but that command only accepts a %s name: %s",
+						path, i+1, m[1], m[2], m[3], want, strings.TrimSpace(line))
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", root, err)
+		}
+	}
+}
+
 // A command named in help text, an error message or the generated AGENTS.md must
 // exist. Telling someone to run `devstack services` when there is no such
 // command sends them in a circle, and a denylist of removed names cannot catch

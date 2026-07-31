@@ -23,10 +23,11 @@ import (
 // base services plus each active stack's overlay services, all as distinct
 // resources prefixed <ws>:<svc>, and writes it to the host Tilt dir. A running
 // host daemon hot-reloads it. With no active workspaces it still writes a valid
-// header-only Tiltfile so a running daemon drains to empty. Returns the path.
-func Regenerate() (string, error) {
+// header-only Tiltfile so a running daemon drains to empty. Returns the path and
+// any warnings generation raised.
+func Regenerate() (string, []string, error) {
 	res, err := Sync()
-	return res.Path, err
+	return res.Path, res.Warnings, err
 }
 
 // SyncResult reports what Sync did. Wrote is false when the rendered Tiltfile
@@ -35,6 +36,9 @@ type SyncResult struct {
 	Path    string
 	Wrote   bool
 	Changed []string
+	// Warnings are the generation problems that did not stop the render, such as
+	// a freePorts reclaim devstack dropped because it would kill another resource.
+	Warnings []string
 }
 
 // Sync renders the host Tiltfile from the manifests and writes it only when it
@@ -42,32 +46,32 @@ type SyncResult struct {
 // that act on a running service call this first so a manifest edit takes effect
 // without a separate 'devstack workspace generate'.
 func Sync() (SyncResult, error) {
-	out, err := render()
+	out, warnings, err := render()
 	if err != nil {
-		return SyncResult{}, err
+		return SyncResult{Warnings: warnings}, err
 	}
 
 	dir := workspace.HostTiltDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return SyncResult{}, fmt.Errorf("failed to create host tilt dir: %w", err)
+		return SyncResult{Warnings: warnings}, fmt.Errorf("failed to create host tilt dir: %w", err)
 	}
 	path := filepath.Join(dir, "Tiltfile")
 
 	existing, readErr := os.ReadFile(path)
 	if readErr == nil && string(existing) == out {
-		return SyncResult{Path: path}, nil
+		return SyncResult{Path: path, Warnings: warnings}, nil
 	}
 
 	if err := os.WriteFile(path, []byte(out), 0644); err != nil {
-		return SyncResult{}, fmt.Errorf("failed to write host Tiltfile: %w", err)
+		return SyncResult{Warnings: warnings}, fmt.Errorf("failed to write host Tiltfile: %w", err)
 	}
-	return SyncResult{Path: path, Wrote: true, Changed: changedResources(string(existing), out)}, nil
+	return SyncResult{Path: path, Wrote: true, Changed: changedResources(string(existing), out), Warnings: warnings}, nil
 }
 
-func render() (string, error) {
+func render() (string, []string, error) {
 	active, err := workspace.ActiveWorkspaces()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	var gens []tiltgen.WorkspaceGen
@@ -75,7 +79,7 @@ func render() (string, error) {
 		ws := active[i]
 		rw, err := config.ResolveWorkspace(ws.Path)
 		if err != nil {
-			return "", fmt.Errorf("workspace %q: failed to resolve manifests: %w", ws.Name, err)
+			return "", nil, fmt.Errorf("workspace %q: failed to resolve manifests: %w", ws.Name, err)
 		}
 		names := make([]string, 0, len(rw.Services))
 		for name := range rw.Services {
@@ -83,7 +87,7 @@ func render() (string, error) {
 		}
 		stackGens, err := ActiveStackGens(&ws)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		gens = append(gens, tiltgen.WorkspaceGen{
 			Name:     ws.Name,

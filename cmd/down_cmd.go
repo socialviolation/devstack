@@ -47,9 +47,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := fireHooks(ws, "", config.EventWorkspaceDown, nil); err != nil {
-		return err
-	}
+	fireTeardownHooks(ws, "", config.EventWorkspaceDown, nil)
 
 	deactivated, err := stack.DeactivateAll(ws.Name)
 	if err != nil {

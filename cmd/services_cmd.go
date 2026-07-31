@@ -341,7 +341,7 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 	fmt.Println()
 
 	color.New(color.Faint).Printf("  within a group, top-to-bottom = startup order   ·   blank ENV = no env\n")
-	color.New(color.Faint).Printf("  devstack service start <service>   ·   devstack service start <group>\n")
+	color.New(color.Faint).Printf("  devstack service start <service>   ·   devstack group start <group>\n")
 	color.New(color.Faint).Printf("  devstack stack up <name>   ·   devstack stack config <svc> --stack <name>\n")
 	color.New(color.Faint).Printf("  idle groups are condensed   ·   devstack status --all shows every service and its source path\n")
 
