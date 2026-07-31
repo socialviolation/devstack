@@ -61,7 +61,7 @@ reconfiguring:
 
 var (
 	tunnelUserFlag     string
-	tunnelServicesFlag string
+	tunnelServicesFlag []string
 	tunnelReclaimFlag  bool
 	tunnelStacksFlag   bool
 	tunnelAsBaseFlag   string
@@ -105,10 +105,10 @@ Any flag you pass overrides the saved one:
 		Short: "Stop this workspace's tunnels, all of them or named ones",
 		Long: `Stop forwards this workspace started.
 
-With no --services, every tunnel for the workspace is stopped. Narrow it to the
+With no --service, every tunnel for the workspace is stopped. Narrow it to the
 ones you name to leave the rest up:
 
-  devstack tunnel stop --services navexa-api
+  devstack tunnel stop --service navexa-api
   devstack tunnel stop`,
 		Args: cobra.NoArgs,
 		RunE: runTunnelStop,
@@ -119,6 +119,20 @@ ones you name to leave the rest up:
 		Args:  cobra.NoArgs,
 		RunE:  runTunnelStatus,
 	}
+	checkCmd := &cobra.Command{
+		Use:   "check [host]",
+		Short: "Show what already holds the ports on the far host, without changing anything",
+		Long: `Ask the remote host what is listening on the ports a push would bind.
+
+This is the counterpart to --reclaim. Reclaim cannot tell a stale forward of
+yours from a live one another stack owns, so it is worth seeing whose it is
+before you kill it. Narrow the ports with --service.
+
+  devstack tunnel check
+  devstack tunnel check --service navexa-api,nxOrbit`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: runTunnelCheck,
+	}
 	listCmd := &cobra.Command{
 		Use:   "list",
 		Short: "List discovered services and ports (no SSH)",
@@ -128,14 +142,14 @@ ones you name to leave the rest up:
 	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd} {
 		c.Flags().StringVar(&tunnelUserFlag, "user", "", "SSH user (default: saved user or current user)")
 	}
-	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, listCmd} {
-		c.Flags().StringVar(&tunnelServicesFlag, "services", "", "Comma-separated exact service names to forward, as printed by 'devstack tunnel list' (default: all)")
+	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, listCmd, checkCmd} {
+		c.Flags().StringSliceVar(&tunnelServicesFlag, "service", nil, "Service to act on. Repeat it, or give a comma-separated list. Names are exact, as printed by 'devstack tunnel list'. Default: every service.")
 	}
 	listCmd.Flags().BoolVar(&tunnelStacksFlag, "stacks", false, "Include every active feature stack, each on its own port — previews what push --stacks would forward")
-	tunnelStopCmd.Flags().StringVar(&tunnelServicesFlag, "services", "", "Comma-separated exact service names whose tunnels to stop (default: all of this workspace's)")
+	tunnelStopCmd.Flags().StringSliceVar(&tunnelServicesFlag, "service", nil, "Service whose tunnel to stop. Repeat it, or give a comma-separated list. Default: every tunnel of this workspace.")
 	for _, c := range []*cobra.Command{pushCmd, restartCmd} {
 		c.Flags().BoolVar(&tunnelReclaimFlag, "reclaim", false,
-			"Kill whatever already holds these ports on the far host before forwarding. Destructive: it may belong to a colleague or another stack, not you. Check first with: ssh <host> 'ss -ltnp | grep <port>'")
+			"Kill whatever already holds these ports on the far host before forwarding. Destructive: it may belong to a colleague or another stack, not you. Only the ports being forwarded are reclaimed, so narrow the blast radius with --service. See what holds them first: devstack tunnel check <host>")
 		c.Flags().BoolVar(&tunnelStacksFlag, "stacks", false,
 			"Also forward every active feature stack, each on its OWN allocated port. Cannot be combined with --as-base.")
 	}
@@ -148,7 +162,7 @@ ones you name to leave the rest up:
 			"Also forward the observability UI, so the telemetry is readable from the other end at the same address you use here")
 	}
 	restartCmd.Flags().String("mode", "", "Direction to re-establish: push or pull (default: the direction of the last run, else push)")
-	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, tunnelStopCmd, tunnelStatusCmd, listCmd} {
+	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, tunnelStopCmd, tunnelStatusCmd, listCmd, checkCmd} {
 		// Runtime failures (daemon down, unreachable remote) shouldn't dump the
 		// full usage block — the messages are self-explanatory.
 		c.SilenceUsage = true
@@ -202,7 +216,7 @@ func discoverTunnelServices(ws *workspace.Workspace) ([]tunnel.Service, error) {
 		return nil, fmt.Errorf("%w: %v", errTunnelDaemon, err)
 	}
 	filter := map[string]bool{}
-	for _, s := range strings.Split(tunnelServicesFlag, ",") {
+	for _, s := range tunnelServicesFlag {
 		if s = strings.TrimSpace(s); s != "" {
 			filter[s] = true
 		}
@@ -217,7 +231,7 @@ func discoverTunnelServices(ws *workspace.Workspace) ([]tunnel.Service, error) {
 
 	svcs := tunnel.Discover(view, filter, ws.Name, tunnelStacksFlag)
 	if len(filter) > 0 && len(svcs) == 0 {
-		return nil, fmt.Errorf("no service matches %s. Names must be exact; 'devstack tunnel list' prints the ones this workspace has", tunnelServicesFlag)
+		return nil, fmt.Errorf("no service matches %s. Names must be exact; 'devstack tunnel list' prints the ones this workspace has", strings.Join(tunnelServicesFlag, ", "))
 	}
 	if tunnelOtelFlag {
 		ui, reason, ok := otelUI(ws)
@@ -354,7 +368,7 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 		// count is enough, unless you named services yourself, in which case a
 		// specific absence is the answer to the question you asked.
 		if len(idle) > 0 {
-			if tunnelServicesFlag != "" {
+			if len(tunnelServicesFlag) > 0 {
 				color.New(color.Faint).Printf("  not serving, skipped: %s\n", serviceNames(idle))
 			} else {
 				color.New(color.Faint).Printf("  %d not serving, skipped\n", len(idle))
@@ -410,7 +424,7 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 	if started > 0 {
 		if serr := workspace.UpdateTunnelForward(ws.Name, workspace.TunnelForward{
 			Mode:     string(mode),
-			Services: tunnelServicesFlag,
+			Services: strings.Join(tunnelServicesFlag, ","),
 			Stacks:   tunnelStacksFlag,
 			AsBase:   tunnelAsBaseFlag,
 			Otel:     tunnelOtelFlag,
@@ -454,7 +468,7 @@ func runTunnelStop(cmd *cobra.Command, args []string) error {
 			}
 		}
 		if len(kept) == 0 {
-			return fmt.Errorf("no running tunnel matches %s — 'devstack tunnel status' lists what is up", tunnelServicesFlag)
+			return fmt.Errorf("no running tunnel matches %s — 'devstack tunnel status' lists what is up", strings.Join(tunnelServicesFlag, ", "))
 		}
 		ports = kept
 	}
@@ -469,7 +483,7 @@ func runTunnelStop(cmd *cobra.Command, args []string) error {
 // tunnelServiceFilter parses --services into a set, or nil when unset.
 func tunnelServiceFilter() map[string]bool {
 	out := map[string]bool{}
-	for _, name := range strings.Split(tunnelServicesFlag, ",") {
+	for _, name := range tunnelServicesFlag {
 		if name = strings.TrimSpace(name); name != "" {
 			out[name] = true
 		}
@@ -541,9 +555,9 @@ func resumeLastForward(cmd *cobra.Command, last *workspace.TunnelForward) (tunne
 			modeStr = last.Mode
 			restored = append(restored, last.Mode)
 		}
-		if !cmd.Flags().Changed("services") && last.Services != "" {
-			tunnelServicesFlag = last.Services
-			restored = append(restored, "--services "+last.Services)
+		if !cmd.Flags().Changed("service") && last.Services != "" {
+			tunnelServicesFlag = splitCSV(last.Services)
+			restored = append(restored, "--service "+last.Services)
 		}
 		if !stackModeGiven && last.Stacks {
 			tunnelStacksFlag = true
@@ -650,5 +664,60 @@ func runTunnelList(cmd *cobra.Command, args []string) error {
 	for _, s := range svcs {
 		fmt.Printf("  %-30s %s  (%s)\n", s.Name, tunnelPortLabel(s), s.Runtime)
 	}
+	return nil
+}
+
+// runTunnelCheck reports what holds the far-host ports a push would bind. It
+// changes nothing: --reclaim is the destructive counterpart, and this exists so
+// the choice to use it is informed rather than hopeful.
+func runTunnelCheck(cmd *cobra.Command, args []string) error {
+	ws, err := tunnelContext()
+	if err != nil {
+		return err
+	}
+	host, sshUser, _, err := resolveRemote(ws, args)
+	if err != nil {
+		return err
+	}
+
+	svcs, err := discoverTunnelServices(ws)
+	if err != nil {
+		return err
+	}
+	if len(svcs) == 0 {
+		fmt.Println("No serving ports to check right now. Start the services first (devstack service start).")
+		return nil
+	}
+
+	ports := make([]int, len(svcs))
+	byPort := map[int]string{}
+	for i, s := range svcs {
+		ports[i] = s.Far()
+		byPort[s.Far()] = s.Name
+	}
+
+	fmt.Printf("Checking %d port(s) on %s@%s\n\n", len(ports), sshUser, host)
+	holders, err := tunnel.InspectRemote(sshUser, host, ports)
+	if err != nil {
+		return err
+	}
+
+	held := 0
+	for _, h := range holders {
+		if h.Info == "" {
+			fmt.Printf("  %-24s :%-6d free\n", byPort[h.Port], h.Port)
+			continue
+		}
+		held++
+		fmt.Printf("  %-24s :%-6d held by %s\n", byPort[h.Port], h.Port, h.Info)
+	}
+
+	fmt.Println()
+	if held == 0 {
+		fmt.Printf("Every port is free. A push will bind without --reclaim.\n")
+		return nil
+	}
+	fmt.Printf("%d port(s) are held. A push needs --reclaim, which kills those processes.\n", held)
+	fmt.Printf("They may belong to a colleague or another stack. Narrow the blast radius with --service.\n")
 	return nil
 }

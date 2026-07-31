@@ -248,18 +248,19 @@ Forward this workspace's service ports over SSH. Any host you can ssh to works, 
 ```bash
 devstack tunnel push my-box.ts.net --user alice        # first run saves the remote
 devstack tunnel push                                   # later runs reuse it
-devstack tunnel push --services navexa-api,navexa-frontend
+devstack tunnel push --service navexa-api,navexa-frontend
 devstack tunnel push --stacks                          # every active stack, each on its own port
 devstack tunnel push --as-base agent                   # one stack, on the ports base normally serves
 devstack tunnel push --otel                            # also the observability UI
 devstack tunnel pull <host>
 devstack tunnel list [--stacks] [--as-base <name>]     # what would be forwarded, no SSH
+devstack tunnel check <host>                          # what already holds those ports on the far end
 devstack tunnel status
-devstack tunnel stop [--services navexa-api]
+devstack tunnel stop [--service navexa-api]
 devstack tunnel restart [--mode push|pull]
 ```
 
-`--services` takes exact names, the ones `tunnel list` prints, not partial matches. Only ports actually serving traffic get forwarded. With `--otel` the remote reads this machine's traces at the address you use locally.
+`--service` takes exact names, the ones `tunnel list` prints, not partial matches. Repeat it or comma-separate it. Only ports actually serving traffic get forwarded. With `--otel` the remote reads this machine's traces at the address you use locally.
 
 `--stacks` and `--as-base` do different jobs and can't be combined. `--stacks` gives every stack its own port on the far end. `--as-base <name>` puts one stack where base lives, so the far end reaches it at the address it already knows and nothing over there needs reconfiguring:
 
@@ -272,7 +273,7 @@ devstack tunnel push my-box.ts.net --as-base agent
 
 `restart` repeats the last push or pull — same direction, same services, same stack mapping — and says what it's repeating. Otherwise it would rebuild from the defaults: base back on the ports a mapped stack was serving, and a push on the machine you ran `pull` from. Any flag you pass overrides the saved one.
 
-`--reclaim` kills whatever already holds those ports on the far host before forwarding. It may belong to a colleague. Check first: `ssh <host> 'ss -ltnp | grep <port>'`.
+`--reclaim` kills whatever already holds those ports on the far host before forwarding, and only the ports being forwarded — so `--service` narrows the blast radius. It may belong to a colleague or another stack. See whose it is first with `devstack tunnel check <host>`.
 
 ## MCP
 
