@@ -33,7 +33,9 @@ SUBCOMMANDS
   devstack workspace up         start this workspace's services in the dev daemon
   devstack workspace down       stop them, and the daemon if no workspace needs it
   devstack workspace add        register a directory as a workspace
-  devstack workspace remove     unregister a workspace`,
+  devstack workspace remove     unregister a workspace
+  devstack workspace topology   the service graph: groups, dependencies, dependents
+  devstack workspace doctor     check the manifests and topology for problems`,
 	// Default action: list
 	RunE: runWorkspaceList,
 }

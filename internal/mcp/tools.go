@@ -1521,19 +1521,20 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			"Only ports that are actually serving traffic are forwarded; dead/idle services are skipped. "+
 			"The remote host/user are remembered per-workspace after the first successful push, so later calls can omit them. "+
 			"Any host you can ssh to works, including a plain ssh-config alias; a tailnet address is one such host, not a requirement. "+
-			"Actions: 'list' (discovered services + whether each is serving), 'status' (every forward that is up, including any whose service is no longer discoverable), "+
+			"Actions: 'list' (what a push or pull WOULD forward: discovered services + whether each is serving — nothing is up as a result), 'status' (every forward that IS up, including any whose service is no longer discoverable), "+
+			"'check' (ask the far host what already holds the ports a push would bind, changing nothing — run it before reclaim=true, which kills those processes), "+
 			"'push' (expose local ports on the remote via ssh -R — the common case), 'pull' (pull ports from a source machine to here via ssh -L), "+
-			"'stop' (tear down this workspace's forwards; narrow it with services). "+
+			"'stop' (tear down this workspace's forwards; narrow it with service). "+
 			"'status' and 'stop' work off the forwards actually running, not what discovery covers now, so the observability UI and a stack's forwards are reported and torn down whether or not this call asked for them. "+
 			"The remote is saved automatically on the first successful push/pull, along with the direction and stack mapping, so a later 'devstack tunnel restart' in a shell re-establishes the same thing."),
 		mcp.WithString("action", mcp.Required(),
-			mcp.Description("One of: list, status, push, pull, stop. Read-only, changes nothing: 'list', 'status'. Writes — they start or kill ssh forwards, and push/pull also save the remote: 'push', 'pull', 'stop'.")),
+			mcp.Description("One of: list, status, check, push, pull, stop. Read-only, changes nothing: 'list', 'status', 'check' (check does open an ssh session to read the far host's ports, but alters nothing). Writes — they start or kill ssh forwards, and push/pull also save the remote: 'push', 'pull', 'stop'.")),
 		mcp.WithString("host",
 			mcp.Description("Remote host or SSH config alias (e.g. 'macbook'). Optional if a default is saved for this workspace.")),
 		mcp.WithString("user",
 			mcp.Description("SSH user. Optional — falls back to the saved user for this workspace.")),
-		mcp.WithString("services",
-			mcp.Description("Comma-separated exact service names to limit to, as printed by action=list. Optional; default is all serving services, and for 'stop' every forward this workspace has running.")),
+		mcp.WithString("service",
+			mcp.Description("Exact service names to limit to, comma-separated, as printed by action=list (CLI: --service). Optional; default is all serving services, and for 'stop' every forward this workspace has running.")),
 		mcp.WithBoolean("reclaim",
 			mcp.Description("Push only. Kill whatever already holds these ports on the remote before forwarding. Destructive: it tears down forwards belonging to other stacks, so leave it off unless a push failed to bind and you know the port is yours.")),
 		mcp.WithBoolean("stacks",
@@ -1561,7 +1562,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		filter := map[string]bool{}
-		for _, s := range strings.Split(request.GetString("services", ""), ",") {
+		for _, s := range strings.Split(request.GetString("service", ""), ",") {
 			if s = strings.TrimSpace(s); s != "" {
 				filter[s] = true
 			}
@@ -1600,7 +1601,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 		switch action {
 		case "list":
 			var sb strings.Builder
-			sb.WriteString("Discovered services:\n")
+			sb.WriteString("Would forward (nothing is up as a result of this):\n")
 			for _, s := range svcs {
 				state := "not serving"
 				if tunnel.Listening(s.Port) {
@@ -1638,6 +1639,52 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 				fmt.Fprintf(&sb, "  [%-4s] %-30s :%d\n", state, names[port], port)
 			}
 			return mcp.NewToolResultText(otelNote + sb.String()), nil
+
+		case "check":
+			// The ports a push would bind over there, which for a mapped stack are
+			// base's, not the stack's own.
+			rhost := host
+			if rhost == "" {
+				rhost = ws.TunnelHost
+			}
+			ruser := user
+			if ruser == "" {
+				ruser = ws.TunnelUser
+			}
+			if rhost == "" || ruser == "" {
+				return mcp.NewToolResultError("no remote host/user given and none saved. Pass host and user (they're remembered after the first successful push)."), nil
+			}
+			if len(svcs) == 0 {
+				return mcp.NewToolResultText(otelNote + "No ports to check right now — nothing is serving. Start the services first."), nil
+			}
+			ports := make([]int, len(svcs))
+			byPort := map[int]string{}
+			for i, s := range svcs {
+				ports[i] = s.Far()
+				byPort[s.Far()] = s.Name
+			}
+			holders, cerr := tunnel.InspectRemote(ruser, rhost, ports)
+			if cerr != nil {
+				return mcp.NewToolResultError(cerr.Error()), nil
+			}
+			var sb strings.Builder
+			sb.WriteString(otelNote)
+			fmt.Fprintf(&sb, "Ports on %s@%s:\n", ruser, rhost)
+			held := 0
+			for _, h := range holders {
+				if h.Info == "" {
+					fmt.Fprintf(&sb, "  %-30s :%-6d free\n", byPort[h.Port], h.Port)
+					continue
+				}
+				held++
+				fmt.Fprintf(&sb, "  %-30s :%-6d held by %s\n", byPort[h.Port], h.Port, h.Info)
+			}
+			if held == 0 {
+				sb.WriteString("\nEvery port is free. A push will bind without reclaim.\n")
+			} else {
+				fmt.Fprintf(&sb, "\n%d port(s) are held. A push needs reclaim=true, which kills those processes — they may belong to a colleague or another stack. Narrow it with service.\n", held)
+			}
+			return mcp.NewToolResultText(sb.String()), nil
 
 		case "stop":
 			// Stop what is forwarding, not what discovery happens to cover now: a
@@ -1739,7 +1786,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			if started > 0 {
 				_ = workspace.UpdateTunnelForward(ws.Name, workspace.TunnelForward{
 					Mode:     string(mode),
-					Services: request.GetString("services", ""),
+					Services: request.GetString("service", ""),
 					Stacks:   wantStacks,
 					AsBase:   asBase,
 					Otel:     request.GetBool("otel", false),
@@ -1752,7 +1799,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			return mcp.NewToolResultText(sb.String()), nil
 
 		default:
-			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — use list, status, push, pull, or stop", action)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — use list, status, check, push, pull, or stop", action)), nil
 		}
 	})
 }

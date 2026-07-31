@@ -73,7 +73,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// the same host ports anyway.
 	if !config.ObservabilityEnabled(ws.Path) {
 		fmt.Printf("Observability disabled for this workspace — skipping collector.\n")
-		fmt.Printf("  Enable it: set observability.enabled: true in %s, then: devstack otel start\n", config.WorkspaceManifestFileName)
+		fmt.Printf("  Turn it on: devstack otel config on (writes %s), then: devstack otel start\n", config.WorkspaceManifestFileName)
 	} else if isOtelRunning(ws) {
 		fmt.Printf("OTEL stack already running\n")
 	} else {

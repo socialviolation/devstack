@@ -737,7 +737,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 
 	observabilityBlock := "### Observability\n\n" +
 		"Not enabled for this workspace — services are not assumed to be OTEL-instrumented and no collector runs. " +
-		"Turn it on with `devstack otel enable`, then `devstack otel start`.\n\n"
+		"Turn it on with `devstack otel config on` (writes the manifest), then `devstack otel start` (starts the collector).\n\n"
 	if config.ObservabilityEnabled(workspacePath) {
 		observabilityBlock = "### Observability\n\n" +
 			"Services ship traces and logs to one collector for the whole machine (gRPC `localhost:4317`), which stores them in one backend shared by every workspace and stack.\n\n" +
@@ -760,7 +760,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 			"```\n\n" +
 			"**A service usually reports itself under a different name than devstack knows it by** (devstack `" + svc + "` may report as something else entirely). Filters accept either name, and `devstack otel services` prints both — check there before concluding a service is silent.\n\n" +
 			"**Comparing a stack against base** is the common debugging move: run the same query with `--stack <name>` and with `--stack base`, and diff what comes back. Without `--stack` you get the base instance only, so a stack's traffic will look missing if you forget it.\n\n" +
-			"Route telemetry upstream instead with `devstack otel configure`; open the UI with `devstack otel open`. " +
+			"Route telemetry upstream instead with `devstack otel config set`; open the UI with `devstack otel open`. " +
 			"Per-developer endpoint override: set `OTEL_EXPORTER_OTLP_ENDPOINT` in `.envrc`.\n\n"
 	}
 
@@ -804,7 +804,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"### Commands\n\n" +
 		"```bash\n" +
 		"devstack status                              # live state of every instance (add --stack <name> for one stack)\n" +
-		"devstack topology                            # services, groups, deps, dependents\n" +
+		"devstack workspace topology                  # services, groups, deps, dependents\n" +
 		"devstack workspace doctor                    # check workspace manifests and topology integrity\n" +
 		"devstack otel status                         # collector state + per-service telemetry evidence\n" +
 		"devstack workspace up                        # start the host daemon + this workspace's services\n" +
@@ -815,12 +815,14 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"devstack stack create <name> --repos " + svc + "    # new feature stack overlaying the base\n" +
 		"devstack stack up <name>                     # bring the stack's services up on their own ports\n" +
 		"devstack stack down <name>                   # stop the stack (keeps its worktrees)\n" +
+		"devstack stack status <name>                 # that stack's instances: state, ports, env\n" +
 		"devstack stack rm <name>                     # tear down: remove worktrees, release ports, delete config\n" +
 		"devstack stack list                          # what each stack overlays, its branch, age and note\n" +
 		"devstack stack note <name> \"...\"             # record what a stack is for (ticket URL, issue key, a sentence)\n" +
 		"devstack stack config " + svc + " --stack <name>    # effective config a stack's service runs with\n" +
 		"devstack tunnel push [--stacks] [--otel]     # forward local service ports over SSH (--stacks adds stack instances, --otel adds the observability UI)\n" +
 		"devstack tunnel push --as-base <name>        # put one stack on base's ports, so the far end reaches it at the usual address\n" +
+		"devstack tunnel status [--planned]           # what is forwarded now (--planned: what a push would forward)\n" +
 		"devstack tunnel check [host]                 # what already holds those ports on the far end\n" +
 		"devstack tunnel stop [--service <name>]      # stop all this workspace's tunnels, or just the named ones\n" +
 		"devstack tunnel restart                      # repeat the last push/pull: same direction, services and mapping\n" +

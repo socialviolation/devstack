@@ -65,7 +65,7 @@ devstack service restart [name] [--stack <name>]   # the target alone
 devstack service stop    [name] [--stack <name>]
 devstack group   start|stop|restart <group>
 devstack status  [--all] [--stack <name>]
-devstack topology [service]
+devstack workspace topology [service]
 ```
 
 Commands are noun first: `devstack <noun> <action> [target]`. A name can be both a service and a group, so the noun says which you mean rather than devstack guessing. Name nothing after `service` and devstack works out the service from your working directory. `start` resolves dependencies and brings them up first, and boots the dev daemon if it isn't already up. `restart` acts on the target alone. `status` collapses groups and stacks with nothing running, until you pass `--all`.
@@ -110,6 +110,7 @@ A feature stack runs a parallel version of a few services beside base. Each chan
 devstack stack create <name> --repos <svc>[,<svc>]  # worktrees for the changed services and their callers
 devstack stack up <name>                            # fold it into the host daemon
 devstack stack down <name>                          # stop it, keep the worktrees
+devstack stack status <name>                        # its instances: state, ports, env
 devstack stack list
 devstack stack rm <name>                            # remove worktrees, release ports, deregister
 devstack stack config <svc> --stack <name>          # effective config that instance runs with
@@ -202,8 +203,10 @@ Agents get the same behaviour: `stack_create`, `stack_up`, `stack_down`, `stack_
 Opt-in per workspace. While it's off, no collector runs and nothing is injected into services.
 
 ```bash
-devstack otel enable [--backend=openobserve|signoz|forwarding]
-devstack otel disable
+devstack otel config on [--backend=openobserve|signoz|forwarding]   # writes config, starts nothing
+devstack otel config off                                           # writes config, stops nothing
+devstack otel start                                                # runs the collector now
+devstack otel stop                                                 # kills it now
 ```
 
 With it on, `workspace up` starts one `otelcol-contrib` and one backend for the whole machine, shared by every workspace, the same way one daemon runs everyone's services. `OTEL_EXPORTER_OTLP_ENDPOINT` is pushed down to every service (gRPC 4317, HTTP 4318), so you never repeat it. If the collector dies while enabled, `devstack status` warns and tries to restart it.
@@ -213,8 +216,8 @@ The collector needs `otelcol-contrib` on `$PATH`, or `OTELCOL_BIN` pointing at i
 OpenObserve is the default backend: one container, ~230 MB idle, UI on `localhost:5080`. SigNoz is available and far heavier, ClickHouse plus Zookeeper plus UI at ~1.5-2 GB idle. To ship to your own OTLP endpoint instead of storing locally:
 
 ```bash
-devstack otel configure --plugin=forwarding --set upstream=telemetry.example.com:443 --set protocol=grpc
-devstack otel configure --plugin=forwarding --set upstream=https://otel.example.com:4318
+devstack otel config set --plugin=forwarding --set upstream=telemetry.example.com:443 --set protocol=grpc
+devstack otel config set --plugin=forwarding --set upstream=https://otel.example.com:4318
 ```
 
 The plugin choice is written to the workspace manifest and travels with the project, so workspaces can differ. When they do, the one collector routes each workspace's telemetry to its own backend on the `devstack.workspace` attribute. Per-developer override: set `OTEL_EXPORTER_OTLP_ENDPOINT` in a service repo's `.envrc`.
@@ -253,14 +256,14 @@ devstack tunnel push --stacks                          # every active stack, eac
 devstack tunnel push --as-base agent                   # one stack, on the ports base normally serves
 devstack tunnel push --otel                            # also the observability UI
 devstack tunnel pull <host>
-devstack tunnel list [--stacks] [--as-base <name>]     # what would be forwarded, no SSH
-devstack tunnel check <host>                          # what already holds those ports on the far end
-devstack tunnel status
+devstack tunnel status                                 # what is forwarded right now
+devstack tunnel status --planned [--stacks]            # what a push would forward, no SSH
+devstack tunnel check <host>                           # what already holds those ports on the far end
 devstack tunnel stop [--service navexa-api]
 devstack tunnel restart [--mode push|pull]
 ```
 
-`--service` takes exact names, the ones `tunnel list` prints, not partial matches. Repeat it or comma-separate it. Only ports actually serving traffic get forwarded. With `--otel` the remote reads this machine's traces at the address you use locally.
+`--service` takes exact names, the ones `tunnel status --planned` prints, not partial matches. Repeat it or comma-separate it. Only ports actually serving traffic get forwarded. With `--otel` the remote reads this machine's traces at the address you use locally.
 
 `--stacks` and `--as-base` do different jobs and can't be combined. `--stacks` gives every stack its own port on the far end. `--as-base <name>` puts one stack where base lives, so the far end reaches it at the address it already knows and nothing over there needs reconfiguring:
 

@@ -74,7 +74,7 @@ var legacyOtelWarned sync.Map
 
 var warnWriter io.Writer = os.Stderr
 
-const baseConfigureCmd = "devstack otel configure"
+const baseConfigureCmd = "devstack otel config set"
 
 // warnStrandedLegacyOtelConfig reports otel settings left in the retired
 // .devstack.json project store that the manifest does not carry, naming the

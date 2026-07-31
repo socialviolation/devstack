@@ -69,7 +69,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 			fmt.Fprintf(&sb, "query scope: telemetry results stay inside this workspace; investigate's recent-executions mode defaults to the base instance and to this repo's service (pass a stack's short name, or 'all'), its attribute search has no default service, and a trace_id/span_id lookup ignores service and stack entirely.\n")
 		} else {
 			fmt.Fprintf(&sb, "recommended order: environment -> status -> process_logs\n")
-			fmt.Fprintf(&sb, "note: observability disabled — no trace/telemetry tools. Turn it on with the observability tool (action=enable).\n")
+			fmt.Fprintf(&sb, "note: observability disabled — no trace/telemetry tools. Turn it on with the observability tool (action=config_on).\n")
 		}
 		if !tunnelsOn {
 			fmt.Fprintf(&sb, "note: tunnel tool unavailable — no ssh client on this machine.\n")

@@ -74,7 +74,7 @@ func TestObservabilityRejectsUnknownActionNamingVariants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "status, variants, enable, disable, or configure") {
+	if !strings.Contains(string(data), "status, variants, config_on, config_off, or config_set") {
 		t.Errorf("unknown action did not point at the variants action; got %s", data)
 	}
 }

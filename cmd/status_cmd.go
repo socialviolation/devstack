@@ -218,9 +218,9 @@ func otelSegment(running, enabled, pluginConfigured bool, plugin, ui string, htt
 		if plugin == "" {
 			plugin = "plugin config"
 		}
-		return fmt.Sprintf("otel: configured (%s) but not enabled — devstack otel enable", plugin), true
+		return fmt.Sprintf("otel: configured (%s) but not enabled — devstack otel config on", plugin), true
 	default:
-		return "otel: disabled — devstack otel enable", true
+		return "otel: disabled — devstack otel config on", true
 	}
 }
 
@@ -233,7 +233,7 @@ func hostOtelLine(running, enabled []string) string {
 	case len(enabled) > 0:
 		return "otel: enabled for " + strings.Join(enabled, ", ") + " but collector stopped — devstack otel start"
 	default:
-		return "otel: no collector running — devstack otel enable"
+		return "otel: no collector running — devstack otel config on"
 	}
 }
 

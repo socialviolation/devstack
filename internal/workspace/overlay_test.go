@@ -83,7 +83,7 @@ func TestOverlayProjectConfigWarnsAboutStrandedLegacyConfig(t *testing.T) {
 	if !strings.Contains(out, ".devstack.json") {
 		t.Errorf("warning does not name the legacy file:\n%s", out)
 	}
-	if !strings.Contains(out, "devstack otel configure --set upstream=https://stranded.example.com:4318") {
+	if !strings.Contains(out, "devstack otel config set --set upstream=https://stranded.example.com:4318") {
 		t.Errorf("warning does not name the command that re-applies the setting:\n%s", out)
 	}
 	if !strings.Contains(out, "api_key") || strings.Contains(out, "synthetic-secret") {

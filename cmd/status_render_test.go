@@ -98,18 +98,18 @@ func TestOtelSegment(t *testing.T) {
 			name:             "configured but not enabled",
 			pluginConfigured: true,
 			plugin:           "signoz",
-			wantText:         "otel: configured (signoz) but not enabled — devstack otel enable",
+			wantText:         "otel: configured (signoz) but not enabled — devstack otel config on",
 			wantDecided:      true,
 		},
 		{
 			name:             "plugin config without a plugin name",
 			pluginConfigured: true,
-			wantText:         "otel: configured (plugin config) but not enabled — devstack otel enable",
+			wantText:         "otel: configured (plugin config) but not enabled — devstack otel config on",
 			wantDecided:      true,
 		},
 		{
 			name:        "disabled",
-			wantText:    "otel: disabled — devstack otel enable",
+			wantText:    "otel: disabled — devstack otel config on",
 			wantDecided: true,
 		},
 	}
@@ -131,7 +131,7 @@ func TestHostOtelLine(t *testing.T) {
 	if got := hostOtelLine(nil, []string{"navexa"}); got != want {
 		t.Fatalf("enabled line = %q, want %q", got, want)
 	}
-	if got := hostOtelLine(nil, nil); got != "otel: no collector running — devstack otel enable" {
+	if got := hostOtelLine(nil, nil); got != "otel: no collector running — devstack otel config on" {
 		t.Fatalf("empty line = %q", got)
 	}
 }

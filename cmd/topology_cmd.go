@@ -20,7 +20,7 @@ service's fully resolved configuration and where each value came from.`,
 }
 
 func init() {
-	rootCmd.AddCommand(topologyCmd)
+	workspaceCmd.AddCommand(topologyCmd)
 }
 
 func runTopology(cmd *cobra.Command, args []string) error {

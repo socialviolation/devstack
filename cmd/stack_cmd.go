@@ -70,6 +70,19 @@ var stackUpCmd = &cobra.Command{
 	RunE:         runStackUp,
 }
 
+var stackStatusCmd = &cobra.Command{
+	Use:   "status <name>",
+	Short: "Show a feature stack's services as they run in the host daemon",
+	Long: `Show one stack's service instances: their state, ports and env, read from the
+one host daemon and printed de-namespaced.
+
+'devstack status' is the workspace-level view and takes --stack for the same
+report.`,
+	Args:         cobra.ExactArgs(1),
+	SilenceUsage: true,
+	RunE:         runStackStatusCmd,
+}
+
 var stackDownCmd = &cobra.Command{
 	Use:          "down <name>",
 	Short:        "Stop a feature stack's services in the host daemon (leaves its worktrees and record)",
@@ -87,6 +100,7 @@ func init() {
 	stackCmd.AddCommand(stackConfigCmd)
 	stackCmd.AddCommand(stackUpCmd)
 	stackCmd.AddCommand(stackDownCmd)
+	stackCmd.AddCommand(stackStatusCmd)
 
 	stackCreateCmd.Flags().String("repos", "", "Comma-separated service names that this stack changes")
 	stackCreateCmd.Flags().String("branch", "", "Branch for the changed repos (default: the stack name). Attaches if it already exists.")
@@ -466,7 +480,7 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 	if err := fireHooks(base, rec.Name, config.EventStackUp, started); err != nil {
 		return fmt.Errorf("%w\nStack %q is running but its setup hooks did not finish. Fix the hook, then re-run them:\n  devstack hooks run stack.up --stack %s", err, rec.Name, rec.Name)
 	}
-	fmt.Printf("\n  devstack status --stack %s   ·   devstack service restart <service> --stack %s\n", rec.Name, rec.Name)
+	fmt.Printf("\n  devstack stack status %s   ·   devstack service restart <service> --stack %s\n", rec.Name, rec.Name)
 	return nil
 }
 
@@ -475,6 +489,18 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 // two of a service's ports apart.
 func stackPortLabel(key string) string {
 	return strings.TrimSuffix(key, "/http")
+}
+
+func runStackStatusCmd(cmd *cobra.Command, args []string) error {
+	base, err := resolveWorkspace(viper.GetString("workspace"))
+	if err != nil {
+		return err
+	}
+	rec, err := stack.Resolve(base.Name, args[0])
+	if err != nil {
+		return err
+	}
+	return runStackStatus(base, rec)
 }
 
 func runStackDown(cmd *cobra.Command, args []string) error {
