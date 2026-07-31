@@ -306,7 +306,6 @@ const (
 	colBranchMax  = 28
 	colPorts      = 14
 	colEnv        = 7
-	colNeeds      = 36
 
 	ungroupedLabel = "ungrouped"
 )
@@ -334,11 +333,9 @@ type statusRow struct {
 	state      string
 	ports      string
 	env        string
-	needs      []string
 	dir        string
 	rowColor   *color.Color
 	stateColor *color.Color
-	memberSet  map[string]bool
 }
 
 func sectionRank(s serviceSection) int {
@@ -383,10 +380,6 @@ func partitionSections(sections []serviceSection, expand bool) (table, condensed
 func assembleRows(sections []serviceSection) []statusRow {
 	var rows []statusRow
 	for _, s := range sections {
-		memberSet := make(map[string]bool, len(s.members))
-		for _, m := range s.members {
-			memberSet[m] = true
-		}
 		for _, svc := range orderGroupServices(s.members, s.deps) {
 			state, stateClr := svcStatusColor(svc, s.resources)
 			rows = append(rows, statusRow{
@@ -395,11 +388,9 @@ func assembleRows(sections []serviceSection) []statusRow {
 				state:      state,
 				ports:      svcPortsRaw(svc, s.resources),
 				env:        s.envs[svc],
-				needs:      s.deps[svc],
 				dir:        s.dirs[svc],
 				rowColor:   s.color,
 				stateColor: stateClr,
-				memberSet:  memberSet,
 			})
 		}
 	}
@@ -420,7 +411,7 @@ func countRunning(members []string, resources map[string]tilt.UIResource) int {
 // renderStatusTable prints every row of the workspace under one header row,
 // colouring each row by the group it belongs to while the STATE cell keeps its
 // own state colour. Source paths only print when the caller asked for them.
-func renderStatusTable(rows []statusRow, svcGroupColor map[string]*color.Color, showDirs bool) {
+func renderStatusTable(rows []statusRow, showDirs bool) {
 	branches := readBranchLabels(rows)
 
 	svcWidth, groupWidth, branchWidth := colService, colGroup, len("BRANCH")
@@ -440,15 +431,11 @@ func renderStatusTable(rows []statusRow, svcGroupColor map[string]*color.Color, 
 	if svcWidth > colServiceMax {
 		svcWidth = colServiceMax
 	}
-	needsIndent := strings.Repeat(" ", len(statusIndent)+svcWidth+2+groupWidth+2+colState+2+branchWidth+2+colPorts+2+colEnv+2)
-
 	faint := color.New(color.Faint)
-	faint.Printf("%s%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %s\n", statusIndent,
-		svcWidth, "SERVICE", groupWidth, "GROUP", colState, "STATE", branchWidth, "BRANCH", colPorts, "PORTS", colEnv, "ENV", "NEEDS")
+	faint.Printf("%s%-*s  %-*s  %-*s  %-*s  %-*s  %s\n", statusIndent,
+		svcWidth, "SERVICE", groupWidth, "GROUP", colState, "STATE", branchWidth, "BRANCH", colPorts, "PORTS", "ENV")
 
 	for _, r := range rows {
-		hasNeeds := len(r.needs) > 0
-
 		fmt.Print(statusIndent)
 		r.rowColor.Printf("%-*s", svcWidth, fitCell(r.service, svcWidth))
 		fmt.Print("  ")
@@ -458,21 +445,12 @@ func renderStatusTable(rows []statusRow, svcGroupColor map[string]*color.Color, 
 		fmt.Print("  ")
 		faint.Printf("%-*s", branchWidth, fitCell(branches[r.dir], branchWidth))
 		fmt.Print("  ")
-		if hasNeeds || r.env != "" {
+		if r.env != "" {
 			printPorts(r.ports, colPorts)
-		} else {
-			printPorts(r.ports, 0)
-		}
-
-		switch {
-		case hasNeeds:
-			fmt.Print("  ")
-			faint.Printf("%-*s", colEnv, r.env)
-			fmt.Print("  ")
-			printNeeds(r.needs, r.memberSet, svcGroupColor, needsIndent)
-		case r.env != "":
 			fmt.Print("  ")
 			faint.Print(r.env)
+		} else {
+			printPorts(r.ports, 0)
 		}
 		fmt.Println()
 
@@ -510,36 +488,6 @@ func readBranchLabels(rows []statusRow) map[string]string {
 		labels[dir] = info.Label()
 	}
 	return labels
-}
-
-// printNeeds prints a service's dependencies, wrapping onto continuation lines
-// aligned under the NEEDS column.
-func printNeeds(svcDeps []string, memberSet map[string]bool, svcGroupColor map[string]*color.Color, contIndent string) {
-	names := append([]string(nil), svcDeps...)
-	sort.Strings(names)
-
-	faint := color.New(color.Faint)
-	col, first := 0, true
-	for _, dep := range names {
-		switch {
-		case first:
-		case col+2+len(dep) > colNeeds:
-			faint.Print(",")
-			fmt.Println()
-			fmt.Print(contIndent)
-			col, first = 0, true
-		default:
-			faint.Print(", ")
-			col += 2
-		}
-		if c, ok := svcGroupColor[dep]; ok && !memberSet[dep] {
-			c.Print(dep)
-		} else {
-			faint.Print(dep)
-		}
-		col += len(dep)
-		first = false
-	}
 }
 
 // runStatusAll shows a summary table of all registered workspaces.

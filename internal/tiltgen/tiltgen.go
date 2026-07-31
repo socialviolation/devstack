@@ -68,6 +68,10 @@ type WorkspaceGen struct {
 // stack, and each resource carries its workspace name as a Tilt label.
 // Workspaces are rendered in the given order.
 func GenerateHost(workspaces []WorkspaceGen) (string, error) {
+	if err := ValidateFreePorts(workspaces); err != nil {
+		return "", err
+	}
+
 	var b strings.Builder
 	b.WriteString(header)
 

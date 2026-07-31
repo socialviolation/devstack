@@ -318,7 +318,7 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 
 	table, condensed := partitionSections(sections, expand)
 	if rows := assembleRows(table); len(rows) > 0 {
-		renderStatusTable(rows, svcGroupColor, expand)
+		renderStatusTable(rows, expand)
 	}
 	if len(condensed) > 0 {
 		fmt.Println()

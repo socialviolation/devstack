@@ -80,7 +80,7 @@ func TestStatusTableCapsTheServiceColumn(t *testing.T) {
 	}
 
 	buf := captureFaint(t)
-	renderStatusTable(rows, map[string]*color.Color{}, false)
+	renderStatusTable(rows, false)
 
 	if strings.Contains(buf.String(), long) {
 		t.Errorf("a %d-char service name printed in full and pushed every later column out:\n%s", len(long), buf.String())
@@ -99,7 +99,7 @@ func TestStatusTableShowsBranchWithoutExpand(t *testing.T) {
 	}
 
 	buf := captureFaint(t)
-	renderStatusTable(rows, map[string]*color.Color{}, false)
+	renderStatusTable(rows, false)
 
 	got := buf.String()
 	if !strings.Contains(got, "BRANCH") {
