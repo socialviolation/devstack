@@ -172,10 +172,11 @@ func buildPrime() (string, error) {
 	}
 
 	var b strings.Builder
+	writePrimeWhatThisIs(&b)
 	writePrimeIdentity(&b, ws, service, repo, branch, working)
-	writePrimeLive(&b, ws, service)
-	writePrimeStacks(&b, ws, service, working)
+	writePrimeInstances(&b, ws, rw, service, working)
 	writePrimeApplies(&b, ws, rw)
+	writePrimeReload(&b, rw, service, working)
 	b.WriteString("\nreference: devstack status · devstack help <command> · devstack stack list\n")
 	return strings.TrimRight(b.String(), "\n"), nil
 }
@@ -212,75 +213,6 @@ func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, re
 	if service != "" {
 		fmt.Fprintf(b, "  edits here stay on this stack's branch. Target it: devstack restart %s --stack %s\n",
 			service, working.Rec.Name)
-	}
-}
-
-func writePrimeLive(b *strings.Builder, ws *workspace.Workspace, service string) {
-	view, err := tilt.NewClient("localhost", workspace.HostTiltPort).GetView()
-	if err != nil {
-		b.WriteString("\nlive: dev daemon is not running — start it: devstack workspace up\n")
-		return
-	}
-
-	prefix := ws.Name + ":"
-	running := 0
-	var mine []string
-	for _, r := range view.UiResources {
-		name := r.Metadata.Name
-		if !strings.HasPrefix(name, prefix) {
-			continue
-		}
-		if serviceStatus(r) != "running" {
-			continue
-		}
-		running++
-		bare := strings.TrimPrefix(name, prefix)
-		if service != "" && (bare == service || strings.HasPrefix(bare, service+":")) {
-			mine = append(mine, bare)
-		}
-	}
-	sort.Strings(mine)
-
-	fmt.Fprintf(b, "\nlive: %d running in the host daemon on :%d\n", running, workspace.HostTiltPort)
-	if len(mine) > 0 {
-		fmt.Fprintf(b, "  %s: %s\n", service, strings.Join(mine, ", "))
-		b.WriteString("  a service runs once per instance — base and each stack, on different ports\n")
-	}
-}
-
-func writePrimeStacks(b *strings.Builder, ws *workspace.Workspace, service string, working *workingStack) {
-	recs, err := stack.LoadStore(ws.Name)
-	if err != nil || len(recs) == 0 {
-		return
-	}
-	var rows []stack.Record
-	for _, rec := range recs {
-		if service == "" || containsString(rec.Overlay, service) {
-			rows = append(rows, rec)
-		}
-	}
-	if len(rows) == 0 {
-		return
-	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
-
-	label := "stacks in flight"
-	if service != "" {
-		label = "stacks running " + service
-	}
-	fmt.Fprintf(b, "\n%s:\n", label)
-	for _, rec := range rows {
-		marker := " "
-		if working != nil && working.Rec != nil && working.Rec.Name == rec.Name {
-			marker = "▸"
-		}
-		port := "-"
-		if service != "" {
-			if p, ok := rec.Ports[stack.QualifyPortKey(service, "http")]; ok {
-				port = fmt.Sprintf(":%d", p)
-			}
-		}
-		fmt.Fprintf(b, "  %s %-12s %-8s %s\n", marker, rec.Name, port, firstLine(rec.Note, 70))
 	}
 }
 
@@ -324,4 +256,120 @@ func countHooks(ws *workspace.Workspace, rw *config.ResolvedWorkspace) int {
 		}
 	}
 	return n
+}
+
+// writePrimeWhatThisIs states the few facts an agent that has never met devstack
+// will otherwise get wrong. Each line earns its place by naming a wrong
+// conclusion it prevents, not by describing a feature: that a service has
+// several running copies, that "stopped" is a registration state rather than a
+// fault, and that none of this is safe to point at production. Everything else
+// about devstack is a `devstack help` away and does not belong in every session.
+func writePrimeWhatThisIs(b *strings.Builder) {
+	b.WriteString("devstack runs this repo's services on your machine, in one background daemon. LOCAL DEV ONLY — never point it at staging or production.\n")
+	b.WriteString("  workspace  the set of repos that run together\n")
+	b.WriteString("  service    one process devstack runs\n")
+	b.WriteString("  base       your normal checkout; what commands act on unless you pass --stack\n")
+	b.WriteString("  stack      a parallel copy of some services on a feature branch, in its own git worktree, on its own ports\n")
+	b.WriteString("A service can be running several times at once — base plus one per stack — each on a different port. Check\n")
+	b.WriteString("`devstack status` before concluding one is down; \"stopped\" means registered and not started, not broken.\n\n")
+}
+
+// writePrimeReload gives the reload verdict for the service in hand rather than
+// the general rule, because the general rule is what an agent skips. A service
+// that does not self-watch keeps executing old code after an edit, and the
+// resulting "my fix did nothing" is expensive to debug from the wrong end.
+func writePrimeReload(b *strings.Builder, rw *config.ResolvedWorkspace, service string, working *workingStack) {
+	if service == "" {
+		return
+	}
+	svc, ok := rw.Services[service]
+	if !ok || svc.Manifest == nil {
+		return
+	}
+	runCmd := strings.TrimSpace(svc.Manifest.Runtime.Run.Command)
+	if runCmd == "" {
+		return
+	}
+
+	target := service
+	if working != nil && working.Certain {
+		target += " --stack " + working.Rec.Name
+	}
+
+	switch {
+	case looksHotReloading(runCmd) || looksHotReloading(resolveRunScript(runCmd, svc.RepoPath)):
+		fmt.Fprintf(b, "\nafter editing: %s hot-reloads (%s) — no restart needed for source changes.\n", service, runCmd)
+	case len(svc.Manifest.Runtime.Watch) > 0:
+		fmt.Fprintf(b, "\nafter editing: %s auto-restarts (runtime.watch is set) — no restart needed for source changes.\n", service)
+	default:
+		fmt.Fprintf(b, "\nafter editing: %s does NOT hot-reload (%s). It keeps running the old code until:\n  devstack restart %s\n", service, runCmd, target)
+	}
+	b.WriteString("config or env changes always need a restart, even when the source hot-reloads.\n")
+}
+
+// writePrimeInstances is the one table that answers the three questions an agent
+// has about the service in front of it: where is it running, on which port, and
+// what is that copy for. Base and every stack are the same kind of thing — an
+// instance — so splitting them across two blocks made the reader join them up,
+// and left base's own port stated nowhere at all.
+func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config.ResolvedWorkspace, service string, working *workingStack) {
+	view, err := tilt.NewClient("localhost", workspace.HostTiltPort).GetView()
+	if err != nil {
+		b.WriteString("\nlive: the daemon is not running — start it: devstack workspace up\n")
+		return
+	}
+
+	states := map[string]string{}
+	total := 0
+	for _, r := range view.UiResources {
+		name := r.Metadata.Name
+		if !strings.HasPrefix(name, ws.Name+":") {
+			continue
+		}
+		st := serviceStatus(r)
+		if st == "running" {
+			total++
+		}
+		states[strings.TrimPrefix(name, ws.Name+":")] = st
+	}
+	fmt.Fprintf(b, "\nlive: %d service(s) running on :%d\n", total, workspace.HostTiltPort)
+	if service == "" {
+		return
+	}
+
+	type instance struct{ name, port, state, note string }
+	rows := []instance{{name: "base", port: "-", state: orDash(states[service])}}
+	if svc, ok := rw.Services[service]; ok && svc.Manifest != nil {
+		if p, ok := svc.Manifest.Ports["http"]; ok {
+			rows[0].port = fmt.Sprintf(":%d", p)
+		}
+	}
+
+	recs, _ := stack.LoadStore(ws.Name)
+	sort.Slice(recs, func(i, j int) bool { return recs[i].Name < recs[j].Name })
+	for _, rec := range recs {
+		if !containsString(rec.Overlay, service) {
+			continue
+		}
+		row := instance{name: rec.Name, port: "-", state: "inactive", note: firstLine(rec.Note, 62)}
+		if p, ok := rec.Ports[stack.QualifyPortKey(service, "http")]; ok {
+			row.port = fmt.Sprintf(":%d", p)
+		}
+		if st, ok := states[service+":"+rec.Name]; ok {
+			row.state = st
+		}
+		rows = append(rows, row)
+	}
+
+	fmt.Fprintf(b, "\n%s runs as %d instance(s):\n", service, len(rows))
+	for _, r := range rows {
+		marker := " "
+		if working != nil && working.Rec != nil && working.Rec.Name == r.name {
+			marker = "▸"
+		} else if r.name == "base" && working == nil {
+			marker = "▸"
+		}
+		fmt.Fprintf(b, "  %s %-12s %-8s %-9s %s\n", marker, r.name, r.port, r.state, r.note)
+	}
+	b.WriteString("  ▸ = the checkout you are in. Reach a stack's copy on its own port, or with --stack <name>.\n")
 }
