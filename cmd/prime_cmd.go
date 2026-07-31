@@ -177,6 +177,7 @@ func buildPrime() (string, error) {
 	writePrimeInstances(&b, ws, rw, service, working)
 	writePrimeApplies(&b, ws, rw)
 	writePrimeReload(&b, rw, service, working)
+	writePrimeNotes(&b, rw, service)
 	b.WriteString("\nreference: devstack status · devstack help <command> · devstack stack list\n")
 	return strings.TrimRight(b.String(), "\n"), nil
 }
@@ -417,4 +418,38 @@ func pluralCopy(n int) string {
 		return "1 copy"
 	}
 	return fmt.Sprintf("%d copies", n)
+}
+
+// primeDocsBudget bounds the team-authored context so a long document cannot
+// push the briefing past the limit the session-start hook imposes. The
+// briefing's own content is fixed and small; this is the only part a workspace
+// can grow without limit.
+const primeDocsBudget = 4000
+
+// writePrimeNotes prints the prose a team declared for this workspace and this
+// service. It is inlined rather than linked because a reference is only read by
+// an agent that decides to read it, and a team that wrote the document intended
+// it to be read. Anything past the budget is clipped and names its own path.
+func writePrimeNotes(b *strings.Builder, rw *config.ResolvedWorkspace, service string) {
+	docs := config.ResolveContextDocs(rw, service)
+	if len(docs) == 0 {
+		return
+	}
+	remaining := primeDocsBudget
+	for _, d := range docs {
+		if d.Missing {
+			fmt.Fprintf(b, "\nNOTE: %s declares %s, and that file is not on disk.\n", config.WorkspaceManifestFileName, d.Path)
+			continue
+		}
+		if remaining <= 0 {
+			fmt.Fprintf(b, "\nmore context for this workspace: %s\n", d.Path)
+			continue
+		}
+		fmt.Fprintf(b, "\n%s notes — %s\n", d.Title(), d.Path)
+		body := d.Clip(remaining)
+		remaining -= len(body)
+		for _, line := range strings.Split(body, "\n") {
+			fmt.Fprintf(b, "  %s\n", line)
+		}
+	}
 }

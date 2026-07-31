@@ -37,6 +37,7 @@ type WorkspaceManifest struct {
 	StartsAfter   map[string][]string             `yaml:"startsAfter,omitempty"`
 	Environments  map[string]WorkspaceEnvironment `yaml:"environments,omitempty"`
 	Hooks         []Hook                          `yaml:"hooks,omitempty"`
+	Context       WorkspaceContext                `yaml:"context,omitempty"`
 }
 
 // ResourceDeps returns the effective startup ordering for svc: the deduped,
