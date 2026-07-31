@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/gitinfo"
 	"github.com/socialviolation/devstack/internal/infra"
 	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/stack"
@@ -59,7 +61,15 @@ var groupPalette = []*color.Color{
 func runStatus(cmd *cobra.Command, args []string) error {
 	ws, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
-		return runStatusAll()
+		// A stack's worktree is a sibling of its base and is never registered, so
+		// workspace detection misses it — and a worktree is exactly where an agent
+		// is told to work. Resolve the owning base rather than dumping the
+		// every-workspace summary at someone standing in one service.
+		if base, _, derr := stack.DetectFromCwd(); derr == nil && base != nil {
+			ws = base
+		} else {
+			return runStatusAll()
+		}
 	}
 	if stackName, _ := cmd.Flags().GetString("stack"); stackName != "" {
 		rec, err := stack.Resolve(ws.Name, stackName)
@@ -247,6 +257,8 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 		}
 		return nil
 	}
+
+	printServiceOrientation(ws, rw, view)
 
 	// Sorted group names
 	groupNames := make([]string, 0, len(cfg.Groups))
@@ -481,4 +493,156 @@ func printPorts(raw string, width int) {
 	} else {
 		fmt.Print(padded)
 	}
+}
+
+// serviceOrientation is one stack that runs its own copy of the service you are
+// standing in.
+type serviceOrientation struct {
+	stack  string
+	state  string
+	port   string
+	branch string
+	note   string
+	here   bool
+}
+
+// printServiceOrientation answers "where am I and what else is in flight on this
+// service" before the workspace table answers "what is running everywhere".
+//
+// An agent opening a session in a service repo needs the landscape for THAT
+// service: which feature stacks run their own copy of it, what each one is for,
+// and whether the checkout it is looking at is base or one of them. The
+// workspace table lists every service flat, which does not answer any of that.
+// Nothing prints when the working directory is not inside a service.
+func printServiceOrientation(ws *workspace.Workspace, rw *config.ResolvedWorkspace, view *tilt.TiltView) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	identity, err := config.ResolveIdentity(cwd)
+	if err != nil || identity.ServiceName == "" {
+		return
+	}
+	service := identity.ServiceName
+
+	hereStack := ""
+	if _, rec, derr := stack.DetectFromCwd(); derr == nil && rec != nil {
+		hereStack = rec.Name
+	}
+
+	recs, err := stack.LoadStore(ws.Name)
+	if err != nil {
+		return
+	}
+
+	var rows []serviceOrientation
+	for _, rec := range recs {
+		if !containsString(rec.Overlay, service) {
+			continue
+		}
+		row := serviceOrientation{
+			stack:  rec.Name,
+			state:  "inactive",
+			port:   "-",
+			branch: rec.Branch,
+			note:   rec.Note,
+			here:   rec.Name == hereStack,
+		}
+		if p, ok := rec.Ports[stack.QualifyPortKey(service, "http")]; ok {
+			row.port = fmt.Sprintf(":%d", p)
+		}
+		if rec.Active && view != nil {
+			if r, ok := hostResourceMap(view.UiResources, ws.Name, rec.Name)[service]; ok {
+				row.state = serviceStatus(r)
+			} else {
+				row.state = "active"
+			}
+		}
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].stack < rows[j].stack })
+
+	faint := color.New(color.Faint)
+	where := "base"
+	if hereStack != "" {
+		where = "stack " + hereStack
+	}
+	repoHere := ""
+	if svc, ok := rw.Services[service]; ok {
+		repoHere = svc.RepoPath
+	}
+	if hereStack != "" {
+		if _, rec, derr := stack.DetectFromCwd(); derr == nil && rec != nil {
+			if wt, ok := rec.Worktrees[service]; ok {
+				repoHere = wt
+			}
+		}
+	}
+	branchHere := ""
+	if repoHere != "" {
+		if info := gitinfo.ReadAll(map[string]string{repoHere: repoHere})[repoHere]; info.Label() != "" {
+			branchHere = "  ·  " + truncateCell(info.Label(), 42)
+		}
+	}
+	fmt.Printf("  %s  %s%s\n",
+		faint.Sprint("you are in"),
+		color.New(color.Bold).Sprintf("%s  ·  %s", service, where),
+		faint.Sprint(branchHere))
+
+	if len(rows) == 0 {
+		faint.Printf("%sno feature stack runs %s — start one: devstack stack create <name> --repos %s\n\n", orientIndent, service, service)
+		return
+	}
+
+	faint.Printf("%s%d feature stack(s) run their own %s:\n", orientIndent, len(rows), service)
+	for _, r := range rows {
+		marker := " "
+		if r.here {
+			marker = "▸"
+		}
+		stateColor := color.New(color.Faint)
+		if r.state == "running" {
+			stateColor = color.New(color.FgGreen)
+		}
+		fmt.Printf("%s%s %-12s ", orientIndent, marker, r.stack)
+		stateColor.Printf("%-9s", r.state)
+		fmt.Printf("%-8s ", r.port)
+		faint.Printf("%-28s", truncateCell(r.branch, 28))
+		if r.note != "" {
+			fmt.Printf("  %s", firstLine(r.note, colNote))
+		}
+		fmt.Println()
+	}
+	faint.Printf("%s▸ = the checkout you are in · a stack is worked in its own worktree: devstack stack list\n", orientIndent)
+	fmt.Println()
+}
+
+func containsString(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
+// orientIndent aligns the orientation rows under the "you are in" label.
+const orientIndent = "              "
+
+// colNote bounds a stack note in the orientation block. A note is free prose and
+// routinely a paragraph; the first line of it is the part that identifies the
+// feature, and the rest belongs in `devstack stack list`.
+const colNote = 58
+
+// firstLine returns the note's opening line, clipped to n. Notes carry sentences
+// of caveat after the headline, which would otherwise wrap the table into noise.
+func firstLine(s string, n int) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	s = strings.TrimSpace(s)
+	if len(s) <= n {
+		return s
+	}
+	return strings.TrimSpace(string([]rune(s)[:n-1])) + "…"
 }
