@@ -217,7 +217,7 @@ func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, re
 	if note := firstLine(working.Rec.Note, 120); note != "" {
 		fmt.Fprintf(b, "  purpose %s\n", note)
 	}
-	fmt.Fprintf(b, "  You are NOT in that stack. Its directory is %s.\n  Ask the user which one this session is for before you change any code.\n",
+	fmt.Fprintf(b, "  You are not in that stack. The directory of that stack is %s.\n  Before you change any code, ask the user which stack this session is for.\n",
 		orDash(working.Rec.Worktrees[service]))
 }
 
@@ -227,7 +227,7 @@ func writePrimeApplies(b *strings.Builder, ws *workspace.Workspace, rw *config.R
 		// A name says nothing about what selecting an environment does, so each
 		// one carries its own description. An environment with none is listed
 		// saying so, because the gap is the thing to fix.
-		lines = append(lines, fmt.Sprintf("  environments  active: %s. Each one repoints services at different config:", orDash(rw.Manifest.Workspace.Env)))
+		lines = append(lines, fmt.Sprintf("  environments  active: %s. Each environment sets different configuration values:", orDash(rw.Manifest.Workspace.Env)))
 		for _, n := range envs {
 			marker := " "
 			if n == rw.Manifest.Workspace.Env {
@@ -252,9 +252,9 @@ func writePrimeApplies(b *strings.Builder, ws *workspace.Workspace, rw *config.R
 		// query it directly, which is how you get a query that ignores the
 		// workspace scoping.
 		lines = append(lines,
-			"  telemetry     every copy ships traces and logs. Query with `devstack otel traces` and `devstack otel logs`,",
-			"                or the investigate tool over MCP. A copy is identified by devstack.stack, so an unqualified",
-			"                query returns base only — pass --stack <name> to see a stack's traffic.")
+			"  telemetry     every copy sends traces and logs. Query them with `devstack otel traces` and `devstack otel logs`,",
+			"                or with the investigate tool over MCP. The attribute devstack.stack identifies each copy.",
+			"                A query without --stack returns base only. To query the traffic of a stack, give --stack <name>.")
 	}
 
 	if len(lines) == 0 {
@@ -298,20 +298,20 @@ func writePrimeWhatThisIs(b *strings.Builder) {
 	b.WriteString("it collects their logs, and it sets their environment variables.\n\n")
 	b.WriteString("CAUTION: Use devstack only for local development. Do not use it with a staging or a production system.\n\n")
 	b.WriteString("devstack is a CLI and an MCP server. The tools do the same work as the commands, and they share their names:\n")
-	b.WriteString("status, start, stop, restart, stack_up, env_use. Use whichever your session has. Call the `environment` tool\n")
-	b.WriteString("first, because it lists the tools this workspace actually has. Six things have no tool and need the shell:\n")
+	b.WriteString("status, start, stop, restart, stack_up, env_use. Use the one that your session has. Call the `environment` tool\n")
+	b.WriteString("first. It lists the tools that this workspace has. Six things have no tool, and they need the shell:\n")
 	b.WriteString("workspace up and down, ports, dependencies, group add and remove, stack config, and init.\n\n")
 	b.WriteString("These are the devstack terms in this text:\n")
 	b.WriteString("  workspace  the set of repositories that run together\n")
 	b.WriteString("  service    one process that devstack runs\n")
-	b.WriteString("  base       your normal checkout. A command uses base if you do not give --stack\n")
+	b.WriteString("  base       your normal checkout. If you do not give --stack, a command uses base\n")
 	b.WriteString("  stack      a parallel copy of some services. Each stack has its own branch, its own directory, and its own ports\n")
 	b.WriteString("  worktree   the directory of a stack. Git checks out the branch of the stack in this directory\n")
 	b.WriteString("One service can run more than one time. base runs one copy, and each stack runs another copy.\n")
 	b.WriteString("Each copy has a different port. Run `devstack status` before you decide that a service is down.\n")
 	b.WriteString("The state \"stopped\" means that the service is registered but not started. It does not mean that the service is broken.\n\n")
 	b.WriteString("To work on a stack, change to the directory of that stack. The branch is already checked out there.\n")
-	b.WriteString("Do not use `git checkout` in your normal checkout. That changes base, and it does not change the stack.\n\n")
+	b.WriteString("Do not use `git checkout` in your normal checkout. That command changes base, and it does not change the stack.\n\n")
 }
 
 // writePrimeReload gives the reload verdict for the service in hand rather than
@@ -450,11 +450,11 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 			fmt.Fprintf(b, "      %s\n", r.note)
 		}
 	}
-	fmt.Fprintf(b, "  ▸ is the copy whose directory you are in right now: %s.\n", here)
+	fmt.Fprintf(b, "  The marker ▸ shows the copy that you are in now: %s.\n", here)
 	if suggested != "" {
-		fmt.Fprintf(b, "  ? is a guess, not a fact: %s is the only stack that runs %s. You are NOT in it. Ask before you work on it.\n", suggested, service)
+		fmt.Fprintf(b, "  The marker ? shows a guess. %s is the only stack that runs %s, but you are not in it.\n  Ask the user before you work on it.\n", suggested, service)
 	}
-	b.WriteString("  To use the copy from a stack, change to its directory, connect to its port,\n  or add `--stack <name>` to a command.\n")
+	b.WriteString("  To use the copy from a stack, do one of these:\n    change to the directory of that stack\n    connect to the port of that stack\n    add `--stack <name>` to a command\n")
 }
 
 // pluralRun and pluralCopy keep the count grammatical. "1 service(s)" makes a
