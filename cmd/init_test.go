@@ -381,7 +381,7 @@ func TestRunInitAllRefreshesStaleMCPJson(t *testing.T) {
 	writeFile(t, mcpFile, staleMCPJson)
 
 	t.Chdir(baseRoot)
-	if err := runInitAll(); err != nil {
+	if err := runInitAll(false); err != nil {
 		t.Fatalf("runInitAll: %v", err)
 	}
 
@@ -394,7 +394,7 @@ func TestRunInitRefreshRefreshesStaleMCPJson(t *testing.T) {
 	writeFile(t, mcpFile, staleMCPJson)
 
 	t.Chdir(baseServiceDir)
-	if err := runInitRefresh(&cobra.Command{}); err != nil {
+	if err := runInitRefresh(&cobra.Command{}, false); err != nil {
 		t.Fatalf("runInitRefresh: %v", err)
 	}
 
