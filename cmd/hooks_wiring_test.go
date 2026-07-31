@@ -57,3 +57,27 @@ func TestEveryDeclaredEventHasAFiringPoint(t *testing.T) {
 		}
 	}
 }
+
+// service.stop is a teardown event: the services are already stopped when it
+// fires, so a broken hook must not fail a command that did its job. Every
+// teardown site goes through fireTeardownHooks, which reports and continues.
+func TestTeardownSitesDoNotReturnHookErrors(t *testing.T) {
+	teardown := map[string]string{
+		"cmd/stop_cmd.go":  "config.EventServiceStop",
+		"cmd/down_cmd.go":  "config.EventWorkspaceDown",
+		"cmd/stack_cmd.go": "config.EventStackDestroy",
+	}
+	for file, event := range teardown {
+		data, err := os.ReadFile(filepath.Base(file))
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		body := string(data)
+		if !strings.Contains(body, "fireTeardownHooks") {
+			t.Errorf("%s fires %s without fireTeardownHooks", file, event)
+		}
+		if strings.Contains(body, "return fireHooks("+"ws, stackName, "+event) {
+			t.Errorf("%s returns its %s hook error, which fails a command that already succeeded", file, event)
+		}
+	}
+}

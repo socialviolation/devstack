@@ -80,12 +80,16 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		// and it must not abandon a service start whose daemon is up.
 		fmt.Println("Dev daemon not running — starting it...")
 		upWS, startErr := bringWorkspaceUp()
-		if startErr != nil {
-			return fmt.Errorf("failed to auto-start dev daemon: %w", startErr)
+		var hookErr error
+		if startErr == nil {
+			hookErr = fireHooks(upWS, "", config.EventWorkspaceUp, nil)
 		}
-		if hookErr := fireHooks(upWS, "", config.EventWorkspaceUp, nil); hookErr != nil {
-			fmt.Fprintf(os.Stderr, "warning: the dev daemon is up, but a workspace.up hook failed: %v\n", hookErr)
-			fmt.Fprintf(os.Stderr, "warning: %s starts anyway. Fix the hook, then re-run it: devstack hooks run workspace.up\n", strings.Join(services, ", "))
+		fatal, warnings := autoStartOutcome(startErr, hookErr, services)
+		for _, w := range warnings {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+		}
+		if fatal != nil {
+			return fatal
 		}
 		view, err = tiltClient.GetView()
 		if err != nil {
@@ -151,4 +155,25 @@ func splitByPresence(wsName, namespace, stackName string, want []string, present
 		here = append(here, svc)
 	}
 	return here, inBase
+}
+
+// autoStartOutcome decides what a failed auto-start means for the service start
+// that triggered it.
+//
+// A daemon that will not come up is fatal: nothing can be triggered. A
+// workspace.up hook that failed is not, because the daemon IS up and the
+// service can start. Reporting the two the same way told the user the daemon
+// had failed when it had not, and abandoned a service start that would have
+// worked.
+func autoStartOutcome(daemonErr, hookErr error, services []string) (error, []string) {
+	if daemonErr != nil {
+		return fmt.Errorf("failed to auto-start dev daemon: %w", daemonErr), nil
+	}
+	if hookErr == nil {
+		return nil, nil
+	}
+	return nil, []string{
+		fmt.Sprintf("the dev daemon is up, but a workspace.up hook failed: %v", hookErr),
+		fmt.Sprintf("%s starts anyway. Fix the hook, then re-run it: devstack hooks run workspace.up", strings.Join(services, ", ")),
+	}
 }

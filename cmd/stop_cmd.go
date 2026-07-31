@@ -70,5 +70,10 @@ func runStop(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("✓ Stopped: %s\n", strings.Join(stopped, ", "))
-	return fireHooks(ws, stackName, config.EventServiceStop, services)
+	// service.stop is a teardown event, and the services are already stopped by
+	// the time it fires. Returning the hook's error made a broken hook fail a
+	// command that had done its job, which is the contract the other teardown
+	// sites already keep.
+	fireTeardownHooks(ws, stackName, config.EventServiceStop, services)
+	return nil
 }
