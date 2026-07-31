@@ -17,11 +17,11 @@ Needs Go 1.25+ and [Tilt](https://docs.tilt.dev/install.html) on `$PATH`. Docker
 ```bash
 devstack workspace add ~/dev/my-workspace   # register the directory holding your services
 devstack workspace up                       # start the dev daemon (and the collector, if enabled)
-devstack init --all                         # write .mcp.json + AGENTS.md into every registered service
+devstack init --all --claude-hook           # wire up every service repo for agents
 devstack status                             # what's running, on which port, pointing where
 ```
 
-Then open Claude Code in any service repo. It reads `.mcp.json` and picks up the devstack tools.
+Then open Claude Code in any service repo. It reads `.mcp.json` and picks up the devstack tools, and the [session hook](#briefing-an-agent) briefs it on where it is and what is running. Drop `--claude-hook` if you would rather not commit a hook that runs for everyone who clones the repo.
 
 To register a service that isn't in the workspace manifest yet:
 
@@ -42,6 +42,7 @@ Language is detected from `go.mod`, `package.json`, `requirements.txt` or `*.csp
 | Base | The workspace's own checkout and the instance it runs. What every command acts on when you pass no `--stack`, and spelled literally as `base` where a command takes a stack name |
 | Feature stack | A parallel version of one or more services, run from a git worktree on a feature branch on its own port, beside base, reusing base for everything it doesn't change |
 | Environment | A named config-var patch (`environments:` in the workspace manifest) applied at workspace, service or stack scope. Where a service points. |
+| Hook | A shell command devstack runs on a lifecycle event — a stack created, a service started. How ephemeral stacks provision and de-provision the state they need outside this machine. |
 
 ## Workspaces
 
@@ -52,6 +53,8 @@ devstack workspace remove <name>
 devstack workspace up         # start the dev daemon in the background
 devstack workspace down       # stop the daemon and the collector
 devstack workspace doctor     # check manifests and topology integrity
+devstack workspace topology   # the service graph: groups, dependencies, dependents
+devstack workspace generate   # rebuild the daemon's Tiltfile from the manifests
 devstack workspace open       # dev daemon dashboard
 ```
 
@@ -63,7 +66,7 @@ devstack workspace open       # dev daemon dashboard
 devstack service start   [name] [--stack <name>]   # and its dependencies
 devstack service restart [name] [--stack <name>]   # the target alone
 devstack service stop    [name] [--stack <name>]
-devstack group   start|stop|restart <group>
+devstack group   start|stop|restart <group>       # every service in the group
 devstack status  [--all] [--stack <name>]
 devstack workspace topology [service]
 ```
@@ -130,6 +133,18 @@ The original design record is [docs/stacks-spec.md](docs/stacks-spec.md). Read i
 An environment is a named config-var patch in the workspace manifest: DB URLs, feature flags, endpoints, repointed without touching code. Base can run against `local` while one stack runs against `staging`.
 
 Environments are defined once in the base workspace manifest and inherited. A stack doesn't define its own; `env use --stack <name>` just points it at one of base's. Three scopes, most-specific winning: stack, service, workspace.
+
+An environment carries a description saying what it is for. A name and a key list say what it sets; only this says why you would pick it, or why picking it is dangerous:
+
+```yaml
+environments:
+  fx-prod:
+    description: Exchange Rate PoC against the PRODUCTION database. Read-only comparison.
+    values:
+      SqlConnectionString: ...
+```
+
+It shows up in `env list`, `env show`, and the session briefing, so the warning travels with every place the environment is named.
 
 ```bash
 devstack env set <name> KEY=VALUE [KEY=VALUE ...]    # creates the env if it's new
@@ -296,6 +311,39 @@ The set adapts to the workspace: `investigate` appears only when observability i
 `service_env` resolves and edits a service's env: `get` shows each key with the rung it came from, `diff` compares services, `set` writes to the manifest or `.envrc`, `check` audits required keys, `drift` compares what's resolved against what the repo declares it needs.
 
 Some commands have no tool and still need a shell: `workspace up` and `down`, `workspace doctor`, `stack config`, and every otel command the `observability` and `investigate` tools don't cover (`otel services`, `otel traces`, `otel logs`, `otel open`). Registration is CLI-only too: `init`, `deps`, `groups`, `workspace add`.
+
+## Briefing an agent
+
+`devstack prime` prints what an agent needs to work here, resolved when it runs: the workspace and service you are in, which copy of that service your checkout is, what is running, and what each environment is for. Because the binary generates it, `go install` updates every workspace at once — there is no committed file to regenerate and none to go stale.
+
+```
+## WHERE YOU ARE
+workspace navexa · service navexa-api · stack nvxa-1422
+  purpose NVXA-1422 wrong Holdings.Name: arbitrary Companies match at import
+  Your changes here go on the branch of this stack, not on base.
+
+## THIS SERVICE — navexa-api
+runs as 5 copies:
+    base         :63290   running   branch master
+      /home/nick/dev/navexa/Navexa
+  ▸ nvxa-1422    :20012   running   branch nick/nvxa-1422-wrong-company-name…
+      /home/nick/dev/.devstack-stacks/nvxa-1422/navexa-api
+  The marker ▸ shows the copy that you are in now: nvxa-1422.
+```
+
+It guesses which stack a session is for, and refuses to guess when it cannot tell. Where you are is read from the filesystem; what you are here for is a guess and is marked `?`, never `▸`.
+
+Wire it into Claude Code so a session is briefed without being asked:
+
+```bash
+devstack init --all --claude-hook
+```
+
+That writes a `SessionStart` hook running `devstack prime --json` for the `startup`, `resume`, `clear` and `compact` matchers. The last one matters most: compaction is exactly when the landscape drops out of context. It merges into an existing `.claude/settings.json` rather than replacing it, keeps hooks you already have, and adds nothing on a second run.
+
+`.claude/settings.json` is committed, so the hook runs for everyone who clones the repo. That is why the flag is opt-in — `devstack init --all` on its own refreshes `AGENTS.md` and `.mcp.json` and writes no hook.
+
+`init --all` also cleans up after older versions: it removes a duplicate generated block, strips a legacy unsentinelled devstack section, and leaves everything outside the sentinels untouched.
 
 ## Per-repo setup
 
