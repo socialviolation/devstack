@@ -12,29 +12,6 @@ import (
 	"github.com/socialviolation/devstack/internal/config"
 )
 
-var groupsCmd = &cobra.Command{
-	Use:   "groups",
-	Short: "Show and manage service groups",
-	Long: `Groups are named collections of services used to organise the workspace and
-start related services together. For example, a 'backend' group might contain
-your API, worker, and scheduler services.
-
-Running 'devstack groups' (or 'devstack groups list') shows a rich tree of all
-groups, their members, and the dependencies each member declares — colour-coded
-by group so cross-group dependencies are immediately visible.
-
-Groups are declared in <workspace>/devstack.workspace.yaml and are used by:
-  devstack start <name>            start all services in a group (respects deps)
-  devstack status                  groups are the top-level sections in the tree
-
-SUBCOMMANDS
-  devstack groups                  show group tree with deps
-  devstack groups add <g> <svc>    add a service to a group
-  devstack groups remove <g> <svc> remove a service from a group`,
-	// Default action: show the rich group tree
-	RunE: runGroupsList,
-}
-
 var groupsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "Show all groups with members and dependencies",
@@ -56,13 +33,6 @@ var groupsRemoveCmd = &cobra.Command{
 	RunE:  runGroupsRemove,
 }
 
-func init() {
-	rootCmd.AddCommand(groupsCmd)
-	groupsCmd.AddCommand(groupsListCmd)
-	groupsCmd.AddCommand(groupsAddCmd)
-	groupsCmd.AddCommand(groupsRemoveCmd)
-}
-
 func runGroupsList(cmd *cobra.Command, args []string) error {
 	wsFlag, _ := cmd.Flags().GetString("workspace")
 	ws, err := resolveWorkspace(wsFlag)
@@ -77,7 +47,7 @@ func runGroupsList(cmd *cobra.Command, args []string) error {
 
 	if len(cfg.Groups) == 0 {
 		fmt.Println("No groups declared.")
-		fmt.Println("Use: devstack groups add <group> <service> [service...]")
+		fmt.Println("Use: devstack group add <group> <service> [service...]")
 		return nil
 	}
 

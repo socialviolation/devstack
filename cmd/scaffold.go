@@ -37,7 +37,7 @@ env:
     # DATABASE_PORT: "5432"
 
 # groups BIND services into a unit you operate on together:
-#   devstack start <group>   devstack stop <group>   devstack status
+#   devstack service start <group>   devstack service stop <group>   devstack status
 # Groups also drive the daemon UI labels. A service may belong to many groups.
 groups: {}
   # backend: [my-api]

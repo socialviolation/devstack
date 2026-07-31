@@ -27,7 +27,7 @@ FIRST-TIME SERVICE SETUP (provide --name, --path, --cmd)
     2. Adds the repo to the workspace manifest's repoDiscovery.repos list
     3. Creates .mcp.json to wire up the devstack MCP server for AI agents
     4. Writes AGENTS.md with instructions for AI agents on how to run and observe it
-    5. Regenerates the dev daemon config so 'devstack start' can run it
+    5. Regenerates the dev daemon config so 'devstack service start' can run it
 
   Use --force to overwrite an existing service manifest (e.g. to update the run command).
 
@@ -58,7 +58,7 @@ func init() {
 	initCmd.Flags().String("cmd", "", "Command to run the service (e.g. \"go run .\" or \"dotnet run\")")
 	initCmd.Flags().Int("port", 0, "HTTP port the service listens on (enables health checks and dashboard links)")
 	initCmd.Flags().String("language", "", "Language override: dotnet, python, node, go (default: auto-detect)")
-	initCmd.Flags().String("group", "", "Suggest a group for the service (add it with 'devstack groups add')")
+	initCmd.Flags().String("group", "", "Suggest a group for the service (add it with 'devstack group add')")
 	initCmd.Flags().Bool("all", false, "Refresh AGENTS.md for every registered service in the workspace")
 	initCmd.Flags().Bool("force", false, "Overwrite existing service configuration if it already exists")
 }
@@ -344,10 +344,10 @@ func runInitOnboard(cmd *cobra.Command) error {
 	fmt.Printf("  AGENTS.md:  %s\n", filepath.Join(path, "AGENTS.md"))
 	fmt.Printf("\nNext:\n")
 	if group != "" {
-		fmt.Printf("  devstack groups add %s %s\n", group, name)
+		fmt.Printf("  devstack group add %s %s\n", group, name)
 	}
-	fmt.Printf("  devstack deps add %s <dep>   # declare dependencies\n", name)
-	fmt.Printf("  devstack start %s            # start it\n", name)
+	fmt.Printf("  devstack dependencies add %s <dep>   # declare dependencies\n", name)
+	fmt.Printf("  devstack service start %s            # start it\n", name)
 
 	return nil
 }
@@ -603,15 +603,15 @@ func buildAIInstructionPointer(serviceName, stackName string) string {
 		"**A service can have more than one running copy.** The base workspace and every active *feature stack* each run their own instance, on their own port, named `<workspace>:<service>[:<stack>]`. " +
 		"Before concluding a service is down, broken, or on the wrong port, run `devstack status` — it lists every instance with its port and env. " +
 		"A stack's copy is served from its own git worktree, not this checkout.\n\n" +
-		"**Services are not all running by default.** An instance shown as `stopped` is registered but not started — start it yourself with `devstack start " + svc + "` (add `--stack <name>` for a stack's instance). " +
+		"**Services are not all running by default.** An instance shown as `stopped` is registered but not started — start it yourself with `devstack service start " + svc + "` (add `--stack <name>` for a stack's instance). " +
 		"State is not binary: `running`, `starting`, `building`, `stopped`, `erroring`, `disabled`, `unknown`. " +
 		"Do not report a service as down or broken until you have checked `devstack status` and started it.\n\n" +
 		"**After editing code**, a service only picks up the change if it self-watches (`dotnet watch`, `ng serve`, `vite`, `--reload`) or has `runtime.watch` set in its `devstack.service.yaml`. " +
-		"Otherwise run `devstack restart " + svc + "` or it keeps running the old code.\n\n" +
+		"Otherwise run `devstack service restart " + svc + "` or it keeps running the old code.\n\n" +
 		"```bash\n" +
 		fmt.Sprintf("%-39s# every instance, its port and env\n", "devstack status") +
-		fmt.Sprintf("%-39s# start a stopped instance (add --stack <name>)\n", "devstack start "+svc) +
-		fmt.Sprintf("%-39s# reload after an edit\n", "devstack restart "+svc) +
+		fmt.Sprintf("%-39s# start a stopped instance (add --stack <name>)\n", "devstack service start "+svc) +
+		fmt.Sprintf("%-39s# reload after an edit\n", "devstack service restart "+svc) +
 		fmt.Sprintf("%-39s# feature stacks currently in flight\n", "devstack stack list") +
 		"```\n\n" +
 		"Full reference: `AGENTS.md` in this repo.\n"
@@ -683,7 +683,7 @@ func resolveRunScript(cmd, servicePath string) string {
 func hotReloadInstructions(serviceName, servicePath, stackName string) string {
 	general := "### After you edit code — reload or restart\n\n" +
 		"A running service keeps executing its **old** code until it is reloaded. A service reloads automatically only if it **self-watches** — a hot-reload run command such as `dotnet watch run`, `air`, `vite` / `next dev`, or `uvicorn --reload` — or has **`runtime.watch`** set in its `devstack.service.yaml`, which has devstack watch those paths and restart it on change (debounced). " +
-		"If a service has neither, after editing its source you **must** run `devstack restart <service>` (add `--stack <name>` for a stack instance) or your change has no effect. " +
+		"If a service has neither, after editing its source you **must** run `devstack service restart <service>` (add `--stack <name>` for a stack instance) or your change has no effect. " +
 		"Prefer hot-reloading run commands; when a service can't self-reload, add `runtime.watch: [<source dirs>]` so devstack reloads it for you. " +
 		"Config/env changes (`devstack env set` / `env use`) always need a restart, even for a self-reloading service — they change the launch environment, not the watched source.\n\n" +
 		"**If a service will not start because its port is still held**, set `runtime.prep.freePorts: true` in its `devstack.service.yaml` rather than writing a `fuser -k <port>/tcp` prep. devstack resolves that instance's own ports, so base frees what it pins and a stack frees what it was allocated. A literal port is a bug: a stack's worktree copies it verbatim, so a hardcoded base port makes the stack kill base every time it starts. To look or act by hand: `devstack ports check <port>` and `devstack ports free <port>`.\n\n"
@@ -696,7 +696,7 @@ func hotReloadInstructions(serviceName, servicePath, stackName string) string {
 		return general
 	}
 	cmd := m.Runtime.Run.Command
-	restartCmd := fmt.Sprintf("devstack restart %s", serviceName)
+	restartCmd := fmt.Sprintf("devstack service restart %s", serviceName)
 	if stackName != "" {
 		restartCmd += fmt.Sprintf(" --stack %s", stackName)
 	}
@@ -732,7 +732,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 
 	stackLine := ""
 	if stackName != "" {
-		stackLine = fmt.Sprintf("**You are in feature stack `%s`'s worktree.** Edits here stay on this stack's branch, not base. Target this instance with `--stack %s` (e.g. `devstack restart %s --stack %s`); without it, commands act on base.\n\n", stackName, stackName, svc, stackName)
+		stackLine = fmt.Sprintf("**You are in feature stack `%s`'s worktree.** Edits here stay on this stack's branch, not base. Target this instance with `--stack %s` (e.g. `devstack service restart %s --stack %s`); without it, commands act on base.\n\n", stackName, stackName, svc, stackName)
 	}
 
 	observabilityBlock := "### Observability\n\n" +
@@ -788,7 +788,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"`devstack stack list` says what each one overlays, what branch it is on, how old it is, and its note — set the note with `devstack stack note <name>` so a stack you come back to next week still explains itself. " +
 		"A shared database is **not** isolated per stack — stacks write to the same DB as base unless the service itself points elsewhere.\n\n" +
 		"### Working on a stack (branch + worktree)\n\n" +
-		"Each stack's changed service lives in its **own git worktree** — a separate folder checked out on the stack's branch, created by `devstack stack create` (path shown in its output and by `devstack stack list`). To work on the feature, **`cd` into that worktree folder and edit there.** Do NOT `git checkout` the feature branch in the base checkout: a stack is *already* its own folder on its own branch, so you switch context by changing directory, never by switching branches. Edits in a stack's worktree stay on that stack's branch; base and every other stack are untouched. After editing, reload only that instance with `devstack restart " + svc + " --stack <name>` (or `devstack start " + svc + " --stack <name>`), then verify against that instance's own port.\n\n" +
+		"Each stack's changed service lives in its **own git worktree** — a separate folder checked out on the stack's branch, created by `devstack stack create` (path shown in its output and by `devstack stack list`). To work on the feature, **`cd` into that worktree folder and edit there.** Do NOT `git checkout` the feature branch in the base checkout: a stack is *already* its own folder on its own branch, so you switch context by changing directory, never by switching branches. Edits in a stack's worktree stay on that stack's branch; base and every other stack are untouched. After editing, reload only that instance with `devstack service restart " + svc + " --stack <name>` (or `devstack service start " + svc + " --stack <name>`), then verify against that instance's own port.\n\n" +
 		"### Finishing a stack (clean up as you go)\n\n" +
 		"When a feature's work is done, close its stack out — do not let inactive stacks, worktrees, and branches pile up (stale stack config is a liability). Steps:\n\n" +
 		"1. Commit the work on the stack's branch, inside its worktree.\n" +
@@ -809,9 +809,9 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"devstack otel status                         # collector state + per-service telemetry evidence\n" +
 		"devstack workspace up                        # start the host daemon + this workspace's services\n" +
 		"devstack workspace down                      # stop this workspace's services\n" +
-		"devstack start " + svc + "                          # start this service + its dependencies\n" +
-		"devstack restart " + svc + " [--stack <name>]       # restart base, or the stack's instance\n" +
-		"devstack stop " + svc + " [--stack <name>]          # stop base, or the stack's instance\n" +
+		"devstack service start " + svc + "                          # start this service + its dependencies\n" +
+		"devstack service restart " + svc + " [--stack <name>]       # restart base, or the stack's instance\n" +
+		"devstack service stop " + svc + " [--stack <name>]          # stop base, or the stack's instance\n" +
 		"devstack stack create <name> --repos " + svc + "    # new feature stack overlaying the base\n" +
 		"devstack stack up <name>                     # bring the stack's services up on their own ports\n" +
 		"devstack stack down <name>                   # stop the stack (keeps its worktrees)\n" +
@@ -828,7 +828,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"devstack env which [--service|--stack]        # which env an instance resolves to, and its values\n" +
 		"```\n\n" +
 		"`--stack <name>` targets that stack's instance instead of base; without it commands operate on the base workspace. " +
-		"A *group* is a named set of services started and stopped together (`devstack groups list`); `start`, `restart`, `stop` and `process_logs` take a group name in place of a service.\n\n" +
+		"A *group* is a named set of services started and stopped together (`devstack group list`); `start`, `restart`, `stop` and `process_logs` take a group name in place of a service.\n\n" +
 		"### Environments (where a service points)\n\n" +
 		"An **environment** (`environments:` in the workspace manifest) is a named bundle of config-var patches — DB URLs, feature flags, external endpoints — that repoints services without code changes. It applies at three scopes, most-specific winning: a **stack**'s env beats a **service**'s env beats the **workspace** default. So base can run against `local` while one stack runs against `prod`. `devstack status` shows each instance's active env (the ENV column / `env:<name>`), so you can see where every running copy is pointed. Set values with `devstack env set` — they are written into the workspace manifest in plaintext (masking is display-only), so if that manifest is committed keep real secrets out and declare them in `env.required` instead; point a scope with `devstack env use`.\n\n" +
 		"### MCP tools\n\n" +

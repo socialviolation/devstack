@@ -60,14 +60,15 @@ devstack workspace open       # dev daemon dashboard
 ## Services
 
 ```bash
-devstack start   [service|group] [--stack <name>]
-devstack restart [service|group] [--stack <name>]
-devstack stop    [service|group] [--stack <name>]
+devstack service start   [name] [--stack <name>]   # and its dependencies
+devstack service restart [name] [--stack <name>]   # the target alone
+devstack service stop    [name] [--stack <name>]
+devstack group   start|stop|restart <group>
 devstack status  [--all] [--stack <name>]
 devstack topology [service]
 ```
 
-Name nothing and devstack works out the service from your working directory. `start` resolves dependencies and brings them up first, and boots the dev daemon if it isn't already up. `restart` acts on the target alone. `status` collapses groups and stacks with nothing running, until you pass `--all`.
+Commands are noun first: `devstack <noun> <action> [target]`. A name can be both a service and a group, so the noun says which you mean rather than devstack guessing. Name nothing after `service` and devstack works out the service from your working directory. `start` resolves dependencies and brings them up first, and boots the dev daemon if it isn't already up. `restart` acts on the target alone. `status` collapses groups and stacks with nothing running, until you pass `--all`.
 
 States are `running`, `starting`, `building`, `stopped`, `erroring`, `disabled`, `unknown`. Stopped means registered but not started, which is not the same as broken.
 
@@ -93,12 +94,12 @@ devstack ports free 4200       # kill it (refuses anything below 1024)
 Dependencies and groups:
 
 ```bash
-devstack deps add <service> <dep>       # <dep> starts first
-devstack deps remove <service> <dep>
-devstack deps list <service>            # full resolved startup sequence
-devstack groups list
-devstack groups add <group> <service> [service...]
-devstack groups remove <group> <service> [service...]
+devstack dependencies add <service> <dep>       # <dep> starts first
+devstack dependencies remove <service> <dep>
+devstack dependencies list <service>            # full resolved startup sequence
+devstack group list
+devstack group add <group> <service> [service...]
+devstack group remove <group> <service> [service...]
 ```
 
 ## Feature stacks
@@ -115,7 +116,7 @@ devstack stack config <svc> --stack <name>          # effective config that inst
 devstack stack note <name> [text]                   # what this stack is for
 ```
 
-Work on a stack by `cd`-ing into its worktree, the path `stack create` and `stack list` print. It's already on the stack's branch, so you never `git checkout`, and reloading that instance alone with `restart --stack <name>` leaves base and every other stack untouched.
+Work on a stack by `cd`-ing into its worktree, the path `stack create` and `stack list` print. It's already on the stack's branch, so you never `git checkout`, and reloading that instance alone with `service restart --stack <name>` leaves base and every other stack untouched.
 
 `create` also takes `--branch` (defaults to the stack name, attaches if it exists) and `--note`. A note is the part you can't reconstruct a week later: a branch says what changed, a note says why.
 

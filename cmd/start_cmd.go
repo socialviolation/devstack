@@ -20,7 +20,7 @@ var upCmd = &cobra.Command{
 detached background process if it isn't already up.
 
 One daemon serves the whole machine. It runs every workspace's services, watches
-their source files, and hot-reloads them when code changes. 'devstack start' also
+their source files, and hot-reloads them when code changes. 'devstack service start' also
 brings it up on demand, so you rarely need this command first.
 
 The shared observability stack is also started automatically so services can

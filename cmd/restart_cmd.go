@@ -11,25 +11,6 @@ import (
 	"github.com/socialviolation/devstack/internal/tilt"
 )
 
-var restartCmd = &cobra.Command{
-	Use:   "restart [service|group]",
-	Short: "Restart a running service or group",
-	Long: `Restart a named service or group by re-triggering it (a disabled service is
-re-enabled first). Unlike 'start', restart acts only on the target itself — it
-does not re-trigger the target's dependencies.
-
-If no name is given, devstack auto-detects the service from the current directory.
-Accepts a service name or group name. Run 'devstack groups' to see available groups.`,
-	Args:         cobra.MaximumNArgs(1),
-	SilenceUsage: true,
-	RunE:         runRestart,
-}
-
-func init() {
-	rootCmd.AddCommand(restartCmd)
-	restartCmd.Flags().String("stack", "", "Target a feature stack's service instances (<ws>:<svc>:<stack>) instead of base")
-}
-
 func runRestart(cmd *cobra.Command, args []string) error {
 	ws, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
@@ -52,7 +33,7 @@ func runRestart(cmd *cobra.Command, args []string) error {
 		targetName = args[0]
 	}
 
-	services, err := resolveTarget(wsPath, targetName, cfg)
+	services, err := resolveTargetKind(wsPath, targetName, cfg, targetKindOf(cmd))
 	if err != nil {
 		return err
 	}

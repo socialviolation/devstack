@@ -10,37 +10,8 @@ import (
 	"github.com/socialviolation/devstack/internal/tilt"
 )
 
-var svcStartCmd = &cobra.Command{
-	Use:   "start [service|group]",
-	Short: "Start a service or group and all its dependencies",
-	Long: `Start a service or group by name, automatically resolving and starting its dependencies first.
-
-devstack reads the dependency graph from the workspace manifest and computes the
-correct startup order. Dependencies are enabled and triggered before the requested
-service, so you never have to think about ordering.
-
-If no service name is given, devstack will auto-detect it from the current directory
-by matching against the service paths in the workspace manifest.
-
-Accepts a service name or group name. Run 'devstack groups' to see available groups.
-
-The dev daemon is started for you if it isn't already running.`,
-	RunE: runEnable,
-}
-
-func init() {
-	rootCmd.AddCommand(svcStartCmd)
-	f := svcStartCmd.Flags().Lookup("group")
-	if f == nil {
-		svcStartCmd.Flags().String("group", "", "Start a named group of services (hidden alias: pass group name as positional arg instead)")
-	}
-	svcStartCmd.Flags().MarkHidden("group")
-	svcStartCmd.Flags().String("stack", "", "Target a feature stack's service instances (<ws>:<svc>:<stack>) instead of base")
-}
-
 func runEnable(cmd *cobra.Command, args []string) error {
 	wsFlag, _ := cmd.Flags().GetString("workspace") // inherited persistent flag
-	groupFlag, _ := cmd.Flags().GetString("group")
 
 	ws, err := resolveWorkspace(wsFlag)
 	if err != nil {
@@ -58,16 +29,12 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Determine the target name: --group flag is a hidden alias for the positional arg
 	targetName := ""
 	if len(args) > 0 {
 		targetName = args[0]
-	} else if groupFlag != "" {
-		targetName = groupFlag
 	}
 
-	// Resolve target to a list of services (service or group)
-	services, err := resolveTarget(wsPath, targetName, cfg)
+	services, err := resolveTargetKind(wsPath, targetName, cfg, targetKindOf(cmd))
 	if err != nil {
 		return err
 	}
@@ -114,7 +81,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		}
 		view, err = tiltClient.GetView()
 		if err != nil {
-			return fmt.Errorf("dev daemon started but not reachable yet — retry: devstack start %s\n(%w)", targetName, err)
+			return fmt.Errorf("dev daemon started but not reachable yet — retry: devstack service start %s\n(%w)", targetName, err)
 		}
 	}
 

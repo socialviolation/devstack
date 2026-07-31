@@ -433,7 +433,7 @@ func handleServiceEnvSet(ws *workspace.Workspace, workspacePath, stackEnv, servi
 
 	return mcp.NewToolResultText(fmt.Sprintf(
 		"wrote %s to %s (%s) — no higher rung overrides it. Takes effect for %s on its next restart: the restart tool "+
-			"(CLI: devstack restart %s) regenerates the Tiltfile from the manifests before triggering, so there is no separate generate step.",
+			"(CLI: devstack service restart %s) regenerates the Tiltfile from the manifests before triggering, so there is no separate generate step.",
 		key, written, rung, serviceName, serviceName)), nil
 }
 

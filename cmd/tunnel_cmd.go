@@ -362,7 +362,7 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 		}
 		svcs = serving
 		if len(svcs) == 0 {
-			fmt.Println("No serving ports to forward right now. Start the services first (devstack start).")
+			fmt.Println("No serving ports to forward right now. Start the services first (devstack service start).")
 			return nil
 		}
 	}

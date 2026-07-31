@@ -11,25 +11,6 @@ import (
 	"github.com/socialviolation/devstack/internal/tilt"
 )
 
-var stopCmd = &cobra.Command{
-	Use:   "stop [service|group]",
-	Short: "Stop a running service or group",
-	Long: `Disable and stop a named service or group. Stopped services will not restart until
-explicitly started again with 'devstack start'.
-
-If no service name is given, devstack auto-detects the service from the current
-directory by matching against the service paths in the workspace manifest.
-
-Accepts a service name or group name. Run 'devstack groups' to see available groups.`,
-	Args: cobra.MaximumNArgs(1),
-	RunE: runStop,
-}
-
-func init() {
-	rootCmd.AddCommand(stopCmd)
-	stopCmd.Flags().String("stack", "", "Target a feature stack's service instances (<ws>:<svc>:<stack>) instead of base")
-}
-
 func runStop(cmd *cobra.Command, args []string) error {
 	ws, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
@@ -53,7 +34,7 @@ func runStop(cmd *cobra.Command, args []string) error {
 		targetName = args[0]
 	}
 
-	services, err := resolveTarget(wsPath, targetName, cfg)
+	services, err := resolveTargetKind(wsPath, targetName, cfg, targetKindOf(cmd))
 	if err != nil {
 		return err
 	}

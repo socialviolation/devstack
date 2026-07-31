@@ -18,7 +18,7 @@ const (
 
 // coreReloadMode classifies whether a running service picks up source edits by
 // itself: it does when its run command watches its own source, or when
-// runtime.watch has devstack restart it on change. Unknown commands classify as
+// runtime.watch has devstack service restart it on change. Unknown commands classify as
 // manual — a wrong "auto" would have an agent read stale behaviour as its edit.
 func coreReloadMode(m *config.ServiceManifest, repoPath string) string {
 	if m == nil {

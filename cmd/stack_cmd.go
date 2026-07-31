@@ -466,7 +466,7 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 	if err := fireHooks(base, rec.Name, config.EventStackUp, started); err != nil {
 		return fmt.Errorf("%w\nStack %q is running but its setup hooks did not finish. Fix the hook, then re-run them:\n  devstack hooks run stack.up --stack %s", err, rec.Name, rec.Name)
 	}
-	fmt.Printf("\n  devstack status --stack %s   ·   devstack restart <service> --stack %s\n", rec.Name, rec.Name)
+	fmt.Printf("\n  devstack status --stack %s   ·   devstack service restart <service> --stack %s\n", rec.Name, rec.Name)
 	return nil
 }
 

@@ -38,15 +38,15 @@ func TestHotReloadInstructionsQualifiesRestartWithStack(t *testing.T) {
 	if !strings.Contains(base, "does NOT hot-reload") {
 		t.Fatalf("expected the non-reloading verdict:\n%s", base)
 	}
-	if !strings.Contains(base, "`devstack restart api`") {
+	if !strings.Contains(base, "`devstack service restart api`") {
 		t.Fatalf("base restart hint missing:\n%s", base)
 	}
-	if strings.Contains(base, "devstack restart api --stack") {
+	if strings.Contains(base, "devstack service restart api --stack") {
 		t.Fatalf("base restart hint should not name a stack:\n%s", base)
 	}
 
 	stacked := hotReloadInstructions("api", dir, "import-review")
-	if !strings.Contains(stacked, "`devstack restart api --stack import-review`") {
+	if !strings.Contains(stacked, "`devstack service restart api --stack import-review`") {
 		t.Fatalf("stack restart hint missing:\n%s", stacked)
 	}
 }

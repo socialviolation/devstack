@@ -204,7 +204,7 @@ func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, re
 		return
 	}
 	if service != "" {
-		fmt.Fprintf(b, "  Your changes here stay on the branch of this stack. To restart this copy, run:\n    devstack restart %s --stack %s\n",
+		fmt.Fprintf(b, "  Your changes here stay on the branch of this stack. To restart this copy, run:\n    devstack service restart %s --stack %s\n",
 			service, working.Rec.Name)
 	}
 }
@@ -324,7 +324,7 @@ func writePrimeReload(b *strings.Builder, rw *config.ResolvedWorkspace, service 
 		fmt.Fprintf(b, "\n%s restarts automatically, because runtime.watch is set. Your code changes apply without a restart.\n", service)
 	default:
 		fmt.Fprintf(b, "\n%s does not reload automatically (run command: `%s`). After you change the code, it runs the old code.\n", service, runCmd)
-		fmt.Fprintf(b, "To load your changes, run:\n  devstack restart %s\n", target)
+		fmt.Fprintf(b, "To load your changes, run:\n  devstack service restart %s\n", target)
 	}
 	b.WriteString("If you change the configuration or an environment variable, you must restart the service.\n")
 }

@@ -1691,7 +1691,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 				svcs, skipped = tunnel.PartitionServing(svcs)
 			}
 			if len(svcs) == 0 {
-				return mcp.NewToolResultText("No serving ports to forward right now. Start the services first (devstack start)."), nil
+				return mcp.NewToolResultText("No serving ports to forward right now. Start the services first (devstack service start)."), nil
 			}
 
 			if cerr := tunnel.CheckConnectivity(ruser, rhost); cerr != nil {

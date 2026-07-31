@@ -201,7 +201,7 @@ func TestClaritySetNamesRestartNotGenerate(t *testing.T) {
 	if strings.Contains(out, "generate + restart") {
 		t.Errorf("the confirmation must not require an undefined generate step; got %q", out)
 	}
-	for _, want := range []string{"next restart", "devstack restart api", "no separate generate step"} {
+	for _, want := range []string{"next restart", "devstack service restart api", "no separate generate step"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the confirmation must state %q; got %q", want, out)
 		}

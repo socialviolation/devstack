@@ -84,7 +84,7 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 	if _, err := regenerateHostTiltfile(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not regenerate host config: %v\n", err)
 	} else {
-		fmt.Println("Regenerated host config. Restart the affected service to apply: devstack restart <service> [--stack <name>]")
+		fmt.Println("Regenerated host config. Restart the affected service to apply: devstack service restart <service> [--stack <name>]")
 	}
 	return nil
 }
@@ -116,7 +116,7 @@ func runEnvUse(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		fmt.Printf("stack %q now uses env %q\n", rec.Name, name)
-		restartHint = fmt.Sprintf("devstack restart <svc> --stack %s", rec.Name)
+		restartHint = fmt.Sprintf("devstack service restart <svc> --stack %s", rec.Name)
 	case svcName != "":
 		rw, err := config.ResolveWorkspace(ws.Path)
 		if err != nil {
@@ -130,13 +130,13 @@ func runEnvUse(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		fmt.Printf("service %q now uses env %q\n", svcName, name)
-		restartHint = fmt.Sprintf("devstack restart %s", svcName)
+		restartHint = fmt.Sprintf("devstack service restart %s", svcName)
 	default:
 		if err := config.SetWorkspaceEnv(ws.Path, name); err != nil {
 			return err
 		}
 		fmt.Printf("workspace %q now uses env %q\n", ws.Name, name)
-		restartHint = "devstack restart <service>"
+		restartHint = "devstack service restart <service>"
 	}
 	if _, err := regenerateHostTiltfile(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not regenerate host config: %v\n", err)
