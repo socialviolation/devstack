@@ -224,36 +224,39 @@ func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, re
 func writePrimeApplies(b *strings.Builder, ws *workspace.Workspace, rw *config.ResolvedWorkspace) {
 	var lines []string
 	if envs := sortedEnvNames(rw); len(envs) > 0 {
-		// An environment name alone says nothing about what selecting it does.
-		// "fx-prod" reads as another local variant until its description says it
-		// points at production, which is the fact that changes what you do.
-		described := 0
+		// A name says nothing about what selecting an environment does, so each
+		// one carries its own description. An environment with none is listed
+		// saying so, because the gap is the thing to fix.
+		lines = append(lines, fmt.Sprintf("  environments  active: %s. Each one repoints services at different config:", orDash(rw.Manifest.Workspace.Env)))
 		for _, n := range envs {
-			if strings.TrimSpace(rw.Manifest.Environments[n].Description) != "" {
-				described++
+			marker := " "
+			if n == rw.Manifest.Workspace.Env {
+				marker = "▸"
 			}
-		}
-		if described == 0 {
-			lines = append(lines, fmt.Sprintf("  environments  %s (active: %s) — devstack env which",
-				strings.Join(envs, ", "), orDash(rw.Manifest.Workspace.Env)))
-		} else {
-			lines = append(lines, fmt.Sprintf("  environments  active: %s. Each one sets different config values:", orDash(rw.Manifest.Workspace.Env)))
-			for _, n := range envs {
-				marker := " "
-				if n == rw.Manifest.Workspace.Env {
-					marker = "▸"
-				}
-				lines = append(lines, fmt.Sprintf("              %s %-10s %s", marker, n,
-					firstLine(rw.Manifest.Environments[n].Description, 84)))
+			desc := firstLine(rw.Manifest.Environments[n].Description, 84)
+			if desc == "" {
+				desc = "(no description — devstack env show " + n + ")"
 			}
+			lines = append(lines, fmt.Sprintf("              %s %-10s %s", marker, n, desc))
 		}
 	}
+
 	if n := countHooks(ws, rw); n > 0 {
-		lines = append(lines, fmt.Sprintf("  hooks         %d declared, run automatically on stack/service lifecycle — devstack hooks list", n))
+		lines = append(lines, fmt.Sprintf("  hooks         %d declared, run automatically on stack and service lifecycle — devstack hooks list", n))
 	}
+
 	if rw.Manifest.Observability.IsEnabled() {
-		lines = append(lines, fmt.Sprintf("  observability %s — devstack otel traces", rw.Manifest.Observability.ResolvedBackend()))
+		// Which backend stores the telemetry is devstack's problem, not the
+		// agent's: every query resolves the backend, endpoint and credentials
+		// itself. Naming the product invites an agent to go around devstack and
+		// query it directly, which is how you get a query that ignores the
+		// workspace scoping.
+		lines = append(lines,
+			"  telemetry     every copy ships traces and logs. Query with `devstack otel traces` and `devstack otel logs`,",
+			"                or the investigate tool over MCP. A copy is identified by devstack.stack, so an unqualified",
+			"                query returns base only — pass --stack <name> to see a stack's traffic.")
 	}
+
 	if len(lines) == 0 {
 		return
 	}
