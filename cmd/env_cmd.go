@@ -180,7 +180,7 @@ func resolveEnvWorkspace(wsName string) (*workspace.Workspace, error) {
 		}
 		return ws, nil
 	}
-	ws, err := workspace.DetectFromCwd()
+	ws, err := resolveWorkspace("")
 	if err != nil {
 		return nil, fmt.Errorf("can not detect workspace from current directory. Use --workspace or DEVSTACK_WORKSPACE: %w", err)
 	}

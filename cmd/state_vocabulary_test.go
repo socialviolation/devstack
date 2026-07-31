@@ -36,13 +36,40 @@ func TestStateWordsAreDefinedOnce(t *testing.T) {
 	// Each copy state has to head its own definition line. A bare substring
 	// match would pass on "the process is up and healthy", which defines
 	// nothing.
-	for _, word := range []string{"running", "starting", "building", "erroring", "stopped", "disabled", stack.StatusDown} {
+	for _, word := range copyStates() {
 		if !strings.Contains(terms, "\n  "+word+" ") {
 			t.Errorf("the briefing prints %q as a state but never defines it — add it to writePrimeStates", word)
 		}
 	}
 	if !strings.Contains(terms, "A stack is "+stack.StatusUp+" or "+stack.StatusDown) {
 		t.Errorf("the briefing must say a stack's two states are %q and %q", stack.StatusUp, stack.StatusDown)
+	}
+}
+
+// copyStates is every state word minus the two that belong to a stack.
+func copyStates() []string {
+	var out []string
+	for w := range stateWords {
+		if w != stack.StatusUp {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// The briefing and `devstack status --help` are the two legends an agent reads,
+// and they listed different sets: the briefing defined "down" and not "unknown",
+// status --help the reverse. A state defined in one place and not the other is a
+// state the agent meets with nowhere to look it up.
+func TestBothLegendsDefineTheSameStates(t *testing.T) {
+	help := statusCmd.Long
+	for _, word := range copyStates() {
+		if !strings.Contains(help, "\n  "+word+" ") {
+			t.Errorf("`devstack status --help` never defines the state %q, so a reader who meets it cannot look it up", word)
+		}
+	}
+	if !strings.Contains(help, "A stack is "+stack.StatusUp+" or "+stack.StatusDown) {
+		t.Errorf("`devstack status --help` must say a stack's two states are %q and %q", stack.StatusUp, stack.StatusDown)
 	}
 }
 

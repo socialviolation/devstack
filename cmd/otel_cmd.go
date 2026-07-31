@@ -184,11 +184,7 @@ func resolveOtelWorkspace(cmd *cobra.Command) (*workspace.Workspace, error) {
 		ws  *workspace.Workspace
 		err error
 	)
-	if wsFlag != "" {
-		ws, err = resolveWorkspace(wsFlag)
-	} else {
-		ws, err = workspace.DetectFromCwd()
-	}
+	ws, err = resolveWorkspace(wsFlag)
 	if err != nil {
 		return nil, fmt.Errorf("can not detect workspace: %w\nTry: devstack otel <subcommand> --workspace=<name>", err)
 	}
@@ -520,7 +516,7 @@ func runOtelConfigOff(cmd *cobra.Command, args []string) error {
 func runOtelPlugins(cmd *cobra.Command, args []string) error {
 	// Try to detect workspace for active plugin marker
 	var activePluginName string
-	if ws, err := workspace.DetectFromCwd(); err == nil {
+	if ws, err := resolveWorkspace(""); err == nil {
 		p := activePlugin(ws)
 		if p != nil {
 			activePluginName = p.Name()

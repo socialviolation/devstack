@@ -27,11 +27,7 @@ func runOpen(cmd *cobra.Command, args []string) error {
 	var ws *workspace.Workspace
 	var err error
 
-	if wsFlag != "" {
-		ws, err = resolveWorkspace(wsFlag)
-	} else {
-		ws, err = workspace.DetectFromCwd()
-	}
+	ws, err = resolveWorkspace(wsFlag)
 	if err != nil {
 		return fmt.Errorf("can not resolve workspace: %w\nTry: devstack workspace open --workspace=<name>", err)
 	}

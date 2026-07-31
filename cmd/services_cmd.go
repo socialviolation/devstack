@@ -29,16 +29,22 @@ dependencies.
 If run from outside any registered workspace, shows a summary table of all
 workspaces and their daemon status instead.
 
-Groups and feature stacks with nothing running collapse to a single line.
-Pass --all to table every group and stack, and to show each service's source path.
+Groups and feature stacks with nothing running collapse to a single line, unless
+one of their services is erroring. Pass --all to table every group and stack, and
+to show each service's source path.
 
-Service states:
+A stack is up or down: up means its services are registered in the daemon, not
+that they run. Each copy has its own state below.
+
+Copy states:
   running   — process is up and healthy
   starting  — process starts
   building  — the daemon is building/updating the service
   stopped   — service is registered but not currently running
   erroring  — the service or its build failed (check logs)
   disabled  — service has been explicitly stopped
+  down      — the copy is not registered at all, because its stack is down
+              (run: devstack stack up <name>)
   unknown   — daemon is not reachable (run: devstack workspace up)`,
 	RunE: runStatus,
 }

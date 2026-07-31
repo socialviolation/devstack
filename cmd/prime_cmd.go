@@ -265,10 +265,16 @@ func writePrimeApplies(b *strings.Builder, ws *workspace.Workspace, rw *config.R
 		// itself. Naming the product invites an agent to go around devstack and
 		// query it directly, which is how you get a query that ignores the
 		// workspace scoping.
+		// The scoping sentence states what the commands do, which is not what
+		// they were once documented to do: `otel traces` with no flag returns
+		// every copy, base and stacks together, and `otel logs` has no --stack
+		// at all. An agent told the opposite reads a stack's traffic as base's.
 		lines = append(lines,
 			"  telemetry     every copy sends traces and logs. Query them with `devstack otel traces` and `devstack otel logs`,",
 			"                or with the investigate tool over MCP. The attribute devstack.stack identifies each copy.",
-			"                A query without --stack returns base only. To query the traffic of a stack, give --stack <name>.")
+			"                `devstack otel traces` with no --stack returns every copy together, base and stacks. To get one,",
+			"                give `--stack <name>`, or `--stack base` for base alone. `devstack otel logs` has no --stack:",
+			"                use `--trace <id>` to get the logs of one execution.")
 	}
 
 	if len(lines) == 0 {
@@ -350,6 +356,7 @@ func writePrimeStates(b *strings.Builder) {
 	b.WriteString("  stopped    it is registered but not started. This is not a fault\n")
 	b.WriteString("  disabled   somebody stopped it on purpose\n")
 	b.WriteString("  down       the copy is not registered in the daemon. Usually its stack is down: run `devstack stack up <name>`\n")
+	b.WriteString("  unknown    the daemon does not answer. Run `devstack workspace up`\n")
 }
 
 // writePrimeLiveCount reports how much of the workspace is up. The daemon runs
@@ -375,8 +382,11 @@ func writePrimeLiveCount(b *strings.Builder, ws *workspace.Workspace) {
 			base++
 		}
 	}
-	fmt.Fprintf(b, "  live          %s in the daemon on port %d: %d in base, %d in stacks\n",
-		pluralCopy(base+stacked), workspace.HostTiltPort, base, stacked)
+	// "in the daemon" would count the stopped copies too, and this counts only
+	// the running ones. The briefing defines "stopped" as registered-not-started
+	// on the same page, so the loose phrasing contradicted itself.
+	fmt.Fprintf(b, "  live          %s now, on daemon port %d: %d in base, %d in stacks\n",
+		pluralCopyRunning(base+stacked), workspace.HostTiltPort, base, stacked)
 }
 
 // writePrimeReload gives the reload verdict for the service in hand rather than
@@ -409,6 +419,8 @@ func writePrimeReload(b *strings.Builder, rw *config.ResolvedWorkspace, service 
 	default:
 		fmt.Fprintf(b, "\n  reload        MANUAL (run command: `%s`). After you change the code, it runs the old code.\n", runCmd)
 		fmt.Fprintf(b, "                To load your changes, run: devstack service restart %s\n", target)
+		fmt.Fprintf(b, "                If the table above shows that copy as stopped, disabled or down, restart does not\n")
+		fmt.Fprintf(b, "                apply. Start it: devstack service start %s\n", target)
 	}
 	b.WriteString("                If you change the configuration or an environment variable, you must restart the service.\n")
 }
@@ -518,11 +530,20 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 	if suggested != "" {
 		fmt.Fprintf(b, "  The marker ? shows a guess. %s is the only stack that runs %s, but you are not in it.\n  Ask the user before you work on it.\n", suggested, service)
 	}
-	b.WriteString("  To use the copy from a stack, do one of these:\n    change to the directory of that stack\n    connect to the port of that stack\n    add `--stack <name>` to a command\n")
+	b.WriteString("  To make a command act on the copy of a stack, add `--stack <name>`. This is the only way.\n")
+	b.WriteString("  Your directory does not select the copy. In the worktree of a stack, `devstack service restart <svc>`\n")
+	b.WriteString("  still restarts the copy of base. To reach a copy over the network, use the port of that copy.\n")
 }
 
 // pluralCopy keeps the count grammatical. "1 copy(s)" makes a reader stop and
 // parse, which is the opposite of what a briefing is for.
+func pluralCopyRunning(n int) string {
+	if n == 1 {
+		return "1 copy runs"
+	}
+	return fmt.Sprintf("%d copies run", n)
+}
+
 func pluralCopy(n int) string {
 	if n == 1 {
 		return "1 copy"

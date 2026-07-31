@@ -13,7 +13,6 @@ import (
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/stack"
-	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 var initCmd = &cobra.Command{
@@ -129,7 +128,7 @@ func runInitRefresh(cmd *cobra.Command, claudeHook bool) error {
 	workspacePath := viper.GetString("workspace")
 
 	if workspacePath == "" {
-		if ws, err := workspace.DetectFromCwd(); err == nil {
+		if ws, err := resolveWorkspace(""); err == nil {
 			workspacePath = ws.Path
 		}
 	}
@@ -175,7 +174,7 @@ func runInitRefresh(cmd *cobra.Command, claudeHook bool) error {
 
 // runInitAll refreshes AGENTS.md for every service registered in the workspace.
 func runInitAll(claudeHook bool) error {
-	ws, err := workspace.DetectFromCwd()
+	ws, err := resolveWorkspace("")
 	if err != nil {
 		return fmt.Errorf("can not detect workspace from current directory: %w\nRun from within a registered workspace.", err)
 	}
