@@ -33,7 +33,7 @@ func runOpen(cmd *cobra.Command, args []string) error {
 		ws, err = workspace.DetectFromCwd()
 	}
 	if err != nil {
-		return fmt.Errorf("could not resolve workspace: %w\nTry: devstack open --workspace=<name>", err)
+		return fmt.Errorf("could not resolve workspace: %w\nTry: devstack workspace open --workspace=<name>", err)
 	}
 
 	url := fmt.Sprintf("http://localhost:%d", workspace.HostTiltPort)

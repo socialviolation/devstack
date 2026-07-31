@@ -98,7 +98,7 @@ func resolveTargetKind(workspacePath, name string, cfg *config.WorkspaceConfig, 
 		if isGroup {
 			return nil, fmt.Errorf("%q is a group, not a service — did you mean: devstack group <action> %s", name, name)
 		}
-		return nil, fmt.Errorf("'%s' is not a known service\nRun 'devstack services' to see available services", name)
+		return nil, fmt.Errorf("'%s' is not a known service\nRun 'devstack status' to see available services", name)
 	case targetGroup:
 		if isGroup {
 			return members, nil
@@ -121,5 +121,5 @@ func resolveTargetKind(workspacePath, name string, cfg *config.WorkspaceConfig, 
 		return members, nil
 	}
 
-	return nil, fmt.Errorf("'%s' is not a known service or group\nRun 'devstack services' to see available services or 'devstack group list' to see groups", name)
+	return nil, fmt.Errorf("'%s' is not a known service or group\nRun 'devstack status' to see available services or 'devstack group list' to see groups", name)
 }
