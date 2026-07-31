@@ -122,3 +122,21 @@ func TestPrimeJSONEnvelopeShape(t *testing.T) {
 		t.Errorf("additionalContext = %q", back.HookSpecificOutput.AdditionalContext)
 	}
 }
+
+// The briefing is injected whole into a session and cannot be skimmed unless
+// its parts are named. THIS SERVICE is omitted outside a service directory,
+// because a heading with nothing under it reads as missing data.
+func TestPrimeSectionsAreNamedAndContextual(t *testing.T) {
+	always := []string{"## DEVSTACK", "## TERMS", "## WHERE YOU ARE", "## THIS WORKSPACE", "## REFERENCE"}
+	for _, want := range always {
+		if !strings.HasPrefix(want, "## ") {
+			t.Fatalf("section heading %q must be a markdown heading", want)
+		}
+	}
+
+	var b strings.Builder
+	section(&b, "THIS SERVICE — api")
+	if got := b.String(); got != "\n## THIS SERVICE — api\n" {
+		t.Fatalf("section() = %q", got)
+	}
+}

@@ -180,16 +180,28 @@ func buildPrime() (string, error) {
 
 	var b strings.Builder
 	writePrimeWhatThisIs(&b)
+	writePrimeTerms(&b)
+
+	section(&b, "WHERE YOU ARE")
 	writePrimeIdentity(&b, ws, service, repo, branch, here, working)
-	writePrimeInstances(&b, ws, rw, service, here, working)
+
+	if service != "" {
+		section(&b, "THIS SERVICE — "+service)
+		writePrimeInstances(&b, ws, rw, service, here, working)
+		writePrimeReload(&b, rw, service, working)
+	}
+
+	section(&b, "THIS WORKSPACE — "+ws.Name)
+	writePrimeLiveCount(&b, ws)
 	writePrimeApplies(&b, ws, rw)
-	writePrimeReload(&b, rw, service, working)
-	b.WriteString("\nreference: devstack status · devstack help <command> · devstack stack list\n")
+
+	section(&b, "REFERENCE")
+	b.WriteString("devstack status · devstack help <command> · devstack stack list · devstack hooks list\n")
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
 func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, repo, branch, here string, working *workingStack) {
-	fmt.Fprintf(b, "devstack · workspace %s", ws.Name)
+	fmt.Fprintf(b, "workspace %s", ws.Name)
 	if service != "" {
 		fmt.Fprintf(b, " · service %s", service)
 	}
@@ -260,7 +272,6 @@ func writePrimeApplies(b *strings.Builder, ws *workspace.Workspace, rw *config.R
 	if len(lines) == 0 {
 		return
 	}
-	b.WriteString("\nthis workspace uses:\n")
 	for _, l := range lines {
 		b.WriteString(l + "\n")
 	}
@@ -294,14 +305,21 @@ func countHooks(ws *workspace.Workspace, rw *config.ResolvedWorkspace) int {
 // fault, and that none of this is safe to point at production. Everything else
 // about devstack is a `devstack help` away and does not belong in every session.
 func writePrimeWhatThisIs(b *strings.Builder) {
+	b.WriteString("## DEVSTACK\n")
 	b.WriteString("devstack manages the local development services on this machine. It starts and stops the services,\n")
 	b.WriteString("it collects their logs, and it sets their environment variables.\n\n")
 	b.WriteString("CAUTION: Use devstack only for local development. Do not use it with a staging or a production system.\n\n")
 	b.WriteString("devstack is a CLI and an MCP server. The tools do the same work as the commands, and they share their names:\n")
 	b.WriteString("status, start, stop, restart, stack_up, env_use. Use the one that your session has. Call the `environment` tool\n")
 	b.WriteString("first. It lists the tools that this workspace has. Six things have no tool, and they need the shell:\n")
-	b.WriteString("workspace up and down, ports, dependencies, group add and remove, stack config, and init.\n\n")
-	b.WriteString("These are the devstack terms in this text:\n")
+	b.WriteString("workspace up and down, ports, dependencies, group add and remove, stack config, and init.\n")
+}
+
+// writePrimeTerms defines the words the rest of the briefing uses. It is its own
+// section because a reader who already knows them can skip it, and a reader who
+// does not cannot parse a single line below without it.
+func writePrimeTerms(b *strings.Builder) {
+	section(b, "TERMS")
 	b.WriteString("  workspace  the set of repositories that run together\n")
 	b.WriteString("  service    one process that devstack runs\n")
 	b.WriteString("  base       your normal checkout. If you do not give --stack, a command uses base\n")
@@ -309,9 +327,26 @@ func writePrimeWhatThisIs(b *strings.Builder) {
 	b.WriteString("  worktree   the directory of a stack. Git checks out the branch of the stack in this directory\n")
 	b.WriteString("One service can run more than one time. base runs one copy, and each stack runs another copy.\n")
 	b.WriteString("Each copy has a different port. Run `devstack status` before you decide that a service is down.\n")
-	b.WriteString("The state \"stopped\" means that the service is registered but not started. It does not mean that the service is broken.\n\n")
+	b.WriteString("The state \"stopped\" means that the service is registered but not started. It does not mean that the service is broken.\n")
 	b.WriteString("To work on a stack, change to the directory of that stack. The branch is already checked out there.\n")
-	b.WriteString("Do not use `git checkout` in your normal checkout. That command changes base, and it does not change the stack.\n\n")
+	b.WriteString("Do not use `git checkout` in your normal checkout. That command changes base, and it does not change the stack.\n")
+}
+
+// writePrimeLiveCount reports how much of the workspace is up, so a briefing
+// that lists five copies of a service is not read as five running processes.
+func writePrimeLiveCount(b *strings.Builder, ws *workspace.Workspace) {
+	view, err := tilt.NewClient("localhost", workspace.HostTiltPort).GetView()
+	if err != nil {
+		b.WriteString("  daemon        not started. To start it, run: `devstack workspace up`\n")
+		return
+	}
+	running := 0
+	for _, r := range view.UiResources {
+		if strings.HasPrefix(r.Metadata.Name, ws.Name+":") && serviceStatus(r) == "running" {
+			running++
+		}
+	}
+	fmt.Fprintf(b, "  live          %s in the daemon on port %d\n", pluralRun(running), workspace.HostTiltPort)
 }
 
 // writePrimeReload gives the reload verdict for the service in hand rather than
@@ -338,14 +373,14 @@ func writePrimeReload(b *strings.Builder, rw *config.ResolvedWorkspace, service 
 
 	switch {
 	case looksHotReloading(runCmd) || looksHotReloading(resolveRunScript(runCmd, svc.RepoPath)):
-		fmt.Fprintf(b, "\n%s reloads automatically (run command: `%s`). Your code changes apply without a restart.\n", service, runCmd)
+		fmt.Fprintf(b, "\n  reload        automatic (run command: `%s`). Your code changes apply without a restart.\n", runCmd)
 	case len(svc.Manifest.Runtime.Watch) > 0:
-		fmt.Fprintf(b, "\n%s restarts automatically, because runtime.watch is set. Your code changes apply without a restart.\n", service)
+		b.WriteString("\n  reload        automatic, because runtime.watch is set. Your code changes apply without a restart.\n")
 	default:
-		fmt.Fprintf(b, "\n%s does not reload automatically (run command: `%s`). After you change the code, it runs the old code.\n", service, runCmd)
-		fmt.Fprintf(b, "To load your changes, run:\n  devstack service restart %s\n", target)
+		fmt.Fprintf(b, "\n  reload        MANUAL (run command: `%s`). After you change the code, it runs the old code.\n", runCmd)
+		fmt.Fprintf(b, "                To load your changes, run: devstack service restart %s\n", target)
 	}
-	b.WriteString("If you change the configuration or an environment variable, you must restart the service.\n")
+	b.WriteString("                If you change the configuration or an environment variable, you must restart the service.\n")
 }
 
 // writePrimeInstances is the one table that answers the three questions an agent
@@ -373,7 +408,6 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 		}
 		states[strings.TrimPrefix(name, ws.Name+":")] = st
 	}
-	fmt.Fprintf(b, "\nlive: %s in the daemon on port %d\n", pluralRun(total), workspace.HostTiltPort)
 	if service == "" {
 		return
 	}
@@ -424,7 +458,7 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 		}
 	}
 
-	fmt.Fprintf(b, "\n%s runs as %s:\n", service, pluralCopy(len(rows)))
+	fmt.Fprintf(b, "runs as %s:\n", pluralCopy(len(rows)))
 	suggested := ""
 	if working != nil && working.Rec != nil && working.Rec.Name != here {
 		suggested = working.Rec.Name
@@ -471,4 +505,11 @@ func pluralCopy(n int) string {
 		return "1 copy"
 	}
 	return fmt.Sprintf("%d copies", n)
+}
+
+// section writes a heading. The briefing is injected whole into a session, so a
+// reader cannot skip to the part it needs unless the parts are named. The
+// headings are short because every one of them is paid for on every session.
+func section(b *strings.Builder, title string) {
+	fmt.Fprintf(b, "\n## %s\n", title)
 }
