@@ -77,16 +77,20 @@ func runPortsCheck(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	listeners, err := ports.FindAll(wanted)
+	if err != nil {
+		return err
+	}
+	byPort := map[int][]ports.Listener{}
+	for _, l := range listeners {
+		byPort[l.Port] = append(byPort[l.Port], l)
+	}
 	for _, p := range wanted {
-		listeners, err := ports.Find(p)
-		if err != nil {
-			return err
-		}
-		if len(listeners) == 0 {
+		if len(byPort[p]) == 0 {
 			fmt.Printf("%-6d free\n", p)
 			continue
 		}
-		for _, l := range listeners {
+		for _, l := range byPort[p] {
 			fmt.Printf("%-6d pid %-8d %-5s %s\n", p, l.PID, l.Stack, l.Command)
 		}
 	}
@@ -101,25 +105,29 @@ func runPortsFree(cmd *cobra.Command, args []string) error {
 	grace, _ := cmd.Flags().GetDuration("grace")
 	quiet, _ := cmd.Flags().GetBool("quiet")
 
-	for _, p := range wanted {
-		listeners, err := ports.Find(p)
-		if err != nil {
-			return err
-		}
-		if len(listeners) == 0 {
-			if !quiet {
+	listeners, err := ports.FindAll(wanted)
+	if err != nil {
+		return err
+	}
+
+	held := map[int]bool{}
+	for _, l := range listeners {
+		// Say what is being killed before killing it. A silent reclaim of
+		// someone else's process is indistinguishable from a crash.
+		fmt.Printf("port %d held by pid %d (%s) — terminating\n", l.Port, l.PID, l.Command)
+		held[l.Port] = true
+	}
+	if !quiet {
+		for _, p := range wanted {
+			if !held[p] {
 				fmt.Printf("port %d already free\n", p)
 			}
-			continue
 		}
-		for _, l := range listeners {
-			// Say what is being killed before killing it. A silent reclaim of
-			// someone else's process is indistinguishable from a crash.
-			fmt.Printf("port %d held by pid %d (%s) — terminating\n", p, l.PID, l.Command)
-			if err := ports.Kill(l, func() { time.Sleep(grace) }); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: %v\n", err)
-			}
-		}
+	}
+
+	// One grace period for the whole set, not one for each port.
+	for _, err := range ports.KillAll(listeners, func() { time.Sleep(grace) }) {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 	return nil
 }

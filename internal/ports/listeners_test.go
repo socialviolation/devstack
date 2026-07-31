@@ -270,3 +270,112 @@ func TestFindAgainstARealSocket(t *testing.T) {
 		t.Errorf("pid = %d, want this test process %d", got[0].PID, os.Getpid())
 	}
 }
+
+// The generated prep runs this before a service boots, so the wait is on the
+// critical path of every start. Killing one listener at a time serialised the
+// grace period, and a service holding three ports paid it three times. The
+// signals are instant; only the wait is slow, so it happens once.
+func TestKillAllWaitsOnceForTheWholeSet(t *testing.T) {
+	var procs []Listener
+	var cmds []*exec.Cmd
+	for i := 0; i < 4; i++ {
+		cmd := exec.Command("sleep", "60")
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start sleep: %v", err)
+		}
+		t.Cleanup(func() { _ = cmd.Process.Kill() })
+		cmds = append(cmds, cmd)
+		procs = append(procs, Listener{PID: cmd.Process.Pid, Port: 20000 + i})
+	}
+
+	waits := 0
+	errs := KillAll(procs, func() { waits++; time.Sleep(150 * time.Millisecond) })
+	if len(errs) != 0 {
+		t.Fatalf("KillAll() = %v, want no errors", errs)
+	}
+	if waits != 1 {
+		t.Fatalf("waited %d times for %d listeners, want exactly 1", waits, len(procs))
+	}
+
+	// Reap before asserting: this test is the parent, and kill(pid, 0) succeeds
+	// on a zombie. devstack is never the parent of what it reclaims, so init
+	// reaps those and the check is unambiguous there.
+	for i, c := range cmds {
+		state, err := c.Process.Wait()
+		if err != nil {
+			t.Fatalf("wait on %d: %v", procs[i].PID, err)
+		}
+		if state.ExitCode() != -1 {
+			t.Errorf("pid %d exited %d, want death by signal", procs[i].PID, state.ExitCode())
+		}
+	}
+}
+
+// A dead process among the living must not stop the rest being signalled, and
+// must not be reported as a failure: between Find and Kill a process can exit.
+func TestKillAllToleratesAnAlreadyDeadListener(t *testing.T) {
+	gone := exec.Command("true")
+	if err := gone.Run(); err != nil {
+		t.Fatal(err)
+	}
+	alive := exec.Command("sleep", "60")
+	if err := alive.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = alive.Process.Kill() })
+
+	errs := KillAll([]Listener{
+		{PID: gone.Process.Pid, Port: 1},
+		{PID: alive.Process.Pid, Port: 2},
+	}, func() { time.Sleep(150 * time.Millisecond) })
+	if len(errs) != 0 {
+		t.Fatalf("KillAll() = %v, want a dead listener to be ignored", errs)
+	}
+	state, err := alive.Process.Wait()
+	if err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	if state.ExitCode() != -1 {
+		t.Errorf("the live listener exited %d, want death by signal", state.ExitCode())
+	}
+}
+
+func TestKillAllOnAnEmptySetDoesNotWait(t *testing.T) {
+	waits := 0
+	if errs := KillAll(nil, func() { waits++ }); errs != nil {
+		t.Fatalf("KillAll(nil) = %v", errs)
+	}
+	if waits != 0 {
+		t.Fatalf("waited %d times for nothing", waits)
+	}
+}
+
+// One walk of /proc for every port, not one per port: the walk opens every
+// process's file descriptors, so per-port cost multiplied by ports held.
+func TestFindAllAttributesEachListenerToItsOwnPort(t *testing.T) {
+	root := fakeProc(t,
+		tcpTable(
+			[3]string{"00000000:20E4", "0A", "111"}, // 8420
+			[3]string{"00000000:20E5", "0A", "222"}, // 8421
+		),
+		"",
+		map[int][]string{10: {"111"}, 20: {"222"}},
+		nil,
+	)
+	withProcRoot(t, root)
+
+	got, err := FindAll([]int{8420, 8421})
+	if err != nil {
+		t.Fatalf("FindAll(): %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("FindAll() = %#v, want both listeners", got)
+	}
+	byPID := map[int]int{}
+	for _, l := range got {
+		byPID[l.PID] = l.Port
+	}
+	if byPID[10] != 8420 || byPID[20] != 8421 {
+		t.Fatalf("ports attributed wrongly: %#v", byPID)
+	}
+}
