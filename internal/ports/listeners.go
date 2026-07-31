@@ -132,20 +132,6 @@ func sortedInts(m map[int]string) []int {
 	return out
 }
 
-// listenInodes returns the socket inodes listening on port in one /proc/net
-// table.
-func listenInodes(path string, port int) ([]string, error) {
-	byInode, err := listenInodesFor(path, map[int]bool{port: true})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]string, 0, len(byInode))
-	for inode := range byInode {
-		out = append(out, inode)
-	}
-	return out, nil
-}
-
 // listenInodesFor maps each listening socket inode to its port, for the ports
 // asked about, in one pass of a /proc/net table.
 func listenInodesFor(path string, wanted map[int]bool) (map[string]int, error) {
@@ -233,8 +219,12 @@ func inodeOwners(inodes map[string]string) ([]Listener, error) {
 func commandName(pid int) string {
 	data, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(pid), "cmdline"))
 	if err == nil {
-		if s := strings.TrimSpace(strings.ReplaceAll(string(data), "\x00", " ")); s != "" {
-			return truncate(s, 80)
+		// A cmdline is NUL-separated, and an argument can itself contain
+		// newlines — `python3 -c "<script>"` does. Left in, they break the row
+		// this is printed in across several lines.
+		flat := strings.Join(strings.Fields(strings.ReplaceAll(string(data), "\x00", " ")), " ")
+		if flat != "" {
+			return truncate(flat, 80)
 		}
 	}
 	data, err = os.ReadFile(filepath.Join(procRoot, strconv.Itoa(pid), "comm"))

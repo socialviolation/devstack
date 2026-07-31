@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/ports"
 )
 
 // portOwner is one resource's claim on one port: it binds it, so nothing else
@@ -32,8 +33,9 @@ type freeClaim struct {
 	slot     slot
 }
 
-// FreePortConflict is one resource's reclaim that would kill a port another
-// resource in the same daemon binds.
+// FreePortConflict is one reclaim devstack will not generate: it would kill a
+// port another resource in the same daemon binds, or it names a privileged port
+// that `devstack ports free` refuses.
 type FreePortConflict struct {
 	Resource string
 	Service  string
@@ -42,13 +44,23 @@ type FreePortConflict struct {
 	slot     slot
 }
 
-// Warning is what devstack says when it drops a conflicting reclaim.
+// Warning is what devstack says when it drops a reclaim.
 func (c FreePortConflict) Warning() string {
+	if len(c.Victims) == 0 {
+		return fmt.Sprintf("%s frees port %d, and devstack never reclaims a port below %d. devstack dropped that reclaim.\n"+
+			"  %s still starts, but it does not free port %d. Remove that port from freePorts.",
+			c.Resource, c.Port, PrivilegedPort, c.Resource, c.Port)
+	}
 	return fmt.Sprintf("%s frees port %d, which %s binds. devstack dropped that reclaim.\n"+
 		"  Both run under the same daemon, so the victim restarts, frees the port back, and the two flap forever.\n"+
 		"  %s still starts, but it does not free port %d. Fix the duplicate port, or remove freePorts from one of them.",
 		c.Resource, c.Port, strings.Join(c.Victims, " and "), c.Resource, c.Port)
 }
+
+// PrivilegedPort is the boundary below which devstack never reclaims: a listener
+// there is far more likely to be a system service than a dev server someone
+// forgot to stop.
+const PrivilegedPort = ports.Privileged
 
 // collectPortClaims walks every resource the host Tiltfile will contain and
 // records what each one owns and what each one would free. Ownership comes from
@@ -144,7 +156,7 @@ func FreePortConflicts(workspaces []WorkspaceGen) ([]FreePortConflict, error) {
 				victims = append(victims, owner)
 			}
 		}
-		if len(victims) == 0 {
+		if len(victims) == 0 && c.Port >= ports.Privileged {
 			continue
 		}
 		sort.Strings(victims)

@@ -463,12 +463,14 @@ func prepCommand(m *config.ServiceManifest, service string, book config.PortBook
 				if skip[p] {
 					continue
 				}
-				// 'devstack ports free' refuses a privileged port, and the
-				// generated prep joins the reclaim to the service's own prep with
-				// &&. A refusal there stops the service's prep too, so the service
-				// never starts. Say so while the manifest is being read.
+				// A privileged port is dropped, not fatal. 'devstack ports free'
+				// refuses one, and the generated prep joins the reclaim to the
+				// service's own prep with &&, so a refusal there stops the prep
+				// and the service never starts. Erroring instead took the whole
+				// host Tiltfile down over one manifest, which is the blast radius
+				// a conflicting reclaim was just changed to avoid.
 				if p < ports.Privileged {
-					return "", fmt.Errorf("runtime.prep.freePorts names port %d, and devstack never reclaims a port below %d. Service %q must not free it. Remove that port from freePorts", p, ports.Privileged, service)
+					continue
 				}
 				args = append(args, strconv.Itoa(p))
 			}

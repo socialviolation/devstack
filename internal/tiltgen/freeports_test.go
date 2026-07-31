@@ -109,18 +109,35 @@ func TestNoPrepAtAllStaysEmpty(t *testing.T) {
 // the reclaim to the service's own prep with &&. A refusal there took the
 // service's prep with it, so the service could never start. Generation says so
 // instead, while the manifest that declares it is still in hand.
-func TestFreePortsRejectsAPrivilegedPort(t *testing.T) {
+func TestFreePortsDropsAPrivilegedPortAndKeepsTheServicePrep(t *testing.T) {
 	m := manifestWithFreePorts(config.FreePortsSpec{All: true}, "dotnet build")
 	m.Ports = map[string]int{"http": 80}
 
-	_, err := prepCommand(m, "api", config.PortBook{"api": {"http": 80}}, nil)
-	if err == nil {
-		t.Fatal("prepCommand() = nil, want a refusal for port 80")
+	got, err := prepCommand(m, "api", config.PortBook{"api": {"http": 80}}, nil)
+	if err != nil {
+		t.Fatalf("prepCommand() = %v, want the reclaim dropped rather than the whole file failing", err)
 	}
-	for _, want := range []string{"80", `"api"`, "freePorts"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error missing %q:\n%v", want, err)
-		}
+	if got != "dotnet build" {
+		t.Fatalf("prep = %q, want only the service's own prep", got)
+	}
+}
+
+// A privileged port cannot be reclaimed, and saying so must not cost every
+// other workspace its Tiltfile — the same blast radius a conflicting reclaim
+// was changed to avoid.
+func TestGenerateHostWarnsAboutAPrivilegedReclaimWithoutFailing(t *testing.T) {
+	ws := workspaceGen("navexa", svcWithPorts("api", map[string]int{"http": 80}, config.FreePortsSpec{All: true}))
+	other := workspaceGen("tsfc", svcWithPorts("web", map[string]int{"http": 4200}, config.FreePortsSpec{All: true}))
+
+	out, warnings, err := GenerateHost([]WorkspaceGen{ws, other})
+	if err != nil {
+		t.Fatalf("GenerateHost() = %v, want a warning not a failure", err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "80") {
+		t.Fatalf("warnings = %#v, want one naming port 80", warnings)
+	}
+	if !strings.Contains(out, "tsfc:web") || !strings.Contains(out, "ports free --quiet 4200") {
+		t.Errorf("an unrelated workspace lost its Tiltfile or its reclaim")
 	}
 }
 
