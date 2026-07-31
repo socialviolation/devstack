@@ -71,7 +71,7 @@ devstack status  [--all] [--stack <name>]
 devstack workspace topology [service]
 ```
 
-Commands are noun first: `devstack <noun> <action> [target]`. A name can be both a service and a group, so the noun says which you mean rather than devstack guessing. Name nothing after `service` and devstack works out the service from your working directory. `start` resolves dependencies and brings them up first, and boots the dev daemon if it isn't already up. `restart` acts on the target alone. `status` collapses groups and stacks with nothing running, until you pass `--all`.
+Commands are noun first: `devstack <noun> <action> [target]`. A name can be both a service and a group, so the noun says which you mean. devstack never guesses. Name nothing after `service` and devstack works out the service from your working directory. `start` resolves dependencies and brings them up first, and boots the dev daemon if it isn't already up. `restart` acts on the target alone. `status` collapses groups and stacks with nothing running, until you pass `--all`.
 
 States are `running`, `starting`, `building`, `stopped`, `erroring`, `disabled`, `unknown`. Stopped means registered but not started, which is not the same as broken.
 
@@ -85,7 +85,7 @@ runtime:
     command: "dotnet build ..."  # your own prep still runs, after
 ```
 
-devstack resolves the ports the same way it resolves `${self.port.http}`, so base frees the port it pins and a stack frees the port it was allocated, from that one line. Never write the port as a literal: a stack's worktree copies the literal, and `fuser -k 63290/tcp` in a stack kills base.
+devstack resolves those ports the same way it resolves `${self.port.http}`. From that one line, base frees the port it pins and a stack frees the port it was allocated. Never write the port as a literal: a stack's worktree copies the literal, and `fuser -k 63290/tcp` in a stack kills base.
 
 An instance can only free ports it owns. Reclaiming names the process before killing it, and sends `SIGTERM` before `SIGKILL` so a dev server takes its own children down instead of orphaning them.
 
@@ -107,7 +107,7 @@ devstack group remove <group> <service> [service...]
 
 ## Feature stacks
 
-A feature stack runs a parallel version of a few services beside base. Each changed service gets its own git worktree on a feature branch and its own dynamically allocated port, folded into the one host daemon as `<workspace>:<service>:<stack>`. Everything it doesn't change resolves to base, so several features can run live at once without cloning the world.
+A feature stack runs a parallel version of a few services beside base. Each changed service gets a git worktree on a feature branch and a dynamically allocated port. Both fold into the one host daemon as `<workspace>:<service>:<stack>`. Everything it doesn't change resolves to base, so several features can run live at once without cloning the world.
 
 ```bash
 devstack stack create <name> --repos <svc>[,<svc>]  # worktrees for the changed services and their callers
@@ -161,7 +161,7 @@ Credentials are redacted in place, so a connection string still shows its server
 
 ## Hooks
 
-A hook is a shell command devstack runs when a lifecycle event fires. Stacks are meant to be disposable, and disposable only works if the state a stack needs outside this machine gets provisioned when it appears and removed when it goes.
+A hook is a shell command devstack runs when a lifecycle event fires. Stacks are disposable. That only works if the state a stack needs beyond this machine appears with it and goes with it.
 
 ```bash
 devstack hooks list [--stack <name>] [--event <event>]
@@ -197,7 +197,7 @@ A stack's ports are allocated when it is created, so a hook cannot hardcode them
 | `workspace.up` | after the daemon is up and the workspace's services are folded in |
 | `workspace.down` | before the workspace's services are torn down |
 
-Failure means opposite things in each direction. A setup hook that fails stops the rest and fails the command, because a half-provisioned stack that looks healthy is worse than one that failed loudly. A teardown hook that fails is reported and skipped, and the teardown carries on. Otherwise one broken hook leaves you a worktree, a branch and a port you cannot reclaim. Override either with `onError: abort` or `onError: continue`, and bound a hook that talks to a slow API with `timeout: 90s`.
+Failure means opposite things in each direction. A setup hook that fails stops the rest and fails the command. A half-provisioned stack that looks healthy is worse than one that failed loudly. A teardown hook that fails is reported and skipped, and the teardown carries on. Otherwise one broken hook leaves you a worktree, a branch and a port you cannot reclaim. Override either with `onError: abort` or `onError: continue`, and bound a hook that talks to a slow API with `timeout: 90s`.
 
 The lifecycle action is never rolled back. If a `stack.create` hook fails the stack still exists, unprovisioned, and the error says so. Fix the hook and run `devstack hooks run stack.create --stack <name>` rather than recreating it. `devstack hooks run` re-fires every hook on the event, including ones that already succeeded, so a hook that provisions external state should tolerate being run twice.
 
@@ -211,7 +211,7 @@ warning: hook "auth0-cleanup/api" failed on stack.destroy, continuing: exit stat
     api                      http://localhost:20016
 ```
 
-Agents get the same behaviour: `stack_create`, `stack_up`, `stack_down`, `stack_rm`, `start` and `stop` fire their events over [MCP](#mcp) and report what ran, and the `hooks` tool lists and re-runs them.
+Agents get the same behaviour. `stack_create`, `stack_up`, `stack_down`, `stack_rm`, `start` and `stop` fire their events over [MCP](#mcp) and report what ran. The `hooks` tool lists and re-runs them.
 
 ## Observability
 
@@ -224,7 +224,7 @@ devstack otel start                                                # runs the co
 devstack otel stop                                                 # kills it now
 ```
 
-With it on, `workspace up` starts one `otelcol-contrib` and one backend for the whole machine, shared by every workspace, the same way one daemon runs everyone's services. `OTEL_EXPORTER_OTLP_ENDPOINT` is pushed down to every service (gRPC 4317, HTTP 4318), so you never repeat it. If the collector dies while enabled, `devstack status` warns and tries to restart it.
+With it on, `workspace up` starts one `otelcol-contrib` and one backend for the whole machine — shared by every workspace, the same way one daemon runs everyone's services. `OTEL_EXPORTER_OTLP_ENDPOINT` is pushed down to every service (gRPC 4317, HTTP 4318), so you never repeat it. If the collector dies while enabled, `devstack status` warns and tries to restart it.
 
 The collector needs `otelcol-contrib` on `$PATH`, or `OTELCOL_BIN` pointing at it. Without one the workspace still comes up, and `devstack otel start` fails until you install it from [opentelemetry-collector-releases](https://github.com/open-telemetry/opentelemetry-collector-releases/releases).
 
@@ -251,7 +251,7 @@ devstack otel open                   # the UI
 devstack otel plugins                # backends and their config keys
 ```
 
-Every instance reports to that one backend, stamped with `devstack.workspace`, `devstack.service`, `devstack.stack` and `devstack.env`. These are namespaced deliberately: `deployment.environment` belongs to whoever owns the destination, and the `forwarding` backend sets it per workspace. So you slice at query time rather than running a backend each. A service often reports itself under a different name than devstack knows it by; filters match either, and `otel services` prints both:
+Every instance reports to that one backend, stamped with `devstack.workspace`, `devstack.service`, `devstack.stack` and `devstack.env`. These are namespaced deliberately: `deployment.environment` belongs to whoever owns the destination, and the `forwarding` backend sets it per workspace. So you run one backend and slice at query time. A service often reports itself under a different name than devstack knows it by; filters match either, and `otel services` prints both:
 
 ```
 Navexa.API      (devstack: navexa-api)  stack=agent env=dev
@@ -287,11 +287,11 @@ devstack tunnel push my-box.ts.net --as-base agent
 # far end :4200 → here :20006, far end :63290 → here :20005
 ```
 
-`stop` and `status` work off the forwards actually running rather than what's discoverable now, so the observability UI (never a Tilt resource) and any port whose service has since gone are still reported and still torn down.
+`stop` and `status` read the forwards actually running, not what discovery covers now. So a port whose service has since gone is still reported and still torn down, and so is the observability UI, which was never a Tilt resource.
 
-`restart` repeats the last push or pull — same direction, same services, same stack mapping — and says what it's repeating. Otherwise it would rebuild from the defaults: base back on the ports a mapped stack was serving, and a push on the machine you ran `pull` from. Any flag you pass overrides the saved one.
+`restart` repeats the last push or pull — same direction, same services, same stack mapping — and says what it's repeating. Otherwise it rebuilds from the defaults — base back on the ports a mapped stack was serving, and a push on the machine you ran `pull` from. Any flag you pass overrides the saved one.
 
-`--reclaim` kills whatever already holds those ports on the far host before forwarding, and only the ports being forwarded — so `--service` narrows the blast radius. It may belong to a colleague or another stack. See whose it is first with `devstack tunnel check <host>`.
+`--reclaim` kills whatever already holds those ports on the far host, and only the ports being forwarded, so `--service` narrows the blast radius. What it kills may belong to a colleague or another stack. See whose it is first with `devstack tunnel check <host>`.
 
 ## MCP
 
@@ -308,13 +308,23 @@ The set adapts to the workspace: `investigate` appears only when observability i
 
 `investigate` is the trace tool, and it has three modes. Give it a `trace_id` for one full span tree. Give it `attribute` and `value` to find every root span where, say, `portfolio.id=57835`, then expand each trace. Give it neither and you get the most recent executions. `stack` scopes it: absent means base, a name means that stack, `"all"` means every instance. When OTEL logs aren't available it falls back to dev-daemon process logs. Matching root spans only means each result is a distinct trace entry point, whichever service owns the root.
 
-`service_env` resolves and edits a service's env: `get` shows each key with the rung it came from, `diff` compares services, `set` writes to the manifest or `.envrc`, `check` audits required keys, `drift` compares what's resolved against what the repo declares it needs.
+`service_env` resolves and edits a service's env:
 
-Some commands have no tool and still need a shell: `workspace up` and `down`, `workspace doctor`, `stack config`, and every otel command the `observability` and `investigate` tools don't cover (`otel services`, `otel traces`, `otel logs`, `otel open`). Registration is CLI-only too: `init`, `deps`, `groups`, `workspace add`.
+| | |
+|---|---|
+| `get` | each key, with the rung it came from |
+| `diff` | compare two services side by side |
+| `set` | write to the manifest or `.envrc` |
+| `check` | audit for placeholders and missing keys |
+| `drift` | what's resolved vs what the repo says it needs |
+
+Six things have no tool and need a shell: `workspace up`, `workspace down`, `workspace doctor`, `stack config`, `ports`, and `init`. The otel queries are shell-only too — `otel traces`, `otel logs`, `otel services`, `otel open` — beyond what `observability` and `investigate` cover.
 
 ## Briefing an agent
 
-`devstack prime` prints what an agent needs to work here, resolved when it runs: the workspace and service you are in, which copy of that service your checkout is, what is running, and what each environment is for. Because the binary generates it, `go install` updates every workspace at once — there is no committed file to regenerate and none to go stale.
+`devstack prime` prints what an agent needs to work here, resolved when it runs — where you are, which copy of the service your checkout is, what's running, what each environment is for.
+
+The binary generates it, so `go install` updates every workspace at once. There's no committed file to regenerate, and none to go stale.
 
 ```
 ## WHERE YOU ARE
@@ -331,7 +341,7 @@ runs as 5 copies:
   The marker ▸ shows the copy that you are in now: nvxa-1422.
 ```
 
-It guesses which stack a session is for, and refuses to guess when it cannot tell. Where you are is read from the filesystem; what you are here for is a guess and is marked `?`, never `▸`.
+It also works out which stack a session is probably for, and stays quiet when it can't tell. Those are two different questions: where you are comes from the filesystem and is marked `▸`. What you're here for is inference, and is marked `?`.
 
 Wire it into Claude Code so a session is briefed without being asked:
 
@@ -341,9 +351,9 @@ devstack init --all --claude-hook
 
 That writes a `SessionStart` hook running `devstack prime --json` for the `startup`, `resume`, `clear` and `compact` matchers. The last one matters most: compaction is exactly when the landscape drops out of context. It merges into an existing `.claude/settings.json` rather than replacing it, keeps hooks you already have, and adds nothing on a second run.
 
-`.claude/settings.json` is committed, so the hook runs for everyone who clones the repo. That is why the flag is opt-in — `devstack init --all` on its own refreshes `AGENTS.md` and `.mcp.json` and writes no hook.
+`.claude/settings.json` is committed, so the hook runs for everyone who clones the repo. That's why the flag is opt-in. `devstack init --all` on its own refreshes `AGENTS.md` and `.mcp.json`, and writes no hook.
 
-`init --all` also cleans up after older versions: it removes a duplicate generated block, strips a legacy unsentinelled devstack section, and leaves everything outside the sentinels untouched.
+`init --all` also cleans up after older versions. It drops a duplicate generated block and strips a legacy unsentinelled devstack section. Everything outside the sentinels is left alone.
 
 ## Per-repo setup
 
@@ -399,13 +409,13 @@ devstack.service.yaml
 Tiltfile
 ```
 
-Because `devstack.service.yaml` is machine-local and gitignored, a stack's worktree doesn't inherit one. That's why `devstack stack create` materialises ignored config into each worktree rather than relying on git.
+Because `devstack.service.yaml` is machine-local and gitignored, a stack's worktree doesn't inherit one. That's why `devstack stack create` copies ignored config into each worktree — git will not carry it there.
 
 ### Secrets and `devstack env set`
 
 `env set <env> KEY=VALUE` writes the value into `devstack.workspace.yaml` in plaintext, and masking happens on display only, never at rest. So it depends on how you treat that file.
 
-If you commit it, which is the default recommended above, keep real secrets out. Declare them in a service's `env.required` and supply them at runtime from `.envrc` or your own secret store, and use `env set` only for URLs, ports and feature flags. A secret written here is a committed secret.
+If you commit it, which is the default recommended above, keep real secrets out. Declare them in a service's `env.required` and supply them at runtime from `.envrc` or your own secret store. Use `env set` only for URLs, ports and feature flags. A secret written here is a committed secret.
 
 If it's machine-local, either gitignored or the workspace root isn't a repo, `env set` is fine for API keys. That's what it was built for, though the file is still plaintext on disk.
 
@@ -421,7 +431,7 @@ devstack init --all           # per workspace: refresh AGENTS.md and .mcp.json
 devstack status               # check the daemon and services still answer
 ```
 
-Two of those bite. A stale binary doesn't fail on config it doesn't understand, it falls back: an older devstack reading a workspace set to OpenObserve quietly started SigNoz instead. And MCP tool descriptions are read once at server startup, so a session already running keeps the old tool list. New tools don't appear, new parameters get rejected. Restart it.
+Two of those bite. A stale binary doesn't fail on config it doesn't understand. It falls back — an older devstack read a workspace set to OpenObserve and quietly started SigNoz. And MCP tool descriptions are read once at server startup, so a session already running keeps the old tool list. New tools don't appear, new parameters get rejected. Restart it.
 
 `devstack init --all` writes files only, nothing restarts. Run it from inside each workspace, and expect a git diff in every service repo.
 
