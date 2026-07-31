@@ -235,7 +235,7 @@ func writePrimeApplies(b *strings.Builder, ws *workspace.Workspace, rw *config.R
 			}
 			desc := firstLine(rw.Manifest.Environments[n].Description, 84)
 			if desc == "" {
-				desc = "(no description — devstack env show " + n + ")"
+				desc = "unset"
 			}
 			lines = append(lines, fmt.Sprintf("              %s %-10s %s", marker, n, desc))
 		}
