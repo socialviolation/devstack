@@ -116,9 +116,12 @@ ones you name to leave the rest up:
 	}
 	tunnelStatusCmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show which of this workspace's ports are forwarded, or which would be",
+		Short: "HERE: which of this workspace's ports are forwarded, or with --planned, which would be",
 		Long: `Show every forward this workspace has up, plus any port still forwarding that
 discovery no longer covers, so a live tunnel is never invisible.
+
+This reads THIS machine and talks to no remote. To ask the far host what is
+already listening on these ports, use 'devstack tunnel check'.
 
 With --planned it answers the other question instead: what a push or pull would
 forward from here, discovered from the running services. That reads nothing over
@@ -133,12 +136,15 @@ SSH and starts nothing — it is a preview, not a report of what is up.
 		"Show what a push or pull WOULD forward (discovery only, no SSH) instead of what is forwarded now")
 	checkCmd := &cobra.Command{
 		Use:   "check [host]",
-		Short: "Show what already holds the ports on the far host, without changing anything",
+		Short: "THERE: what already holds these ports on the remote host (one SSH round trip)",
 		Long: `Ask the remote host what is listening on the ports a push would bind.
 
+This reads the REMOTE host over SSH. To see what this machine has forwarded,
+use 'devstack tunnel status'.
+
 This is the counterpart to --reclaim. Reclaim cannot tell a stale forward of
-yours from a live one another stack owns, so it is worth seeing whose it is
-before you kill it. Narrow the ports with --service.
+yours from a live one another stack owns, so see whose it is before you kill it.
+Narrow the ports with --service.
 
   devstack tunnel check
   devstack tunnel check --service navexa-api,nxOrbit`,
