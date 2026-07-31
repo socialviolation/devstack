@@ -191,13 +191,6 @@ func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, re
 	} else {
 		b.WriteString(" · base\n")
 	}
-	if repo != "" {
-		fmt.Fprintf(b, "  repo    %s\n", repo)
-	}
-	if branch != "" {
-		fmt.Fprintf(b, "  branch  %s\n", branch)
-	}
-
 	if working == nil {
 		return
 	}
@@ -272,10 +265,13 @@ func writePrimeWhatThisIs(b *strings.Builder) {
 	b.WriteString("  workspace  the set of repositories that run together\n")
 	b.WriteString("  service    one process that devstack runs\n")
 	b.WriteString("  base       your normal checkout. A command uses base if you do not give --stack\n")
-	b.WriteString("  stack      a parallel copy of some services. Each stack has a feature branch, a git worktree, and its own ports\n")
+	b.WriteString("  stack      a parallel copy of some services. Each stack has its own branch, its own directory, and its own ports\n")
+	b.WriteString("  worktree   the directory of a stack. Git checks out the branch of the stack in this directory\n")
 	b.WriteString("One service can run more than one time. base runs one copy, and each stack runs another copy.\n")
 	b.WriteString("Each copy has a different port. Run `devstack status` before you decide that a service is down.\n")
 	b.WriteString("The state \"stopped\" means that the service is registered but not started. It does not mean that the service is broken.\n\n")
+	b.WriteString("To work on a stack, change to the directory of that stack. The branch is already checked out there.\n")
+	b.WriteString("Do not use `git checkout` in your normal checkout. That changes base, and it does not change the stack.\n\n")
 }
 
 // writePrimeReload gives the reload verdict for the service in hand rather than
@@ -342,11 +338,15 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 		return
 	}
 
-	type instance struct{ name, port, state, note string }
+	type instance struct{ name, port, state, branch, dir, note string }
+
 	rows := []instance{{name: "base", port: "-", state: orDash(states[service])}}
-	if svc, ok := rw.Services[service]; ok && svc.Manifest != nil {
-		if p, ok := svc.Manifest.Ports["http"]; ok {
-			rows[0].port = fmt.Sprintf(":%d", p)
+	if svc, ok := rw.Services[service]; ok {
+		rows[0].dir = svc.RepoPath
+		if svc.Manifest != nil {
+			if p, ok := svc.Manifest.Ports["http"]; ok {
+				rows[0].port = fmt.Sprintf(":%d", p)
+			}
 		}
 	}
 
@@ -356,14 +356,32 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 		if !containsString(rec.Overlay, service) {
 			continue
 		}
-		row := instance{name: rec.Name, port: "-", state: "inactive", note: firstLine(rec.Note, 62)}
+		row := instance{name: rec.Name, port: "-", state: "inactive", note: firstLine(rec.Note, 74)}
 		if p, ok := rec.Ports[stack.QualifyPortKey(service, "http")]; ok {
 			row.port = fmt.Sprintf(":%d", p)
 		}
 		if st, ok := states[service+":"+rec.Name]; ok {
 			row.state = st
 		}
+		row.dir = rec.Worktrees[service]
 		rows = append(rows, row)
+	}
+
+	// The branch is read from each checkout rather than taken from the stack
+	// record: a service pulled into an overlay because it calls a changed one is
+	// detached at HEAD, not on the branch of the stack, and telling an agent
+	// otherwise sends it to commit somewhere that does not exist.
+	dirs := map[string]string{}
+	for _, r := range rows {
+		if r.dir != "" {
+			dirs[r.dir] = r.dir
+		}
+	}
+	labels := gitinfo.ReadAll(dirs)
+	for i := range rows {
+		if rows[i].dir != "" {
+			rows[i].branch = labels[rows[i].dir].Label()
+		}
 	}
 
 	fmt.Fprintf(b, "\n%s runs as %s:\n", service, pluralCopy(len(rows)))
@@ -374,9 +392,15 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 		} else if r.name == "base" && working == nil {
 			marker = "▸"
 		}
-		fmt.Fprintf(b, "  %s %-12s %-8s %-9s %s\n", marker, r.name, r.port, r.state, r.note)
+		fmt.Fprintf(b, "  %s %-12s %-8s %-9s branch %s\n", marker, r.name, r.port, r.state, orDash(truncateCell(r.branch, 46)))
+		if r.dir != "" {
+			fmt.Fprintf(b, "      %s\n", r.dir)
+		}
+		if r.note != "" {
+			fmt.Fprintf(b, "      %s\n", r.note)
+		}
 	}
-	b.WriteString("  ▸ is the checkout that you are in. To use the copy from a stack, connect to its port.\n  Or add `--stack <name>` to a command.\n")
+	b.WriteString("  ▸ is the checkout that you are in. To use the copy from a stack, connect to its port,\n  or add `--stack <name>` to a command.\n")
 }
 
 // pluralRun and pluralCopy keep the count grammatical. "1 service(s)" makes a
