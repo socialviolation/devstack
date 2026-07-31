@@ -34,7 +34,7 @@ Pass --all to table every group and stack, and to show each service's source pat
 
 Service states:
   running   — process is up and healthy
-  starting  — process is coming up
+  starting  — process starts
   building  — the daemon is building/updating the service
   stopped   — service is registered but not currently running
   erroring  — the service or its build failed (check logs)
@@ -85,7 +85,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 // runStackStatus shows a feature stack's services as they run in the one host
 // daemon: it reads the host view and filters to the stack's
 // <base>:<service>:<stack> resources, printing them de-namespaced. A stack is up
-// only when the host daemon is running and the stack is active — otherwise it
+// only when the host daemon runs and the stack is active — otherwise it
 // prints the same "not up" guidance the other --stack commands give, without
 // dialing a dead port.
 func runStackStatus(base *workspace.Workspace, rec *stack.Record) error {
@@ -507,7 +507,7 @@ type serviceOrientation struct {
 }
 
 // printServiceOrientation answers "where am I and what else is in flight on this
-// service" before the workspace table answers "what is running everywhere".
+// service" before the workspace table answers "what runs everywhere".
 //
 // An agent opening a session in a service repo needs the landscape for THAT
 // service: which feature stacks run their own copy of it, what each one is for,

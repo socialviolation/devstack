@@ -17,8 +17,8 @@ func registerHooksTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("hooks",
 		mcp.WithDescription("Inspect and test lifecycle hooks: shell commands devstack runs automatically when a stack or service changes state. Use action=\"list\" to see what is wired up before you create or destroy a stack, so you know what will run and what external state it touches. Use action=\"run\" to fire an event's hooks WITHOUT performing the lifecycle action — the way to test a hook, or to retry provisioning after a setup hook failed and left a stack created-but-unprovisioned.\n\n"+
 			"You do not call this to make hooks happen during normal work: stack_create, stack_up, stack_down, stack_rm, start and stop fire their own events and report the result. This tool is for seeing what exists and re-running it.\n\n"+
-			"Hooks are declared in devstack.workspace.yaml (shared with the team; a 'services:' list scopes one to named services) and in a service's devstack.service.yaml (that service only). A feature stack inherits the workspace's hooks.\n\n"+
-			"A hook's command can name values it cannot know in advance, because a stack's ports are allocated when it is created: ${self.url} is the http URL of the service the hook is running for, ${self.port.<key>} one of that service's ports by manifest key, and ${<service>.url} / ${<service>.port.<key>} the same for another service in the event. 'self' is the service, not the stack. A hook also receives DEVSTACK_* environment variables and the whole event as JSON on stdin.\n\n"+
+			"Hooks are declared in devstack.workspace.yaml (shared with the team. A 'services:' list scopes one to named services) and in a service's devstack.service.yaml (that service only). A feature stack inherits the workspace's hooks.\n\n"+
+			"A hook's command can name values it cannot know in advance, because a stack's ports are allocated when it is created: ${self.url} is the http URL of the service the hook runs for, ${self.port.<key>} one of that service's ports by manifest key, and ${<service>.url} / ${<service>.port.<key>} the same for another service in the event. 'self' is the service, not the stack. A hook also receives DEVSTACK_* environment variables and the whole event as JSON on stdin.\n\n"+
 			"Events, each with a fixed firing point: "+strings.Join(config.HookEvents(), ", ")+". "+
 			"stack.create fires once the worktrees exist, the ports are allocated and the record is written. stack.destroy fires before any of that is removed, so a teardown hook can still read what the stack was allocated.\n\n"+
 			"A hook that fails on a SETUP event (stack.create, stack.up, service.start, workspace.up) skips the event's remaining hooks and is returned as a tool error. The lifecycle action itself is NOT rolled back: the stack exists, and it is not fully provisioned. Fix the hook and re-run the event here with action=\"run\" rather than recreating the stack. Whether that re-runs hooks which already succeeded is up to the hooks themselves — devstack re-fires all of them, so a hook that provisions external state should be written to tolerate it.\n\n"+
@@ -121,7 +121,7 @@ func hooksRun(ws *workspace.Workspace, stackName, event string, services []strin
 	invocations := hooks.Resolve(ev, src)
 	if len(invocations) == 0 {
 		return mcp.NewToolResultText(fmt.Sprintf(
-			"No hooks fire on %s for %s, so nothing ran. This is not an error — the workspace simply declares none for that event. Check with action=\"list\".",
+			"No hooks fire on %s for %s, so nothing ran. This is not an error — the workspace declares none for that event. Check with action=\"list\".",
 			event, ev.StackLabel())), nil
 	}
 

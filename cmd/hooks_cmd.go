@@ -24,7 +24,7 @@ services) and in a service's devstack.service.yaml (that service only).
 
 Because a feature stack's ports are allocated when it is created, a hook cannot
 know them in advance. It names them instead: ${self.url}, ${self.port.http} and
-${<service>.port.<key>} resolve against the ports that instance actually got.`,
+${<service>.port.<key>} resolve against the ports that instance got.`,
 	RunE: runHooksList,
 }
 

@@ -219,7 +219,7 @@ func runWorkspaceAdd(cmd *cobra.Command, args []string) error {
 		} else {
 			wrote, err := scaffoldWorkspaceManifest(path, registered.Name)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "  warning: could not scaffold manifest: %v\n", err)
+				fmt.Fprintf(os.Stderr, "  warning: can not scaffold manifest: %v\n", err)
 			} else if wrote {
 				fmt.Printf("  ✓ Created %s — add services with 'devstack init --name=<n> --path=<p> --cmd=<c>'.\n", config.WorkspaceManifestFileName)
 			}

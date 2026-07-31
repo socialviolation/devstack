@@ -107,7 +107,7 @@ func runDepsAdd(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("✓ %s now depends on %s\n", service, dep)
 	if _, err := regenerateHostTiltfile(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not regenerate host config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: can not regenerate host config: %v\n", err)
 	} else {
 		fmt.Println("Regenerated host config.")
 	}
@@ -157,7 +157,7 @@ func runDepsRemove(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("✓ Removed %s from %s dependencies\n", dep, service)
 	if _, err := regenerateHostTiltfile(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not regenerate host config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: can not regenerate host config: %v\n", err)
 	} else {
 		fmt.Println("Regenerated host config.")
 	}

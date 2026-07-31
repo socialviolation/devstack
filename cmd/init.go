@@ -29,7 +29,7 @@ FIRST-TIME SERVICE SETUP (provide --name, --path, --cmd)
     4. Writes AGENTS.md with instructions for AI agents on how to run and observe it
     5. Regenerates the dev daemon config so 'devstack service start' can run it
 
-  Use --force to overwrite an existing service manifest (e.g. to update the run command).
+  Use --force to overwrite an existing service manifest (for example to update the run command).
 
 REFRESH ONLY (no --name/--path/--cmd flags)
   Re-writes the devstack section of AGENTS.md in the current service directory with
@@ -66,7 +66,7 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 	initCmd.Flags().String("name", "", "Service name")
 	initCmd.Flags().String("path", "", "Absolute path to the service directory")
-	initCmd.Flags().String("cmd", "", "Command to run the service (e.g. \"go run .\" or \"dotnet run\")")
+	initCmd.Flags().String("cmd", "", "Command to run the service (for example \"go run .\" or \"dotnet run\")")
 	initCmd.Flags().Int("port", 0, "HTTP port the service listens on (enables health checks and dashboard links)")
 	initCmd.Flags().String("language", "", "Language override: dotnet, python, node, go (default: auto-detect)")
 	initCmd.Flags().String("group", "", "Suggest a group for the service (add it with 'devstack group add')")
@@ -177,7 +177,7 @@ func runInitRefresh(cmd *cobra.Command, claudeHook bool) error {
 func runInitAll(claudeHook bool) error {
 	ws, err := workspace.DetectFromCwd()
 	if err != nil {
-		return fmt.Errorf("could not detect workspace from current directory: %w\nRun from within a registered workspace.", err)
+		return fmt.Errorf("can not detect workspace from current directory: %w\nRun from within a registered workspace.", err)
 	}
 
 	cfg, err := config.Load(ws.Path)
@@ -245,7 +245,7 @@ func runInitAll(claudeHook bool) error {
 func refreshStackAgentsMD(workspaceName, workspacePath string, claudeHook bool) []string {
 	recs, err := stack.LoadStore(workspaceName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not load stacks for workspace %q: %v\n", workspaceName, err)
+		fmt.Fprintf(os.Stderr, "Warning: can not load stacks for workspace %q: %v\n", workspaceName, err)
 		return nil
 	}
 
@@ -622,7 +622,7 @@ func assembleAgents(before, block, after string) string {
 	return sb.String()
 }
 
-// aiInstructionFiles are the instruction files coding agents actually read.
+// aiInstructionFiles are the instruction files coding agents read.
 // devstack updates the ones a repo already has and never creates any of them.
 var aiInstructionFiles = []string{
 	"CLAUDE.md",
@@ -713,7 +713,7 @@ func buildAIInstructionPointer(serviceName, stackName string) string {
 
 // looksHotReloading reports whether a run command self-watches its source and
 // reloads on change. It is deliberately conservative: a false positive would
-// tell an agent not to restart a process that is actually running stale code,
+// tell an agent not to restart a process that is running stale code,
 // so unknown commands are treated as non-reloading.
 func looksHotReloading(cmd string) bool {
 	c := " " + strings.ToLower(cmd) + " "
@@ -737,7 +737,7 @@ func looksHotReloading(cmd string) bool {
 
 // resolveRunScript expands a `npm run <s>` / `yarn <s>` / `pnpm run <s>` /
 // `bun run <s>` invocation to the underlying script from the service's
-// package.json, so hot-reload detection sees the real command (e.g. an "start"
+// package.json, so hot-reload detection sees the real command (for example an "start"
 // script that runs `ng serve`). Anything else is returned unchanged.
 func resolveRunScript(cmd, servicePath string) string {
 	fields := strings.Fields(cmd)
@@ -820,7 +820,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"| State | Meaning |\n" +
 		"|---|---|\n" +
 		"| `running` | the process is up |\n" +
-		"| `starting` | the process is coming up |\n" +
+		"| `starting` | the process starts |\n" +
 		"| `building` | the daemon is building or updating it |\n" +
 		"| `stopped` | registered, and not started. This is not a fault |\n" +
 		"| `erroring` | the service or its build failed. Read the logs |\n" +
@@ -888,7 +888,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"`environment`, `status`, `start`, `stop`, `restart`, `topology`, `process_logs`, `configure`, `service_env`, `observability`, `hooks`, `tunnel` and `investigate`; " +
 		"the stack tools `stack_create`, `stack_up`, `stack_down`, `stack_list`, `stack_rm`, `stack_note`; and the env tools `env_use`, `env_which`, `env_set`. " +
 		"Two are conditional: `investigate` is registered only while observability is on, and `tunnel` only when an ssh client exists. " +
-		"Call `environment` first. It reports what this workspace actually registered, and each description of a tool is more current than this file.\n\n" +
+		"Call `environment` first. It reports what this workspace registered, and each description of a tool is more current than this file.\n\n" +
 		"The service-control tools (`status`, `start`, `restart`, `stop`, `process_logs`, `configure`) take an optional `stack` parameter. " +
 		"Omit it, or pass `\"base\"`, for base. `investigate` takes `stack` as a telemetry filter: absent means base only, a name means that stack, and `\"all\"` means every copy. " +
 		"A bare `stop` acts on the default service. To stop every service you must pass `all=true`, so one forgotten parameter cannot take the workspace down.\n\n" +
@@ -920,7 +920,7 @@ func observabilityInstructions(workspacePath, svc string) string {
 		"devstack otel services                  # which copies report, with their stack and env\n" +
 		"devstack otel traces [--stack <name>]   # recent traces (no --stack means base only)\n" +
 		"devstack otel logs --trace <trace-id>   # the logs of one trace\n" +
-		"devstack otel status                    # which copies actually emit\n" +
+		"devstack otel status                    # which copies emit\n" +
 		"```\n\n" +
 		"A service usually reports itself under a name of its own choosing, and not the name devstack uses for it. " +
 		"devstack `" + svc + "` can report as something else. A filter accepts either name, and `devstack otel services` prints both. " +

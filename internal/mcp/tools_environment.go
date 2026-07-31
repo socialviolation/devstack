@@ -23,7 +23,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		mcp.WithDescription(
 			"Show the active workspace and available tools. "+
 				"Call this first to understand what you can and cannot do in the current context. "+
-				"An 'env' here is a CONFIG-PATCH environment — a named set of config vars (e.g. 'staging') that a workspace, service, or stack instance is pointed at via env_use (CLI: devstack env use). status and env_which show which env each instance currently points at. "+
+				"An 'env' here is a CONFIG-PATCH environment — a named set of config vars (for example 'staging') that a workspace, service, or stack instance is pointed at via env_use (CLI: devstack env use). status and env_which show which env each instance currently points at. "+
 				"devstack is a LOCAL development environment. Data is ephemeral and local — not production. "+
 				"The available tools depend on this workspace's configuration: trace/telemetry tools appear only when observability is enabled, tunnel tools only when an ssh client is available. "+
 				"Call this tool first to understand the context before using other tools.",
@@ -166,7 +166,7 @@ func stacksSummary(ws *workspace.Workspace) string {
 // hooksSummary orients an agent on lifecycle hooks before it creates or destroys
 // anything. Creating a stack in a workspace with hooks can run someone's shell
 // command against external state, so whether any exist belongs in the first tool
-// an agent calls, not in a tool it might never reach.
+// an agent calls, not in a tool it can never reach.
 func hooksSummary(ws *workspace.Workspace) string {
 	if ws == nil {
 		return ""

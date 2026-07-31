@@ -174,7 +174,7 @@ func init() {
 	}
 	otelConfigOnCmd.Flags().String("backend", "", "Observability backend to use (default: openobserve)")
 
-	otelConfigSetCmd.Flags().String("plugin", "", "Plugin name to activate (e.g. openobserve, signoz, forwarding)")
+	otelConfigSetCmd.Flags().String("plugin", "", "Plugin name to activate (for example openobserve, signoz, forwarding)")
 	otelConfigSetCmd.Flags().StringArray("set", nil, "Set a plugin config key (format: key=value, repeatable)")
 }
 
@@ -190,7 +190,7 @@ func resolveOtelWorkspace(cmd *cobra.Command) (*workspace.Workspace, error) {
 		ws, err = workspace.DetectFromCwd()
 	}
 	if err != nil {
-		return nil, fmt.Errorf("could not detect workspace: %w\nTry: devstack otel <subcommand> --workspace=<name>", err)
+		return nil, fmt.Errorf("can not detect workspace: %w\nTry: devstack otel <subcommand> --workspace=<name>", err)
 	}
 	ws.OverlayProjectConfig()
 	return ws, nil
@@ -324,7 +324,7 @@ func runOtelStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Per-variant telemetry evidence — which instances are actually emitting,
+	// Per-variant telemetry evidence — which instances are emitting,
 	// queried from the backend rather than inferred.
 	evidenceBackend, _ := otel.BackendFor(ws)
 	if statuses, terr := telemetry.Status(ws.Path, evidenceBackend, telemetry.DefaultWindow); terr == nil && len(statuses) > 0 {
@@ -500,7 +500,7 @@ func runOtelConfigOn(cmd *cobra.Command, args []string) error {
 		effective = config.DefaultObservabilityBackend + " (default)"
 	}
 	fmt.Printf("Observability turned on in config for '%s' (backend: %s)\n", ws.Name, effective)
-	fmt.Printf("\nNothing is running yet. Start the collector: devstack otel start\n")
+	fmt.Printf("\nNothing runs yet. Start the collector: devstack otel start\n")
 	return nil
 }
 

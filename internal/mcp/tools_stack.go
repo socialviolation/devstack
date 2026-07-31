@@ -19,11 +19,14 @@ import (
 
 // stackShortNameDesc states the short-name-vs-identity rule wherever a stack is
 // named: every parameter takes the short name, while output prints the identity.
-const stackShortNameDesc = "Feature stack SHORT name (e.g. 'import-review') — not the '<base>--<name>' full identity that stack_list and telemetry print. There is no stack called \"base\": base is the absence of a stack, so omit this rather than passing \"base\" (the service-control and telemetry tools accept \"base\" as a synonym for omitting it; the stack tools do not, and stack_rm would reject it)."
+const stackShortNameDesc = "Feature stack SHORT name, for example 'import-review'. This is not the '<base>--<name>' full identity that stack_list and telemetry print. " +
+	"No stack is called \"base\", because base is the absence of a stack. Omit this parameter instead of passing \"base\". " +
+	"The service-control and telemetry tools accept \"base\" as a synonym for omitting it. The stack tools do not, and stack_rm rejects it."
 
 // serviceLinksDesc defines the "service links" these tools return: one
 // http://localhost:<port> URL per port the stack allocated.
-const serviceLinksDesc = "A service link is 'service/portKey=http://localhost:<port>': the localhost URL of one port that this stack allocated for one of its overlay services, portKey being a key from that service's manifest ports (e.g. 'http'). These are the stack's own ports — reach its instances here, not on base's."
+const serviceLinksDesc = "A service link is 'service/portKey=http://localhost:<port>'. It is the localhost URL of one port that this stack allocated for one of its overlay services. " +
+	"The portKey is a key from the manifest ports of that service, for example 'http'. These ports belong to the stack. Reach its copies here, not on the ports of base."
 
 func registerStackTools(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	registerStackCreateTool(mcpServer, ws)
@@ -38,9 +41,9 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 	tool := mcp.NewTool("stack_create",
 		mcp.WithDescription("Create a feature stack overlaying THIS workspace (the base). A stack instantiates only the services it changes plus the services that call them, each in its own git worktree on a dynamically allocated port; every other service resolves to the base stack. Use this for the request 'I need a stack to work on X in services A and B'. The base workspace must be running — a stack reuses its services. Returns the overlay set with reasons, worktree paths, service links, and any warnings (dirty base checkout, base daemon not running). This workspace may declare lifecycle HOOKS: shell commands devstack runs automatically on this action, which can change state outside this machine (registering callback URLs, provisioning resources). They fire on their own and their output is included below. A hook failure is returned as an error and means the stack exists but is NOT fully provisioned — do not report success; see the hooks tool. Run the hooks tool with action=\"list\" first if you do not know what this workspace fires. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
-			mcp.Description("Short stack name (e.g. 'import-review'). The full stack identity becomes '<base>--<name>'; every stack parameter across these tools takes the short name.")),
+			mcp.Description("Short stack name (for example 'import-review'). The full stack identity becomes '<base>--<name>'; every stack parameter across these tools takes the short name.")),
 		mcp.WithString("repos", mcp.Required(),
-			mcp.Description("Comma-separated exact service names this stack changes (e.g. 'frontend,backend'). Services that call these are pulled into the overlay automatically.")),
+			mcp.Description("Comma-separated exact service names this stack changes (for example 'frontend,backend'). Services that call these are pulled into the overlay automatically.")),
 		mcp.WithString("note",
 			mcp.Description("What this stack is for, in the author's words — a ticket URL, an issue key, a sentence. devstack never derives this: the branch says what changed, the note says why. Shown by stack_list. Optional, and editable later with the CLI: devstack stack note <name> \"...\"")),
 		mcp.WithString("branch",
@@ -298,7 +301,7 @@ func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 
 func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_up",
-		mcp.WithDescription("Bring a feature stack up: mark it (and its base workspace) active, fold its <base>:<service>:<stack> resources into the one host Tilt daemon, then enable and trigger them so its services actually start (registering a resource does not run it). Reports which services it started; they are starting, not started, so confirm with status before drawing conclusions. Mirrors 'devstack stack up'. This is the remedy when another tool reports the stack is not up: status, process_logs, restart, start, stop and configure all refuse an inactive stack rather than falling through to base. There is no per-stack daemon — its services run on their own ports inside the host daemon. Returns the stack's allocated service links and the daemon status. This workspace may declare lifecycle HOOKS: shell commands devstack runs automatically on this action, which can change state outside this machine. They fire on their own and their output is included in the result. A hook failure is returned as an error and means the action succeeded but the stack is NOT fully provisioned — do not report success; retry with the hooks tool (action=\"run\"). Call the hooks tool with action=\"list\" first if you do not know what this workspace fires. "+serviceLinksDesc),
+		mcp.WithDescription("Bring a feature stack up: mark it (and its base workspace) active, fold its <base>:<service>:<stack> resources into the one host Tilt daemon, then enable and trigger them so its services start (registering a resource does not run it). Reports which services it started; they are starting, not started, so confirm with status before drawing conclusions. Mirrors 'devstack stack up'. This is the remedy when another tool reports the stack is not up: status, process_logs, restart, start, stop and configure all refuse an inactive stack rather than falling through to base. There is no per-stack daemon — its services run on their own ports inside the host daemon. Returns the stack's allocated service links and the daemon status. This workspace may declare lifecycle HOOKS: shell commands devstack runs automatically on this action, which can change state outside this machine. They fire on their own and their output is included in the result. A hook failure is returned as an error and means the action succeeded but the stack is NOT fully provisioned — do not report success; retry with the hooks tool (action=\"run\"). Call the hooks tool with action=\"list\" first if you do not know what this workspace fires. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(stackShortNameDesc)),
 		mcp.WithReadOnlyHintAnnotation(false),

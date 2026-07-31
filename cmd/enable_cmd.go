@@ -75,7 +75,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		}
 		// Daemon not running — bring it up automatically, then retry.
 		// bringWorkspaceUp is idempotent and self-resolves the workspace, so this
-		// is a no-op if it's already up by the time we get here. Its hooks are
+		// is a no-op if it is already up by the time we get here. Its hooks are
 		// fired separately: a broken workspace.up hook is not a daemon failure,
 		// and it must not abandon a service start whose daemon is up.
 		fmt.Println("Dev daemon not running — starting it...")
@@ -143,7 +143,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 }
 
 // splitByPresence divides the resolved service set into the ones this daemon
-// target actually runs and the deps that live in the base workspace. A stack
+// target runs and the deps that live in the base workspace. A stack
 // only holds the services it overlays, so its other deps are already running as
 // base resources and this command must not claim to have started them.
 func splitByPresence(wsName, namespace, stackName string, want []string, present map[string]bool) (here, inBase []string) {

@@ -22,10 +22,10 @@ import (
 // per-service telemetry evidence is reported by this tool's status action.
 func registerObservabilityTool(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	tool := mcp.NewTool("observability",
-		mcp.WithDescription("Inspect this workspace's OpenTelemetry (OTEL) setup, check whether telemetry is actually arriving, and change the OTEL configuration.\n"+
+		mcp.WithDescription("Inspect this workspace's OpenTelemetry (OTEL) setup, check whether telemetry is arriving, and change the OTEL configuration.\n"+
 			"Actions:\n"+
-			"- 'status' — reads. Enabled state, backend, whether the collector is running, the OTLP ports, then evidence for every service this workspace declares: which of its variants (base, each feature stack) emitted spans in the last 15 minutes, the env each ran under, the name it reports itself as, a span count and a confidence rating. This is the answer to \"is my service actually sending telemetry?\". It only covers services declared in this workspace's config.\n"+
-			"- 'variants' — reads. The backend's own list of every service variant that reported telemetry in the last 15 minutes, with stack, env and span count, whether or not devstack has a manifest for it. Same data as `devstack otel services`. Use it when 'status' shows a service as silent, to see what is reporting instead — a different reported name, another stack, another workspace's copy.\n"+
+			"- 'status' — reads. Enabled state, backend, whether the collector runs, the OTLP ports, then evidence for every service this workspace declares: which of its variants (base, each feature stack) emitted spans in the last 15 minutes, the env each ran under, the name it reports itself as, a span count and a confidence rating. This is the answer to \"is my service sending telemetry?\". It only covers services declared in this workspace's config.\n"+
+			"- 'variants' — reads. The backend's own list of every service variant that reported telemetry in the last 15 minutes, with stack, env and span count, whether or not devstack has a manifest for it. Same data as `devstack otel services`. Use it when 'status' shows a service as silent, to see what reports instead — a different reported name, another stack, another workspace's copy.\n"+
 			"- 'config_on' — writes config: sets enabled=true, optionally with a backend (CLI: `devstack otel config on`).\n"+
 			"- 'config_off' — writes config: sets enabled=false (CLI: `devstack otel config off`).\n"+
 			"- 'config_set' — writes config: sets the backend and/or a plugin config key such as upstream (CLI: `devstack otel config set`).\n"+
@@ -39,9 +39,9 @@ func registerObservabilityTool(mcpServer *server.MCPServer, ws *workspace.Worksp
 		mcp.WithString("action", mcp.Required(),
 			mcp.Description("One of: status, variants — read only, change nothing; config_on, config_off, config_set — each writes this workspace's manifest and starts or stops no process.")),
 		mcp.WithString("backend",
-			mcp.Description("Backend/plugin to use (e.g. 'openobserve', 'signoz', 'forwarding'). Optional for config_on/config_set; defaults to openobserve — a single lightweight local stack shared by every workspace.")),
+			mcp.Description("Backend/plugin to use (for example 'openobserve', 'signoz', 'forwarding'). Optional for config_on/config_set; defaults to openobserve — a single lightweight local stack shared by every workspace.")),
 		mcp.WithString("key",
-			mcp.Description("Plugin config key to set with 'config_set' (e.g. 'upstream', 'deployment_env'). Requires value.")),
+			mcp.Description("Plugin config key to set with 'config_set' (for example 'upstream', 'deployment_env'). Requires value.")),
 		mcp.WithString("value",
 			mcp.Description("Value for the given config key.")),
 	)
@@ -135,7 +135,7 @@ func observabilityStatus(ws *workspace.Workspace, workspacePath string) string {
 		fmt.Fprintf(&sb, "upstream: %s\n", upstream)
 	}
 
-	// Per-service telemetry evidence — whether signals are actually arriving.
+	// Per-service telemetry evidence — whether signals are arriving.
 	// Check this before inferring anything from missing traces or logs.
 	evidenceBackend, _ := otel.BackendFor(ws)
 	if statuses, err := telemetry.Status(workspacePath, evidenceBackend, telemetry.DefaultWindow); err == nil && len(statuses) > 0 {

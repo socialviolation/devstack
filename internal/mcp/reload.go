@@ -70,7 +70,7 @@ func coreWatchCommand(cmd string) bool {
 }
 
 // coreResolveRunScript expands a package-manager script invocation to the
-// command it actually runs, so classification sees the real command (e.g. a
+// command it runs, so classification sees the real command (for example a
 // "start" script that runs `ng serve`). Anything else is returned unchanged.
 func coreResolveRunScript(cmd, repoPath string) string {
 	fields := strings.Fields(cmd)

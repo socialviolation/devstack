@@ -63,7 +63,7 @@ func runRestart(cmd *cobra.Command, args []string) error {
 	for _, svc := range services {
 		resolved, err := tilt.ResolveService(resourceName(ws.Name, svc, namespace), view)
 		if err != nil {
-			return fmt.Errorf("could not resolve service %q: %w", svc, err)
+			return fmt.Errorf("can not resolve service %q: %w", svc, err)
 		}
 		// Re-enable a disabled service before triggering it.
 		if disabled[resolved] {

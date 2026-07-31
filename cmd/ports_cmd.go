@@ -51,7 +51,7 @@ func init() {
 	portsCmd.AddCommand(portsFreeCmd)
 	portsCmd.AddCommand(portsCheckCmd)
 	portsFreeCmd.Flags().Duration("grace", 2*time.Second, "How long to wait after SIGTERM before SIGKILL")
-	portsFreeCmd.Flags().Bool("quiet", false, "Only report ports that actually had a listener")
+	portsFreeCmd.Flags().Bool("quiet", false, "Only report ports that had a listener")
 }
 
 // privilegedPort is the boundary below which a listener is far more likely to be
@@ -146,7 +146,7 @@ func runPortsFree(cmd *cobra.Command, args []string) error {
 	// hands a caller a port that is still busy, and the bind fails later with
 	// nothing to connect it to.
 	if len(blocked) > 0 {
-		return fmt.Errorf("could not free port(s) %s — another user owns the process that holds them.\nFind the owner with: sudo ss -ltnp | grep -E ':(%s) '", joinPorts(blocked, ", "), joinPorts(blocked, "|"))
+		return fmt.Errorf("can not free port(s) %s — another user owns the process that holds them.\nFind the owner with: sudo ss -ltnp | grep -E ':(%s) '", joinPorts(blocked, ", "), joinPorts(blocked, "|"))
 	}
 	return nil
 }

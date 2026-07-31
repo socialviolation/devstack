@@ -24,7 +24,7 @@ var tunnelCmd = &cobra.Command{
 	Long: `Discover the running services in this workspace and forward their ports over SSH.
 
 Both commands run where you are sitting. What differs is which way the ports move:
-  push   Run it on the machine the services are running on. Exposes those ports
+  push   Run it on the machine the services run on. Exposes those ports
          on the far host (ssh -R), which reaches them at localhost:<port>.
   pull   Run it on the machine you want to reach the services FROM. Brings the
          far host's ports back to this one (ssh -L).
@@ -116,7 +116,7 @@ ones you name to leave the rest up:
 	}
 	tunnelStatusCmd := &cobra.Command{
 		Use:   "status",
-		Short: "HERE: which of this workspace's ports are forwarded, or with --planned, which would be",
+		Short: "HERE: which of this workspace's ports are forwarded, or with --planned, which is",
 		Long: `Show every forward this workspace has up, plus any port still forwarding that
 discovery no longer covers, so a live tunnel is never invisible.
 
@@ -193,7 +193,7 @@ func tunnelContext() (*workspace.Workspace, error) {
 	return ws, nil
 }
 
-// tunnelServices discovers services, or — when the dev daemon isn't running —
+// tunnelServices discovers services, or — when the dev daemon is not running —
 // prints the same gentle hint `devstack status` uses and reports ok=false so the
 // caller can exit cleanly (no raw Tilt error, no usage dump).
 func tunnelServices(ws *workspace.Workspace) (svcs []tunnel.Service, ok bool) {
@@ -290,7 +290,7 @@ func otelUI(ws *workspace.Workspace) (svc tunnel.Service, reason string, ok bool
 	}
 	port := tunnel.PortFromURL(endpoint)
 	if port == 0 {
-		return tunnel.Service{}, fmt.Sprintf("could not read a port from the %s UI address %q", plugin.Name(), endpoint), false
+		return tunnel.Service{}, fmt.Sprintf("can not read a port from the %s UI address %q", plugin.Name(), endpoint), false
 	}
 	return tunnel.Service{Name: "otel-ui (" + plugin.Name() + ")", Port: port, Runtime: "ok"}, "", true
 }
@@ -319,7 +319,7 @@ func resolveRemote(ws *workspace.Workspace, args []string) (host, user string, e
 		}
 	}
 	if user == "" {
-		return "", "", false, fmt.Errorf("could not determine SSH user; pass --user")
+		return "", "", false, fmt.Errorf("can not determine SSH user; pass --user")
 	}
 	if tunnelUserFlag != "" {
 		explicit = true
@@ -327,9 +327,9 @@ func resolveRemote(ws *workspace.Workspace, args []string) (host, user string, e
 	return host, user, explicit, nil
 }
 
-// printSSHGuidance explains, gently, why a tunnel can't be opened and how to fix
-// it. Tunnels rely on key-based SSH — the most common failure is simply that the
-// user's public key isn't on the remote yet.
+// printSSHGuidance explains, gently, why a tunnel cannot be opened and how to fix
+// it. Tunnels rely on key-based SSH — the most common failure is that the
+// user's public key is not on the remote yet.
 func printSSHGuidance(user, host string, cause error) {
 	color.New(color.FgYellow, color.Bold).Printf("Can't open an SSH session to %s@%s.\n", user, host)
 	if cause != nil {
@@ -341,7 +341,7 @@ func printSSHGuidance(user, host string, cause error) {
 	fmt.Printf("  2. Install your key on the remote: %s\n", color.New(color.Bold).Sprintf("ssh-copy-id %s@%s", user, host))
 	fmt.Printf("  3. Re-run:                         %s\n", color.New(color.Bold).Sprintf("devstack tunnel push %s", host))
 	fmt.Println()
-	color.New(color.Faint).Println("  Tip: for a saved SSH config alias, use it as the host (e.g. `devstack tunnel push mybox`).")
+	color.New(color.Faint).Println("  Tip: for a saved SSH config alias, use it as the host (for example `devstack tunnel push mybox`).")
 }
 
 // currentUser returns the current OS username.
@@ -372,7 +372,7 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 	}
 
 	// Push forwards LOCAL ports to the remote, so only forward ports that are
-	// actually serving traffic here — a dead port would just create a broken
+	// serving traffic here — a dead port would just create a broken
 	// forward on the remote.
 	if mode == tunnel.ModePush {
 		serving, idle := tunnel.PartitionServing(svcs)
@@ -395,7 +395,7 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 
 	// Preflight: confirm key-based SSH works before touching any ports. This keeps
 	// failures gentle (one clear message, not a wall of failed forwards) and
-	// teaches how to enable access when keys aren't set up on the remote.
+	// teaches how to enable access when keys are not set up on the remote.
 	if err := tunnel.CheckConnectivity(sshUser, host); err != nil {
 		printSSHGuidance(sshUser, host, err)
 		return nil
@@ -404,7 +404,7 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 	// The remote works — remember it (only if the user named it explicitly).
 	if explicit {
 		if serr := workspace.UpdateTunnelRemote(ws.Name, host, sshUser); serr != nil {
-			fmt.Printf("  warning: could not save remote: %v\n", serr)
+			fmt.Printf("  warning: can not save remote: %v\n", serr)
 		}
 	}
 
@@ -441,7 +441,7 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 			AsBase:   tunnelAsBaseFlag,
 			Otel:     tunnelOtelFlag,
 		}); serr != nil {
-			fmt.Printf("  warning: could not save what was forwarded: %v\n", serr)
+			fmt.Printf("  warning: can not save what was forwarded: %v\n", serr)
 		}
 	}
 	if clashed && mode == tunnel.ModePush && !tunnelReclaimFlag {
@@ -462,7 +462,7 @@ func runTunnelStop(cmd *cobra.Command, args []string) error {
 	if !ok {
 		return nil
 	}
-	// Stop what is actually forwarding, not what happens to be discoverable now —
+	// Stop what is forwarding, not what happens to be discoverable now —
 	// a forward outlives its service, and the observability UI is never a Tilt
 	// resource at all.
 	ports := tunnel.TrackedPorts(ws.Name)

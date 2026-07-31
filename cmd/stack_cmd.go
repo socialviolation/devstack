@@ -438,7 +438,7 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 // runStackUp marks a stack active and folds its services into the one host Tilt
 // daemon: it marks the base workspace active too (a stack only renders inside its
 // base's block), regenerates the host Tiltfile (now including the stack's
-// <base>:<svc>:<stack> resources), and ensures the host daemon is running, so Tilt
+// <base>:<svc>:<stack> resources), and ensures the host daemon runs, so Tilt
 // hot-reloads the new resources. There is no per-stack daemon.
 func runStackUp(cmd *cobra.Command, args []string) error {
 	base, err := resolveWorkspace(viper.GetString("workspace"))
@@ -481,7 +481,7 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := fireHooks(base, rec.Name, config.EventStackUp, started); err != nil {
-		return fmt.Errorf("%w\nStack %q is running but its setup hooks did not finish. Fix the hook, then re-run them:\n  devstack hooks run stack.up --stack %s", err, rec.Name, rec.Name)
+		return fmt.Errorf("%w\nStack %q runs but its setup hooks did not finish. Fix the hook, then re-run them:\n  devstack hooks run stack.up --stack %s", err, rec.Name, rec.Name)
 	}
 	fmt.Printf("\n  devstack stack status %s   ·   devstack service restart <service> --stack %s\n", rec.Name, rec.Name)
 	return nil

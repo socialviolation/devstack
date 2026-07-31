@@ -138,7 +138,7 @@ func stopHostDaemon() error {
 
 	proc, err := os.FindProcess(pid)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not find process %d: %v\n", pid, err)
+		fmt.Fprintf(os.Stderr, "Warning: can not find process %d: %v\n", pid, err)
 	} else if killErr := proc.Kill(); killErr != nil && isProcessAlive(pid) {
 		fmt.Fprintf(os.Stderr, "Warning: failed to kill process %d: %v\n", pid, killErr)
 	}

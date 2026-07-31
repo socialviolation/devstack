@@ -17,7 +17,7 @@ var upCmd = &cobra.Command{
 	Use:   "up",
 	Short: "Start this workspace's services in the dev daemon",
 	Long: `Fold this workspace's services into the dev daemon, starting the daemon as a
-detached background process if it isn't already up.
+detached background process if it is not already up.
 
 One daemon serves the whole machine. It runs every workspace's services, watches
 their source files, and hot-reloads them when code changes. 'devstack service start' also
@@ -55,7 +55,7 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 		return nil, err
 	}
 	if !config.HasWorkspaceManifest(ws.Path) {
-		return nil, fmt.Errorf("no %s in %s — this workspace isn't manifest-based yet", config.WorkspaceManifestFileName, ws.Path)
+		return nil, fmt.Errorf("no %s in %s — this workspace is not manifest-based yet", config.WorkspaceManifestFileName, ws.Path)
 	}
 
 	if err := workspace.SetWorkspaceActive(ws.Name, true); err != nil {
@@ -81,7 +81,7 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 	}
 
 	// 10. Start observability backend — only when the workspace opts in.
-	// We don't assume services are OTEL-instrumented; enable it in the workspace
+	// We do not assume services are OTEL-instrumented; enable it in the workspace
 	// manifest (observability.enabled) to run a collector and ship telemetry.
 	// A feature stack never runs its own collector — it attaches to the base's
 	// (generation points its OTEL endpoint there), and two collectors cannot bind
@@ -151,7 +151,7 @@ func isTiltReachable(url string) bool {
 	return hostdaemon.TiltReachable(url)
 }
 
-// isProcessAlive returns true if a process with the given PID exists and is running.
+// isProcessAlive returns true if a process with the given PID exists and runs.
 func isProcessAlive(pid int) bool {
 	return hostdaemon.ProcessAlive(pid)
 }
