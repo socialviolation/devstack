@@ -12,6 +12,7 @@ import (
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/gitinfo"
+	"github.com/socialviolation/devstack/internal/selfcheck"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -387,6 +388,32 @@ func writePrimeLiveCount(b *strings.Builder, ws *workspace.Workspace) {
 	// on the same page, so the loose phrasing contradicted itself.
 	fmt.Fprintf(b, "  live          %s now, on daemon port %d: %d in base, %d in stacks\n",
 		pluralCopyRunning(base+stacked), workspace.HostTiltPort, base, stacked)
+	writePrimeBuild(b)
+}
+
+// writePrimeBuild names the binary the session is talking to, and says so only
+// when it is not the current one.
+//
+// This is the surface the check exists for. An agent inherits whichever devstack
+// was on the path, and a stale one answers current commands with "unknown
+// command" and serves MCP tool descriptions for tools that were renamed —
+// neither of which names the cause. The briefing is the one place every session
+// reads, so it is the one place worth saying it.
+//
+// It is also where the check refreshes: at most once a day, bounded by a short
+// timeout, and silent on every failure. `devstack --version` reads what this
+// leaves behind rather than paying for its own.
+func writePrimeBuild(b *strings.Builder) {
+	rev := buildRevision()
+	if rev == "" {
+		return
+	}
+	line := selfcheck.Refresh(modulePath(), rev).Describe(modulePath())
+	if line == "" {
+		return
+	}
+	fmt.Fprintf(b, "  build         %s\n", buildVersion())
+	fmt.Fprintf(b, "                %s\n", line)
 }
 
 // writePrimeReload gives the reload verdict for the service in hand rather than

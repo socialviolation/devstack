@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"runtime/debug"
+
+	"github.com/socialviolation/devstack/internal/selfcheck"
 )
 
 // buildVersion identifies the running binary from the build information Go
@@ -21,6 +23,45 @@ func buildVersion() string {
 	v := info.Main.Version
 	if v == "" || v == "(devel)" {
 		return "devel — built outside a module, so no commit is recorded"
+	}
+	return v
+}
+
+// buildRevision is the commit this binary was built from, and the key the update
+// check compares and caches against.
+func buildRevision() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" {
+			return s.Value
+		}
+	}
+	return ""
+}
+
+// modulePath is the import path this binary was built from, so the update check
+// and the install command it prints are derived rather than hardcoded.
+func modulePath() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	return info.Main.Path
+}
+
+// versionLine is what `devstack --version` prints. It reads the cached update
+// result and never the network: this runs during command setup, and no command
+// should wait on a network to say its own name. `devstack prime` is what
+// refreshes the cache, and it runs at the start of every session.
+func versionLine() string {
+	v := buildVersion()
+	if r, ok := selfcheck.Cached(buildRevision()); ok {
+		if line := r.Describe(modulePath()); line != "" {
+			return v + "\n  " + line
+		}
 	}
 	return v
 }
