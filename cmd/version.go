@@ -15,14 +15,17 @@ import (
 // the CLI is noun-first with no aliases — an old binary answers a current
 // command with "unknown command" and names no cause. This is what the answer
 // costs: one call.
+// It returns a bare token and never prose, because the same string is stamped
+// into every generated AGENTS.md and compared back out of it. Explanation
+// belongs in versionLine, which nothing parses.
 func buildVersion() string {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
-		return "unknown — this binary carries no build information"
+		return "unknown"
 	}
 	v := info.Main.Version
 	if v == "" || v == "(devel)" {
-		return "devel — built outside a module, so no commit is recorded"
+		return "devel"
 	}
 	return v
 }

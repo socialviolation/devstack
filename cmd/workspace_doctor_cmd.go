@@ -24,6 +24,27 @@ func init() {
 	workspaceCmd.AddCommand(workspaceDoctorCmd)
 }
 
+// reportGeneratedStaleness names the AGENTS.md files an older devstack wrote,
+// and returns how many. It belongs here as well as in `upgrade` because the
+// files go stale on their own schedule: a repo cloned today carries whatever was
+// committed months ago, with no upgrade involved.
+func reportGeneratedStaleness(wsPath string) int {
+	files, err := scanGenerated(wsPath)
+	if err != nil {
+		return 0
+	}
+	stale := staleGenerated(files, buildVersion())
+	if len(stale) == 0 {
+		return 0
+	}
+	fmt.Printf("generated files: %d of %d written by an older devstack\n", len(stale), len(files))
+	for _, f := range stale {
+		fmt.Printf("- [warn] %s: AGENTS.md %s\n", f.Service, describeStamp(f.Version))
+	}
+	fmt.Println("  regenerate: devstack init --all")
+	return len(stale)
+}
+
 func runWorkspaceDoctor(cmd *cobra.Command, args []string) error {
 	ctx, err := resolveExplainContext(cmd)
 	if err != nil {
@@ -53,9 +74,10 @@ func runWorkspaceDoctor(cmd *cobra.Command, args []string) error {
 	}
 
 	drifted := reportConfigDrift(ctx.WorkspaceRoot.Value)
+	outdated := reportGeneratedStaleness(ctx.WorkspaceRoot.Value)
 
 	if len(graph.Issues) == 0 {
-		if drifted == 0 {
+		if drifted == 0 && outdated == 0 {
 			fmt.Println("status: ok")
 		}
 		return nil
