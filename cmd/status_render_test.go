@@ -98,18 +98,18 @@ func TestOtelSegment(t *testing.T) {
 			name:             "configured but not enabled",
 			pluginConfigured: true,
 			plugin:           "signoz",
-			wantText:         "otel: configured (signoz) but not enabled — devstack otel enable",
+			wantText:         "otel: configured (signoz) but not enabled — devstack otel config on",
 			wantDecided:      true,
 		},
 		{
 			name:             "plugin config without a plugin name",
 			pluginConfigured: true,
-			wantText:         "otel: configured (plugin config) but not enabled — devstack otel enable",
+			wantText:         "otel: configured (plugin config) but not enabled — devstack otel config on",
 			wantDecided:      true,
 		},
 		{
 			name:        "disabled",
-			wantText:    "otel: disabled — devstack otel enable",
+			wantText:    "otel: disabled — devstack otel config on",
 			wantDecided: true,
 		},
 	}
@@ -131,25 +131,57 @@ func TestHostOtelLine(t *testing.T) {
 	if got := hostOtelLine(nil, []string{"navexa"}); got != want {
 		t.Fatalf("enabled line = %q, want %q", got, want)
 	}
-	if got := hostOtelLine(nil, nil); got != "otel: no collector running — devstack otel enable" {
+	if got := hostOtelLine(nil, nil); got != "otel: no collector running — devstack otel config on" {
 		t.Fatalf("empty line = %q", got)
 	}
 }
 
 func TestCondenseSection(t *testing.T) {
 	tests := []struct {
-		running int
-		expand  bool
-		want    bool
+		running  int
+		expand   bool
+		erroring bool
+		want     bool
 	}{
 		{running: 0, expand: false, want: true},
 		{running: 1, expand: false, want: false},
 		{running: 0, expand: true, want: false},
 		{running: 3, expand: true, want: false},
+		// A failing service is the row worth reading. Collapsing its section
+		// answers "the frontend is down" with "nothing is up here" and hides
+		// the reason one keystroke away.
+		{running: 0, expand: false, erroring: true, want: false},
 	}
 	for _, tt := range tests {
-		if got := condenseSection(tt.running, tt.expand); got != tt.want {
-			t.Fatalf("condenseSection(%d, %v) = %v, want %v", tt.running, tt.expand, got, tt.want)
+		if got := condenseSection(tt.running, tt.expand, tt.erroring); got != tt.want {
+			t.Fatalf("condenseSection(%d, %v, erroring=%v) = %v, want %v", tt.running, tt.expand, tt.erroring, got, tt.want)
+		}
+	}
+}
+
+// sectionInFlight is what decides that, so it has to see a failing member — and
+// a member on its way up — through the same status mapping the table uses. A
+// service wedged in `starting` was collapsed behind "none up", a phrase that
+// means the opposite of what was happening.
+func TestSectionInFlightFindsAMemberWorthShowing(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		runtime string
+		want    bool
+	}{
+		{"erroring", "error", true},
+		{"starting", "pending", true},
+		{"stopped", "none", false},
+	} {
+		s := serviceSection{
+			members: []string{"api", "frontend"},
+			resources: map[string]tilt.UIResource{
+				"api":      {Status: tilt.UIResourceStatus{RuntimeStatus: "ok"}},
+				"frontend": {Status: tilt.UIResourceStatus{RuntimeStatus: tc.runtime}},
+			},
+		}
+		if got := sectionInFlight(s); got != tc.want {
+			t.Errorf("sectionInFlight() with a %s member = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }

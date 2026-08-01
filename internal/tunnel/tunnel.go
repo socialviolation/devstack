@@ -404,6 +404,69 @@ func strayForwards(port int) []int {
 	return pids
 }
 
+// RemoteHolder is one process holding a port on the far host.
+type RemoteHolder struct {
+	Port int
+	Info string
+}
+
+// InspectRemote reports what holds each port on the remote host, so a caller can
+// see whose forward it is about to kill. ReclaimRemote cannot tell a stale
+// forward of ours from a live one another stack owns; this is how you find out
+// before you destroy it rather than after.
+func InspectRemote(user, host string, ports []int) ([]RemoteHolder, error) {
+	if len(ports) == 0 {
+		return nil, nil
+	}
+	var b strings.Builder
+	for _, p := range ports {
+		b.WriteString(remoteInspectCommand(p))
+	}
+	cmd := exec.Command(sshBin,
+		"-o", "BatchMode=yes",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ConnectTimeout=8",
+		fmt.Sprintf("%s@%s", user, host),
+		b.String(),
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil && len(out) == 0 {
+		return nil, fmt.Errorf("could not inspect %s: %w", host, err)
+	}
+
+	byPort := map[int]string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		port, info, ok := strings.Cut(strings.TrimRight(line, "\r"), "\t")
+		if !ok {
+			continue
+		}
+		n, cerr := strconv.Atoi(strings.TrimSpace(port))
+		if cerr != nil {
+			continue
+		}
+		if info = strings.TrimSpace(info); info != "" {
+			byPort[n] = info
+		}
+	}
+
+	holders := make([]RemoteHolder, 0, len(ports))
+	for _, p := range ports {
+		holders = append(holders, RemoteHolder{Port: p, Info: byPort[p]})
+	}
+	return holders, nil
+}
+
+// remoteInspectCommand is the shell devstack runs on the far host for one port:
+// it prints the port, a tab, and one line naming what holds it, or nothing.
+//
+// Each tool strips its own header. lsof prints a header, so its branch drops the
+// first line; ss prints a header that the grep already removes, so its branch
+// drops nothing. Stripping one line from the pair discarded the ss branch's only
+// line, and every port then read as free on a host without lsof.
+func remoteInspectCommand(port int) string {
+	return fmt.Sprintf("printf '%d\\t'; { lsof -nP -iTCP:%d -sTCP:LISTEN 2>/dev/null | tail -n +2; ss -ltnp 2>/dev/null | grep ':%d '; } | head -1; echo; ", port, port, port)
+}
+
 // ReclaimRemote frees the given ports on the remote host, killing whatever is
 // bound there so a reverse forward can bind. Best-effort, and indiscriminate:
 // it cannot tell a stale forward of ours from a live one another stack owns, so

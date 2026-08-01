@@ -77,7 +77,7 @@ func captureFaint(t *testing.T) *bytes.Buffer {
 // way a fresh process would start.
 func resetTunnelFlags() {
 	tunnelUserFlag = ""
-	tunnelServicesFlag = ""
+	tunnelServicesFlag = nil
 	tunnelReclaimFlag = false
 	tunnelStacksFlag = false
 	tunnelAsBaseFlag = ""
@@ -105,7 +105,7 @@ func TestForwardRecordsAndRestartRepeatsIt(t *testing.T) {
 	record := stubSSH(t)
 
 	resetTunnelFlags()
-	tunnelServicesFlag = "api"
+	tunnelServicesFlag = []string{"api"}
 	if err := runTunnelForward(tunnel.ModePull, []string{"testhost"}); err != nil {
 		t.Fatalf("pull: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestPushSummarisesWhatItSkipped(t *testing.T) {
 		tunnel.KillPort("navexa", port)
 	}
 	resetTunnelFlags()
-	tunnelServicesFlag = "importer,worker"
+	tunnelServicesFlag = []string{"importer", "worker"}
 	out2 := captureFaint(t)
 	if err := runTunnelForward(tunnel.ModePush, []string{"testhost"}); err != nil {
 		t.Fatalf("filtered push: %v", err)

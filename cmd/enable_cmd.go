@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -10,37 +11,8 @@ import (
 	"github.com/socialviolation/devstack/internal/tilt"
 )
 
-var svcStartCmd = &cobra.Command{
-	Use:   "start [service|group]",
-	Short: "Start a service or group and all its dependencies",
-	Long: `Start a service or group by name, automatically resolving and starting its dependencies first.
-
-devstack reads the dependency graph from the workspace manifest and computes the
-correct startup order. Dependencies are enabled and triggered before the requested
-service, so you never have to think about ordering.
-
-If no service name is given, devstack will auto-detect it from the current directory
-by matching against the service paths in the workspace manifest.
-
-Accepts a service name or group name. Run 'devstack groups' to see available groups.
-
-The dev daemon is started for you if it isn't already running.`,
-	RunE: runEnable,
-}
-
-func init() {
-	rootCmd.AddCommand(svcStartCmd)
-	f := svcStartCmd.Flags().Lookup("group")
-	if f == nil {
-		svcStartCmd.Flags().String("group", "", "Start a named group of services (hidden alias: pass group name as positional arg instead)")
-	}
-	svcStartCmd.Flags().MarkHidden("group")
-	svcStartCmd.Flags().String("stack", "", "Target a feature stack's service instances (<ws>:<svc>:<stack>) instead of base")
-}
-
 func runEnable(cmd *cobra.Command, args []string) error {
 	wsFlag, _ := cmd.Flags().GetString("workspace") // inherited persistent flag
-	groupFlag, _ := cmd.Flags().GetString("group")
 
 	ws, err := resolveWorkspace(wsFlag)
 	if err != nil {
@@ -58,16 +30,12 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Determine the target name: --group flag is a hidden alias for the positional arg
 	targetName := ""
 	if len(args) > 0 {
 		targetName = args[0]
-	} else if groupFlag != "" {
-		targetName = groupFlag
 	}
 
-	// Resolve target to a list of services (service or group)
-	services, err := resolveTarget(wsPath, targetName, cfg)
+	services, err := resolveTargetKind(wsPath, targetName, cfg, targetKindOf(cmd))
 	if err != nil {
 		return err
 	}
@@ -105,16 +73,27 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		if stackName != "" {
 			return fmt.Errorf("dev daemon not reachable on :%d — start the stack first with: devstack stack up %s\n(%w)", tiltPort, stackName, err)
 		}
-		// Daemon not running — bring it up automatically, then retry. runStart is
-		// idempotent and self-resolves the workspace, so this is a no-op if it's
-		// already up by the time we get here.
+		// Daemon not running — bring it up automatically, then retry.
+		// bringWorkspaceUp is idempotent and self-resolves the workspace, so this
+		// is a no-op if it is already up by the time we get here. Its hooks are
+		// fired separately: a broken workspace.up hook is not a daemon failure,
+		// and it must not abandon a service start whose daemon is up.
 		fmt.Println("Dev daemon not running — starting it...")
-		if startErr := runStart(cmd, args); startErr != nil {
-			return fmt.Errorf("failed to auto-start dev daemon: %w", startErr)
+		upWS, startErr := bringWorkspaceUp()
+		var hookErr error
+		if startErr == nil {
+			hookErr = fireHooks(upWS, "", config.EventWorkspaceUp, nil)
+		}
+		fatal, warnings := autoStartOutcome(startErr, hookErr, services)
+		for _, w := range warnings {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+		}
+		if fatal != nil {
+			return fatal
 		}
 		view, err = tiltClient.GetView()
 		if err != nil {
-			return fmt.Errorf("dev daemon started but not reachable yet — retry: devstack start %s\n(%w)", targetName, err)
+			return fmt.Errorf("dev daemon started but not reachable yet — retry: devstack service start %s\n(%w)", targetName, err)
 		}
 	}
 
@@ -128,12 +107,13 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	for _, svc := range toTrigger {
+	here, inBase := splitByPresence(ws.Name, namespace, stackName, toTrigger, present)
+	for _, svc := range inBase {
+		fmt.Printf("  (dep %s runs in base — not started here)\n", svc)
+	}
+
+	for _, svc := range here {
 		rn := resourceName(ws.Name, svc, namespace)
-		if stackName != "" && !present[rn] {
-			fmt.Printf("  (dep %s runs in base — not started here)\n", svc)
-			continue
-		}
 		if disabled[rn] {
 			if out, err := tiltClient.RunCLI("enable", rn); err != nil {
 				if out != "" {
@@ -153,7 +133,47 @@ func runEnable(cmd *cobra.Command, args []string) error {
 			fmt.Print(out)
 		}
 	}
-	fmt.Printf("✓ Started: %s\n", strings.Join(toTrigger, ", "))
+	fmt.Printf("✓ Started: %s\n", strings.Join(here, ", "))
 
-	return nil
+	// Only the services this command triggered get a service.start hook. A dep
+	// that lives in base was deliberately left alone, and firing its hook here
+	// both misreports what happened and fails the whole command when that hook
+	// fails.
+	return fireHooks(ws, stackName, config.EventServiceStart, here)
+}
+
+// splitByPresence divides the resolved service set into the ones this daemon
+// target runs and the deps that live in the base workspace. A stack
+// only holds the services it overlays, so its other deps are already running as
+// base resources and this command must not claim to have started them.
+func splitByPresence(wsName, namespace, stackName string, want []string, present map[string]bool) (here, inBase []string) {
+	for _, svc := range want {
+		if stackName != "" && !present[resourceName(wsName, svc, namespace)] {
+			inBase = append(inBase, svc)
+			continue
+		}
+		here = append(here, svc)
+	}
+	return here, inBase
+}
+
+// autoStartOutcome decides what a failed auto-start means for the service start
+// that triggered it.
+//
+// A daemon that will not come up is fatal: nothing can be triggered. A
+// workspace.up hook that failed is not, because the daemon IS up and the
+// service can start. Reporting the two the same way told the user the daemon
+// had failed when it had not, and abandoned a service start that would have
+// worked.
+func autoStartOutcome(daemonErr, hookErr error, services []string) (error, []string) {
+	if daemonErr != nil {
+		return fmt.Errorf("failed to auto-start dev daemon: %w", daemonErr), nil
+	}
+	if hookErr == nil {
+		return nil, nil
+	}
+	return nil, []string{
+		fmt.Sprintf("the dev daemon is up, but a workspace.up hook failed: %v", hookErr),
+		fmt.Sprintf("%s starts anyway. Fix the hook, then re-run it: devstack hooks run workspace.up", strings.Join(services, ", ")),
+	}
 }

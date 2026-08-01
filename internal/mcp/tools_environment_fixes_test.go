@@ -65,7 +65,7 @@ func TestEnvironmentNamesServicesAndStackShortNames(t *testing.T) {
 	s := newEnvironmentToolWorkspace(t)
 	out := callTool(t, s, "environment", nil)
 
-	for _, want := range []string{"services: api, worker", "default: api", "perf (active"} {
+	for _, want := range []string{"services: api, worker", "default: api", "perf (up"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("environment output must contain %q; got:\n%s", want, out)
 		}

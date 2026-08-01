@@ -113,7 +113,7 @@ func TestClarityEnvironmentScopeMatchesInvestigate(t *testing.T) {
 
 // An agent that finds a stack listed as inactive must learn from the same output
 // what querying it does.
-func TestClarityStacksSummaryDefinesInactive(t *testing.T) {
+func TestClarityStacksSummaryDefinesDown(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeStacksStore(t, "navexa", `[
 	  {"name":"perf","base":"navexa","root":"/x/perf","branch":"perf",
@@ -123,17 +123,17 @@ func TestClarityStacksSummaryDefinesInactive(t *testing.T) {
 
 	got := stacksSummary(&workspace.Workspace{Name: "navexa"})
 	for _, want := range []string{
-		"inactive =",
+		"down =",
 		"error \"not up\" instead of falling through to base",
 		"service_env still reads and writes its worktree config",
 	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("an inactive stack must be defined at the point it is listed: missing %q in %q", want, got)
+			t.Errorf("a stack that is down must be defined at the point it is listed: missing %q in %q", want, got)
 		}
 	}
 }
 
-func TestClarityStacksSummaryOmitsInactiveNoteWhenAllActive(t *testing.T) {
+func TestClarityStacksSummaryOmitsDownNoteWhenAllUp(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeStacksStore(t, "navexa", `[
 	  {"name":"perf","base":"navexa","root":"/x/perf","branch":"perf","active":true,
@@ -142,11 +142,11 @@ func TestClarityStacksSummaryOmitsInactiveNoteWhenAllActive(t *testing.T) {
 	]`)
 
 	got := stacksSummary(&workspace.Workspace{Name: "navexa"})
-	if !strings.Contains(got, "perf (active") {
-		t.Fatalf("fixture must produce an active stack; got %q", got)
+	if !strings.Contains(got, "perf (up") {
+		t.Fatalf("fixture must produce a stack that is up; got %q", got)
 	}
-	if strings.Contains(got, "inactive =") {
-		t.Errorf("no stack is inactive, so the definition must not be printed; got %q", got)
+	if strings.Contains(got, "down =") {
+		t.Errorf("no stack is down, so the definition must not be printed; got %q", got)
 	}
 }
 
@@ -201,7 +201,7 @@ func TestClaritySetNamesRestartNotGenerate(t *testing.T) {
 	if strings.Contains(out, "generate + restart") {
 		t.Errorf("the confirmation must not require an undefined generate step; got %q", out)
 	}
-	for _, want := range []string{"next restart", "devstack restart api", "no separate generate step"} {
+	for _, want := range []string{"next restart", "devstack service restart api", "no separate generate step"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the confirmation must state %q; got %q", want, out)
 		}

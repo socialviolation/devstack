@@ -198,7 +198,9 @@ func stackRunningSummary(running int, stacks []string) string {
 	case len(stacks) == 1:
 		return fmt.Sprintf("%d more in stack %s", running, stacks[0])
 	default:
-		return fmt.Sprintf("%d more across %d stacks", running, len(stacks))
+		// "across N stacks" was read as a count of the workspace's stacks. It
+		// counts only the ones with something running, which is fewer.
+		return fmt.Sprintf("%d more running, in %d stacks — devstack stack list", running, len(stacks))
 	}
 }
 
@@ -218,9 +220,9 @@ func otelSegment(running, enabled, pluginConfigured bool, plugin, ui string, htt
 		if plugin == "" {
 			plugin = "plugin config"
 		}
-		return fmt.Sprintf("otel: configured (%s) but not enabled — devstack otel enable", plugin), true
+		return fmt.Sprintf("otel: configured (%s) but not enabled — devstack otel config on", plugin), true
 	default:
-		return "otel: disabled — devstack otel enable", true
+		return "otel: disabled — devstack otel config on", true
 	}
 }
 
@@ -233,15 +235,37 @@ func hostOtelLine(running, enabled []string) string {
 	case len(enabled) > 0:
 		return "otel: enabled for " + strings.Join(enabled, ", ") + " but collector stopped — devstack otel start"
 	default:
-		return "otel: no collector running — devstack otel enable"
+		return "otel: no collector running — devstack otel config on"
 	}
 }
 
 // condenseSection reports whether a section renders as a single summary line
-// instead of a full table: nothing running, and the user did not ask for
-// everything expanded.
-func condenseSection(running int, expand bool) bool {
-	return running == 0 && !expand
+// instead of a full table: nothing running, nothing in flight, and the user did
+// not ask for everything expanded.
+//
+// A service that is failing or on its way up keeps its section expanded.
+// Collapsing hid the one row worth reading behind a line saying only that
+// nothing was up — which is how "the frontend is down" got answered, and how a
+// service wedged in `starting` disappeared from the default view entirely.
+func condenseSection(running int, expand bool, inFlight bool) bool {
+	return running == 0 && !inFlight && !expand
+}
+
+// sectionInFlight reports whether any member of a section is failing or is on
+// its way up: the states whose row a reader needs and a summary line cannot
+// carry.
+func sectionInFlight(s serviceSection) bool {
+	for _, svc := range s.members {
+		r, ok := s.resources[svc]
+		if !ok {
+			continue
+		}
+		switch serviceStatus(r) {
+		case "erroring", "starting", "building":
+			return true
+		}
+	}
+	return false
 }
 
 // wrapCommaList joins names into comma-separated lines no wider than width,
@@ -270,14 +294,18 @@ func wrapCommaList(names []string, width int) []string {
 	return append(lines, cur)
 }
 
-// printCondensedSection prints a section with nothing running as one line: an
-// idle marker, the section's coloured name, a count or state tag, then the
-// member names wrapped under the first name.
+// printCondensedSection prints a section with nothing running as one line: the
+// marker, the section's coloured name, a count or state tag, then the member
+// names wrapped under the first name.
+//
+// The marker says "none up" and not "idle" because "idle" is a word no other
+// devstack surface uses, so a reader cannot map it onto any state in the legend.
+// One stack read "active" here, "idle" there and "stopped" in the briefing.
 func printCondensedSection(hdrColor *color.Color, label, tag string, names []string) {
-	head := statusIndent + "idle  " + label
+	head := statusIndent + condensedMarker + label
 	suffix := " " + tag + " "
 	faint := color.New(color.Faint)
-	faint.Print(statusIndent + "idle  ")
+	faint.Print(statusIndent + condensedMarker)
 	hdrColor.Print(label)
 	faint.Print(suffix)
 
@@ -299,6 +327,11 @@ const (
 	condenseWidth = 100
 	statusIndent  = "  "
 
+	// condensedMarker labels a section collapsed because none of its members
+	// run. It is not a state a service is in — the members' own states are what
+	// the expanded table shows.
+	condensedMarker = "none up  "
+
 	colService    = 22
 	colServiceMax = 34
 	colGroup      = 12
@@ -306,7 +339,6 @@ const (
 	colBranchMax  = 28
 	colPorts      = 14
 	colEnv        = 7
-	colNeeds      = 36
 
 	ungroupedLabel = "ungrouped"
 )
@@ -334,11 +366,9 @@ type statusRow struct {
 	state      string
 	ports      string
 	env        string
-	needs      []string
 	dir        string
 	rowColor   *color.Color
 	stateColor *color.Color
-	memberSet  map[string]bool
 }
 
 func sectionRank(s serviceSection) int {
@@ -369,7 +399,7 @@ func sortSections(sections []serviceSection) []serviceSection {
 // the ones collapsed to a single idle line, preserving table order.
 func partitionSections(sections []serviceSection, expand bool) (table, condensed []serviceSection) {
 	for _, s := range sortSections(sections) {
-		if condenseSection(s.running, expand) {
+		if condenseSection(s.running, expand, sectionInFlight(s)) {
 			condensed = append(condensed, s)
 		} else {
 			table = append(table, s)
@@ -383,10 +413,6 @@ func partitionSections(sections []serviceSection, expand bool) (table, condensed
 func assembleRows(sections []serviceSection) []statusRow {
 	var rows []statusRow
 	for _, s := range sections {
-		memberSet := make(map[string]bool, len(s.members))
-		for _, m := range s.members {
-			memberSet[m] = true
-		}
 		for _, svc := range orderGroupServices(s.members, s.deps) {
 			state, stateClr := svcStatusColor(svc, s.resources)
 			rows = append(rows, statusRow{
@@ -395,11 +421,9 @@ func assembleRows(sections []serviceSection) []statusRow {
 				state:      state,
 				ports:      svcPortsRaw(svc, s.resources),
 				env:        s.envs[svc],
-				needs:      s.deps[svc],
 				dir:        s.dirs[svc],
 				rowColor:   s.color,
 				stateColor: stateClr,
-				memberSet:  memberSet,
 			})
 		}
 	}
@@ -420,7 +444,7 @@ func countRunning(members []string, resources map[string]tilt.UIResource) int {
 // renderStatusTable prints every row of the workspace under one header row,
 // colouring each row by the group it belongs to while the STATE cell keeps its
 // own state colour. Source paths only print when the caller asked for them.
-func renderStatusTable(rows []statusRow, svcGroupColor map[string]*color.Color, showDirs bool) {
+func renderStatusTable(rows []statusRow, showDirs bool) {
 	branches := readBranchLabels(rows)
 
 	svcWidth, groupWidth, branchWidth := colService, colGroup, len("BRANCH")
@@ -440,15 +464,11 @@ func renderStatusTable(rows []statusRow, svcGroupColor map[string]*color.Color, 
 	if svcWidth > colServiceMax {
 		svcWidth = colServiceMax
 	}
-	needsIndent := strings.Repeat(" ", len(statusIndent)+svcWidth+2+groupWidth+2+colState+2+branchWidth+2+colPorts+2+colEnv+2)
-
 	faint := color.New(color.Faint)
-	faint.Printf("%s%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %s\n", statusIndent,
-		svcWidth, "SERVICE", groupWidth, "GROUP", colState, "STATE", branchWidth, "BRANCH", colPorts, "PORTS", colEnv, "ENV", "NEEDS")
+	faint.Printf("%s%-*s  %-*s  %-*s  %-*s  %-*s  %s\n", statusIndent,
+		svcWidth, "SERVICE", groupWidth, "GROUP", colState, "STATE", branchWidth, "BRANCH", colPorts, "PORTS", "ENV")
 
 	for _, r := range rows {
-		hasNeeds := len(r.needs) > 0
-
 		fmt.Print(statusIndent)
 		r.rowColor.Printf("%-*s", svcWidth, fitCell(r.service, svcWidth))
 		fmt.Print("  ")
@@ -458,21 +478,12 @@ func renderStatusTable(rows []statusRow, svcGroupColor map[string]*color.Color, 
 		fmt.Print("  ")
 		faint.Printf("%-*s", branchWidth, fitCell(branches[r.dir], branchWidth))
 		fmt.Print("  ")
-		if hasNeeds || r.env != "" {
+		if r.env != "" {
 			printPorts(r.ports, colPorts)
-		} else {
-			printPorts(r.ports, 0)
-		}
-
-		switch {
-		case hasNeeds:
-			fmt.Print("  ")
-			faint.Printf("%-*s", colEnv, r.env)
-			fmt.Print("  ")
-			printNeeds(r.needs, r.memberSet, svcGroupColor, needsIndent)
-		case r.env != "":
 			fmt.Print("  ")
 			faint.Print(r.env)
+		} else {
+			printPorts(r.ports, 0)
 		}
 		fmt.Println()
 
@@ -486,14 +497,18 @@ func renderStatusTable(rows []statusRow, svcGroupColor map[string]*color.Color, 
 // where a branch label carries one: uncommitted work is the part of the label
 // that changes what you do next.
 func fitCell(v string, width int) string {
-	if len(v) <= width {
+	r := []rune(v)
+	if len(r) <= width {
 		return v
 	}
 	suffix := ".."
 	if strings.HasSuffix(v, "*") {
 		suffix = "..*"
 	}
-	return string([]rune(v)[:width-len(suffix)]) + suffix
+	if width <= len(suffix) {
+		return string(r[:max(width, 0)])
+	}
+	return string(r[:width-len(suffix)]) + suffix
 }
 
 // readBranchLabels reports the checkout label for each row's source directory,
@@ -512,36 +527,6 @@ func readBranchLabels(rows []statusRow) map[string]string {
 	return labels
 }
 
-// printNeeds prints a service's dependencies, wrapping onto continuation lines
-// aligned under the NEEDS column.
-func printNeeds(svcDeps []string, memberSet map[string]bool, svcGroupColor map[string]*color.Color, contIndent string) {
-	names := append([]string(nil), svcDeps...)
-	sort.Strings(names)
-
-	faint := color.New(color.Faint)
-	col, first := 0, true
-	for _, dep := range names {
-		switch {
-		case first:
-		case col+2+len(dep) > colNeeds:
-			faint.Print(",")
-			fmt.Println()
-			fmt.Print(contIndent)
-			col, first = 0, true
-		default:
-			faint.Print(", ")
-			col += 2
-		}
-		if c, ok := svcGroupColor[dep]; ok && !memberSet[dep] {
-			c.Print(dep)
-		} else {
-			faint.Print(dep)
-		}
-		col += len(dep)
-		first = false
-	}
-}
-
 // runStatusAll shows a summary table of all registered workspaces.
 func runStatusAll() error {
 	workspaces, err := workspace.All()
@@ -550,7 +535,7 @@ func runStatusAll() error {
 	}
 
 	if len(workspaces) == 0 {
-		fmt.Println("No workspaces registered. Run: devstack register")
+		fmt.Println("No workspaces registered. Run: devstack workspace add")
 		return nil
 	}
 
@@ -606,22 +591,22 @@ func runStatusAll() error {
 
 			prefix := w.Name + ":"
 			total := 0
-			active := 0
+			running := 0
 			for _, res := range view.UiResources {
 				if !strings.HasPrefix(res.Metadata.Name, prefix) {
 					continue
 				}
 				total++
 				if res.Status.RuntimeStatus == "ok" {
-					active++
+					running++
 				}
 			}
 			if total == 0 {
-				r.status = "inactive"
+				r.status = "down"
 				r.services = "0 services"
 			} else {
 				r.status = "running"
-				r.services = fmt.Sprintf("%d services (%d active)", total, active)
+				r.services = fmt.Sprintf("%d services (%d running)", total, running)
 			}
 			results[idx] = r
 		}(i, ws)

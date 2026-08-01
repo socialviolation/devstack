@@ -78,7 +78,7 @@ func TestBuildAgentInstructionsContentSanity(t *testing.T) {
 	if !strings.Contains(block, "<workspace>:<service>") {
 		t.Fatalf("missing instance-naming guidance:\n%s", block)
 	}
-	if !strings.Contains(block, "After you edit code") || !strings.Contains(block, "devstack restart") {
+	if !strings.Contains(block, "After you edit code") || !strings.Contains(block, "devstack service restart") {
 		t.Fatalf("missing hot-reload/restart guidance:\n%s", block)
 	}
 	if strings.Contains(block, "devstack up") {
@@ -120,8 +120,8 @@ func TestWriteAIInstructionPointersAppendsAndIsIdempotent(t *testing.T) {
 		"A service can have more than one running copy.",
 		"Services are not all running by default.",
 		"devstack status",
-		"devstack start api",
-		"devstack restart api",
+		"devstack service start api",
+		"devstack service restart api",
 		"devstack stack list",
 		"AGENTS.md",
 	} {
@@ -381,7 +381,7 @@ func TestRunInitAllRefreshesStaleMCPJson(t *testing.T) {
 	writeFile(t, mcpFile, staleMCPJson)
 
 	t.Chdir(baseRoot)
-	if err := runInitAll(); err != nil {
+	if err := runInitAll(false); err != nil {
 		t.Fatalf("runInitAll: %v", err)
 	}
 
@@ -394,7 +394,7 @@ func TestRunInitRefreshRefreshesStaleMCPJson(t *testing.T) {
 	writeFile(t, mcpFile, staleMCPJson)
 
 	t.Chdir(baseServiceDir)
-	if err := runInitRefresh(&cobra.Command{}); err != nil {
+	if err := runInitRefresh(&cobra.Command{}, false); err != nil {
 		t.Fatalf("runInitRefresh: %v", err)
 	}
 

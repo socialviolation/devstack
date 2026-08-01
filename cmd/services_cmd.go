@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/gitinfo"
 	"github.com/socialviolation/devstack/internal/infra"
 	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/stack"
@@ -27,16 +29,22 @@ dependencies.
 If run from outside any registered workspace, shows a summary table of all
 workspaces and their daemon status instead.
 
-Groups and feature stacks with nothing running collapse to a single line.
-Pass --all to table every group and stack, and to show each service's source path.
+Groups and feature stacks with nothing running collapse to a single line, unless
+one of their services is erroring, starting or building. Pass --all to table
+every group and stack, and to show each service's source path.
 
-Service states:
+A stack is up or down: up means its services are registered in the daemon, not
+that they run. Each copy has its own state below.
+
+Copy states:
   running   — process is up and healthy
-  starting  — process is coming up
+  starting  — process starts
   building  — the daemon is building/updating the service
   stopped   — service is registered but not currently running
   erroring  — the service or its build failed (check logs)
   disabled  — service has been explicitly stopped
+  down      — the copy is not registered at all, because its stack is down
+              (run: devstack stack up <name>)
   unknown   — daemon is not reachable (run: devstack workspace up)`,
 	RunE: runStatus,
 }
@@ -75,7 +83,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 // runStackStatus shows a feature stack's services as they run in the one host
 // daemon: it reads the host view and filters to the stack's
 // <base>:<service>:<stack> resources, printing them de-namespaced. A stack is up
-// only when the host daemon is running and the stack is active — otherwise it
+// only when the host daemon runs and the stack is active — otherwise it
 // prints the same "not up" guidance the other --stack commands give, without
 // dialing a dead port.
 func runStackStatus(base *workspace.Workspace, rec *stack.Record) error {
@@ -248,6 +256,8 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 		return nil
 	}
 
+	printServiceOrientation(ws, rw, view)
+
 	// Sorted group names
 	groupNames := make([]string, 0, len(cfg.Groups))
 	for g := range cfg.Groups {
@@ -318,7 +328,7 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 
 	table, condensed := partitionSections(sections, expand)
 	if rows := assembleRows(table); len(rows) > 0 {
-		renderStatusTable(rows, svcGroupColor, expand)
+		renderStatusTable(rows, expand)
 	}
 	if len(condensed) > 0 {
 		fmt.Println()
@@ -329,9 +339,9 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 	fmt.Println()
 
 	color.New(color.Faint).Printf("  within a group, top-to-bottom = startup order   ·   blank ENV = no env\n")
-	color.New(color.Faint).Printf("  devstack start <service>   ·   devstack start --group=<group>\n")
+	color.New(color.Faint).Printf("  devstack service start <service>   ·   devstack group start <group>\n")
 	color.New(color.Faint).Printf("  devstack stack up <name>   ·   devstack stack config <svc> --stack <name>\n")
-	color.New(color.Faint).Printf("  idle groups are condensed   ·   devstack status --all shows every service and its source path\n")
+	color.New(color.Faint).Printf("  groups with nothing running, starting, building or erroring are condensed   ·   devstack status --all shows every one\n")
 
 	return nil
 }
@@ -385,7 +395,7 @@ func stackSections(ws *workspace.Workspace, view *tilt.TiltView, baseDeps map[st
 		stackRunning := countRunning(names, resourceMap)
 		tag := fmt.Sprintf("[%d/%d]", stackRunning, len(names))
 		if !rec.Active {
-			tag += " inactive"
+			tag += " down"
 		}
 
 		// A stack runs its own worktree of each service, so its rows must report
@@ -481,4 +491,165 @@ func printPorts(raw string, width int) {
 	} else {
 		fmt.Print(padded)
 	}
+}
+
+// serviceOrientation is one stack that runs its own copy of the service you are
+// standing in.
+type serviceOrientation struct {
+	stack  string
+	state  string
+	port   string
+	branch string
+	note   string
+	here   bool
+}
+
+// printServiceOrientation answers "where am I and what else is in flight on this
+// service" before the workspace table answers "what runs everywhere".
+//
+// An agent opening a session in a service repo needs the landscape for THAT
+// service: which feature stacks run their own copy of it, what each one is for,
+// and whether the checkout it is looking at is base or one of them. The
+// workspace table lists every service flat, which does not answer any of that.
+// Nothing prints when the working directory is not inside a service.
+func printServiceOrientation(ws *workspace.Workspace, rw *config.ResolvedWorkspace, view *tilt.TiltView) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	identity, err := config.ResolveIdentity(cwd)
+	if err != nil || identity.ServiceName == "" {
+		return
+	}
+	service := identity.ServiceName
+
+	hereStack := ""
+	if _, rec, derr := stack.DetectFromCwd(); derr == nil && rec != nil {
+		hereStack = rec.Name
+	}
+
+	recs, err := stack.LoadStore(ws.Name)
+	if err != nil {
+		return
+	}
+
+	var rows []serviceOrientation
+	for _, rec := range recs {
+		if !containsString(rec.Overlay, service) {
+			continue
+		}
+		row := serviceOrientation{
+			stack:  rec.Name,
+			state:  "down",
+			port:   "-",
+			branch: rec.Branch,
+			note:   rec.Note,
+			here:   rec.Name == hereStack,
+		}
+		if p, ok := rec.Ports[stack.QualifyPortKey(service, "http")]; ok {
+			row.port = fmt.Sprintf(":%d", p)
+		}
+		if rec.Active && view != nil {
+			if r, ok := hostResourceMap(view.UiResources, ws.Name, rec.Name)[service]; ok {
+				row.state = serviceStatus(r)
+			}
+		}
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].stack < rows[j].stack })
+
+	faint := color.New(color.Faint)
+	where := "base"
+	if hereStack != "" {
+		where = "stack " + hereStack
+	}
+	repoHere := ""
+	if svc, ok := rw.Services[service]; ok {
+		repoHere = svc.RepoPath
+	}
+	if hereStack != "" {
+		if _, rec, derr := stack.DetectFromCwd(); derr == nil && rec != nil {
+			if wt, ok := rec.Worktrees[service]; ok {
+				repoHere = wt
+			}
+		}
+	}
+	branchHere := ""
+	if repoHere != "" {
+		if info := gitinfo.ReadAll(map[string]string{repoHere: repoHere})[repoHere]; info.Label() != "" {
+			branchHere = "  ·  " + truncateCell(info.Label(), 42)
+		}
+	}
+	fmt.Printf("  %s  %s%s\n",
+		faint.Sprint("you are in"),
+		color.New(color.Bold).Sprintf("%s  ·  %s", service, where),
+		faint.Sprint(branchHere))
+
+	if len(rows) == 0 {
+		faint.Printf("%sno feature stack runs %s — start one: devstack stack create <name> --repos %s\n\n", orientIndent, service, service)
+		return
+	}
+
+	faint.Printf("%s%d feature stack(s) run their own %s:\n", orientIndent, len(rows), service)
+	for _, r := range rows {
+		marker := " "
+		if r.here {
+			marker = "▸"
+		}
+		stateColor := color.New(color.Faint)
+		if r.state == "running" {
+			stateColor = color.New(color.FgGreen)
+		}
+		fmt.Printf("%s%s %-12s ", orientIndent, marker, r.stack)
+		stateColor.Printf("%-9s", r.state)
+		fmt.Printf("%-8s ", r.port)
+		faint.Printf("%-28s", truncateCell(r.branch, 28))
+		if r.note != "" {
+			fmt.Printf("  %s", firstLine(r.note, colNote))
+		}
+		fmt.Println()
+	}
+	faint.Printf("%s▸ = the checkout you are in · a stack is worked in its own worktree: devstack stack list\n", orientIndent)
+	fmt.Println()
+}
+
+func containsString(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
+// orientIndent aligns the orientation rows under the "you are in" label.
+const orientIndent = "              "
+
+// colNote bounds a stack note in the orientation block. A note is free prose and
+// routinely a paragraph; the first line of it is the part that identifies the
+// feature, and the rest belongs in `devstack stack list`.
+const colNote = 58
+
+// firstLine returns the note's opening line, clipped to n. Notes carry sentences
+// of caveat after the headline, which would otherwise wrap the table into noise.
+func firstLine(s string, n int) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(clipRunes(strings.TrimSpace(s), n))
+}
+
+// clipRunes shortens s to n printed characters. It counts runes, because
+// comparing len(s) in bytes and then slicing []rune panics on any string that
+// is longer in bytes than in runes — which is every non-ASCII string. A stack
+// note or a branch name with an accent in it crashed the command printing it.
+func clipRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n <= 1 {
+		return string(r[:max(n, 0)])
+	}
+	return string(r[:n-1]) + "…"
 }

@@ -22,25 +22,26 @@ import (
 // per-service telemetry evidence is reported by this tool's status action.
 func registerObservabilityTool(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	tool := mcp.NewTool("observability",
-		mcp.WithDescription("Inspect this workspace's OpenTelemetry (OTEL) setup, check whether telemetry is actually arriving, and change the OTEL configuration.\n"+
+		mcp.WithDescription("Inspect this workspace's OpenTelemetry (OTEL) setup, check whether telemetry is arriving, and change the OTEL configuration.\n"+
 			"Actions:\n"+
-			"- 'status' — reads. Enabled state, backend, whether the collector is running, the OTLP ports, then evidence for every service this workspace declares: which of its variants (base, each feature stack) emitted spans in the last 15 minutes, the env each ran under, the name it reports itself as, a span count and a confidence rating. This is the answer to \"is my service actually sending telemetry?\". It only covers services declared in this workspace's config.\n"+
-			"- 'variants' — reads. The backend's own list of every service variant that reported telemetry in the last 15 minutes, with stack, env and span count, whether or not devstack has a manifest for it. Same data as `devstack otel services`. Use it when 'status' shows a service as silent, to see what is reporting instead — a different reported name, another stack, another workspace's copy.\n"+
-			"- 'enable' — writes config: sets enabled=true, optionally with a backend.\n"+
-			"- 'disable' — writes config: sets enabled=false.\n"+
-			"- 'configure' — writes config: sets the backend and/or a plugin config key such as upstream.\n"+
-			"Enabling starts nothing now and grants no new tools now. 'enable' only writes config. The collector starts on the next `devstack otel start` or `devstack workspace up`. The trace-query tool (investigate) is registered only when observability is enabled and the registration happens at MCP server startup, so it will not appear in this session — the MCP server has to be restarted. Sequence: enable, start the collector, restart the MCP server, then query traces.\n"+
+			"- 'status' — reads. Enabled state, backend, whether the collector runs, the OTLP ports, then evidence for every service this workspace declares: which of its variants (base, each feature stack) emitted spans in the last 15 minutes, the env each ran under, the name it reports itself as, a span count and a confidence rating. This is the answer to \"is my service sending telemetry?\". It only covers services declared in this workspace's config.\n"+
+			"- 'variants' — reads. The backend's own list of every service variant that reported telemetry in the last 15 minutes, with stack, env and span count, whether or not devstack has a manifest for it. Same data as `devstack otel services`. Use it when 'status' shows a service as silent, to see what reports instead — a different reported name, another stack, another workspace's copy.\n"+
+			"- 'config_on' — writes config: sets enabled=true, optionally with a backend (CLI: `devstack otel config on`).\n"+
+			"- 'config_off' — writes config: sets enabled=false (CLI: `devstack otel config off`).\n"+
+			"- 'config_set' — writes config: sets the backend and/or a plugin config key such as upstream (CLI: `devstack otel config set`).\n"+
+			"The three config_* actions write this workspace's manifest and nothing else — they start no process and stop none. Running and killing the collector is `devstack otel start` / `devstack otel stop` in a shell; there is no MCP action for it.\n"+
+			"'config_on' also grants no new tools now. The collector starts on the next `devstack otel start` or `devstack workspace up`. The trace-query tool (investigate) is registered only when observability is enabled and the registration happens at MCP server startup, so it will not appear in this session — the MCP server has to be restarted. Sequence: config_on, start the collector, restart the MCP server, then query traces.\n"+
 			"While observability is disabled no collector runs and no OTEL export env is pushed down to services."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(true),
 		mcp.WithString("action", mcp.Required(),
-			mcp.Description("One of: status, variants — read only, change nothing; enable, disable, configure — each writes this workspace's manifest.")),
+			mcp.Description("One of: status, variants — read only, change nothing; config_on, config_off, config_set — each writes this workspace's manifest and starts or stops no process.")),
 		mcp.WithString("backend",
-			mcp.Description("Backend/plugin to use (e.g. 'openobserve', 'signoz', 'forwarding'). Optional for enable/configure; defaults to openobserve — a single lightweight local stack shared by every workspace.")),
+			mcp.Description("Backend/plugin to use (for example 'openobserve', 'signoz', 'forwarding'). Optional for config_on/config_set; defaults to openobserve — a single lightweight local stack shared by every workspace.")),
 		mcp.WithString("key",
-			mcp.Description("Plugin config key to set with 'configure' (e.g. 'upstream', 'deployment_env'). Requires value.")),
+			mcp.Description("Plugin config key to set with 'config_set' (for example 'upstream', 'deployment_env'). Requires value.")),
 		mcp.WithString("value",
 			mcp.Description("Value for the given config key.")),
 	)
@@ -61,7 +62,7 @@ func registerObservabilityTool(mcpServer *server.MCPServer, ws *workspace.Worksp
 		case "variants":
 			return mcp.NewToolResultText(observabilityVariants(ws)), nil
 
-		case "enable":
+		case "config_on":
 			if err := config.SetObservabilityEnabled(workspacePath, true); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -70,17 +71,17 @@ func registerObservabilityTool(mcpServer *server.MCPServer, ws *workspace.Worksp
 					return mcp.NewToolResultError(err.Error()), nil
 				}
 			}
-			return mcp.NewToolResultText("Observability enabled. Run `devstack otel start` (or restart the workspace) to start the collector.\n\n" + observabilityStatus(ws, workspacePath)), nil
+			return mcp.NewToolResultText("Observability turned on in config. Nothing is running yet — run `devstack otel start` (or restart the workspace) to start the collector.\n\n" + observabilityStatus(ws, workspacePath)), nil
 
-		case "disable":
+		case "config_off":
 			if err := config.SetObservabilityEnabled(workspacePath, false); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			return mcp.NewToolResultText("Observability disabled. No collector will start on the next `workspace up`.\n\n" + observabilityStatus(ws, workspacePath)), nil
+			return mcp.NewToolResultText("Observability turned off in config. No collector will start on the next `workspace up`; one running now keeps running until `devstack otel stop`.\n\n" + observabilityStatus(ws, workspacePath)), nil
 
-		case "configure":
+		case "config_set":
 			if backend == "" && key == "" {
-				return mcp.NewToolResultError("configure needs a backend and/or a key=value plugin config"), nil
+				return mcp.NewToolResultError("config_set needs a backend and/or a key=value plugin config"), nil
 			}
 			if backend != "" {
 				if err := config.SetObservabilityBackend(workspacePath, backend); err != nil {
@@ -100,10 +101,10 @@ func registerObservabilityTool(mcpServer *server.MCPServer, ws *workspace.Worksp
 					return mcp.NewToolResultError(err.Error()), nil
 				}
 			}
-			return mcp.NewToolResultText("Observability configured.\n\n" + observabilityStatus(ws, workspacePath)), nil
+			return mcp.NewToolResultText("Observability configured. A running collector keeps its old settings until `devstack otel stop` then `devstack otel start`.\n\n" + observabilityStatus(ws, workspacePath)), nil
 
 		default:
-			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — use status, variants, enable, disable, or configure", action)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — use status, variants, config_on, config_off, or config_set", action)), nil
 		}
 	})
 }
@@ -134,7 +135,7 @@ func observabilityStatus(ws *workspace.Workspace, workspacePath string) string {
 		fmt.Fprintf(&sb, "upstream: %s\n", upstream)
 	}
 
-	// Per-service telemetry evidence — whether signals are actually arriving.
+	// Per-service telemetry evidence — whether signals are arriving.
 	// Check this before inferring anything from missing traces or logs.
 	evidenceBackend, _ := otel.BackendFor(ws)
 	if statuses, err := telemetry.Status(workspacePath, evidenceBackend, telemetry.DefaultWindow); err == nil && len(statuses) > 0 {

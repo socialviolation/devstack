@@ -36,6 +36,7 @@ type WorkspaceManifest struct {
 	Calls         map[string][]string             `yaml:"calls,omitempty"`
 	StartsAfter   map[string][]string             `yaml:"startsAfter,omitempty"`
 	Environments  map[string]WorkspaceEnvironment `yaml:"environments,omitempty"`
+	Hooks         []Hook                          `yaml:"hooks,omitempty"`
 }
 
 // ResourceDeps returns the effective startup ordering for svc: the deduped,
@@ -135,7 +136,14 @@ type WorkspaceManifestObservabilityDefaults struct {
 // devstack versions may still carry type/observability keys under an
 // environment; they are ignored.
 type WorkspaceEnvironment struct {
-	Values map[string]string `yaml:"values,omitempty"`
+	// Description says what this environment is for and what makes it
+	// different from the others, in the author's words. A name and a list of
+	// keys say what an environment sets; only this says why you would select
+	// it, or why selecting it is dangerous. devstack never derives it, and it
+	// travels with the definition rather than sitting in a YAML comment that
+	// nothing reads.
+	Description string            `yaml:"description,omitempty"`
+	Values      map[string]string `yaml:"values,omitempty"`
 }
 
 type ServiceManifest struct {
@@ -147,6 +155,7 @@ type ServiceManifest struct {
 	Config    ServiceConfig          `yaml:"config,omitempty"`
 	Links     []ServiceLink          `yaml:"links,omitempty"`
 	Telemetry ServiceTelemetry       `yaml:"telemetry,omitempty"`
+	Hooks     []Hook                 `yaml:"hooks,omitempty"`
 	Dev       map[string]any         `yaml:"dev,omitempty"`
 }
 
@@ -192,9 +201,91 @@ type ServiceRun struct {
 }
 
 // ServicePrep is a one-shot command run before the long-running service command
-// (e.g. freeing a port or a build step).
+// (e.g. a build step).
 type ServicePrep struct {
 	Command string `yaml:"command,omitempty"`
+	// FreePorts kills whatever still listens on this instance's own ports
+	// before it starts, replacing the hand-written `fuser -k <port>/tcp` every
+	// service used to carry. Empty means off; "all" (or the bool true) means
+	// every port key in the manifest; otherwise it names port keys.
+	//
+	// An instance may only free the ports IT resolved to, never another
+	// instance's — a stack owns its allocated ports from create to delete, and
+	// base owns the ports it pins. That is what makes this safe where a copied
+	// literal port was not: a stack's copy of a hardcoded base port would kill
+	// base on every start.
+	FreePorts FreePortsSpec `yaml:"freePorts,omitempty"`
+}
+
+// FreePortsSpec accepts `freePorts: true`, `freePorts: all`, or an explicit list
+// of port keys, so the common case stays a single word.
+type FreePortsSpec struct {
+	All  bool
+	Keys []string
+}
+
+func (f *FreePortsSpec) UnmarshalYAML(value *yaml.Node) error {
+	var b bool
+	if value.Decode(&b) == nil {
+		f.All = b
+		return nil
+	}
+	var s string
+	if value.Decode(&s) == nil {
+		if s = strings.TrimSpace(s); s == "all" {
+			f.All = true
+			return nil
+		} else if s != "" {
+			f.Keys = []string{s}
+			return nil
+		}
+		return nil
+	}
+	var keys []string
+	if err := value.Decode(&keys); err != nil {
+		return fmt.Errorf("runtime.prep.freePorts must be true, \"all\", or a list of port keys: %w", err)
+	}
+	f.Keys = keys
+	return nil
+}
+
+func (f FreePortsSpec) MarshalYAML() (any, error) {
+	if f.All {
+		return true, nil
+	}
+	if len(f.Keys) == 0 {
+		return nil, nil
+	}
+	return f.Keys, nil
+}
+
+// Enabled reports whether the service asked for any port freeing.
+func (f FreePortsSpec) Enabled() bool { return f.All || len(f.Keys) > 0 }
+
+// Resolve returns the ports to free for one instance, given the ports that
+// instance actually resolved to. Unknown keys are an error rather than a
+// silently skipped no-op: a typo would look like it worked.
+func (f FreePortsSpec) Resolve(service string, instancePorts map[string]int) ([]int, error) {
+	if !f.Enabled() {
+		return nil, nil
+	}
+	keys := f.Keys
+	if f.All {
+		keys = make([]string, 0, len(instancePorts))
+		for k := range instancePorts {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+	}
+	out := make([]int, 0, len(keys))
+	for _, k := range keys {
+		port, ok := instancePorts[k]
+		if !ok {
+			return nil, fmt.Errorf("service %q: runtime.prep.freePorts names port key %q, which it has no port for", service, k)
+		}
+		out = append(out, port)
+	}
+	return out, nil
 }
 
 type ServiceRestart struct {
@@ -336,7 +427,7 @@ func (m *WorkspaceManifest) Validate() error {
 	if mode == RepoDiscoveryModeScan && len(m.Workspace.RepoDiscovery.Roots) == 0 {
 		return errors.New("workspace.repoDiscovery.roots is required for scan mode")
 	}
-	return nil
+	return validateHooks(m.Hooks, WorkspaceManifestFileName, true)
 }
 
 func LoadServiceManifest(repoPath string) (*ServiceManifest, error) {
@@ -369,7 +460,7 @@ func (m *ServiceManifest) Validate() error {
 	if strings.TrimSpace(m.Runtime.Run.Command) == "" {
 		return errors.New("runtime.run.command is required")
 	}
-	return nil
+	return validateHooks(m.Hooks, ServiceManifestFileName, false)
 }
 
 func ResolveWorkspace(workspacePath string) (*ResolvedWorkspace, error) {

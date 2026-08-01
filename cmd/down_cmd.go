@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/infra"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
@@ -45,6 +46,8 @@ func runDown(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	fireTeardownHooks(ws, "", config.EventWorkspaceDown, nil)
 
 	deactivated, err := stack.DeactivateAll(ws.Name)
 	if err != nil {
@@ -135,7 +138,7 @@ func stopHostDaemon() error {
 
 	proc, err := os.FindProcess(pid)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not find process %d: %v\n", pid, err)
+		fmt.Fprintf(os.Stderr, "Warning: can not find process %d: %v\n", pid, err)
 	} else if killErr := proc.Kill(); killErr != nil && isProcessAlive(pid) {
 		fmt.Fprintf(os.Stderr, "Warning: failed to kill process %d: %v\n", pid, killErr)
 	}

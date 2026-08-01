@@ -104,11 +104,17 @@ func processAlive(pid int) bool {
 	return err == nil
 }
 
+// portListening reports whether anything holds the port. Both loopback families
+// are probed: a server bound only to ::1 (Vite's default) is invisible to a
+// 127.0.0.1 dial, which made a live service read as "not serving" and let the
+// allocator hand out a port that was already taken.
 func portListening(port int) bool {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 250*time.Millisecond)
-	if err != nil {
-		return false
+	for _, host := range []string{"127.0.0.1", "[::1]"} {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), 250*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return true
+		}
 	}
-	_ = conn.Close()
-	return true
+	return false
 }

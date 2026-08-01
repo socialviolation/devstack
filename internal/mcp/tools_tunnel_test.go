@@ -106,7 +106,7 @@ func TestMCPTunnelStopHonoursTheServiceFilter(t *testing.T) {
 	trackForward(t, ws.Name, apiPort)
 	trackForward(t, ws.Name, otelPort)
 
-	callTool(t, s, "tunnel", map[string]string{"action": "stop", "services": "api"})
+	callTool(t, s, "tunnel", map[string]string{"action": "stop", "service": "api"})
 
 	left := tunnel.TrackedPorts(ws.Name)
 	if len(left) != 1 || left[0] != otelPort {
@@ -146,5 +146,35 @@ func TestPortLabelNamesBothEndsWhenMapped(t *testing.T) {
 	mapped := tunnel.Service{Name: "api:agent", Port: 20005, RemotePort: 63290}
 	if got := portLabel(mapped); got != "far end :63290 → here :20005" {
 		t.Errorf("portLabel(mapped) = %q", got)
+	}
+}
+
+// The CLI flag is --service and the names it takes are exact. A tool parameter
+// spelled differently is one an agent fills from the CLI's documentation and
+// watches be ignored — the call then forwards or tears down everything.
+func TestMCPTunnelNamesTheServiceParamAsTheCLIDoes(t *testing.T) {
+	s, _ := newTunnelToolServer(t, oneBaseService)
+	listing := clarityToolListing(t, s)
+
+	if !strings.Contains(listing, `"service"`) {
+		t.Errorf("tunnel tool does not take a 'service' parameter: %s", listing)
+	}
+	if strings.Contains(listing, `"services"`) {
+		t.Errorf("tunnel tool still takes the old 'services' parameter: %s", listing)
+	}
+}
+
+// Reclaim kills whatever holds the far host's ports, and cannot tell a stale
+// forward of yours from a live one another stack owns. Without a check action
+// the only way to look first is to leave MCP for a shell.
+func TestMCPTunnelOffersCheckBeforeReclaim(t *testing.T) {
+	s, _ := newTunnelToolServer(t, oneBaseService)
+	if !strings.Contains(clarityToolListing(t, s), "check") {
+		t.Error("tunnel tool does not advertise the check action")
+	}
+
+	out := callTool(t, s, "tunnel", map[string]string{"action": "sniff"})
+	if !strings.Contains(out, "check") {
+		t.Errorf("unknown-action message does not name check: %s", out)
 	}
 }

@@ -18,6 +18,7 @@ import (
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/gitinfo"
+	"github.com/socialviolation/devstack/internal/hooks"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/observability"
 	"github.com/socialviolation/devstack/internal/otel"
@@ -49,7 +50,7 @@ func RegisterTools(
 	}
 
 	// The environment orientation tool is always available — it tells the agent
-	// which of the capability-gated tools below actually exist for this context.
+	// which of the capability-gated tools below exist for this context.
 	registerEnvironmentTool(mcpServer, obsURL, workspaceName, workspacePath, defaultService, ws)
 
 	cfg, _ := config.Load(workspacePath)
@@ -75,7 +76,7 @@ func RegisterTools(
 	registerObservabilityTool(mcpServer, ws, workspacePath)
 
 	// The trace-query tool only makes sense when the workspace has opted into
-	// observability — otherwise there's no collector or backend to query.
+	// observability — otherwise there is no collector or backend to query.
 	// (Telemetry evidence/confidence lives in the observability tool's status.)
 	if config.ObservabilityEnabled(workspacePath) {
 		registerInvestigateTool(mcpServer, tiltClient, defaultService, backend, obsURL, workspacePath, ws)
@@ -90,6 +91,10 @@ func RegisterTools(
 
 	// Feature stacks overlay this workspace as their base.
 	registerStackTools(mcpServer, ws)
+
+	// Lifecycle hooks: discovery and manual re-run. The lifecycle tools above
+	// fire their own events; this is how an agent sees what is wired up.
+	registerHooksTool(mcpServer, ws)
 
 	// Config-patch environments: point scopes at named envs and inspect them.
 	registerEnvTools(mcpServer, ws, workspacePath)
@@ -179,7 +184,7 @@ func availableGroups(cfg *config.WorkspaceConfig) string {
 
 func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, serviceDirs map[string]string, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
 	tool := mcp.NewTool("status",
-		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack. Status reflects the current state of locally running dev services, not production. Returns SERVICE, STATUS (one of running/starting/building/stopped/erroring/disabled/unknown), PORT(S), PATH (source directory), BRANCH (the git branch that directory is on, with * for uncommitted changes — this is the code the process is actually running), GROUP, ENV (the active environment/config-patch the instance is pointed at, blank if none), and last error. Also shows a groups summary. 'running' means the process is up. 'starting' means it is coming up; 'building' means the daemon is building/updating it. 'stopped' means the service is known but not currently running (not started yet, or was stopped). 'erroring' means the service or its build failed — check logs. 'disabled' means the resource is switched off in the daemon. 'unknown' means the daemon reported no state for it. Pass stack to see a feature stack's instances. RELOAD says whether a service reloads on its own (auto) or needs an explicit restart after an edit (manual)."),
+		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack. Status reflects the current state of locally running dev services, not production. Returns SERVICE, STATUS (one of running/starting/building/stopped/erroring/disabled/down/unknown), PORT(S), PATH (source directory), BRANCH (the git branch that directory is on, with * for uncommitted changes — this is the code the process is running), GROUP, ENV (the active environment/config-patch the instance is pointed at, blank if none), and last error. Also shows a groups summary. 'running' means the process is up. 'starting' means it is coming up; 'building' means the daemon is building/updating it. 'stopped' means the service is known but not currently running (not started yet, or was stopped). 'erroring' means the service or its build failed — check logs. 'disabled' means the resource is switched off in the daemon. 'down' means the copy is not registered in the daemon at all, because its stack is down — bring it up with stack_up. 'unknown' means the daemon reported no state for it. Pass stack to see a feature stack's instances. RELOAD says whether a service reloads on its own (auto) or needs an explicit restart after an edit (manual)."),
 		mcp.WithString("stack", mcp.Description(stackParamDesc)),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
@@ -265,7 +270,7 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 		sb.WriteString(targetHeader(t.label))
 		sb.WriteString("Tilt is running.\n\n")
 		sb.WriteString(renderColumns(rows))
-		sb.WriteString("\nBRANCH is the git checkout each service actually runs from; * marks uncommitted changes.\nA service runs the code on that branch — if it is not the branch you expect, the running process does not contain the work you are looking for.\nRELOAD auto = source edits apply on their own; manual = restart it after editing or it keeps running the old code.\n")
+		sb.WriteString("\nBRANCH is the git checkout each service runs from; * marks uncommitted changes.\nA service runs the code on that branch — if it is not the branch you expect, the running process does not contain the work you are looking for.\nRELOAD auto = source edits apply on their own; manual = restart it after editing or it keeps running the old code.\n")
 
 		// Groups summary section.
 		if len(cfg.Groups) > 0 {
@@ -433,15 +438,15 @@ func coreRenderTopology(graph *config.TopologyGraph, service string) (string, er
 		}
 	}
 
-	sb.WriteString("\nThis is declared configuration, not runtime state — use status for what is actually running.\n")
+	sb.WriteString("\nThis is declared configuration, not runtime state — use status for what is running.\n")
 	return sb.String(), nil
 }
 
 func registerTopologyTool(mcpServer *server.MCPServer, workspacePath string) {
 	tool := mcp.NewTool("topology",
-		mcp.WithDescription("Show this workspace's declared service graph: every service, its source directory, its groups, the services it depends on, the services that depend on it, and the call edges recorded for it — plus config issues such as unknown group members, unknown dependencies and dependency cycles. Read this before claiming that one service calls or depends on another; the graph comes from the workspace manifest, not from guessing at code. Pass service to show one service's node alone. Reflects declared configuration, not runtime state — use status for what is actually running."),
+		mcp.WithDescription("Show this workspace's declared service graph: every service, its source directory, its groups, the services it depends on, the services that depend on it, and the call edges recorded for it — plus config issues such as unknown group members, unknown dependencies and dependency cycles. Read this before claiming that one service calls or depends on another; the graph comes from the workspace manifest, not from guessing at code. Pass service to show one service's node alone. Reflects declared configuration, not runtime state — use status for what is running."),
 		mcp.WithString("service",
-			mcp.Description("Exact service name to show alone (e.g. 'api-service'). NOT a description or partial match. If omitted, the whole graph is returned."),
+			mcp.Description("Exact service name to show alone (for example 'api-service'). NOT a description or partial match. If omitted, the whole graph is returned."),
 		),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
@@ -598,7 +603,7 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 	tool := mcp.NewTool("restart",
 		mcp.WithDescription("Restart a specific service or all services in a group in the LOCAL dev stack by triggering a rebuild. Operates on local dev services only — service name must be exact. If neither service nor group is given, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
 		mcp.WithString("service",
-			mcp.Description("Exact service name or configured alias (e.g. 'api-service'). NOT a description or partial match. If omitted, uses the default service for this repo (unless group is given)."),
+			mcp.Description("Exact service name or configured alias (for example 'api-service'). NOT a description or partial match. If omitted, uses the default service for this repo (unless group is given)."),
 		),
 		mcp.WithString("group",
 			mcp.Description("Group name to restart. All services in the group are restarted in parallel. Cannot be combined with service."),
@@ -748,7 +753,7 @@ func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, def
 	tool := mcp.NewTool("start",
 		mcp.WithDescription("Start a service, or every service in a group, in the LOCAL dev stack. Use this on a service that status reports as 'stopped' or 'disabled'; use restart on one that is already running. Dependencies are read from the workspace's dependency graph and started first, in order, so a service's callees come up before it. Operates on local dev services only — service name must be exact. If neither service nor group is given, uses the default service for this repo (set via DEVSTACK_DEFAULT_SERVICE)."),
 		mcp.WithString("service",
-			mcp.Description("Exact service name or configured alias (e.g. 'api-service'). NOT a description or partial match. If omitted, uses the default service for this repo (unless group is given)."),
+			mcp.Description("Exact service name or configured alias (for example 'api-service'). NOT a description or partial match. If omitted, uses the default service for this repo (unless group is given)."),
 		),
 		mcp.WithString("group",
 			mcp.Description("Group name to start. Every service in the group is started, dependencies first. Cannot be combined with service."),
@@ -854,7 +859,14 @@ func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, def
 		if len(failures) > 0 {
 			return mcp.NewToolResultError(sb.String() + "\nfailures: " + strings.Join(failures, "; ")), nil
 		}
-		return mcp.NewToolResultText(sb.String() + coreWaitFor(tiltClient, waited, deployedBefore, waitSeconds)), nil
+		var hookOut strings.Builder
+		hookErr := hooks.Fire(ws, t.namespace, config.EventServiceStart, started, &hookOut)
+		sb.WriteString(coreWaitFor(tiltClient, waited, deployedBefore, waitSeconds))
+		appendHookOutput(&sb, config.EventServiceStart, hookOut.String(), hookErr)
+		if hookErr != nil {
+			return mcp.NewToolResultError(sb.String()), nil
+		}
+		return mcp.NewToolResultText(sb.String()), nil
 	})
 }
 
@@ -862,7 +874,7 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 	tool := mcp.NewTool("stop",
 		mcp.WithDescription("Stop (disable) services in the LOCAL dev stack. Operates on local dev services only — service name must be exact. Exactly one target: service stops that service; group stops every service in that group; all=true stops every service of the targeted instance. With none of them, stops the default service for this repo — the same default restart uses (DEVSTACK_DEFAULT_SERVICE), so a bare call never takes the workspace down. Stopping everything requires all=true. Scoped by stack: with stack set, even all=true touches only that stack's instances, never base's."),
 		mcp.WithString("service",
-			mcp.Description("Exact service name or alias to stop (e.g. 'api-service'). NOT a description or partial match. If omitted, the default service for this repo is stopped — not every service. Stopping every service requires all=true."),
+			mcp.Description("Exact service name or alias to stop (for example 'api-service'). NOT a description or partial match. If omitted, the default service for this repo is stopped — not every service. Stopping every service requires all=true."),
 		),
 		mcp.WithString("group",
 			mcp.Description("Group name to stop. All services in the group are stopped in parallel, in the targeted instance only. Cannot be combined with service or all."),
@@ -943,8 +955,13 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 				return mcp.NewToolResultError(fmt.Sprintf("stopped %d/%d services in group %q: %s\nfailures: %s",
 					len(successes), len(members), groupName, strings.Join(successes, ", "), strings.Join(failures, "; "))), nil
 			}
-			return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("stopped %d services in group %s: %s",
-				len(members), groupName, strings.Join(successes, ", ")))), nil
+			var hookOut strings.Builder
+			hookErr := hooks.Fire(ws, t.namespace, config.EventServiceStop, successes, &hookOut)
+			var gsb strings.Builder
+			gsb.WriteString(onTarget(t.label, fmt.Sprintf("stopped %d services in group %s: %s",
+				len(members), groupName, strings.Join(successes, ", "))))
+			appendHookOutput(&gsb, config.EventServiceStop, hookOut.String(), hookErr)
+			return mcp.NewToolResultText(gsb.String()), nil
 		}
 
 		// Single service stop.
@@ -957,7 +974,12 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 			if err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("failed to stop %q: %v\n%s", resolved, err, out)), nil
 			}
-			return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("Stopped %q.", resolved))), nil
+			var hookOut strings.Builder
+			hookErr := hooks.Fire(ws, t.namespace, config.EventServiceStop, []string{name}, &hookOut)
+			var ssb strings.Builder
+			ssb.WriteString(onTarget(t.label, fmt.Sprintf("Stopped %q.", resolved)))
+			appendHookOutput(&ssb, config.EventServiceStop, hookOut.String(), hookErr)
+			return mcp.NewToolResultText(ssb.String()), nil
 		}
 
 		// Stop all — only ever reached via an explicit all=true, and scoped to
@@ -977,7 +999,12 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 		if len(failures) > 0 {
 			return mcp.NewToolResultError(fmt.Sprintf("Some services failed to stop:\n%s", sb.String())), nil
 		}
-		return mcp.NewToolResultText(onTarget(t.label, fmt.Sprintf("Stopped %d service(s).", len(targets))) + "\n" + sb.String() + coreStillRunning(ws, stopAll, request.GetString("stack", ""))), nil
+		var hookOut strings.Builder
+		hookErr := hooks.Fire(ws, t.namespace, config.EventServiceStop, nil, &hookOut)
+		var asb strings.Builder
+		asb.WriteString(onTarget(t.label, fmt.Sprintf("Stopped %d service(s).", len(targets))) + "\n" + sb.String() + coreStillRunning(ws, stopAll, request.GetString("stack", "")))
+		appendHookOutput(&asb, config.EventServiceStop, hookOut.String(), hookErr)
+		return mcp.NewToolResultText(asb.String()), nil
 	})
 }
 
@@ -1006,7 +1033,7 @@ func coreStillRunning(ws *workspace.Workspace, stoppedAll bool, stackName string
 	return sb.String()
 }
 
-// coreLogFilters records the filters a process_logs call actually applied.
+// coreLogFilters records the filters a process_logs call applied.
 type coreLogFilters struct {
 	Service      string
 	Group        string
@@ -1068,7 +1095,7 @@ func coreLogEmptyNote(f coreLogFilters) string {
 	if f.Service != "" || f.Group != "" {
 		widen = append(widen, "omit service/group to read every service of this instance")
 	}
-	widen = append(widen, "status to check the service is actually running")
+	widen = append(widen, "status to check the service is running")
 
 	return fmt.Sprintf("Empty means nothing matched these filters — NOT that the service is healthy or silent.\nFilters applied: %s.\nTo widen: %s.",
 		strings.Join(applied, ", "), strings.Join(widen, "; "))
@@ -1078,7 +1105,7 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 	tool := mcp.NewTool("process_logs",
 		mcp.WithDescription("Fetch raw stdout/stderr from a locally running dev service process. NOT a log search engine — fetches live process output directly from the dev daemon. Parameters are structured: exact service name, integer line count, boolean flags. Natural language queries are NOT accepted. Example: service='api-service' lines=100 since_restart=true. Use for services not instrumented with OTEL or when you need unstructured process output. If no service is given, uses this repo's default service when one is configured, and only fetches every service in parallel when there is none. Supports grep filtering, paging via offset, and since_restart to isolate post-startup output. When group is given, fetches logs from all services in the group concurrently. Cannot specify both service and group."),
 		mcp.WithString("service",
-			mcp.Description("Exact service name or alias (e.g. 'api-service'). NOT a description or partial match. If omitted, uses the default service for this repo or fetches all."),
+			mcp.Description("Exact service name or alias (for example 'api-service'). NOT a description or partial match. If omitted, uses the default service for this repo or fetches all."),
 		),
 		mcp.WithString("group",
 			mcp.Description("Group name. Fetches logs from all services in the group concurrently, prefixed with service name. Cannot be combined with service."),
@@ -1327,7 +1354,7 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 	})
 }
 
-// lastDeploySince returns a --since duration string (e.g. "127s") for the given service,
+// lastDeploySince returns a --since duration string (for example "127s") for the given service,
 // derived from its LastDeployTime in the Tilt view. Returns "" if unavailable.
 func lastDeploySince(view *tilt.TiltView, svcName string) string {
 	for _, r := range view.UiResources {
@@ -1345,7 +1372,7 @@ func lastDeploySince(view *tilt.TiltView, svcName string) string {
 		if elapsed < 0 {
 			elapsed = 0
 		}
-		// Add 2s buffer so we don't miss the first lines right at deploy time.
+		// Add 2s buffer so we do not miss the first lines right at deploy time.
 		elapsed += 2 * time.Second
 		return fmt.Sprintf("%ds", int(elapsed.Seconds()))
 	}
@@ -1405,10 +1432,10 @@ func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client,
 			"Boundary: this sets arguments the daemon itself reads when it generates the stack — for config values a service reads, use env_use (point a scope at a named config env), env_set (edit a named env's vars) or service_env (edit one service's vars) instead. "+
 			"Setting an argument REPLACES the daemon's entire argument list: this tool sets one key, so every argument set earlier is silently dropped."),
 		mcp.WithString("key",
-			mcp.Description("The argument key (e.g. 'env', 'debug', 'profile'). Omit it, with no value, to read the arguments currently set instead of writing one."),
+			mcp.Description("The argument key (for example 'env', 'debug', 'profile'). Omit it, with no value, to read the arguments currently set instead of writing one."),
 		),
 		mcp.WithString("value",
-			mcp.Description("The value to set (e.g. 'production', 'true', 'staging')."),
+			mcp.Description("The value to set (for example 'production', 'true', 'staging')."),
 		),
 		mcp.WithString("stack", mcp.Description(stackParamDesc)),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -1463,7 +1490,7 @@ func coreOtelUIService(ws *workspace.Workspace) (svc tunnel.Service, reason stri
 	}
 	port := tunnel.PortFromURL(endpoint)
 	if port == 0 {
-		return tunnel.Service{}, fmt.Sprintf("could not read a port from the %s UI address %q", plugin.Name(), endpoint), false
+		return tunnel.Service{}, fmt.Sprintf("can not read a port from the %s UI address %q", plugin.Name(), endpoint), false
 	}
 	return tunnel.Service{Name: "otel-ui (" + plugin.Name() + ")", Port: port, Runtime: "ok"}, "", true
 }
@@ -1489,24 +1516,26 @@ func portList(ports []int) string {
 
 func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws *workspace.Workspace) {
 	tool := mcp.NewTool("tunnel",
-		mcp.WithDescription("Forward this workspace's LOCAL service ports to/from a remote host over SSH, so a remote machine can reach services running on this dev box. "+
-			"Requires key-based SSH access to the remote (no passwords) — if keys aren't installed you'll get instructions to run ssh-copy-id. "+
-			"Only ports that are actually serving traffic are forwarded; dead/idle services are skipped. "+
-			"The remote host/user are remembered per-workspace after the first successful push, so later calls can omit them. "+
-			"Any host you can ssh to works, including a plain ssh-config alias; a tailnet address is one such host, not a requirement. "+
-			"Actions: 'list' (discovered services + whether each is serving), 'status' (every forward that is up, including any whose service is no longer discoverable), "+
-			"'push' (expose local ports on the remote via ssh -R — the common case), 'pull' (pull ports from a source machine to here via ssh -L), "+
-			"'stop' (tear down this workspace's forwards; narrow it with services). "+
-			"'status' and 'stop' work off the forwards actually running, not what discovery covers now, so the observability UI and a stack's forwards are reported and torn down whether or not this call asked for them. "+
-			"The remote is saved automatically on the first successful push/pull, along with the direction and stack mapping, so a later 'devstack tunnel restart' in a shell re-establishes the same thing."),
+		mcp.WithDescription("Forward this workspace's LOCAL service ports to or from a remote host over SSH. A remote machine can then reach the services that run on this dev box.\n\n"+
+			"Actions:\n"+
+			"  status  what this workspace has forwarded now. Add planned=true for what a push WOULD forward instead. Reads this machine only.\n"+
+			"  check   ask the remote host what already holds the ports a push binds. Changes nothing. Run it before reclaim=true, which kills those processes.\n"+
+			"  push    expose local ports on the remote over ssh -R. This is the common case.\n"+
+			"  pull    bring ports from a source machine to here over ssh -L.\n"+
+			"  stop    tear down the forwards of this workspace. Narrow it with service.\n\n"+
+			"This needs key-based SSH access to the remote. Passwords do not work. If the keys are absent, the result tells you to run ssh-copy-id.\n"+
+			"It forwards only the ports that serve traffic now, and skips a service that is idle or dead.\n"+
+			"Any host that you can reach over ssh works, and a plain ssh-config alias is one. A tailnet address is one such host, not a requirement.\n\n"+
+			"status and stop read the forwards that run, not what discovery covers now. So they report and tear down the observability UI and the forwards of a stack, whether or not this call asked for them.\n"+
+			"After the first push or pull, the remote is remembered, with the direction and the stack mapping. A later `devstack tunnel restart` in a shell then repeats the same thing.\n"),
 		mcp.WithString("action", mcp.Required(),
-			mcp.Description("One of: list, status, push, pull, stop. Read-only, changes nothing: 'list', 'status'. Writes — they start or kill ssh forwards, and push/pull also save the remote: 'push', 'pull', 'stop'.")),
+			mcp.Description("One of: list, status, check, push, pull, stop. Read-only, changes nothing: 'list', 'status', 'check' (check does open an ssh session to read the far host's ports, but alters nothing). Writes — they start or kill ssh forwards, and push/pull also save the remote: 'push', 'pull', 'stop'.")),
 		mcp.WithString("host",
-			mcp.Description("Remote host or SSH config alias (e.g. 'macbook'). Optional if a default is saved for this workspace.")),
+			mcp.Description("Remote host or SSH config alias (for example 'macbook'). Optional if a default is saved for this workspace.")),
 		mcp.WithString("user",
 			mcp.Description("SSH user. Optional — falls back to the saved user for this workspace.")),
-		mcp.WithString("services",
-			mcp.Description("Comma-separated exact service names to limit to, as printed by action=list. Optional; default is all serving services, and for 'stop' every forward this workspace has running.")),
+		mcp.WithString("service",
+			mcp.Description("Exact service names to limit to, comma-separated, as printed by action=list (CLI: --service). Optional; default is all serving services, and for 'stop' every forward this workspace has running.")),
 		mcp.WithBoolean("reclaim",
 			mcp.Description("Push only. Kill whatever already holds these ports on the remote before forwarding. Destructive: it tears down forwards belonging to other stacks, so leave it off unless a push failed to bind and you know the port is yours.")),
 		mcp.WithBoolean("stacks",
@@ -1534,7 +1563,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		filter := map[string]bool{}
-		for _, s := range strings.Split(request.GetString("services", ""), ",") {
+		for _, s := range strings.Split(request.GetString("service", ""), ",") {
 			if s = strings.TrimSpace(s); s != "" {
 				filter[s] = true
 			}
@@ -1573,7 +1602,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 		switch action {
 		case "list":
 			var sb strings.Builder
-			sb.WriteString("Discovered services:\n")
+			sb.WriteString("Would forward (nothing is up as a result of this):\n")
 			for _, s := range svcs {
 				state := "not serving"
 				if tunnel.Listening(s.Port) {
@@ -1612,6 +1641,52 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			}
 			return mcp.NewToolResultText(otelNote + sb.String()), nil
 
+		case "check":
+			// The ports a push binds over there, which for a mapped stack are
+			// base's, not the stack's own.
+			rhost := host
+			if rhost == "" {
+				rhost = ws.TunnelHost
+			}
+			ruser := user
+			if ruser == "" {
+				ruser = ws.TunnelUser
+			}
+			if rhost == "" || ruser == "" {
+				return mcp.NewToolResultError("no remote host/user given and none saved. Pass host and user (they're remembered after the first successful push)."), nil
+			}
+			if len(svcs) == 0 {
+				return mcp.NewToolResultText(otelNote + "No ports to check right now — nothing is serving. Start the services first."), nil
+			}
+			ports := make([]int, len(svcs))
+			byPort := map[int]string{}
+			for i, s := range svcs {
+				ports[i] = s.Far()
+				byPort[s.Far()] = s.Name
+			}
+			holders, cerr := tunnel.InspectRemote(ruser, rhost, ports)
+			if cerr != nil {
+				return mcp.NewToolResultError(cerr.Error()), nil
+			}
+			var sb strings.Builder
+			sb.WriteString(otelNote)
+			fmt.Fprintf(&sb, "Ports on %s@%s:\n", ruser, rhost)
+			held := 0
+			for _, h := range holders {
+				if h.Info == "" {
+					fmt.Fprintf(&sb, "  %-30s :%-6d free\n", byPort[h.Port], h.Port)
+					continue
+				}
+				held++
+				fmt.Fprintf(&sb, "  %-30s :%-6d held by %s\n", byPort[h.Port], h.Port, h.Info)
+			}
+			if held == 0 {
+				sb.WriteString("\nEvery port is free. A push will bind without reclaim.\n")
+			} else {
+				fmt.Fprintf(&sb, "\n%d port(s) are held. A push needs reclaim=true, which kills those processes — they may belong to a colleague or another stack. Narrow it with service.\n", held)
+			}
+			return mcp.NewToolResultText(sb.String()), nil
+
 		case "stop":
 			// Stop what is forwarding, not what discovery happens to cover now: a
 			// forward outlives its service, and the observability UI is never a
@@ -1649,14 +1724,14 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 				rhost = ws.TunnelHost
 			}
 			if rhost == "" {
-				return mcp.NewToolResultError("no remote host given and none saved. Pass host (it's remembered after the first successful push)."), nil
+				return mcp.NewToolResultError("no remote host given and none saved. Pass host (it is remembered after the first successful push)."), nil
 			}
 			ruser := user
 			if ruser == "" {
 				ruser = ws.TunnelUser
 			}
 			if ruser == "" {
-				return mcp.NewToolResultError("no SSH user given and none saved. Pass user (it's remembered after the first successful push)."), nil
+				return mcp.NewToolResultError("no SSH user given and none saved. Pass user (it is remembered after the first successful push)."), nil
 			}
 
 			var skipped []tunnel.Service
@@ -1664,7 +1739,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 				svcs, skipped = tunnel.PartitionServing(svcs)
 			}
 			if len(svcs) == 0 {
-				return mcp.NewToolResultText("No serving ports to forward right now. Start the services first (devstack start)."), nil
+				return mcp.NewToolResultText("No serving ports to forward right now. Start the services first (devstack service start)."), nil
 			}
 
 			if cerr := tunnel.CheckConnectivity(ruser, rhost); cerr != nil {
@@ -1673,7 +1748,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 					ruser, rhost, cerr, ruser, rhost, ruser, rhost)), nil
 			}
 
-			// Remember an explicitly provided remote now that it's known to work.
+			// Remember an explicitly provided remote now that it is known to work.
 			if host != "" || user != "" {
 				_ = workspace.UpdateTunnelRemote(ws.Name, rhost, ruser)
 			}
@@ -1712,20 +1787,20 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			if started > 0 {
 				_ = workspace.UpdateTunnelForward(ws.Name, workspace.TunnelForward{
 					Mode:     string(mode),
-					Services: request.GetString("services", ""),
+					Services: request.GetString("service", ""),
 					Stacks:   wantStacks,
 					AsBase:   asBase,
 					Otel:     request.GetBool("otel", false),
 				})
 			}
 			if clashed && mode == tunnel.ModePush && !reclaim {
-				fmt.Fprintf(&sb, "\nA forward fails when something already holds the port on %s. It may be a stale "+
+				fmt.Fprintf(&sb, "\nA forward fails when something already holds the port on %s. It can be a stale "+
 					"forward of your own, or it may belong to another stack — check before retrying with reclaim=true.\n", rhost)
 			}
 			return mcp.NewToolResultText(sb.String()), nil
 
 		default:
-			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — use list, status, push, pull, or stop", action)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — use list, status, check, push, pull, or stop", action)), nil
 		}
 	})
 }
@@ -1747,7 +1822,7 @@ func resolveInvestigateStack(raw string) string {
 }
 
 // coreInvestigateFilters records the filters an investigate search (mode 2 or 3)
-// actually applied, including how the service was chosen when the caller did not
+// applied, including how the service was chosen when the caller did not
 // name one.
 type coreInvestigateFilters struct {
 	Service                 string
@@ -1838,13 +1913,13 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		"Investigate distributed traces in the LOCAL dev environment (backend resolved at server start: %s — the observability tool reports the current one, and can change it). "+
 			"Queries this workspace's configured telemetry backend — NOT a natural language search engine. Parameters are structured: exact service names, structured time ranges, and exact attribute key=value pairs. "+
 			"Results are always confined to this workspace's telemetry, and in mode 3 an unqualified call narrows to the service the server is running in. "+
-			"Modes, and what each one actually filters on: (1) trace_id/span_id — look up one trace or span by id; every other filter is ignored, including service, stack, since_minutes, limit and errors_only, so the trace comes back whichever instance emitted it and however old it is. "+
-			"(2) attribute+value — search by business attribute (e.g. attribute='portfolio.id' value='123'), filtered by stack, since_minutes, limit and errors_only, and by service when service is given (there is no default service in this mode). "+
+			"Modes, and what each one filters on: (1) trace_id/span_id — look up one trace or span by id; every other filter is ignored, including service, stack, since_minutes, limit and errors_only, so the trace comes back whichever instance emitted it and however old it is. "+
+			"(2) attribute+value — search by business attribute (for example attribute='portfolio.id' value='123'), filtered by stack, since_minutes, limit and errors_only, and by service when service is given (there is no default service in this mode). "+
 			"(3) service — recent executions, filtered by stack, since_minutes, limit, errors_only and service, where an omitted service falls back to this repo's default service. "+
-			"Querying an inactive stack is not an error but is rarely useful: it returns only what that stack emitted while it was last up, so an empty result there means it is down, not that it is healthy — stack_list reports which stacks are active. "+
+			"Querying a stack that is down is not an error but is rarely useful: it returns only what that stack emitted while it was last up, so an empty result there means it is down, not that it is healthy — stack_list reports which stacks are up. "+
 			"One backend holds every workspace and every stack, so results are told apart by resource attributes: devstack.workspace (applied for you, always), devstack.service (the name devstack uses, which often differs from the name the service reports itself as — either matches), devstack.stack (base, or a feature stack's name), devstack.env (the config env that instance runs under). "+
 			"In modes 2 and 3, results can be isolated to one stack's service: 'service' pins the service and 'stack' pins the devstack.stack resource attribute (a stack's short name, or 'stack'='base' to select base-workspace services). "+
-			"To compare a feature stack against base, run the same query twice with stack='<name>' and stack='base'. Use the observability tool's status action to see which variants are actually emitting before concluding a service is silent. "+
+			"To compare a feature stack against base, run the same query twice with stack='<name>' and stack='base'. Use the observability tool's status action to see which variants are emitting before concluding a service is silent. "+
 			"Example: service='api-service' stack='perf' since_minutes=15 errors_only=true. "+
 			"Returns an ASCII span tree showing service calls, durations, and errors. Combine with process_logs and status for full debugging context.",
 		queryURL,
@@ -1859,19 +1934,19 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			mcp.Description("Specific span ID to look up. Finds the trace containing this span, with every other filter ignored. Ignored itself if trace_id is given."),
 		),
 		mcp.WithString("service",
-			mcp.Description("Exact service name (e.g. 'api-service'). NOT a description or partial match. Applied in mode 2 (attribute search) and mode 3 (recent executions); only mode 3 falls back to this repo's default service when it is omitted. A trace_id/span_id lookup ignores it and returns every service's spans in that trace."),
+			mcp.Description("Exact service name (for example 'api-service'). NOT a description or partial match. Applied in mode 2 (attribute search) and mode 3 (recent executions); only mode 3 falls back to this repo's default service when it is omitted. A trace_id/span_id lookup ignores it and returns every service's spans in that trace."),
 		),
 		mcp.WithString("stack",
-			mcp.Description("Which instance's telemetry to query, via the devstack.stack resource attribute. Applied in mode 2 (attribute search) and mode 3 (recent executions) ONLY — a trace_id/span_id lookup is not stack-filtered and returns the trace whichever instance emitted it. Within those two modes: ABSENT/empty = base only (the base-workspace services — the default an unqualified query means). A stack's short name (e.g. 'perf') = that stack only. 'all' (or '*') = every instance co-mingled (base + all stacks). Combine with 'service' to pin a single instance's service."),
+			mcp.Description("Which instance's telemetry to query, via the devstack.stack resource attribute. Applied in mode 2 (attribute search) and mode 3 (recent executions) ONLY — a trace_id/span_id lookup is not stack-filtered and returns the trace whichever instance emitted it. Within those two modes: ABSENT/empty = base only (the base-workspace services — the default an unqualified query means). A stack's short name (for example 'perf') = that stack only. 'all' (or '*') = every instance co-mingled (base + all stacks). Combine with 'service' to pin a single instance's service."),
 		),
 		mcp.WithString("attribute",
-			mcp.Description("Exact attribute key to search by (e.g. 'portfolio.id', 'user.id', 'process.id'). NOT natural language. Requires value parameter."),
+			mcp.Description("Exact attribute key to search by (for example 'portfolio.id', 'user.id', 'process.id'). NOT natural language. Requires value parameter."),
 		),
 		mcp.WithString("value",
-			mcp.Description("Exact value to match for the given attribute (e.g. '123'). NOT a pattern or description."),
+			mcp.Description("Exact value to match for the given attribute (for example '123'). NOT a pattern or description."),
 		),
 		mcp.WithNumber("since_minutes",
-			mcp.Description("Look-back window in minutes (integer). Defaults to 30. Use larger values (e.g. 60) to search further back."),
+			mcp.Description("Look-back window in minutes (integer). Defaults to 30. Use larger values (for example 60) to search further back."),
 		),
 		mcp.WithNumber("limit",
 			mcp.Description("Maximum number of executions to expand. Defaults to 5."),
@@ -2253,7 +2328,7 @@ func coreTiltfileReadsArgs() bool {
 func coreCurrentArgs(tiltClient *tilt.Client) string {
 	out, err := tiltClient.RunCLI("get", "tiltfiles", "-o", "json")
 	if err != nil {
-		return fmt.Sprintf("could not read the daemon's arguments: %v\n%s", err, out)
+		return fmt.Sprintf("can not read the daemon's arguments: %v\n%s", err, out)
 	}
 
 	var payload struct {
@@ -2267,7 +2342,7 @@ func coreCurrentArgs(tiltClient *tilt.Client) string {
 		} `json:"spec"`
 	}
 	if err := json.Unmarshal([]byte(out), &payload); err != nil {
-		return fmt.Sprintf("could not parse the daemon's arguments: %v", err)
+		return fmt.Sprintf("can not parse the daemon's arguments: %v", err)
 	}
 
 	args := payload.Spec.Args

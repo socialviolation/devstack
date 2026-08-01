@@ -12,29 +12,6 @@ import (
 	"github.com/socialviolation/devstack/internal/config"
 )
 
-var groupsCmd = &cobra.Command{
-	Use:   "groups",
-	Short: "Show and manage service groups",
-	Long: `Groups are named collections of services used to organise the workspace and
-start related services together. For example, a 'backend' group might contain
-your API, worker, and scheduler services.
-
-Running 'devstack groups' (or 'devstack groups list') shows a rich tree of all
-groups, their members, and the dependencies each member declares — colour-coded
-by group so cross-group dependencies are immediately visible.
-
-Groups are declared in <workspace>/devstack.workspace.yaml and are used by:
-  devstack start <name>            start all services in a group (respects deps)
-  devstack status                  groups are the top-level sections in the tree
-
-SUBCOMMANDS
-  devstack groups                  show group tree with deps
-  devstack groups add <g> <svc>    add a service to a group
-  devstack groups remove <g> <svc> remove a service from a group`,
-	// Default action: show the rich group tree
-	RunE: runGroupsList,
-}
-
 var groupsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "Show all groups with members and dependencies",
@@ -44,7 +21,7 @@ var groupsListCmd = &cobra.Command{
 
 var groupsAddCmd = &cobra.Command{
 	Use:   "add <group> <service> [service...]",
-	Short: "Add services to a group (creates the group if it doesn't exist)",
+	Short: "Add services to a group (creates the group if it does not exist)",
 	Args:  cobra.MinimumNArgs(2),
 	RunE:  runGroupsAdd,
 }
@@ -54,13 +31,6 @@ var groupsRemoveCmd = &cobra.Command{
 	Short: "Remove services from a group",
 	Args:  cobra.MinimumNArgs(2),
 	RunE:  runGroupsRemove,
-}
-
-func init() {
-	rootCmd.AddCommand(groupsCmd)
-	groupsCmd.AddCommand(groupsListCmd)
-	groupsCmd.AddCommand(groupsAddCmd)
-	groupsCmd.AddCommand(groupsRemoveCmd)
 }
 
 func runGroupsList(cmd *cobra.Command, args []string) error {
@@ -77,7 +47,7 @@ func runGroupsList(cmd *cobra.Command, args []string) error {
 
 	if len(cfg.Groups) == 0 {
 		fmt.Println("No groups declared.")
-		fmt.Println("Use: devstack groups add <group> <service> [service...]")
+		fmt.Println("Use: devstack group add <group> <service> [service...]")
 		return nil
 	}
 
@@ -241,7 +211,7 @@ func runGroupsAdd(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("✓ Group %q: %s\n", group, strings.Join(cfg.Groups[group], ", "))
 	if _, err := regenerateHostTiltfile(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not regenerate host config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: can not regenerate host config: %v\n", err)
 	} else {
 		fmt.Println("Regenerated host config.")
 	}
@@ -292,7 +262,7 @@ func runGroupsRemove(cmd *cobra.Command, args []string) error {
 		fmt.Printf("✓ Group %q: %s\n", group, strings.Join(remaining, ", "))
 	}
 	if _, err := regenerateHostTiltfile(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not regenerate host config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: can not regenerate host config: %v\n", err)
 	} else {
 		fmt.Println("Regenerated host config.")
 	}

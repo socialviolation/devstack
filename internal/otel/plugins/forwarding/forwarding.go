@@ -128,9 +128,9 @@ func (p *ForwardingPlugin) QueryEndpoint(ws *workspace.Workspace) string { retur
 // locally to query.
 func (p *ForwardingPlugin) Backend(ws *workspace.Workspace) (observability.Backend, error) {
 	if upstream := ws.PluginConfig("upstream"); upstream != "" {
-		return nil, fmt.Errorf("workspace %q forwards telemetry to %s — query it there, or switch to a local backend with: devstack otel configure --plugin=openobserve", ws.Name, upstream)
+		return nil, fmt.Errorf("workspace %q forwards telemetry to %s — query it there, or switch to a local backend with: devstack otel config set --plugin=openobserve", ws.Name, upstream)
 	}
-	return nil, fmt.Errorf("workspace %q has no upstream configured — telemetry goes to the collector log. Switch to a local backend with: devstack otel configure --plugin=openobserve", ws.Name)
+	return nil, fmt.Errorf("workspace %q has no upstream configured — telemetry goes to the collector log. Switch to a local backend with: devstack otel config set --plugin=openobserve", ws.Name)
 }
 
 // Validate always passes — upstream is optional. When not set the collector

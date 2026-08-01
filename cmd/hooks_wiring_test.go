@@ -1,0 +1,83 @@
+package cmd
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/socialviolation/devstack/internal/config"
+)
+
+// eventConstant maps an event name back to the Go constant a firing point
+// spells it with, since call sites use the constant, never the literal.
+var eventConstant = map[string]string{
+	config.EventWorkspaceUp:   "config.EventWorkspaceUp",
+	config.EventWorkspaceDown: "config.EventWorkspaceDown",
+	config.EventStackCreate:   "config.EventStackCreate",
+	config.EventStackUp:       "config.EventStackUp",
+	config.EventStackDown:     "config.EventStackDown",
+	config.EventStackDestroy:  "config.EventStackDestroy",
+	config.EventServiceStart:  "config.EventServiceStart",
+	config.EventServiceStop:   "config.EventServiceStop",
+}
+
+// An event devstack advertises in `hooks list` but never fires is worse than no
+// event: you write a hook against it and it silently never runs.
+func TestEveryDeclaredEventHasAFiringPoint(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read cmd dir: %v", err)
+	}
+
+	var sources strings.Builder
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		if name == "hooks_cmd.go" {
+			continue // the hooks command itself resolves events, it does not fire them
+		}
+		data, err := os.ReadFile(filepath.Join(".", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		sources.Write(data)
+	}
+	body := sources.String()
+
+	for _, event := range config.HookEvents() {
+		constant, ok := eventConstant[event]
+		if !ok {
+			t.Fatalf("event %q has no entry in eventConstant — add it alongside the new event", event)
+		}
+		if !strings.Contains(body, "fireHooks(") || !strings.Contains(body, constant) {
+			t.Errorf("event %q (%s) is declared but never fired by any command", event, constant)
+		}
+	}
+}
+
+// service.stop is a teardown event: the services are already stopped when it
+// fires, so a broken hook must not fail a command that did its job. Every
+// teardown site goes through fireTeardownHooks, which reports and continues.
+func TestTeardownSitesDoNotReturnHookErrors(t *testing.T) {
+	teardown := map[string]string{
+		"cmd/stop_cmd.go":  "config.EventServiceStop",
+		"cmd/down_cmd.go":  "config.EventWorkspaceDown",
+		"cmd/stack_cmd.go": "config.EventStackDestroy",
+	}
+	for file, event := range teardown {
+		data, err := os.ReadFile(filepath.Base(file))
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		body := string(data)
+		if !strings.Contains(body, "fireTeardownHooks") {
+			t.Errorf("%s fires %s without fireTeardownHooks", file, event)
+		}
+		if strings.Contains(body, "return fireHooks("+"ws, stackName, "+event) {
+			t.Errorf("%s returns its %s hook error, which fails a command that already succeeded", file, event)
+		}
+	}
+}

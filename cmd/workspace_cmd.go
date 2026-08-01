@@ -33,7 +33,9 @@ SUBCOMMANDS
   devstack workspace up         start this workspace's services in the dev daemon
   devstack workspace down       stop them, and the daemon if no workspace needs it
   devstack workspace add        register a directory as a workspace
-  devstack workspace remove     unregister a workspace`,
+  devstack workspace remove     unregister a workspace
+  devstack workspace topology   the service graph: groups, dependencies, dependents
+  devstack workspace doctor     check the manifests and topology for problems`,
 	// Default action: list
 	RunE: runWorkspaceList,
 }
@@ -217,7 +219,7 @@ func runWorkspaceAdd(cmd *cobra.Command, args []string) error {
 		} else {
 			wrote, err := scaffoldWorkspaceManifest(path, registered.Name)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "  warning: could not scaffold manifest: %v\n", err)
+				fmt.Fprintf(os.Stderr, "  warning: can not scaffold manifest: %v\n", err)
 			} else if wrote {
 				fmt.Printf("  ✓ Created %s — add services with 'devstack init --name=<n> --path=<p> --cmd=<c>'.\n", config.WorkspaceManifestFileName)
 			}

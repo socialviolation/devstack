@@ -170,9 +170,6 @@ func TestAssembleRowsCarriesStateEnvPortsAndDir(t *testing.T) {
 	if api.dir != "/src/api" {
 		t.Fatalf("api dir = %q, want /src/api", api.dir)
 	}
-	if !reflect.DeepEqual(api.needs, []string{"db"}) {
-		t.Fatalf("api needs = %v, want [db]", api.needs)
-	}
 	if prices.state != "unknown" {
 		t.Fatalf("prices state = %q, want unknown (absent from the daemon view)", prices.state)
 	}

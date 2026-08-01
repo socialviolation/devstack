@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -38,7 +39,12 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 }
 
 // regenerateHostTiltfile delegates to hostdaemon.Regenerate, kept as a package
-// alias for the many cmd call sites.
+// alias for the many cmd call sites. Generation warnings go to stderr here, so
+// every one of those sites reports them without repeating the code.
 func regenerateHostTiltfile() (string, error) {
-	return hostdaemon.Regenerate()
+	path, warnings, err := hostdaemon.Regenerate()
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "WARNING: %s\n", w)
+	}
+	return path, err
 }

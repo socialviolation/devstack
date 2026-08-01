@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -17,7 +18,14 @@ func restartCommand(t *testing.T) *cobra.Command {
 	for _, c := range tunnelCmd.Commands() {
 		if c.Name() == "restart" {
 			c.Flags().VisitAll(func(f *pflag.Flag) {
-				_ = f.Value.Set(f.DefValue)
+				// A slice flag's DefValue is the literal "[]", and Set parses
+				// that as a one-element slice containing "[]". Clear it as a
+				// slice instead.
+				if sv, ok := f.Value.(pflag.SliceValue); ok {
+					_ = sv.Replace(nil)
+				} else {
+					_ = f.Value.Set(f.DefValue)
+				}
 				f.Changed = false
 			})
 			return c
@@ -76,7 +84,7 @@ func TestRestartRepeatsTheLastForward(t *testing.T) {
 			name:     "the service filter is repeated too",
 			last:     &workspace.TunnelForward{Mode: "push", Services: "navexa-api"},
 			wantMode: tunnel.ModePush,
-			wantSaid: "push --services navexa-api",
+			wantSaid: "push --service navexa-api",
 			wantSvcs: "navexa-api",
 		},
 	}
@@ -103,8 +111,8 @@ func TestRestartRepeatsTheLastForward(t *testing.T) {
 			if tunnelAsBaseFlag != tc.wantBase {
 				t.Errorf("--as-base = %q, want %q", tunnelAsBaseFlag, tc.wantBase)
 			}
-			if tunnelServicesFlag != tc.wantSvcs {
-				t.Errorf("--services = %q, want %q", tunnelServicesFlag, tc.wantSvcs)
+			if strings.Join(tunnelServicesFlag, ",") != tc.wantSvcs {
+				t.Errorf("--service = %q, want %q", tunnelServicesFlag, tc.wantSvcs)
 			}
 		})
 	}

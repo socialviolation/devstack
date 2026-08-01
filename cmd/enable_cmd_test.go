@@ -7,9 +7,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func TestStartCommandHasStackFlag(t *testing.T) {
-	if svcStartCmd.Flags().Lookup("stack") == nil {
-		t.Fatal("start command is missing the --stack flag")
+// Every service and group action can target a stack's copy instead of base.
+func TestNounCommandsHaveStackFlag(t *testing.T) {
+	for _, c := range []*cobra.Command{
+		serviceStartCmd, serviceStopCmd, serviceRestartCmd,
+		groupStartCmd, groupStopCmd, groupRestartCmd,
+	} {
+		if c.Flags().Lookup("stack") == nil {
+			t.Errorf("%q is missing the --stack flag", c.CommandPath())
+		}
 	}
 }
 

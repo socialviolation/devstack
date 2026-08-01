@@ -74,7 +74,7 @@ var legacyOtelWarned sync.Map
 
 var warnWriter io.Writer = os.Stderr
 
-const baseConfigureCmd = "devstack otel configure"
+const baseConfigureCmd = "devstack otel config set"
 
 // warnStrandedLegacyOtelConfig reports otel settings left in the retired
 // .devstack.json project store that the manifest does not carry, naming the
@@ -378,7 +378,7 @@ func DetectFromCwd() (*Workspace, error) {
 		w := workspaces[best]
 		return &w, nil
 	}
-	return nil, fmt.Errorf("not inside a registered devstack workspace. Run: devstack register")
+	return nil, fmt.Errorf("not inside a registered devstack workspace. Run: devstack workspace add")
 }
 
 // OTLP ingestion is machine-level: one collector serves every workspace, which

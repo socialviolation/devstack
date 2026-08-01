@@ -21,36 +21,26 @@ import (
 func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	tool := mcp.NewTool("service_env",
 		mcp.WithDescription(
-			"Inspect and manage environment variables across local services, by reading and writing the config FILES in a service's checkout — "+
-				"not the running process (a write takes effect on the next generate + restart). "+
-				"Its 'stack' parameter therefore picks which CHECKOUT to read/write, where every other tool's 'stack' picks which running instances to act on. "+
-				"Supports five actions: "+
-				"'get' — show the env a service actually resolves to, with the rung each value comes from; "+
-				"'diff' — compare resolved env across multiple services or a group side-by-side; "+
-				"'set' — write a key=value to ONE service's manifest (env.values) or .envrc, and report if a higher rung overrides it "+
-				"(to instead set a config-var for every service pointed at a named environment, use env_set); "+
-				"'check' — audit resolved env for placeholder values (empty, or containing TODO/CHANGEME/<replace>/your-/example.com) "+
-				"and asymmetry — a key set for some of the selected services but missing from the others; "+
-				"'drift' — compare the resolved env against what the service's own repo declares it needs: the files its "+
-				"devstack.service.yaml lists under config.sources (its deployment manifest / appsettings), "+
-				"reporting declared keys that are unset locally, secret-backed keys with no local value, and keys set to a different value. "+
-				"Use 'drift' before trusting a local run of a code path that reads config: a declared key that is unset locally does not error, "+
-				"it silently falls back to the code's default, so the service runs a different configuration than the one it is standing in for. "+
-				"A rung is one layer of the env precedence ladder, lowest first — .envrc, workspace env.files, service env.files, "+
-				"workspace env.values, service env.values, active env (workspace, then service, then stack), devstack-computed — "+
-				"and a higher rung overrides every rung below it. "+
-				"'get' resolves every rung — reach for it to answer 'what is KEY set to'; "+
-				"reach for env_which instead for the narrower question of which named config-patch env applies at each scope and what that patch alone contributes.",
-		),
+			"Read and write the environment variables of a local service, in the config FILES of its checkout. This tool does not touch the running process. A write takes effect on the next generate and restart.\n\n"+
+				"Its stack parameter picks which CHECKOUT to read or write. Every other tool uses stack to pick which running copy to act on.\n\n"+
+				"Actions:\n"+
+				"  get    show the environment a service resolves to, with the rung that each value comes from.\n"+
+				"  diff   compare the resolved environment across several services, or across a group, side by side.\n"+
+				"  set    write one key and value to the manifest of ONE service (env.values) or to its .envrc. It reports a higher rung that overrides your value. To set a config value for every service pointed at a named environment, use env_set instead.\n"+
+				"  check  audit the resolved environment for a placeholder value (empty, or one that holds TODO, CHANGEME, <replace>, your-, or example.com). It also reports a key that some selected services set and the others do not.\n"+
+				"  drift  compare the resolved environment against what the repo of the service declares it needs, in the files its devstack.service.yaml lists under config.sources.\n\n"+
+				"Run drift before you trust a local run of code that reads configuration. A declared key that is unset locally does not raise an error. The code falls back to its own default, so the service runs a different configuration from the one it stands in for.\n\n"+
+				"A rung is one layer of the environment precedence ladder. Lowest first: .envrc, workspace env.files, service env.files, workspace env.values, service env.values, active env (workspace, then service, then stack), devstack-computed. A higher rung overrides every rung below it.\n\n"+
+				"Use get to answer \"what is KEY set to\", because it resolves every rung. For the narrower question of which named config-patch env applies at each scope, and what that patch alone contributes, reach for env_which instead.\n"),
 		mcp.WithString("action",
 			mcp.Required(),
-			mcp.Description("One of: get, diff, check, drift — read only, change nothing; set — writes a file (the service's devstack.service.yaml or its .envrc)."),
+			mcp.Description("One of: get, diff, check, drift — read only, change nothing. set — writes a file (the service's devstack.service.yaml or its .envrc)."),
 		),
 		mcp.WithString("service",
-			mcp.Description("Exact service name. For diff, may be comma-separated list of 2+ services."),
+			mcp.Description("Exact service name. For diff, can be comma-separated list of 2+ services."),
 		),
 		mcp.WithString("group",
-			mcp.Description("Group name — a named set of services declared under 'groups' in the workspace manifest; expands to its member services. The environment tool lists this workspace's group names."),
+			mcp.Description("Group name — a named set of services declared under 'groups' in the workspace manifest. It expands to its member services. The environment tool lists this workspace's group names."),
 		),
 		mcp.WithString("filter",
 			mcp.Description("Substring filter on key names (case-insensitive). Applies to get and diff."),
@@ -158,7 +148,7 @@ func resolveLadders(ws *workspace.Workspace, workspacePath, stackEnv string, ser
 	return out, nil
 }
 
-// resolvedEnvs flattens each service's ladder into the env it actually receives.
+// resolvedEnvs flattens each service's ladder into the env it receives.
 func resolvedEnvs(ws *workspace.Workspace, workspacePath, stackEnv string, services []string) (map[string]map[string]string, error) {
 	ladders, err := resolveLadders(ws, workspacePath, stackEnv, services)
 	if err != nil {
@@ -369,7 +359,7 @@ func handleServiceEnvDiff(ws *workspace.Workspace, workspacePath, stackEnv strin
 
 // handleServiceEnvSet implements the "set" action. It writes to the rung the
 // caller names, then re-resolves the ladder from disk and reports whether the
-// value can actually reach the service.
+// value can reach the service.
 func handleServiceEnvSet(ws *workspace.Workspace, workspacePath, stackEnv, serviceName, key, value, target string) (*mcp.CallToolResult, error) {
 	if serviceName == "" {
 		return mcp.NewToolResultError("service is required for set"), nil
@@ -420,7 +410,7 @@ func handleServiceEnvSet(ws *workspace.Workspace, workspacePath, stackEnv, servi
 	layers, err := reresolveLadder(ws, workspacePath, stackEnv, serviceName)
 	if err != nil {
 		return mcp.NewToolResultText(fmt.Sprintf(
-			"wrote %s to %s (%s), but the env ladder could not be resolved to confirm it takes effect: %v",
+			"wrote %s to %s (%s), but the env ladder can not be resolved to confirm it takes effect: %v",
 			key, written, rung, err)), nil
 	}
 
@@ -433,7 +423,7 @@ func handleServiceEnvSet(ws *workspace.Workspace, workspacePath, stackEnv, servi
 
 	return mcp.NewToolResultText(fmt.Sprintf(
 		"wrote %s to %s (%s) — no higher rung overrides it. Takes effect for %s on its next restart: the restart tool "+
-			"(CLI: devstack restart %s) regenerates the Tiltfile from the manifests before triggering, so there is no separate generate step.",
+			"(CLI: devstack service restart %s) regenerates the Tiltfile from the manifests before triggering, so there is no separate generate step.",
 		key, written, rung, serviceName, serviceName)), nil
 }
 
@@ -446,7 +436,7 @@ func reresolveLadder(ws *workspace.Workspace, workspacePath, stackEnv, serviceNa
 	}
 	layers, ok := ladders[serviceName]
 	if !ok {
-		return nil, fmt.Errorf("service %q could not be resolved", serviceName)
+		return nil, fmt.Errorf("service %q can not be resolved", serviceName)
 	}
 	return layers, nil
 }
@@ -472,7 +462,7 @@ func setEnvrcValue(dir, key, value string) (string, error) {
 		}
 	}
 
-	// .envrc is executed, not line-parsed, so an unquoted value would be word-split.
+	// .envrc is executed, not line-parsed, so an unquoted value is word-split.
 	newLine := fmt.Sprintf("export %s=%s", key, shQuote(value))
 	found := false
 	for i, line := range lines {
@@ -530,7 +520,7 @@ type checkFinding struct {
 }
 
 // handleServiceEnvCheck implements the "check" action. It audits the env each
-// service actually resolves to. It deliberately makes no cross-service agreement
+// service resolves to. It deliberately makes no cross-service agreement
 // claims: services agreeing is consensus, not correctness.
 func handleServiceEnvCheck(ws *workspace.Workspace, workspacePath, stackEnv string, cfg *config.WorkspaceConfig, serviceName, groupName string) (*mcp.CallToolResult, error) {
 	var services []string
@@ -633,7 +623,7 @@ func handleServiceEnvCheck(ws *workspace.Workspace, workspacePath, stackEnv stri
 }
 
 // handleServiceEnvDrift implements the "drift" action: for each service, compare
-// the env it actually resolves to against the config surface its own repo
+// the env it resolves to against the config surface its own repo
 // declares, and report every difference. With no service or group it covers
 // every service that declares config sources.
 func handleServiceEnvDrift(ws *workspace.Workspace, workspacePath, stackEnv string, cfg *config.WorkspaceConfig, serviceName, groupName string) (*mcp.CallToolResult, error) {
@@ -671,7 +661,7 @@ func handleServiceEnvDrift(ws *workspace.Workspace, workspacePath, stackEnv stri
 		}
 		entries, err := svcconfig.Drift(svc, svcEnvs[name])
 		if err != nil {
-			fmt.Fprintf(&sb, "%s: could not compare — %v\n\n", name, err)
+			fmt.Fprintf(&sb, "%s: can not compare — %v\n\n", name, err)
 			continue
 		}
 		total += len(entries)

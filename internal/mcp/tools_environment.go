@@ -10,6 +10,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/hooks"
 	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -22,7 +23,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		mcp.WithDescription(
 			"Show the active workspace and available tools. "+
 				"Call this first to understand what you can and cannot do in the current context. "+
-				"An 'env' here is a CONFIG-PATCH environment — a named set of config vars (e.g. 'staging') that a workspace, service, or stack instance is pointed at via env_use (CLI: devstack env use). status and env_which show which env each instance currently points at. "+
+				"An 'env' here is a CONFIG-PATCH environment — a named set of config vars (for example 'staging') that a workspace, service, or stack instance is pointed at via env_use (CLI: devstack env use). status and env_which show which env each instance currently points at. "+
 				"devstack is a LOCAL development environment. Data is ephemeral and local — not production. "+
 				"The available tools depend on this workspace's configuration: trace/telemetry tools appear only when observability is enabled, tunnel tools only when an ssh client is available. "+
 				"Call this tool first to understand the context before using other tools.",
@@ -55,7 +56,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		if line := servicesSummary(workspacePath, defaultService); line != "" {
 			sb.WriteString(line)
 		}
-		tools := []string{"status", "start", "restart", "stop", "topology", "configure", "process_logs", "service_env", "observability", "stack_create", "stack_list", "stack_note", "stack_up", "stack_down", "stack_rm", "env_use", "env_which", "env_set"}
+		tools := []string{"status", "start", "restart", "stop", "topology", "configure", "process_logs", "service_env", "observability", "hooks", "stack_create", "stack_list", "stack_note", "stack_up", "stack_down", "stack_rm", "env_use", "env_which", "env_set"}
 		if otelOn {
 			tools = append(tools, "investigate")
 		}
@@ -68,11 +69,12 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 			fmt.Fprintf(&sb, "query scope: telemetry results stay inside this workspace; investigate's recent-executions mode defaults to the base instance and to this repo's service (pass a stack's short name, or 'all'), its attribute search has no default service, and a trace_id/span_id lookup ignores service and stack entirely.\n")
 		} else {
 			fmt.Fprintf(&sb, "recommended order: environment -> status -> process_logs\n")
-			fmt.Fprintf(&sb, "note: observability disabled — no trace/telemetry tools. Turn it on with the observability tool (action=enable).\n")
+			fmt.Fprintf(&sb, "note: observability disabled — no trace/telemetry tools. Turn it on with the observability tool (action=config_on).\n")
 		}
 		if !tunnelsOn {
 			fmt.Fprintf(&sb, "note: tunnel tool unavailable — no ssh client on this machine.\n")
 		}
+		sb.WriteString(hooksSummary(ws))
 
 		if cfg, err := config.Load(workspacePath); err == nil && len(cfg.Groups) > 0 {
 			fmt.Fprintf(&sb, "groups: %s\n", availableGroups(cfg))
@@ -143,20 +145,56 @@ func stacksSummary(ws *workspace.Workspace) string {
 		return fmt.Sprintf("workspace: %s — base only, no feature stacks in flight\n", ws.Name)
 	}
 	parts := make([]string, 0, len(stacks))
-	anyInactive := false
+	anyDown := false
 	for _, s := range stacks {
 		short := strings.TrimPrefix(s.Name, s.BaseName+"--")
-		if s.Status == "active" {
-			parts = append(parts, fmt.Sprintf("%s (active, base :%d)", short, s.BasePort))
+		if s.Status == stack.StatusUp {
+			parts = append(parts, fmt.Sprintf("%s (%s, base :%d)", short, stack.StatusUp, s.BasePort))
 		} else {
-			anyInactive = true
+			anyDown = true
 			parts = append(parts, fmt.Sprintf("%s (%s)", short, s.Status))
 		}
 	}
 	line := fmt.Sprintf("workspace: %s — base + %d feature stack(s) in flight: %s — those are the short names every 'stack' parameter takes (full identity is %s--<name>)\n", ws.Name, len(stacks), strings.Join(parts, ", "), ws.Name)
-	if anyInactive {
-		line += "inactive = the stack's worktrees and record exist but none of its services run: status/process_logs/restart/stop/configure against it error \"not up\" instead of falling through to base, " +
+	if anyDown {
+		line += "down = the stack's worktrees and record exist but none of its services run: status/process_logs/restart/stop/configure against it error \"not up\" instead of falling through to base, " +
 			"service_env still reads and writes its worktree config, and investigate returns only what it emitted while it was last up.\n"
 	}
 	return line
+}
+
+// hooksSummary orients an agent on lifecycle hooks before it creates or destroys
+// anything. Creating a stack in a workspace with hooks can run someone's shell
+// command against external state, so whether any exist belongs in the first tool
+// an agent calls, not in a tool it can never reach.
+func hooksSummary(ws *workspace.Workspace) string {
+	if ws == nil {
+		return ""
+	}
+	events := map[string][]string{}
+	total := 0
+	for _, event := range config.HookEvents() {
+		ev, src, err := hooks.Context(ws, "", event, nil)
+		if err != nil {
+			return ""
+		}
+		for _, inv := range hooks.Resolve(ev, src) {
+			events[event] = append(events[event], inv.Label())
+			total++
+		}
+	}
+	if total == 0 {
+		return "hooks: none declared — no lifecycle automation runs in this workspace\n"
+	}
+
+	var parts []string
+	for _, event := range config.HookEvents() {
+		if names := events[event]; len(names) > 0 {
+			parts = append(parts, fmt.Sprintf("%s (%s)", event, strings.Join(names, ", ")))
+		}
+	}
+	return fmt.Sprintf("hooks: %d declared, firing on %s\n"+
+		"  These run automatically on stack_create/stack_up/stack_down/stack_rm/start/stop and can change state outside this machine. "+
+		"List them with the hooks tool before creating or tearing down a stack. A failed SETUP hook means the thing exists but is not provisioned; a failed TEARDOWN hook means teardown finished but external cleanup probably did not.\n",
+		total, strings.Join(parts, ", "))
 }

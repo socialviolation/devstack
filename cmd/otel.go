@@ -12,7 +12,7 @@ import (
 )
 
 // ensureCollector starts the collector when the workspace has observability
-// enabled but it isn't running. Returns started=false with no error when there
+// enabled but it is not running. Returns started=false with no error when there
 // is nothing to do (disabled, or already running).
 func ensureCollector(ws *workspace.Workspace) (started bool, err error) {
 	if !config.ObservabilityEnabled(ws.Path) {
