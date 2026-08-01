@@ -59,6 +59,9 @@ func init() {
 	// Hide the built-in help subcommand (--help flag still works)
 	rootCmd.SetHelpCommand(&cobra.Command{Hidden: true})
 
+	rootCmd.Version = buildVersion()
+	rootCmd.SetVersionTemplate("devstack {{.Version}}\n")
+
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./config.json)")
 	_ = rootCmd.PersistentFlags().MarkHidden("config")
 
