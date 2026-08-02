@@ -525,7 +525,7 @@ const (
 // an older devstack wrote unmatchable, and the block would be appended again
 // instead of replaced.
 func agentsProvenance() string {
-	return "<!-- devstack " + buildVersion() + " · regenerate with `devstack init --all` -->\n"
+	return "<!-- devstack " + buildStamp() + " · regenerate with `devstack init --all` -->\n"
 }
 
 // writeAgentsMD writes the managed devstack block into AGENTS.md non-destructively.

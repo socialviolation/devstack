@@ -33,7 +33,7 @@ func reportGeneratedStaleness(wsPath string) int {
 	if err != nil {
 		return 0
 	}
-	stale := staleGenerated(files, buildVersion())
+	stale := staleGenerated(files, buildStamp())
 	if len(stale) == 0 {
 		return 0
 	}

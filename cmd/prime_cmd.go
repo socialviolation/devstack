@@ -412,7 +412,7 @@ func writePrimeBuild(b *strings.Builder) {
 	if line == "" {
 		return
 	}
-	fmt.Fprintf(b, "  build         %s\n", buildVersion())
+	fmt.Fprintf(b, "  build         %s\n", buildStamp())
 	fmt.Fprintf(b, "                %s\n", line)
 }
 

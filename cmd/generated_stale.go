@@ -22,7 +22,7 @@ type generatedFile struct {
 // provenanceRe reads the version out of the line agentsProvenance writes. It
 // anchors on the marker rather than the whole line so the trailing advice can be
 // reworded without orphaning every file already on disk.
-var provenanceRe = regexp.MustCompile(`(?m)^<!-- devstack (\S+) `)
+var provenanceRe = regexp.MustCompile(`(?m)^<!-- devstack (.+?)\s+(?:·|-->)`)
 
 // scanGenerated reports the AGENTS.md of every service in a workspace and which
 // devstack generated it.

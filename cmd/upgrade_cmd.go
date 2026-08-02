@@ -51,7 +51,7 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	if mod == "" {
 		return fmt.Errorf("this binary carries no module path, so there is nothing to install from")
 	}
-	fmt.Printf("installed: %s\n", buildVersion())
+	fmt.Printf("installed: %s\n", buildStamp())
 
 	res := selfcheck.Refresh(mod, buildRevision())
 	if err := checkUpgradeWorthDoing(res, force); err != nil {
