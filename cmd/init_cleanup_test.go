@@ -327,3 +327,39 @@ func TestRunInitAllLeavesClaudeSettingsAloneByDefault(t *testing.T) {
 		}
 	}
 }
+
+// An AGENTS.md written before the block carried a version has no provenance
+// line. The version must therefore live inside the block and never in the
+// sentinel: the sentinel is located by exact string match, so a versioned one
+// would fail to match every file an older devstack wrote, and the block would be
+// appended alongside the stale one instead of replacing it.
+func TestVersionStampDoesNotOrphanBlocksWrittenBeforeIt(t *testing.T) {
+	human := "# api\n\nNotes a human wrote.\n"
+	old := human + "\n" + agentsSentinelBegin + "\nold instructions, no provenance line\n" + agentsSentinelEnd + "\n"
+
+	fresh := agentsSentinelBegin + "\n" + agentsProvenance() + "new instructions\n" + agentsSentinelEnd
+	got := replaceManagedBlock(old, fresh)
+
+	if n := strings.Count(got, agentsSentinelBegin); n != 1 {
+		t.Fatalf("want exactly 1 managed block after regenerating an unversioned file, got %d:\n%s", n, got)
+	}
+	if strings.Contains(got, "old instructions") {
+		t.Errorf("the stale block survived instead of being replaced:\n%s", got)
+	}
+	if !strings.Contains(got, "Notes a human wrote.") {
+		t.Errorf("human content outside the block must be preserved:\n%s", got)
+	}
+	if !strings.Contains(got, "<!-- devstack ") {
+		t.Errorf("the regenerated block carries no version stamp:\n%s", got)
+	}
+}
+
+// Regenerating with one binary must be byte-identical, or every init --all
+// across 15 repos produces a diff that says nothing.
+func TestVersionStampIsIdempotent(t *testing.T) {
+	block := agentsSentinelBegin + "\n" + agentsProvenance() + "instructions\n" + agentsSentinelEnd
+	once := replaceManagedBlock("# api\n", block)
+	if twice := replaceManagedBlock(once, block); twice != once {
+		t.Errorf("regenerating twice changed the file:\nfirst:\n%s\nsecond:\n%s", once, twice)
+	}
+}

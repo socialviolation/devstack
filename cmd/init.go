@@ -515,6 +515,19 @@ const (
 	legacyPointerHeader = "## devstack (local dev services)"
 )
 
+// agentsProvenance stamps the generated block with the devstack that wrote it.
+//
+// This file is committed into every service repo, so without it there is no way
+// to tell instructions a current devstack generated from instructions left by
+// one several breaking changes ago — and the CLI they name has already been
+// renamed once. It is a line inside the block, never part of the sentinel: the
+// sentinel is matched by exact string, so versioning it would leave every file
+// an older devstack wrote unmatchable, and the block would be appended again
+// instead of replaced.
+func agentsProvenance() string {
+	return "<!-- devstack " + buildStamp() + " · regenerate with `devstack init --all` -->\n"
+}
+
 // writeAgentsMD writes the managed devstack block into AGENTS.md non-destructively.
 // If a sentinel-wrapped block exists it is replaced in place; otherwise any legacy
 // section is migrated away and a fresh block is appended, preserving all other content.
@@ -524,7 +537,7 @@ func writeAgentsMD(serviceName, servicePath, workspacePath, stackName string) er
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to read AGENTS.md: %w", err)
 	}
-	block := agentsSentinelBegin + "\n" + buildAgentInstructions(serviceName, servicePath, workspacePath, stackName) + agentsSentinelEnd
+	block := agentsSentinelBegin + "\n" + agentsProvenance() + buildAgentInstructions(serviceName, servicePath, workspacePath, stackName) + agentsSentinelEnd
 	updated := replaceManagedBlock(string(existing), block)
 	return os.WriteFile(agentsFile, []byte(updated), 0644)
 }
