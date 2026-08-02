@@ -114,3 +114,46 @@ func TestUpgradeProceedsWhenBehind(t *testing.T) {
 		t.Errorf("a build that is behind is the case upgrade exists for: %v", err)
 	}
 }
+
+// upgrade compares the stamp of the newly installed binary against the stamp in
+// every generated file, so what it reads back out of `--version` has to be the
+// whole stamp. Taking the second field dropped the commit — "v0.1.1" against a
+// file written by "v0.1.1 (f1969ec)" — so nothing ever matched and upgrade
+// reported every file in every workspace as stale, immediately after migrating
+// them, while workspace doctor reported the same files as current.
+func TestVersionOutputParsesBackToTheWholeStamp(t *testing.T) {
+	for _, tc := range []struct{ out, want string }{
+		{"devstack v0.1.1 (f1969ec)\n", "v0.1.1 (f1969ec)"},
+		{"devstack dev (a615867, uncommitted changes)\n", "dev (a615867, uncommitted changes)"},
+		{"devstack v0.1.1 (f1969ec)\n  12 commits behind main — update: go install x@latest\n", "v0.1.1 (f1969ec)"},
+		{"devstack v0.1.1\n", "v0.1.1"},
+	} {
+		if got := parseVersionOutput(tc.out); got != tc.want {
+			t.Errorf("parseVersionOutput(%q) = %q, want %q", tc.out, got, tc.want)
+		}
+	}
+}
+
+// The round trip is the actual contract: what --version prints must come back
+// as exactly what is stamped into generated files, or the two disagree forever.
+func TestStampSurvivesItsOwnVersionOutput(t *testing.T) {
+	if got := parseVersionOutput("devstack " + buildStamp() + "\n"); got != buildStamp() {
+		t.Errorf("stamp did not survive the round trip: printed %q, read back %q", buildStamp(), got)
+	}
+}
+
+// upgrade and workspace doctor answer the same question and must answer it the
+// same way. They compared different values, so one called a file stale while the
+// other called it current — with no way to tell which was lying.
+func TestUpgradeAndDoctorCompareTheSameValue(t *testing.T) {
+	files := []generatedFile{{Service: "api", Exists: true, Version: buildStamp()}}
+
+	if got := staleGenerated(files, buildStamp()); len(got) != 0 {
+		t.Errorf("doctor calls a file written by this build stale: %+v", got)
+	}
+	// What upgrade passes when the install produced this same binary.
+	upgradeTarget := parseVersionOutput("devstack " + buildStamp() + "\n")
+	if got := staleGenerated(files, upgradeTarget); len(got) != 0 {
+		t.Errorf("upgrade calls a file written by this build stale: %+v", got)
+	}
+}

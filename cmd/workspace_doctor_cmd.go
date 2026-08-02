@@ -37,7 +37,7 @@ func reportGeneratedStaleness(wsPath string) int {
 	if len(stale) == 0 {
 		return 0
 	}
-	fmt.Printf("generated files: %d of %d written by an older devstack\n", len(stale), len(files))
+	fmt.Printf("generated files: %d of %d differ from what this devstack writes\n", len(stale), len(files))
 	for _, f := range stale {
 		fmt.Printf("- [warn] %s: AGENTS.md %s\n", f.Service, describeStamp(f.Version))
 	}

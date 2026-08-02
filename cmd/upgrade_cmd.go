@@ -64,16 +64,18 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	newVersion := installedVersion()
-	if newVersion != "" && newVersion != buildVersion() {
-		fmt.Printf("now:       %s\n", newVersion)
+	newStamp := installedStamp()
+	if newStamp != "" && newStamp != buildStamp() {
+		fmt.Printf("now:       %s\n", newStamp)
 	}
-	// The stamp to compare against is the one the NEW binary writes. Comparing
-	// against this process's version would call every file stale the moment the
-	// install landed, and call them fresh again once it was restarted.
-	target := newVersion
+	// The stamp to compare against is the one the NEW binary writes, and it must
+	// be the whole stamp: this is compared against what is written into every
+	// generated file, so anything less matches nothing. Comparing against this
+	// process's stamp would call every file stale the moment the install landed,
+	// and fresh again once it was restarted.
+	target := newStamp
 	if target == "" {
-		target = buildVersion()
+		target = buildStamp()
 	}
 	return reportAndMigrate(target, migrate)
 }
@@ -139,9 +141,9 @@ func installedBinary() string {
 	return path
 }
 
-// installedVersion asks the newly installed binary what it is, rather than
+// installedStamp asks the newly installed binary what it is, rather than
 // assuming the install produced what was asked for.
-func installedVersion() string {
+func installedStamp() string {
 	bin := installedBinary()
 	if bin == "" {
 		return ""
@@ -150,11 +152,21 @@ func installedVersion() string {
 	if err != nil {
 		return ""
 	}
-	fields := strings.Fields(strings.SplitN(string(out), "\n", 2)[0])
-	if len(fields) < 2 {
-		return ""
-	}
-	return fields[1]
+	return parseVersionOutput(string(out))
+}
+
+// parseVersionOutput reads a stamp back out of `devstack --version`.
+//
+// It takes the whole of the first line after the program name, because the stamp
+// has spaces in it: "v0.1.1 (f1969ec)". Taking the second field instead dropped
+// the commit, so the value compared against the stamp in every generated file
+// could never equal it, and `upgrade` reported every file in every workspace as
+// written by an older devstack — while `workspace doctor`, which compares
+// buildStamp directly, reported the same files as current.
+func parseVersionOutput(out string) string {
+	first := strings.SplitN(out, "\n", 2)[0]
+	rest := strings.TrimPrefix(strings.TrimSpace(first), "devstack")
+	return strings.TrimSpace(rest)
 }
 
 func reportAndMigrate(version string, migrate bool) error {
@@ -164,7 +176,7 @@ func reportAndMigrate(version string, migrate bool) error {
 		return nil
 	}
 
-	fmt.Printf("\n%d workspace(s) hold generated files an older devstack wrote:\n", len(order))
+	fmt.Printf("\n%d workspace(s) hold generated files that differ from what this devstack writes:\n", len(order))
 	for _, ws := range order {
 		files := stale[ws.Name]
 		fmt.Printf("  %-16s %d file(s)\n", ws.Name, len(files))

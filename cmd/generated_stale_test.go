@@ -58,28 +58,50 @@ func TestStampCarriesTheCommit(t *testing.T) {
 	}
 }
 
-func TestStaleGeneratedPicksOnlyFilesAnotherVersionWrote(t *testing.T) {
+// Staleness is about content, not about which build wrote the file. The stamp
+// carries the commit, so every devstack commit changed it — and comparing on it
+// made all fifteen repos stale on every release, with a regenerated diff whose
+// only change was the stamp recording the regeneration.
+func TestStalenessIsDecidedByContentNotVersion(t *testing.T) {
 	files := []generatedFile{
-		{Service: "current", Exists: true, Version: "v2"},
-		{Service: "older", Exists: true, Version: "v1"},
-		{Service: "unstamped", Exists: true, Version: ""},
-		{Service: "never-generated", Exists: false},
+		{Service: "same-content-older-stamp", Exists: true, Version: "v0.1.0 (aaaaaaa)", Differs: false},
+		{Service: "changed-content", Exists: true, Version: "v0.1.1 (bbbbbbb)", Differs: true},
+		{Service: "never-generated", Exists: false, Differs: true},
 	}
-	got := staleGenerated(files, "v2")
-
 	names := map[string]bool{}
-	for _, f := range got {
+	for _, f := range staleGenerated(files, "v0.1.1 (bbbbbbb)") {
 		names[f.Service] = true
 	}
-	if !names["older"] || !names["unstamped"] {
-		t.Errorf("a file written by another version, or written before the stamp, is stale: %v", names)
+
+	if names["same-content-older-stamp"] {
+		t.Error("an older stamp with identical content needs no regeneration, and reporting it teaches people to ignore the report")
 	}
-	if names["current"] {
-		t.Error("a file this version wrote is not stale")
+	if !names["changed-content"] {
+		t.Error("content this devstack would write differently is exactly what stale means")
 	}
 	// A repo that never opted into AGENTS.md must not be nagged into one.
 	if names["never-generated"] {
 		t.Error("a file that does not exist was never asked for, so it is not stale")
+	}
+}
+
+// The stamp differs between any two builds by design, so it cannot take part in
+// the comparison or nothing would ever match.
+func TestManagedBodyIgnoresTheStamp(t *testing.T) {
+	mk := func(stamp string) string {
+		return "# api\n\n" + agentsSentinelBegin + "\n<!-- devstack " + stamp + " · regenerate with `devstack init --all` -->\nthe same instructions\n" + agentsSentinelEnd + "\n"
+	}
+	if managedBody(mk("v0.1.0 (aaaaaaa)")) != managedBody(mk("v9.9.9 (fffffff)")) {
+		t.Error("two builds writing identical instructions must compare equal")
+	}
+	if got := managedBody(mk("v0.1.0 (aaaaaaa)")); !strings.Contains(got, "the same instructions") {
+		t.Errorf("managedBody dropped the instructions it is meant to compare: %q", got)
+	}
+	if got := managedBody(mk("v0.1.0 (aaaaaaa)")); strings.Contains(got, "devstack v0.1.0") {
+		t.Errorf("managedBody kept the stamp: %q", got)
+	}
+	if got := managedBody("# api\nno managed block here\n"); got != "" {
+		t.Errorf("a file with no managed block has no body to compare: %q", got)
 	}
 }
 
