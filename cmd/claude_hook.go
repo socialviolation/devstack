@@ -15,12 +15,19 @@ const claudeSettingsRel = ".claude/settings.json"
 // substring, so a user who adds flags of their own keeps one entry.
 const primeHookCommand = "devstack prime --json"
 
-// primeHookMatchers are the SessionStart events worth briefing.
+// primeHookMatchers are the SessionStart events worth briefing. It is every
+// matcher Claude Code defines, because each one begins a session whose context
+// does not carry the briefing forward.
 //
 // "compact" matters most after the first: compaction is exactly the moment the
 // landscape falls out of context, and an agent that forgets there are several
-// copies of a service starts reporting the wrong one as broken.
-var primeHookMatchers = []string{"startup", "resume", "clear", "compact"}
+// copies of a service starts reporting the wrong one as broken. "fork" is the
+// same event wearing another name — /fork and /branch start a session against a
+// workspace whose state has moved on since the parent was briefed.
+//
+// Adding one here is enough to patch every settings.json already written:
+// mergePrimeHook adds the matchers that are missing and leaves the rest alone.
+var primeHookMatchers = []string{"startup", "resume", "clear", "compact", "fork"}
 
 // ensureClaudeSessionHook merges devstack's SessionStart hook into dir's
 // .claude/settings.json and reports whether it changed the file.
