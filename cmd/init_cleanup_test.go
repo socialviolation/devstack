@@ -363,3 +363,37 @@ func TestVersionStampIsIdempotent(t *testing.T) {
 		t.Errorf("regenerating twice changed the file:\nfirst:\n%s\nsecond:\n%s", once, twice)
 	}
 }
+
+// The other matcher tests compare primeHookMatchers against itself, so a matcher
+// nobody thought of is invisible to them — which is how "fork" was missed. This
+// one states Claude Code's documented set independently, so the code is checked
+// against the contract rather than against its own opinion.
+//
+// From the SessionStart matcher table:
+//
+//	startup  new session
+//	resume   --resume, --continue, or /resume
+//	clear    /clear
+//	compact  auto or manual compaction
+//	fork     --fork-session with --resume or --continue, /fork, or /branch
+//
+// A matcher Claude Code does not define is never called, and one it defines that
+// devstack omits is a session that starts with no briefing. Both fail silently,
+// which is the only reason this is worth a test.
+func TestBriefedMatchersAreEverySessionStartEvent(t *testing.T) {
+	documented := []string{"startup", "resume", "clear", "compact", "fork"}
+
+	have := map[string]bool{}
+	for _, m := range primeHookMatchers {
+		have[m] = true
+	}
+	for _, m := range documented {
+		if !have[m] {
+			t.Errorf("SessionStart fires %q and devstack does not brief it, so that session starts blind", m)
+		}
+		delete(have, m)
+	}
+	for m := range have {
+		t.Errorf("devstack briefs %q, which SessionStart does not define — the hook would never run", m)
+	}
+}
