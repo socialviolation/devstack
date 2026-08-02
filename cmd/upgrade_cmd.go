@@ -174,8 +174,14 @@ func reportAndMigrate(version string, migrate bool) error {
 	}
 
 	if !migrate {
-		fmt.Println("\nThese are committed into their repos, so regenerating them is a real diff.")
-		fmt.Println("To regenerate: devstack upgrade --migrate")
+		fmt.Println("\ndevstack upgrade --migrate brings these up to date. In every service above,")
+		fmt.Println("and in each stack worktree, it writes:")
+		fmt.Println("  AGENTS.md              the devstack block, replacing whatever an older one left")
+		fmt.Println("  .mcp.json              the MCP server entry")
+		fmt.Println("  CLAUDE.md and friends  a pointer block, in the files a repo already has")
+		fmt.Println("  .claude/settings.json  the SessionStart hook, so every session runs devstack prime")
+		fmt.Println("\nAll of these are committed, so this is a real diff in every repo. Nothing else")
+		fmt.Println("in them is touched, and no file is created that is not already there.")
 		return nil
 	}
 
@@ -187,6 +193,17 @@ func reportAndMigrate(version string, migrate bool) error {
 	return migrateWorkspaces(bin, order)
 }
 
+// migrateArgs is the full refresh: every generated file this devstack owns,
+// brought to what this devstack writes.
+//
+// --claude-hook is included here and nowhere else by default. The flag is
+// opt-in on `init` because .claude/settings.json is committed, and adding a hook
+// to somebody's repo unasked is not a side effect a refresh should have. A
+// migration is the one place it is asked for: the report above names every file
+// before anything is written, and running it is a separate decision from
+// upgrading.
+var migrateArgs = []string{"init", "--all", "--claude-hook"}
+
 // migrateWorkspaces regenerates each workspace's files by running bin, which is
 // the devstack that was just installed and not this process. This one is the old
 // build: asking it to regenerate would write exactly the content being replaced.
@@ -196,7 +213,7 @@ func reportAndMigrate(version string, migrate bool) error {
 func migrateWorkspaces(bin string, order []workspace.Workspace) error {
 	var failed []string
 	for _, ws := range order {
-		c := exec.Command(bin, "init", "--all")
+		c := exec.Command(bin, migrateArgs...)
 		c.Dir = ws.Path
 		c.Stdout = os.Stdout
 		c.Stderr = os.Stderr

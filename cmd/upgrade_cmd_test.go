@@ -47,9 +47,26 @@ func TestMigrationRunsTheInstalledBinaryInEachWorkspace(t *testing.T) {
 		t.Fatalf("want one invocation per workspace, got %d: %q", len(lines), lines)
 	}
 	for _, l := range lines {
-		if !strings.HasSuffix(l, "init --all") {
-			t.Errorf("migration must run `init --all`, got %q", l)
+		if !strings.HasSuffix(l, "init --all --claude-hook") {
+			t.Errorf("migration must run the full refresh, got %q", l)
 		}
+	}
+}
+
+// The hook is what makes a session briefed at all, and a migration is the one
+// place it is asked for — `init` alone leaves it opt-in, because
+// .claude/settings.json is committed and adding one unasked is not a side
+// effect a refresh should have.
+func TestMigrationSetsUpTheSessionHook(t *testing.T) {
+	var joined string
+	for _, a := range migrateArgs {
+		joined += a + " "
+	}
+	if !strings.Contains(joined, "--claude-hook") {
+		t.Errorf("migrateArgs = %v, want the session hook wired up", migrateArgs)
+	}
+	if !strings.Contains(joined, "--all") {
+		t.Errorf("migrateArgs = %v, want every service refreshed", migrateArgs)
 	}
 }
 
