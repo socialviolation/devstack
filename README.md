@@ -118,11 +118,21 @@ devstack stack list
 devstack stack rm <name>                            # remove worktrees, release ports, deregister
 devstack stack config <svc> --stack <name>          # effective config that instance runs with
 devstack stack note <name> [text]                   # what this stack is for
+devstack stack note <name> --add "..."              # append where it got to
 ```
 
 Work on a stack by `cd`-ing into its worktree, the path `stack create` and `stack list` print. It's already on the stack's branch, so you never `git checkout`, and reloading that instance alone with `service restart --stack <name>` leaves base and every other stack untouched.
 
 `create` also takes `--branch` (defaults to the stack name, attaches if it exists) and `--note`. A note is the part you can't reconstruct a week later: a branch says what changed, a note says why.
+
+`--add` appends a dated entry instead of replacing the note, so a stack you left half-done says where it got to. The last 5 entries are kept, each at most 200 characters, and repeating the last one does nothing — a log that records every step buries the line worth reading. The purpose and the newest entry go into the session briefing, so an agent picking the stack up reads both before it touches anything.
+
+```
+$ devstack stack note perf
+NAV-412 daily value spike
+  2026-08-01  repro on dev2, recalc is 40s
+  2026-08-03  traced to the FX join; parked pending a prod diff
+```
 
 > Shared state is not isolated. Stacks isolate code and ports, not the database, queues or caches. Two stacks on one DB see each other's data. Point one elsewhere with an [environment](#environments) if that matters.
 

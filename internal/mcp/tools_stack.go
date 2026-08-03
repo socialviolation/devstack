@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -179,6 +180,9 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			if s.Note != "" {
 				fmt.Fprintf(&sb, "  note:     %s\n", s.Note)
 			}
+			if n := len(s.Log); n > 0 {
+				fmt.Fprintf(&sb, "  latest:   %s  %s\n", s.Log[n-1].At.Format("2006-01-02"), s.Log[n-1].Text)
+			}
 			links := make([]string, 0, len(s.Ports))
 			for _, k := range sortedPortKeys(s.Ports) {
 				links = append(links, fmt.Sprintf("%s=http://localhost:%d", k, s.Ports[k]))
@@ -194,7 +198,8 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 
 func registerStackNoteTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_note",
-		mcp.WithDescription("Read or set what a feature stack is for. devstack derives everything else about a stack — which services it overlays, its branch, its age — but not why it exists, and a week later that is the part nobody can reconstruct. Free text: a ticket URL, an issue key, a sentence. Omit note to read the current one; pass an empty string to clear it. Shown by stack_list. Mirrors 'devstack stack note'."),
+		mcp.WithDescription("Read, set or add to what a feature stack is for and where it got to. devstack derives everything else about a stack — which services it overlays, its branch, its age — but not why it exists or how far it got, and a week later those are the parts nobody can reconstruct. "+
+			"'note' is the standing purpose and replaces what is there. 'append' adds one dated entry to a log of at most "+strconv.Itoa(stack.NoteLogEntries)+" entries. Pass neither to read both. Mirrors 'devstack stack note'."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -202,7 +207,12 @@ func registerStackNoteTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(stackShortNameDesc)),
 		mcp.WithString("note",
-			mcp.Description("What the stack is for. Omit to read the current note instead of writing one; pass \"\" to clear it.")),
+			mcp.Description("What the stack is for, replacing the current purpose. Omit to read instead of write; pass \"\" to clear the purpose and its entries.")),
+		mcp.WithString("append",
+			mcp.Description("One line on where the work got to, appended with today's date. "+
+				"Append when the answer to \"what would the next person need to know?\" changed: a decision taken, a blocker hit, a piece verified working, work parked mid-way. "+
+				"Do NOT append to narrate: not per file edited, per command run, per test executed, and never to say what you are about to do. If in doubt, do not append — a session that ends with no entry is normal and correct. "+
+				"Only the last "+strconv.Itoa(stack.NoteLogEntries)+" entries are kept, so an entry per step deletes the ones worth reading. Maximum "+strconv.Itoa(stack.NoteEntryMax)+" characters, and repeating the last entry is a no-op.")),
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -215,12 +225,35 @@ func registerStackNoteTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		note, given := request.GetArguments()["note"]
-		if !given {
-			if rec.Note == "" {
+		note, setting := request.GetArguments()["note"]
+		add := strings.TrimSpace(request.GetString("append", ""))
+		if setting && add != "" {
+			return mcp.NewToolResultError("pass either note (replaces the purpose) or append (adds an entry), not both"), nil
+		}
+
+		if add != "" {
+			appended, entry, err := stack.AppendNote(ws.Name, rec.Name, add)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			if !appended {
+				return mcp.NewToolResultText(fmt.Sprintf("Not appended: the last entry on %q already says that.", rec.Name)), nil
+			}
+			return mcp.NewToolResultText(fmt.Sprintf("%s: %s", rec.Name, entry.Text)), nil
+		}
+
+		if !setting {
+			if rec.Note == "" && len(rec.Log) == 0 {
 				return mcp.NewToolResultText(fmt.Sprintf("Stack %q has no note. Set one so the next reader knows what it is for.", rec.Name)), nil
 			}
-			return mcp.NewToolResultText(rec.Note), nil
+			var sb strings.Builder
+			if rec.Note != "" {
+				fmt.Fprintf(&sb, "%s\n", rec.Note)
+			}
+			for _, e := range rec.Log {
+				fmt.Fprintf(&sb, "  %s  %s\n", e.At.Format("2006-01-02"), e.Text)
+			}
+			return mcp.NewToolResultText(strings.TrimRight(sb.String(), "\n")), nil
 		}
 
 		text := strings.TrimSpace(fmt.Sprintf("%v", note))

@@ -214,6 +214,9 @@ func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, re
 			if note := firstLine(rec.Note, 110); note != "" {
 				fmt.Fprintf(b, "  purpose %s\n", note)
 			}
+			if e, ok := rec.LatestEntry(); ok {
+				fmt.Fprintf(b, "  latest  %s  %s\n", e.At.Format("2006-01-02"), firstLine(e.Text, 100))
+			}
 		}
 		b.WriteString("  Your changes here go on the branch of this stack, not on base.\n")
 		return
@@ -225,6 +228,9 @@ func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, re
 	fmt.Fprintf(b, "  possibly for  %s (%s)\n", working.Rec.Name, working.Reason)
 	if note := firstLine(working.Rec.Note, 120); note != "" {
 		fmt.Fprintf(b, "  purpose %s\n", note)
+	}
+	if e, ok := working.Rec.LatestEntry(); ok {
+		fmt.Fprintf(b, "  latest  %s  %s\n", e.At.Format("2006-01-02"), firstLine(e.Text, 100))
 	}
 	fmt.Fprintf(b, "  You are not in that stack. The directory of that stack is %s.\n  Before you change any code, ask the user which stack this session is for.\n",
 		orDash(working.Rec.Worktrees[service]))

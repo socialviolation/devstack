@@ -129,6 +129,7 @@ func init() {
 	stackCreateCmd.Flags().String("repos", "", "Comma-separated service names that this stack changes")
 	stackCreateCmd.Flags().String("branch", "", "Branch for the changed repos (default: the stack name). Attaches if it already exists.")
 	stackCreateCmd.Flags().String("note", "", "What this stack is for — a ticket URL, an issue key, a sentence. Shown by 'devstack stack list'.")
+	stackNoteCmd.Flags().String("add", "", "Append a dated entry — where the work got to — instead of replacing the note")
 	stackRemoveCmd.Flags().Bool("force", false, "Remove worktrees even if they have uncommitted changes. Destroys that work; it cannot be recovered")
 	stackConfigCmd.Flags().String("stack", "", "Stack name (default: the stack containing the current directory)")
 }
@@ -276,6 +277,9 @@ func runStackList(cmd *cobra.Command, args []string) error {
 		if s.Note != "" {
 			color.New(color.Faint).Printf("  %s\n", s.Note)
 		}
+		if n := len(s.Log); n > 0 {
+			color.New(color.Faint).Printf("  %s ago  %s\n", stackAge(s.Log[n-1].At), s.Log[n-1].Text)
+		}
 		var links []string
 		for _, k := range sortedKeys(s.Ports) {
 			links = append(links, fmt.Sprintf("%s=http://localhost:%d", k, s.Ports[k]))
@@ -324,16 +328,22 @@ func stackAge(created time.Time) string {
 var stackNoteCmd = &cobra.Command{
 	Use:   "note <name> [text]",
 	Short: "Show or set what a stack is for",
-	Long: `Record what a stack is for, in your words — a ticket URL, an issue key, a
+	Long: fmt.Sprintf(`Record what a stack is for, in your words — a ticket URL, an issue key, a
 sentence. devstack never derives this: a branch says what changed, a note says
 why, and a week later the note is the part you cannot reconstruct.
 
-With no text, prints the current note. Pass an empty string to clear it.
+--add appends a dated entry instead of replacing the note: where the work got
+to, so picking it up next week does not start with reading the diff. The last
+%d entries are kept, each at most %d characters — an entry per step drops the
+one worth reading.
+
+With no text, prints the note and its entries. Pass an empty string to clear
+both.
 
 Examples:
   devstack stack note perf "NAV-412 daily value spike"
-  devstack stack note perf https://linear.app/navexa/issue/NAV-412
-  devstack stack note perf`,
+  devstack stack note perf --add "cache warms on boot now, spike is in the FX join"
+  devstack stack note perf`, stack.NoteLogEntries, stack.NoteEntryMax),
 	Args:         cobra.RangeArgs(1, 2),
 	SilenceUsage: true,
 	RunE:         runStackNote,
@@ -348,13 +358,35 @@ func runStackNote(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	add, _ := cmd.Flags().GetString("add")
+
+	if add != "" {
+		if len(args) == 2 {
+			return fmt.Errorf("--add appends an entry and [text] replaces the note; pass one or the other")
+		}
+		appended, entry, err := stack.AppendNote(base.Name, rec.Name, add)
+		if err != nil {
+			return err
+		}
+		if !appended {
+			fmt.Printf("Unchanged — the last entry on %q already says that.\n", rec.Name)
+			return nil
+		}
+		fmt.Printf("✓ %s: %s\n", rec.Name, entry.Text)
+		return nil
+	}
 
 	if len(args) == 1 {
-		if rec.Note == "" {
+		if rec.Note == "" && len(rec.Log) == 0 {
 			fmt.Printf("No note on stack %q. Set one with: devstack stack note %s \"...\"\n", rec.Name, rec.Name)
 			return nil
 		}
-		fmt.Println(rec.Note)
+		if rec.Note != "" {
+			fmt.Println(rec.Note)
+		}
+		for _, e := range rec.Log {
+			color.New(color.Faint).Printf("  %s  %s\n", e.At.Format("2006-01-02"), e.Text)
+		}
 		return nil
 	}
 

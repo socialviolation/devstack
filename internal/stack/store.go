@@ -25,12 +25,38 @@ type Record struct {
 	Branch     string            `json:"branch"`                // branch the changed repos' worktrees are on
 	Env        string            `json:"env,omitempty"`         // active env name applied at the stack scope
 	Note       string            `json:"note,omitempty"`        // what this stack is for, in the author's words
+	Log        []NoteEntry       `json:"log,omitempty"`         // dated entries: where the work got to
 	Overlay    []string          `json:"overlay"`               // overlay service names, sorted
 	Worktrees  map[string]string `json:"worktrees"`             // service -> worktree path
 	Ports      map[string]int    `json:"ports"`                 // service/portKey -> allocated port
 	Active     bool              `json:"active,omitempty"`      // folded into the base Tiltfile as namespaced resources
 	DaemonPort int               `json:"daemon_port,omitempty"` // legacy per-stack daemon port; unused, kept so old records still parse
 	CreatedAt  time.Time         `json:"created_at"`
+}
+
+// NoteEntry is one dated line appended to a stack's note. The note says what the
+// stack is for; an entry says where it got to.
+type NoteEntry struct {
+	At   time.Time `json:"at"`
+	Text string    `json:"text"`
+}
+
+const (
+	// NoteEntryMax bounds one entry, in runes. An entry is a line the next reader
+	// skims, not a place to paste output.
+	NoteEntryMax = 200
+
+	// NoteLogEntries is how many entries a stack keeps. Appending past it drops the
+	// oldest, so a writer that logs every step erases the record it was adding to.
+	NoteLogEntries = 5
+)
+
+// LatestEntry returns the most recent log entry, and false when there is none.
+func (r Record) LatestEntry() (NoteEntry, bool) {
+	if len(r.Log) == 0 {
+		return NoteEntry{}, false
+	}
+	return r.Log[len(r.Log)-1], true
 }
 
 // RuntimeKey is the globally unique key a stack's runtime state is filed under:
@@ -99,7 +125,9 @@ func FindStack(workspaceName, name string) (*Record, error) {
 }
 
 // SetNote records what a stack is for. A branch name says what changed; this
-// says why, and is the only field devstack never derives.
+// says why, and is the only field devstack never derives. Clearing the note
+// (note == "") also drops the log: the entries are progress against a purpose
+// that no longer exists.
 func SetNote(base, name, note string) error {
 	recs, err := LoadStore(base)
 	if err != nil {
@@ -108,10 +136,48 @@ func SetNote(base, name, note string) error {
 	for i := range recs {
 		if recs[i].Name == name {
 			recs[i].Note = note
+			if note == "" {
+				recs[i].Log = nil
+			}
 			return saveStore(base, recs)
 		}
 	}
 	return fmt.Errorf("stack %q not found in workspace %q", name, base)
+}
+
+// AppendNote adds a dated entry to a stack's log, keeping the last
+// NoteLogEntries. It reports appended == false when the entry repeats the last
+// one verbatim, which is a no-op rather than an error: the record already says
+// it. Whitespace is collapsed so one entry is always one line.
+func AppendNote(base, name, text string) (appended bool, entry NoteEntry, err error) {
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" {
+		return false, NoteEntry{}, fmt.Errorf("empty entry: say what changed, in one line")
+	}
+	if n := len([]rune(text)); n > NoteEntryMax {
+		return false, NoteEntry{}, fmt.Errorf("entry is %d characters, over the %d limit: one line on what changed, not the detail behind it", n, NoteEntryMax)
+	}
+
+	recs, err := LoadStore(base)
+	if err != nil {
+		return false, NoteEntry{}, err
+	}
+	for i := range recs {
+		if !strings.EqualFold(recs[i].Name, name) {
+			continue
+		}
+		if last, ok := recs[i].LatestEntry(); ok && strings.EqualFold(last.Text, text) {
+			return false, last, nil
+		}
+		entry = NoteEntry{At: time.Now(), Text: text}
+		log := append(recs[i].Log, entry)
+		if len(log) > NoteLogEntries {
+			log = log[len(log)-NoteLogEntries:]
+		}
+		recs[i].Log = log
+		return true, entry, saveStore(base, recs)
+	}
+	return false, NoteEntry{}, fmt.Errorf("stack %q not found in workspace %q", name, base)
 }
 
 // SetActive marks a base workspace's stack active or inactive and persists it. An

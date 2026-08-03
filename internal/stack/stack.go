@@ -72,6 +72,7 @@ type StackInfo struct {
 	Branch   string
 	Env      string
 	Note     string
+	Log      []NoteEntry
 	Created  time.Time
 }
 
@@ -350,6 +351,7 @@ func List(workspaceName string) ([]StackInfo, error) {
 			Branch:   rec.Branch,
 			Env:      rec.Env,
 			Note:     rec.Note,
+			Log:      rec.Log,
 			Created:  rec.CreatedAt,
 		})
 	}
