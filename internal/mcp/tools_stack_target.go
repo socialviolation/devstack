@@ -7,6 +7,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -105,12 +106,30 @@ func resolveLocalTarget(ws *workspace.Workspace, base localTarget, stackName str
 	}
 	return localTarget{
 		client:      base.client,
-		serviceDirs: base.serviceDirs,
+		serviceDirs: cfg.ServicePaths,
 		cfg:         cfg,
 		defaultSvc:  "",
 		namespace:   rec.Name,
 		label:       fmt.Sprintf("stack %q (host :%d)", rec.Name, workspace.HostTiltPort),
 	}, nil
+}
+
+// replicaServiceDirs is where base's copies actually run: the replica worktrees,
+// not the checkouts they were built from. PATH and BRANCH are read to answer "is
+// my work what is running", and the checkout answers it wrongly — it can sit on
+// any branch, dirty, while base runs a detached worktree at the default branch
+// tip. Falls back to the checkouts, which is then the truth, when no replica is
+// built.
+func replicaServiceDirs(ws *workspace.Workspace, checkouts map[string]string) map[string]string {
+	rw, err := replica.Resolve(ws)
+	if err != nil {
+		return checkouts
+	}
+	dirs := make(map[string]string, len(rw.Services))
+	for name, svc := range rw.Services {
+		dirs[name] = svc.RepoPath
+	}
+	return dirs
 }
 
 func resolveMutatingTarget(ws *workspace.Workspace, base localTarget, stackParam string) (localTarget, error) {
@@ -119,6 +138,48 @@ func resolveMutatingTarget(ws *workspace.Workspace, base localTarget, stackParam
 		return localTarget{}, err
 	}
 	return resolveLocalTarget(ws, base, name)
+}
+
+// targetGroupMembers resolves a group name against the instance a tool acts on,
+// with the two answers a stack makes wrong put right.
+//
+// A stack's generated manifest lists only the group members that made it into
+// the overlay. So a group half in a stack silently resolves to that half, and a
+// group not in it at all reads as a name that does not exist — while the group
+// does exist, on base. Both readings are true of the stack and false of the
+// workspace, and the caller asked about the workspace. The returned note is
+// empty unless the group falls short, and belongs in the tool's result text.
+func targetGroupMembers(ws *workspace.Workspace, t localTarget, groupName string) (members []string, note string, err error) {
+	members, ok := t.cfg.Groups[groupName]
+	if t.namespace == "" {
+		if !ok {
+			return nil, "", fmt.Errorf("group %q not found — available groups: %s", groupName, availableGroups(t.cfg))
+		}
+		return members, "", nil
+	}
+
+	baseGroups := map[string][]string{}
+	if ws != nil {
+		if cfg, cerr := config.Load(ws.Path); cerr == nil && cfg != nil {
+			baseGroups = cfg.Groups
+		}
+	}
+	if !ok {
+		onBase, isBaseGroup := baseGroups[groupName]
+		if !isBaseGroup {
+			return nil, "", fmt.Errorf("group %q not found — available groups: %s", groupName, availableGroups(t.cfg))
+		}
+		return nil, "", fmt.Errorf("group %q has no services in stack %q — it runs entirely on base (%s), so there is nothing of it here to act on. Act on base's copies instead: call this tool again with stack=\"base\"",
+			groupName, t.namespace, strings.Join(onBase, ", "))
+	}
+	for _, cov := range stack.CoverageOf([]string{groupName}, members, baseGroups) {
+		if cov.Complete() {
+			continue
+		}
+		note = fmt.Sprintf("group %s: %d of %d members are in stack %q — %s stay on base and this call does not touch them. Act on base's copies with stack=\"base\".\n",
+			cov.Group, len(cov.In), len(cov.In)+len(cov.Missing), t.namespace, strings.Join(cov.Missing, ", "))
+	}
+	return members, note, nil
 }
 
 // resourceName is the host-daemon resource name for a service, matching tiltgen's

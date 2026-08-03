@@ -34,6 +34,7 @@ TOOLS EXPOSED TO AI AGENTS
   stop            disable one service, a group, or (with all=true) an instance
   process_logs    fetch stdout/stderr from a running copy
   service_env     read and write a service's env files, and audit them
+  base            print the replica base runs from, or sync it to the default branch tip
   configure       read or set a dev daemon runtime argument
   hooks           list the declared lifecycle hooks, or fire an event's by hand
   observability   inspect/enable/disable OTEL + telemetry evidence
@@ -55,8 +56,8 @@ when observability is enabled in the manifest, and tunnel tools only when an ssh
 Call the 'environment' tool first to see what's available.
 
 The tools do not cover every command. These are shell only: workspace up and down,
-base sync and base path, ports, dependencies, group add and remove, env list, show
-and remove, stack config, and init.
+ports, dependencies, group add and remove, env list, show and remove, stack config,
+and init.
 
 TRANSPORT
   stdio (default)   used by Claude Code and most AI tooling

@@ -61,9 +61,6 @@ func TestBriefingParityClaimHolds(t *testing.T) {
 	shellOnly := map[string]string{
 		"workspace_up":   "workspace up and down",
 		"workspace_down": "workspace up and down",
-		"base_sync":      "base sync and base path",
-		"base_path":      "base sync and base path",
-		"base":           "base sync and base path",
 		"ports":          "ports",
 		"ports_free":     "ports",
 		"dependencies":   "dependencies",

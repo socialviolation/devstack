@@ -31,8 +31,7 @@ SUBCOMMANDS
   devstack base sync    move every service's worktree to its default branch tip
   devstack base path    print the replica root, or one service's worktree
 
-Neither has an MCP tool. An agent that needs the replica moved, or needs to know
-where it is, runs the command in a shell.`,
+Both have an MCP tool: 'base', with action="path" or action="sync".`,
 	SilenceUsage: true,
 	RunE:         runBasePath,
 }

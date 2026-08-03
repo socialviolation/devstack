@@ -837,7 +837,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"One service runs more than one copy, each a daemon resource on its own port: `<workspace>:<service>` for base, `<workspace>:<service>:<stack>` for a stack's.\n\n" +
 		"### base runs from a replica; name the copy you act on\n\n" +
 		"`base` is the workspace with no stack, and it does not run out of the checkouts. devstack keeps a **replica**: one git worktree per service at its default branch tip, under a `.devstack-base` directory beside the workspace. " +
-		"`devstack workspace up` builds it, `devstack base path` prints it, `devstack base sync` moves it to the tip. " +
+		"`devstack workspace up` builds it, and the `base` commands below read and move it. " +
 		"Your checkout is the **template** it is built from — git objects, manifests, machine-local gitignored config — and nothing runs there. " +
 		"Work parked in it neither runs nor blocks, and an edit in it changes no running copy: it reaches base once it is on the default branch and `devstack base sync` has run. To see a change run now, put it in a stack.\n\n" +
 		"So `service start|stop|restart`, `group start|stop|restart` and `env use` must be told which copy: `--stack <name>`, or `--stack base`. " +
@@ -914,7 +914,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"and `devstack group start|stop <group> --stack base` operates one. Against a stack it reaches only the members that stack overlays.\n\n" +
 		"### MCP tools\n\n" +
 		"The `.mcp.json` in this repo wires up the devstack MCP server: " +
-		"`environment`, `status`, `start`, `stop`, `restart`, `topology`, `process_logs`, `configure`, `service_env`, `observability`, `hooks`, `tunnel`, `investigate`, " +
+		"`environment`, `status`, `start`, `stop`, `restart`, `topology`, `process_logs`, `configure`, `service_env`, `base`, `observability`, `hooks`, `tunnel`, `investigate`, " +
 		"`stack_create`, `stack_add`, `stack_up`, `stack_down`, `stack_list`, `stack_rm`, `stack_note`, `env_use`, `env_which`, `env_set`. " +
 		"Two are conditional: `investigate` needs observability on, `tunnel` an ssh client. " +
 		"Call `environment` first — it reports what this workspace registered, and each tool's own description is more current than this file.\n\n" +

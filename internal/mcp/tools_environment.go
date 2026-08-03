@@ -57,11 +57,11 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		}
 		sb.WriteString("instances: base runs from a replica of the workspace, never from the user's checkouts — those are the template it is built from, and nothing runs in them.\n" +
 			"  start, stop, restart and env_use have no default instance: pass stack=\"<name>\" or stack=\"base\", or the call is read from the working directory and fails where that is neither. The read-only tools still default to base.\n" +
-			"  The replica has no tool. In a shell: `devstack base path` prints where base runs from, `devstack base sync` moves it to each service's default branch tip. An edit in a checkout reaches base only once it is on the default branch and that sync has run; to see a change run now, put it in a stack.\n")
+			"  The base tool works on the replica: action=\"path\" prints where base runs from, action=\"sync\" moves it to each service's default branch tip without restarting anything. An edit in a checkout reaches base only once it is on the default branch and that sync has run; to see a change run now, put it in a stack.\n")
 		if line := servicesSummary(workspacePath, defaultService); line != "" {
 			sb.WriteString(line)
 		}
-		tools := []string{"status", "start", "restart", "stop", "topology", "configure", "process_logs", "service_env", "observability", "hooks", "stack_create", "stack_add", "stack_list", "stack_note", "stack_up", "stack_down", "stack_rm", "env_use", "env_which", "env_set"}
+		tools := []string{"status", "start", "restart", "stop", "topology", "configure", "process_logs", "service_env", "base", "observability", "hooks", "stack_create", "stack_add", "stack_list", "stack_note", "stack_up", "stack_down", "stack_rm", "env_use", "env_which", "env_set"}
 		if otelOn {
 			tools = append(tools, "investigate")
 		}

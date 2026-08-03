@@ -70,6 +70,7 @@ func RegisterTools(
 	registerConfigureTool(mcpServer, tiltClient, ws)
 	registerProcessLogsTool(mcpServer, tiltClient, defaultService, cfg, ws)
 	registerServiceEnvTool(mcpServer, ws, workspacePath)
+	registerBaseTool(mcpServer, ws)
 
 	// Observability control (status/enable/disable/configure) is always
 	// available so an agent can discover and turn it on.
@@ -184,7 +185,7 @@ func availableGroups(cfg *config.WorkspaceConfig) string {
 
 func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, serviceDirs map[string]string, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
 	tool := mcp.NewTool("status",
-		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack. Status reflects the current state of locally running dev services, not production. Returns SERVICE, STATUS (one of running/starting/building/stopped/erroring/disabled/down/unknown), PORT(S), PATH (the source directory this instance's config was read from — a stack's own worktree, or for base the template checkout), BRANCH (the git branch that directory is on, with * for uncommitted changes). For a stack that is the code its process runs; for base it is NOT — base runs a replica of the workspace, not the checkout, and the CLI 'devstack base path' prints it. GROUP, ENV (the active environment/config-patch the instance is pointed at, blank if none), and last error. Also shows a groups summary. 'running' means the process is up. 'starting' means it is coming up; 'building' means the daemon is building/updating it. 'stopped' means the service is known but not currently running (not started yet, or was stopped). 'erroring' means the service or its build failed — check logs. 'disabled' means the resource is switched off in the daemon. 'down' means the copy is not registered in the daemon at all, because its stack is down — bring it up with stack_up. 'unknown' means the daemon reported no state for it. Pass stack to see a feature stack's instances. RELOAD says whether a service reloads on its own (auto) or needs an explicit restart after an edit (manual)."),
+		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack. Status reflects the current state of locally running dev services, not production. Returns SERVICE, STATUS (one of running/starting/building/stopped/erroring/disabled/down/unknown), PORT(S), PATH (the directory this instance's copy runs from — a stack's own worktree, or for base the replica worktree), BRANCH (the git branch that directory is on, with * for uncommitted changes). For both that is the code the process runs: base runs a replica of the workspace rather than the user's checkout, so a base row's PATH is under a .devstack-base directory and its BRANCH is detached at the default branch tip — the base tool (action=\"path\") prints it, and until the replica is built the checkout is shown in its place. GROUP, ENV (the active environment/config-patch the instance is pointed at, blank if none), and last error. Also shows a groups summary. 'running' means the process is up. 'starting' means it is coming up; 'building' means the daemon is building/updating it. 'stopped' means the service is known but not currently running (not started yet, or was stopped). 'erroring' means the service or its build failed — check logs. 'disabled' means the resource is switched off in the daemon. 'down' means the copy is not registered in the daemon at all, because its stack is down — bring it up with stack_up. 'unknown' means the daemon reported no state for it. Pass stack to see a feature stack's instances. RELOAD says whether a service reloads on its own (auto) or needs an explicit restart after an edit (manual)."),
 		mcp.WithString("stack", mcp.Description(stackParamDesc)),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
@@ -193,7 +194,7 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		t, err := resolveLocalTarget(ws, localTarget{client: tiltClient, serviceDirs: serviceDirs, cfg: cfg}, request.GetString("stack", ""))
+		t, err := resolveLocalTarget(ws, localTarget{client: tiltClient, serviceDirs: replicaServiceDirs(ws, serviceDirs), cfg: cfg}, request.GetString("stack", ""))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -270,7 +271,7 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 		sb.WriteString(targetHeader(t.label))
 		sb.WriteString("Tilt is running.\n\n")
 		sb.WriteString(renderColumns(rows))
-		sb.WriteString("\nPATH and BRANCH are the directory this instance's config was read from; * marks uncommitted changes.\nFor a stack that directory is what its process runs, so a branch you did not expect means the process does not contain the work you are looking for.\nFor base it is the template checkout, and base runs a replica of it at its default branch tip instead — the CLI 'devstack base path' prints it.\nRELOAD auto = edits in the directory a copy runs from apply on their own; manual = restart that copy after editing or it keeps running the old code.\n")
+		sb.WriteString("\nPATH and BRANCH are the directory this instance's copy runs from; * marks uncommitted changes.\nA branch you did not expect means the process does not contain the work you are looking for.\nFor base that directory is the replica, not the checkout it was built from: an edit in the checkout reaches base once it is on the default branch and the base tool (action=\"sync\") has run.\nRELOAD auto = edits in the directory a copy runs from apply on their own; manual = restart that copy after editing or it keeps running the old code.\n")
 
 		// Groups summary section.
 		if len(cfg.Groups) > 0 {
@@ -630,7 +631,7 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		tiltClient, defaultService, cfg := t.client, t.defaultSvc, t.cfg
+		tiltClient, defaultService := t.client, t.defaultSvc
 
 		// Regenerate first so an edit to a manifest is what gets restarted.
 		syncNotes := strings.Join(hostdaemon.SyncAndReload(tiltClient), "\n")
@@ -646,9 +647,9 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 
 		// Group restart.
 		if groupName != "" {
-			members, ok := cfg.Groups[groupName]
-			if !ok {
-				return mcp.NewToolResultError(fmt.Sprintf("group %q not found — available groups: %s", groupName, availableGroups(cfg))), nil
+			members, groupNote, err := targetGroupMembers(ws, t, groupName)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 
 			type restartResult struct {
@@ -686,14 +687,14 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 				}
 			}
 			if len(failures) > 0 {
-				return mcp.NewToolResultError(fmt.Sprintf("restarted %d/%d services in group %q: %s\nfailures: %s",
+				return mcp.NewToolResultError(groupNote + fmt.Sprintf("restarted %d/%d services in group %q: %s\nfailures: %s",
 					len(successes), len(members), groupName, strings.Join(successes, ", "), strings.Join(failures, "; "))), nil
 			}
 			waited := make([]string, 0, len(members))
 			for _, svc := range members {
 				waited = append(waited, resourceName(ws.Name, svc, t.namespace))
 			}
-			return mcp.NewToolResultText(syncNotes + onTarget(t.label, fmt.Sprintf("restarted %d services in group %s: %s",
+			return mcp.NewToolResultText(syncNotes + groupNote + onTarget(t.label, fmt.Sprintf("restarted %d services in group %s: %s",
 				len(members), groupName, strings.Join(successes, ", "))) + coreWaitFor(tiltClient, waited, deployedBefore, waitSeconds)), nil
 		}
 
@@ -784,12 +785,13 @@ func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, def
 		tiltClient, defaultService, cfg := t.client, t.defaultSvc, t.cfg
 
 		var seeds []string
+		var groupNote string
 		if groupName != "" {
-			members, ok := cfg.Groups[groupName]
-			if !ok {
-				return mcp.NewToolResultError(fmt.Sprintf("group %q not found — available groups: %s", groupName, availableGroups(cfg))), nil
+			members, note, err := targetGroupMembers(ws, t, groupName)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			seeds = members
+			seeds, groupNote = members, note
 		} else {
 			if name == "" {
 				name = defaultService
@@ -852,6 +854,7 @@ func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, def
 
 		var sb strings.Builder
 		sb.WriteString(syncNotes)
+		sb.WriteString(groupNote)
 		sb.WriteString(onTarget(t.label, fmt.Sprintf("Started %d service(s) in dependency order: %s.", len(started), strings.Join(started, ", "))))
 		if len(missing) > 0 {
 			fmt.Fprintf(&sb, "\nnot loaded in the daemon, skipped: %s", strings.Join(missing, ", "))
@@ -904,7 +907,7 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		tiltClient, defaultService, cfg := t.client, t.defaultSvc, t.cfg
+		tiltClient, defaultService := t.client, t.defaultSvc
 
 		if name == "" && groupName == "" && !stopAll {
 			name = defaultService
@@ -920,9 +923,9 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 
 		// Group stop.
 		if groupName != "" {
-			members, ok := cfg.Groups[groupName]
-			if !ok {
-				return mcp.NewToolResultError(fmt.Sprintf("group %q not found — available groups: %s", groupName, availableGroups(cfg))), nil
+			members, groupNote, err := targetGroupMembers(ws, t, groupName)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 
 			type stopResult struct {
@@ -952,12 +955,13 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 				}
 			}
 			if len(failures) > 0 {
-				return mcp.NewToolResultError(fmt.Sprintf("stopped %d/%d services in group %q: %s\nfailures: %s",
+				return mcp.NewToolResultError(groupNote + fmt.Sprintf("stopped %d/%d services in group %q: %s\nfailures: %s",
 					len(successes), len(members), groupName, strings.Join(successes, ", "), strings.Join(failures, "; "))), nil
 			}
 			var hookOut strings.Builder
 			hookErr := hooks.Fire(ws, t.namespace, config.EventServiceStop, successes, &hookOut)
 			var gsb strings.Builder
+			gsb.WriteString(groupNote)
 			gsb.WriteString(onTarget(t.label, fmt.Sprintf("stopped %d services in group %s: %s",
 				len(members), groupName, strings.Join(successes, ", "))))
 			appendHookOutput(&gsb, config.EventServiceStop, hookOut.String(), hookErr)

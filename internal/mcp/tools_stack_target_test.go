@@ -7,14 +7,17 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -391,6 +394,229 @@ func TestMutatingToolsDocumentThatAbsentIsNotBase(t *testing.T) {
 	}
 	if desc := tools["status"].InputSchema.Properties["stack"].Description; !strings.Contains(desc, "Absent (or the literal \"base\")") {
 		t.Errorf("a read-only tool must keep its base default: %s", desc)
+	}
+}
+
+// The PATH and BRANCH columns of status are read to answer "is my work in the
+// copy that is running". A stack's rows must therefore come from the stack's own
+// worktrees; base's serviceDirs, carried over, made every row report base's
+// directory and base's branch — a confident wrong answer.
+func TestStackTargetServiceDirsAreTheStacksWorktrees(t *testing.T) {
+	ws, basePath, worktree := seedStack(t)
+
+	srv := serveHostDaemon(t)
+	defer srv.Close()
+
+	if err := stack.SetActive("testws", "feat", true); err != nil {
+		t.Fatalf("SetActive: %v", err)
+	}
+
+	baseDirs := map[string]string{"api": filepath.Join(basePath, "repos", "api")}
+	got, err := resolveLocalTarget(ws, localTarget{serviceDirs: baseDirs}, "feat")
+	if err != nil {
+		t.Fatalf("resolveLocalTarget: %v", err)
+	}
+	if got.serviceDirs["api"] != worktree {
+		t.Errorf("stack target's serviceDirs[api] = %q, want the stack worktree %q", got.serviceDirs["api"], worktree)
+	}
+	if got.serviceDirs["api"] == baseDirs["api"] {
+		t.Errorf("a stack row must not report base's directory %q", baseDirs["api"])
+	}
+}
+
+// Base's rows have the same job, and base does not run from the checkout: it
+// runs the replica worktrees, which sit on the default branch tip while the
+// checkout can be on any branch, dirty.
+func TestBaseServiceDirsResolveToTheReplicaWorktrees(t *testing.T) {
+	ws, repo := baseWorkspace(t)
+	checkouts := map[string]string{"api": repo}
+
+	if got := replicaServiceDirs(ws, checkouts); got["api"] != repo {
+		t.Errorf("with no replica built the checkout is what runs; got %q", got["api"])
+	}
+
+	if _, err := replica.Ensure(ws); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	want := filepath.Join(replica.Root(ws), "api")
+	if got := replicaServiceDirs(ws, checkouts)["api"]; got != want {
+		t.Errorf("base serviceDirs[api] = %q, want the replica worktree %q", got, want)
+	}
+}
+
+// The wiring, not just the resolution: the row status prints for a base service
+// names the replica worktree.
+func TestStatusRowsShowTheReplicaDirectory(t *testing.T) {
+	ws, repo := baseWorkspace(t)
+	if _, err := replica.Ensure(ws); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"uiResources":[{"metadata":{"name":"navexa:api"},"status":{"runtimeStatus":"ok"}}]}`))
+	}))
+	defer srv.Close()
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := server.NewMCPServer("test", "0.0.0")
+	registerStatusTool(s, tilt.NewClient(u.Hostname(), port), map[string]string{"api": repo}, &config.WorkspaceConfig{}, ws)
+
+	out := safetyCallTool(t, s, "status", map[string]any{})
+	if want := statusPathCell(filepath.Join(replica.Root(ws), "api")); !strings.Contains(out, want) {
+		t.Errorf("status must show the replica worktree %q; got %s", want, out)
+	}
+	if cell := statusPathCell(repo); strings.Contains(out, cell) {
+		t.Errorf("status must not report the checkout %q as what base runs; got %s", cell, out)
+	}
+}
+
+// statusPathCell is how renderColumns lays one path into the PATH column: paths
+// longer than the cap are truncated, so the assertion has to compare what is
+// printed rather than the full path.
+func statusPathCell(path string) string {
+	p := []rune(shortenPath(path))
+	if len(p) > maxColWidth {
+		return string(append(p[:maxColWidth-1:maxColWidth-1], '…'))
+	}
+	return string(p)
+}
+
+// A group half inside a stack resolves, against the stack's manifest, to that
+// half — and says nothing about the rest, which keeps serving from base. The
+// count and the names of what was left alone belong in the text the agent reads.
+func TestTargetGroupMembersReportsTheShortfallInAStack(t *testing.T) {
+	ws, basePath, _ := seedStack(t)
+	writeFile(t, filepath.Join(basePath, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: testws
+  repoDiscovery:
+    mode: explicit
+    repos:
+      - ./repos/api
+groups:
+  core:
+    - api
+    - frontend
+    - orbit
+`)
+
+	t.Run("half in the stack", func(t *testing.T) {
+		target := localTarget{
+			cfg:       &config.WorkspaceConfig{Groups: map[string][]string{"core": {"api"}}},
+			namespace: "feat",
+		}
+		members, note, err := targetGroupMembers(ws, target, "core")
+		if err != nil {
+			t.Fatalf("targetGroupMembers: %v", err)
+		}
+		if !equalStrings(members, []string{"api"}) {
+			t.Errorf("members = %v, want the stack's half %v", members, []string{"api"})
+		}
+		for _, want := range []string{"1 of 3", "frontend, orbit", "stay on base", `stack="base"`} {
+			if !strings.Contains(note, want) {
+				t.Errorf("the shortfall note must state %q; got %q", want, note)
+			}
+		}
+	})
+
+	t.Run("none of it in the stack", func(t *testing.T) {
+		target := localTarget{
+			cfg:       &config.WorkspaceConfig{Groups: map[string][]string{}},
+			namespace: "feat",
+		}
+		_, _, err := targetGroupMembers(ws, target, "core")
+		if err == nil {
+			t.Fatal("a group with no member in the stack must be refused")
+		}
+		if strings.Contains(err.Error(), "not found") {
+			t.Errorf("a group that exists on base must not read as a typo: %v", err)
+		}
+		for _, want := range []string{"runs entirely on base", "api, frontend, orbit", `stack="base"`} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal must state %q; got %v", want, err)
+			}
+		}
+	})
+
+	t.Run("a name that is nowhere", func(t *testing.T) {
+		target := localTarget{
+			cfg:       &config.WorkspaceConfig{Groups: map[string][]string{"core": {"api"}}},
+			namespace: "feat",
+		}
+		_, _, err := targetGroupMembers(ws, target, "nope")
+		if err == nil || !strings.Contains(err.Error(), "not found") {
+			t.Fatalf("an unknown group must still be reported as unknown, got %v", err)
+		}
+	})
+}
+
+// Base is not a stack, so nothing is ever missing from it: the same call there
+// keeps today's members and adds no note.
+func TestTargetGroupMembersOnBaseIsUnchanged(t *testing.T) {
+	ws, _, _ := seedStack(t)
+	target := localTarget{cfg: &config.WorkspaceConfig{Groups: map[string][]string{"core": {"api", "frontend"}}}}
+
+	members, note, err := targetGroupMembers(ws, target, "core")
+	if err != nil {
+		t.Fatalf("targetGroupMembers: %v", err)
+	}
+	if !equalStrings(members, []string{"api", "frontend"}) || note != "" {
+		t.Errorf("base target = (%v, %q), want every member and no note", members, note)
+	}
+	if _, _, err := targetGroupMembers(ws, target, "nope"); err == nil || !strings.Contains(err.Error(), "available groups: core") {
+		t.Errorf("an unknown group on base must list the groups, got %v", err)
+	}
+}
+
+// The group note has to reach the agent through the tool, not just the helper.
+func TestStopReturnsTheGroupShortfallToTheAgent(t *testing.T) {
+	ws, basePath, worktree := seedStack(t)
+	writeFile(t, filepath.Join(basePath, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: testws
+  repoDiscovery:
+    mode: explicit
+    repos:
+      - ./repos/api
+groups:
+  core:
+    - api
+    - frontend
+`)
+	rec, err := stack.FindStack("testws", "feat")
+	if err != nil {
+		t.Fatalf("FindStack: %v", err)
+	}
+	writeFile(t, filepath.Join(rec.Root, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: testws--feat
+  repoDiscovery:
+    mode: explicit
+    repos:
+      - `+worktree+`
+groups:
+  core:
+    - api
+`)
+	srv := serveHostDaemon(t)
+	defer srv.Close()
+	if err := stack.SetActive("testws", "feat", true); err != nil {
+		t.Fatalf("SetActive: %v", err)
+	}
+
+	s := server.NewMCPServer("test", "0.0.0")
+	registerStopTool(s, tilt.NewClient("localhost", workspace.HostTiltPort), "", &config.WorkspaceConfig{}, ws)
+
+	out := safetyCallTool(t, s, "stop", map[string]any{"group": "core", "stack": "feat"})
+	if !strings.Contains(out, "1 of 2") || !strings.Contains(out, "frontend") {
+		t.Errorf("stop must return the group's shortfall in its text; got %s", out)
 	}
 }
 
