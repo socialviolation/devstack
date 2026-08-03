@@ -72,7 +72,7 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 	if err := workspace.SetWorkspaceActive(ws.Name, true); err != nil {
 		return nil, fmt.Errorf("can not mark the workspace active: %w", err)
 	}
-	if err := ensureReplica(ws); err != nil {
+	if _, err := ensureReplica(ws); err != nil {
 		return nil, err
 	}
 	if _, err := regenerateHostTiltfile(); err != nil {

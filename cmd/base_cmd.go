@@ -32,6 +32,7 @@ manifest.
 
 SUBCOMMANDS
   devstack base         print the replica root (the same as 'base path')
+  devstack base build   build the replica, and start nothing
   devstack base sync    move every service's worktree to its default branch tip
   devstack base path    print the replica root, or one service's worktree
 
@@ -56,6 +57,27 @@ worktree stays on the ref that it already has, and base keeps running.`,
 	RunE:         runBaseSync,
 }
 
+var baseBuildCmd = &cobra.Command{
+	Use:   "build",
+	Short: "Build the replica that base runs from, and start nothing",
+	Long: `devstack cuts one git worktree for each repository of the workspace, under a
+.devstack-base sibling of the workspace. Each worktree is detached at its
+repository's default branch tip. devstack then writes the replica manifest, and
+removes a worktree that the manifest no longer lists.
+
+This command starts nothing. It does not start the daemon, and it does not start
+a service. To build the replica and run its services, run 'devstack workspace
+up'.
+
+A worktree that exists already stays where it is. To move every worktree to the
+current default branch tip, run 'devstack base sync'.
+
+Each worktree is a new checkout. Before a service starts, its worktree needs its
+own dependency install.`,
+	SilenceUsage: true,
+	RunE:         runBaseBuild,
+}
+
 var basePathCmd = &cobra.Command{
 	Use:          "path [service]",
 	Short:        "Print the replica root, or one service's replica worktree",
@@ -68,12 +90,33 @@ func init() {
 	rootCmd.AddCommand(baseCmd)
 	baseCmd.AddCommand(baseSyncCmd)
 	baseCmd.AddCommand(basePathCmd)
+	baseCmd.AddCommand(baseBuildCmd)
 }
 
-func ensureReplica(ws *workspace.Workspace) error {
-	res, err := replica.Ensure(ws)
+func runBaseBuild(cmd *cobra.Command, args []string) error {
+	ws, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
 		return err
+	}
+	return buildBase(ws)
+}
+
+func buildBase(ws *workspace.Workspace) error {
+	fmt.Printf("Replica for %q: %s\n", ws.Name, replica.Root(ws))
+	res, err := ensureReplica(ws)
+	if err != nil {
+		return err
+	}
+	if len(res.Created) == 0 && len(res.Removed) == 0 {
+		fmt.Println("Every repository has its worktree already. To move each worktree to its default branch tip, run: devstack base sync")
+	}
+	return nil
+}
+
+func ensureReplica(ws *workspace.Workspace) (*replica.EnsureResult, error) {
+	res, err := replica.Ensure(ws)
+	if err != nil {
+		return nil, err
 	}
 	for _, wt := range res.Created {
 		fmt.Printf("  ✓ replica worktree %-16s %s (%s)\n", wt.Repo, wt.Path, wt.Branch)
@@ -87,7 +130,7 @@ func ensureReplica(ws *workspace.Workspace) error {
 	for _, w := range res.Warnings {
 		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 	}
-	return nil
+	return res, nil
 }
 
 func runBaseSync(cmd *cobra.Command, args []string) error {

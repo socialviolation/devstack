@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -31,12 +34,13 @@ upgrade.
 
 A migration is a second and separate decision. Every service repo commits its
 AGENTS.md, so a regeneration produces a real git diff in repos that devstack does
-not own. This command reports what is out of date, and then it stops. Pass
---migrate to regenerate the files. The migration runs the devstack that was just
-installed, and never this one.
+not own. A replica is one git worktree for each repository, and each worktree
+needs its own dependency install. This command reports both, and then it stops.
+Pass --migrate to regenerate the files and to build the replicas. The migration
+runs the devstack that was just installed, and never this one.
 
   devstack upgrade             install, then report what is now out of date
-  devstack upgrade --migrate   also regenerate the files an older devstack wrote
+  devstack upgrade --migrate   also regenerate the files, and build each replica
   devstack upgrade --force     install even when this build is current or local`,
 	SilenceUsage: true,
 	RunE:         runUpgrade,
@@ -44,7 +48,7 @@ installed, and never this one.
 
 func init() {
 	rootCmd.AddCommand(upgradeCmd)
-	upgradeCmd.Flags().Bool("migrate", false, "Also regenerate the files that an older devstack wrote")
+	upgradeCmd.Flags().Bool("migrate", false, "Also regenerate the files that an older devstack wrote, and build each workspace's replica")
 	upgradeCmd.Flags().Bool("force", false, "Install even when this build is already current, or is a local build")
 }
 
@@ -176,29 +180,13 @@ func parseVersionOutput(out string) string {
 
 func reportAndMigrate(version string, migrate bool) error {
 	stale, order := staleByWorkspace(version)
-	if len(order) == 0 {
-		fmt.Println("The generated files of every workspace match this build.")
-		return nil
-	}
+	writeStaleReport(os.Stdout, stale, order, migrate)
 
-	fmt.Printf("\n%d workspace(s) hold generated files that differ from what this devstack writes:\n", len(order))
-	for _, ws := range order {
-		files := stale[ws.Name]
-		fmt.Printf("  %-16s %d file(s)\n", ws.Name, len(files))
-		for _, f := range files {
-			fmt.Printf("      %-24s %s\n", f.Service, describeStamp(f.Version))
-		}
-	}
+	all := registeredWorkspaces()
+	writeReplicaReport(os.Stdout, planReplicas(all), migrate)
 
 	if !migrate {
-		fmt.Println("\ndevstack upgrade --migrate brings these up to date. In every service above,")
-		fmt.Println("and in each stack worktree, it writes:")
-		fmt.Println("  AGENTS.md              the devstack block, which replaces what an older one left")
-		fmt.Println("  .mcp.json              the MCP server entry")
-		fmt.Println("  CLAUDE.md and friends  a pointer block, in the files a repo already has")
-		fmt.Println("  .claude/settings.json  the SessionStart hook, so every session runs devstack prime")
-		fmt.Println("\nEvery repo commits these files, so this is a real diff in each one. devstack")
-		fmt.Println("touches nothing else in them, and it creates no file that is not already there.")
+		writeDeprecations(os.Stdout)
 		return nil
 	}
 
@@ -206,8 +194,58 @@ func reportAndMigrate(version string, migrate bool) error {
 	if bin == "" {
 		return fmt.Errorf("devstack can not find the installed binary to migrate with. Run 'devstack init --all' in each workspace instead")
 	}
-	fmt.Println()
-	return migrateWorkspaces(bin, order)
+
+	// The generated files come first. They tell an agent that a bare restart acts
+	// on base, which this release makes false, and a build takes long enough for
+	// an agent to read the old text and act on it.
+	var failures []error
+	if len(order) > 0 {
+		fmt.Println()
+		if err := migrateWorkspaces(bin, order); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	if err := buildReplicas(bin, all); err != nil {
+		failures = append(failures, err)
+	}
+	writeDeprecations(os.Stdout)
+	return errors.Join(failures...)
+}
+
+func registeredWorkspaces() []workspace.Workspace {
+	all, err := workspace.All()
+	if err != nil {
+		return nil
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+	return all
+}
+
+func writeStaleReport(w io.Writer, stale map[string][]generatedFile, order []workspace.Workspace, migrate bool) {
+	if len(order) == 0 {
+		fmt.Fprintln(w, "The generated files of every workspace match this build.")
+		return
+	}
+
+	fmt.Fprintf(w, "\n%d workspace(s) hold generated files that differ from what this devstack writes:\n", len(order))
+	for _, ws := range order {
+		files := stale[ws.Name]
+		fmt.Fprintf(w, "  %-16s %d file(s)\n", ws.Name, len(files))
+		for _, f := range files {
+			fmt.Fprintf(w, "      %-24s %s\n", f.Service, describeStamp(f.Version))
+		}
+	}
+	if migrate {
+		return
+	}
+	fmt.Fprintln(w, "\ndevstack upgrade --migrate brings these up to date. In every service above,")
+	fmt.Fprintln(w, "and in each stack worktree, it writes:")
+	fmt.Fprintln(w, "  AGENTS.md              the devstack block, which replaces what an older one left")
+	fmt.Fprintln(w, "  .mcp.json              the MCP server entry")
+	fmt.Fprintln(w, "  CLAUDE.md and friends  a pointer block, in the files a repo already has")
+	fmt.Fprintln(w, "  .claude/settings.json  the SessionStart hook, so every session runs devstack prime")
+	fmt.Fprintln(w, "\nEvery repo commits these files, so this is a real diff in each one. devstack")
+	fmt.Fprintln(w, "touches nothing else in them, and it creates no file that is not already there.")
 }
 
 // migrateArgs is the full refresh: every generated file this devstack owns,
