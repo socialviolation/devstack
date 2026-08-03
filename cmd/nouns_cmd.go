@@ -77,6 +77,6 @@ func init() {
 		serviceStartCmd, serviceStopCmd, serviceRestartCmd,
 		groupStartCmd, groupStopCmd, groupRestartCmd,
 	} {
-		c.Flags().String("stack", "", "Act on a feature stack's copy instead of base")
+		c.Flags().String("stack", "", "Which copy to act on: a feature stack's name, or \"base\" for the replica base runs from. Required unless the working directory is inside one of them")
 	}
 }

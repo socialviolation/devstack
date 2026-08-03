@@ -27,15 +27,12 @@ type Result struct {
 	SourceOffRef bool
 }
 
-// Create adds a worktree at worktreePath for the repo at repoPath, cut from
-// from — a ref or commit-ish, or "" for the repo's current HEAD.
+// from is a ref or commit-ish, or "" for the repo's current HEAD.
 //
-// A changed repo gets a feature branch: a new branch named branch cut from from,
-// or, when branch already exists, an attach (checkout) of it — an existing branch
-// keeps the history it already has, so from does not apply to it. A dependent
-// repo (changed == false) is unmodified code isolated only for config, so it gets
-// a detached HEAD at from — this avoids git's refusal to check out a branch a
-// second time while it is live in another working tree.
+// An existing branch is attached, keeping the history it already has, so from
+// does not apply to it. A dependent repo (changed == false) detaches instead:
+// git refuses to check out a branch a second time while it is live in another
+// working tree.
 func Create(repoPath, worktreePath, branch, from string, changed bool) (Result, error) {
 	dirty, err := HasUncommittedChanges(repoPath)
 	if err != nil {
@@ -161,10 +158,8 @@ func MaterializeIgnoredConfig(baseRepo, worktreePath string) ([]string, error) {
 	return materializeIgnoredConfig(baseRepo, worktreePath, false)
 }
 
-// MaterializeIgnoredConfigForce is MaterializeIgnoredConfig for a worktree that
-// is a replica of the base repo rather than somewhere work happens: the base's
-// config wins every refresh, so a file the worktree already holds is replaced
-// instead of kept.
+// For a worktree that replicates the base repo rather than one where work
+// happens: the base's config wins every refresh, replacing what is there.
 func MaterializeIgnoredConfigForce(baseRepo, worktreePath string) ([]string, error) {
 	return materializeIgnoredConfig(baseRepo, worktreePath, true)
 }

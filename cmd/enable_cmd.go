@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 )
 
@@ -19,7 +20,11 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	stackName, _ := cmd.Flags().GetString("stack")
+	flagStack, _ := cmd.Flags().GetString("stack")
+	stackName, err := stack.ResolveTarget(ws, flagStack)
+	if err != nil {
+		return err
+	}
 	tiltPort, namespace, wsPath, label, err := resolveStackTarget(ws, stackName)
 	if err != nil {
 		return err
@@ -93,7 +98,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		}
 		view, err = tiltClient.GetView()
 		if err != nil {
-			return fmt.Errorf("dev daemon started but not reachable yet — retry: devstack service start %s\n(%w)", targetName, err)
+			return fmt.Errorf("dev daemon started but not reachable yet — retry: devstack service start %s --stack base\n(%w)", targetName, err)
 		}
 	}
 

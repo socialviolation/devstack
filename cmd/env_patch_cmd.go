@@ -43,7 +43,7 @@ actually came from.`,
 var envUseCmd = &cobra.Command{
 	Use:   "use <name>",
 	Short: "Point a scope (workspace/service/stack) at a named environment",
-	Long:  "Point a scope at one of the base workspace's named environments.\nEnvironments are defined once in the base workspace manifest; feature stacks do not define their own. --stack points a stack at one of the base's environments (likewise --service for a service, or no flag for the workspace). <name> must be defined in the base workspace.",
+	Long:  "Point a scope at one of the base workspace's named environments.\nEnvironments are defined once in the base workspace manifest; feature stacks do not define their own. --stack points a stack at one of the base's environments, --stack base points the workspace, and --service points one service. <name> must be defined in the base workspace.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runEnvUse,
 }
@@ -68,7 +68,7 @@ func init() {
 	envCmd.AddCommand(envSetCmd, envUseCmd, envShowCmd, envWhichCmd)
 
 	envUseCmd.Flags().String("service", "", "apply at the service scope")
-	envUseCmd.Flags().String("stack", "", "apply at the stack scope")
+	envUseCmd.Flags().String("stack", "", "apply at the stack scope, or \"base\" for the workspace scope. Required unless --service is given or the working directory is inside a stack or the replica")
 
 	envWhichCmd.Flags().String("service", "", "service to resolve (defaults to the current directory)")
 	envWhichCmd.Flags().String("stack", "", "stack whose env to include")
@@ -97,7 +97,7 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 	if _, err := regenerateHostTiltfile(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: can not regenerate host config: %v\n", err)
 	} else {
-		fmt.Println("Regenerated host config. Restart the affected service to apply: devstack service restart <service> [--stack <name>]")
+		fmt.Println("Regenerated host config. Restart the affected service to apply: devstack service restart <service> --stack base (or --stack <name> for a stack's copy)")
 	}
 	return nil
 }
@@ -118,6 +118,11 @@ func runEnvUse(cmd *cobra.Command, args []string) error {
 
 	stackName, _ := cmd.Flags().GetString("stack")
 	svcName, _ := cmd.Flags().GetString("service")
+	if svcName == "" {
+		if stackName, err = stack.ResolveTarget(ws, stackName); err != nil {
+			return err
+		}
+	}
 	var restartHint string
 	switch {
 	case stackName != "":
@@ -143,13 +148,13 @@ func runEnvUse(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		fmt.Printf("service %q now uses env %q\n", svcName, name)
-		restartHint = fmt.Sprintf("devstack service restart %s", svcName)
+		restartHint = fmt.Sprintf("devstack service restart %s --stack base", svcName)
 	default:
 		if err := config.SetWorkspaceEnv(ws.Path, name); err != nil {
 			return err
 		}
 		fmt.Printf("workspace %q now uses env %q\n", ws.Name, name)
-		restartHint = "devstack service restart <service>"
+		restartHint = "devstack service restart <service> --stack base"
 	}
 	if _, err := regenerateHostTiltfile(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: can not regenerate host config: %v\n", err)

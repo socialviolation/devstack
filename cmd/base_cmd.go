@@ -59,8 +59,6 @@ func init() {
 	baseCmd.AddCommand(basePathCmd)
 }
 
-// ensureReplica brings the replica in line with the manifest and reports what
-// changed, staying silent when nothing did.
 func ensureReplica(ws *workspace.Workspace) error {
 	res, err := replica.Ensure(ws)
 	if err != nil {

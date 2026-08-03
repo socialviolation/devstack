@@ -9,9 +9,6 @@ import (
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
-// A stack's purpose says why it exists; its latest entry says where it got to.
-// An agent briefed into a session it did not start needs the second one to avoid
-// redoing work that is already done, so the briefing carries both.
 func TestBriefingCarriesTheLatestEntryOfTheInferredStack(t *testing.T) {
 	rec := &stack.Record{
 		Name: "perf",

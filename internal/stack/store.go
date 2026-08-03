@@ -34,24 +34,19 @@ type Record struct {
 	CreatedAt  time.Time         `json:"created_at"`
 }
 
-// NoteEntry is one dated line appended to a stack's note. The note says what the
-// stack is for; an entry says where it got to.
 type NoteEntry struct {
 	At   time.Time `json:"at"`
 	Text string    `json:"text"`
 }
 
 const (
-	// NoteEntryMax bounds one entry, in runes. An entry is a line the next reader
-	// skims, not a place to paste output.
 	NoteEntryMax = 200
 
-	// NoteLogEntries is how many entries a stack keeps. Appending past it drops the
-	// oldest, so a writer that logs every step erases the record it was adding to.
+	// Appending past this drops the oldest, so a writer that logs every step
+	// erases the record it was adding to.
 	NoteLogEntries = 5
 )
 
-// LatestEntry returns the most recent log entry, and false when there is none.
 func (r Record) LatestEntry() (NoteEntry, bool) {
 	if len(r.Log) == 0 {
 		return NoteEntry{}, false
@@ -145,10 +140,8 @@ func SetNote(base, name, note string) error {
 	return fmt.Errorf("stack %q not found in workspace %q", name, base)
 }
 
-// AppendNote adds a dated entry to a stack's log, keeping the last
-// NoteLogEntries. It reports appended == false when the entry repeats the last
-// one verbatim, which is a no-op rather than an error: the record already says
-// it. Whitespace is collapsed so one entry is always one line.
+// Reports appended == false when the entry repeats the last one verbatim, which
+// is a no-op rather than an error: the record already says it.
 func AppendNote(base, name, text string) (appended bool, entry NoteEntry, err error) {
 	text = strings.Join(strings.Fields(text), " ")
 	if text == "" {

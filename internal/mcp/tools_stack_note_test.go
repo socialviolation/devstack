@@ -65,9 +65,6 @@ func TestStackNoteAppendAddsAnEntryAndKeepsThePurpose(t *testing.T) {
 	}
 }
 
-// The purpose and the progress are different fields with different lifetimes.
-// Accepting both in one call would make it ambiguous which the caller meant to
-// keep, so the tool refuses instead of guessing.
 func TestStackNoteRefusesNoteAndAppendTogether(t *testing.T) {
 	s := noteServer(t, stack.Record{Name: "perf", Base: "navexa"})
 
@@ -117,9 +114,8 @@ func TestStackNoteRepeatedEntryIsRejectedNotStacked(t *testing.T) {
 	}
 }
 
-// The caps stop a log from being flooded, but only the description stops the
-// flooding from being attempted. It has to say when NOT to write, because a
-// model with a writable field and no instruction not to use it will use it.
+// Only the description stops the flooding from being attempted: a model with a
+// writable field and no instruction not to use it will use it.
 func TestStackNoteDescriptionDiscouragesNarration(t *testing.T) {
 	s := noteServer(t, stack.Record{Name: "perf", Base: "navexa"})
 

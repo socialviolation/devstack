@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/stack"
@@ -324,6 +327,93 @@ func TestStackResourceNamesScopedToWorkspace(t *testing.T) {
 	if !ok || svc != "api" || ns != "perf" {
 		t.Errorf("splitHostResource(navexa:api:perf) = (%q,%q,%v), want (api,perf,true)", svc, ns, ok)
 	}
+}
+
+// A tool that starts or stops something takes no implicit base: with no stack
+// parameter and a working directory inside neither a stack nor the replica, it
+// refuses and names what to pass.
+func TestMutatingToolRefusesWithoutATarget(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s := server.NewMCPServer("test", "0.0.0")
+	ws := &workspace.Workspace{Name: "navexa", Path: t.TempDir()}
+	registerStopTool(s, nil, "api", &config.WorkspaceConfig{}, ws)
+
+	out := safetyCallTool(t, s, "stop", map[string]any{"service": "api"})
+	if !strings.Contains(out, "--stack base") {
+		t.Errorf("stop must refuse without a target and name base, got: %s", out)
+	}
+	if strings.Contains(out, "Stopped") {
+		t.Errorf("stop must not have stopped anything, got: %s", out)
+	}
+}
+
+// The regression the rule most easily causes: a read-only tool changes nothing,
+// so absent still means base and it must answer with no stack parameter. It
+// fails here on the dead daemon port, which is the point — it got past target
+// resolution.
+func TestReadOnlyToolNeedsNoTarget(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s := server.NewMCPServer("test", "0.0.0")
+	ws := &workspace.Workspace{Name: "navexa", Path: t.TempDir()}
+	registerStatusTool(s, tilt.NewClient("localhost", 1), map[string]string{}, &config.WorkspaceConfig{}, ws)
+
+	out := safetyCallTool(t, s, "status", map[string]any{})
+	if strings.Contains(out, "--stack base") {
+		t.Errorf("status must not demand a target, got: %s", out)
+	}
+	if !strings.Contains(out, "dev daemon is not running") {
+		t.Errorf("status should have reached the daemon and reported it down, got: %s", out)
+	}
+}
+
+// The stack parameter means different things on tools that read and tools that
+// act, so the two descriptions have to say so where an agent reads them.
+func TestMutatingToolsDocumentThatAbsentIsNotBase(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s := server.NewMCPServer("test", "0.0.0")
+	ws := &workspace.Workspace{Name: "navexa", Path: t.TempDir()}
+	cfg := &config.WorkspaceConfig{}
+	registerStatusTool(s, nil, nil, cfg, ws)
+	registerStartTool(s, nil, "api", cfg, ws)
+	registerStopTool(s, nil, "api", cfg, ws)
+	registerRestartTool(s, nil, "api", cfg, ws)
+	registerEnvTools(s, ws, ws.Path)
+
+	tools := listTools(t, s)
+	for _, name := range []string{"start", "stop", "restart", "env_use"} {
+		desc := tools[name].InputSchema.Properties["stack"].Description
+		if !strings.Contains(desc, "NO implicit default") {
+			t.Errorf("%s's stack parameter must say it has no default: %s", name, desc)
+		}
+		if !strings.Contains(desc, "replica") {
+			t.Errorf("%s's stack parameter must say what base runs from: %s", name, desc)
+		}
+	}
+	if desc := tools["status"].InputSchema.Properties["stack"].Description; !strings.Contains(desc, "Absent (or the literal \"base\")") {
+		t.Errorf("a read-only tool must keep its base default: %s", desc)
+	}
+}
+
+func listTools(t *testing.T, s *server.MCPServer) map[string]listedTool {
+	t.Helper()
+	resp := s.HandleMessage(context.Background(), json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	data, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Result struct {
+			Tools []listedTool `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatalf("unmarshal tools/list: %v (%s)", err, data)
+	}
+	out := map[string]listedTool{}
+	for _, tool := range envelope.Result.Tools {
+		out[tool.Name] = tool
+	}
+	return out
 }
 
 func equalStrings(a, b []string) bool {

@@ -114,8 +114,6 @@ func newTemplate(t *testing.T) *workspace.Workspace {
 	return &workspace.Workspace{Name: "navexa", Path: root}
 }
 
-// newClonedTemplate gives backend a real origin, so the origin-tracking and
-// fetch-failure paths run against git rather than a stand-in.
 func newClonedTemplate(t *testing.T) (ws *workspace.Workspace, upstream, origin string) {
 	t.Helper()
 	home := t.TempDir()

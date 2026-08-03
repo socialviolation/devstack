@@ -28,8 +28,6 @@ func noDaemon(t *testing.T) {
 	t.Cleanup(func() { daemonReachable = orig })
 }
 
-// park leaves the checkout where a user leaves it: on a feature branch, one
-// commit deep, with work nobody asked to be copied into the next stack.
 func park(t *testing.T, repo string) string {
 	t.Helper()
 	git(t, repo, "checkout", "-q", "-b", "parked")

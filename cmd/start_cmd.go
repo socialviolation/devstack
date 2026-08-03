@@ -10,6 +10,7 @@ import (
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/infra"
+	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -132,13 +133,10 @@ func ensureHostDaemon() error {
 
 // resolveWorkspace resolves a workspace by name/path flag or auto-detects from cwd.
 //
-// A stack's worktrees live outside its base workspace directory, and a stack is
-// never itself registered, so the registry alone cannot place someone standing
-// in one — yet a worktree is exactly where an agent is sent to work. Falling
-// back to the owning base is what makes a worktree a place commands run rather
-// than a place they refuse. Resolving the base does not change what a command
-// acts on: without --stack it still targets base, and the commands that can say
-// which stack the directory belongs to do.
+// Neither a stack worktree nor the replica is a registered workspace, so the
+// registry alone cannot place someone standing in one — and both are places
+// commands legitimately run. Which workspace this is says nothing about which of
+// its instances a command acts on: stack.ResolveTarget decides that.
 func resolveWorkspace(flag string) (*workspace.Workspace, error) {
 	if flag == "" {
 		ws, err := workspace.DetectFromCwd()
@@ -146,6 +144,9 @@ func resolveWorkspace(flag string) (*workspace.Workspace, error) {
 			return ws, nil
 		}
 		if base, _, derr := stack.DetectFromCwd(); derr == nil && base != nil {
+			return base, nil
+		}
+		if base, derr := replica.DetectFromCwd(); derr == nil && base != nil {
 			return base, nil
 		}
 		return nil, err

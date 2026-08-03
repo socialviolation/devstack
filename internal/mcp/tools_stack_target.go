@@ -12,11 +12,19 @@ import (
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
-// stackParamDesc is the shared description for the optional `stack` parameter the
-// local tools accept. Absent = the base workspace this daemon is bound to.
+// For the tools that do not start, stop or restart anything: absent = the base
+// workspace this daemon is bound to.
 const stackParamDesc = "Optional feature stack name to target instead of base. " + baseTermDesc +
 	"Absent (or the literal \"base\") operates on base's service copies. When set to a stack name, the tool " +
-	"operates on that stack's copies, which run in the one host daemon as <workspace>:<service>:<stack> resources, plus its worktree config."
+	"operates on that stack's copies, which run in the one host daemon as <workspace>:<service>:<stack> resources, plus its worktree config. " +
+	"Absent means base on THIS tool. It does not on the tools that start, stop or restart a service — there, absent means the instance is worked out from the working directory, or the call fails."
+
+// Separate from stackParamDesc because absent no longer means base: base runs
+// from a replica, not from the checkouts, so a call that silently defaulted to
+// base would act on code the caller is not looking at.
+const mutatingStackParamDesc = "Which copy to act on: a feature stack's SHORT name (for example 'import-review'), or the literal \"base\". " + baseTermDesc +
+	"This tool changes what is running, so it has NO implicit default. Absent, the instance is taken from the server's working directory — a stack worktree, or base's replica — and where the directory is neither, the call is an error listing the stacks available. " +
+	"Omitting this parameter is never a safe way to mean base: say \"base\"."
 
 // resolveStackRecord looks up a feature stack by short name within the bound
 // (base) workspace, returning a clear error that lists the available stack names
@@ -103,6 +111,14 @@ func resolveLocalTarget(ws *workspace.Workspace, base localTarget, stackName str
 		namespace:   rec.Name,
 		label:       fmt.Sprintf("stack %q (host :%d)", rec.Name, workspace.HostTiltPort),
 	}, nil
+}
+
+func resolveMutatingTarget(ws *workspace.Workspace, base localTarget, stackParam string) (localTarget, error) {
+	name, err := stack.ResolveTarget(ws, stackParam)
+	if err != nil {
+		return localTarget{}, err
+	}
+	return resolveLocalTarget(ws, base, name)
 }
 
 // resourceName is the host-daemon resource name for a service, matching tiltgen's

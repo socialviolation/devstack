@@ -45,8 +45,6 @@ func makeRepo(t *testing.T, dir, service string, port int) {
 	rungit(t, dir, "commit", "-q", "-m", "init")
 }
 
-// newActiveWorkspace registers an active workspace of one service, checked out
-// in the user's own tree, with no replica built.
 func newActiveWorkspace(t *testing.T, home, name, service string, port int) *workspace.Workspace {
 	t.Helper()
 	root := filepath.Join(home, "dev", name)

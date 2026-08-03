@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 )
 
@@ -17,7 +18,11 @@ func runStop(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	stackName, _ := cmd.Flags().GetString("stack")
+	flagStack, _ := cmd.Flags().GetString("stack")
+	stackName, err := stack.ResolveTarget(ws, flagStack)
+	if err != nil {
+		return err
+	}
 	tiltPort, namespace, wsPath, label, err := resolveStackTarget(ws, stackName)
 	if err != nil {
 		return err

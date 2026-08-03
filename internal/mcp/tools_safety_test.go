@@ -48,7 +48,7 @@ func safetyStopServer(t *testing.T, defaultService string) *server.MCPServer {
 }
 
 func TestStopWithNoArgumentsDoesNotStopEverything(t *testing.T) {
-	out := safetyCallTool(t, safetyStopServer(t, ""), "stop", map[string]any{})
+	out := safetyCallTool(t, safetyStopServer(t, ""), "stop", map[string]any{"stack": "base"})
 	if !strings.Contains(out, "no service specified") || !strings.Contains(out, "all=true") {
 		t.Fatalf("a bare stop must refuse and point at all=true, got: %s", out)
 	}

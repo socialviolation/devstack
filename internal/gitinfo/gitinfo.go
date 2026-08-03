@@ -113,9 +113,7 @@ func DirtyKeys(infos map[string]Info) []string {
 	return out
 }
 
-// DefaultBranch reports the branch a repo's work is cut from: what origin calls
-// HEAD, or, for a repo with no origin, whichever of main or master exists
-// locally. It never guesses — a repo naming neither is an error, because
+// It never guesses: a repo naming neither main nor master is an error, because
 // checking out the wrong branch is worse than refusing.
 func DefaultBranch(dir string) (string, error) {
 	if ref, ok := git(dir, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"); ok {
@@ -131,9 +129,8 @@ func DefaultBranch(dir string) (string, error) {
 	return "", fmt.Errorf("could not tell which branch is the default in %s: no origin/HEAD, and neither main nor master exists locally", dir)
 }
 
-// DefaultRef resolves the ref new work is cut from: the default branch as origin
-// has it, falling back to the local branch when there is no remote copy. Origin
-// wins because a local default branch goes stale the moment it is not pulled.
+// Origin's copy wins: a local default branch goes stale the moment it is not
+// pulled.
 func DefaultRef(dir string) (branch, ref string, err error) {
 	branch, err = DefaultBranch(dir)
 	if err != nil {
@@ -150,8 +147,6 @@ func DefaultRef(dir string) (branch, ref string, err error) {
 	return "", "", fmt.Errorf("default branch %q exists in neither origin nor %s", branch, dir)
 }
 
-// ShortRef renders a full ref the way a person names it: refs/remotes/origin/main
-// as origin/main, refs/heads/main as main.
 func ShortRef(ref string) string {
 	return strings.TrimPrefix(strings.TrimPrefix(ref, "refs/remotes/"), "refs/heads/")
 }

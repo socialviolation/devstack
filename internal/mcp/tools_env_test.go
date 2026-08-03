@@ -113,6 +113,7 @@ func TestEnvSetRedactsConfirmation(t *testing.T) {
 		"name":  "dev",
 		"key":   "ConnectionStrings__Other",
 		"value": testDSN,
+		"stack": "base",
 	})
 
 	if strings.Contains(out, testDSNPassword) {
@@ -129,6 +130,7 @@ func TestEnvSetMasksOpaqueSecret(t *testing.T) {
 		"name":  "dev",
 		"key":   "OTHER_TOKEN",
 		"value": testOpaqueToken,
+		"stack": "base",
 	})
 
 	if strings.Contains(out, testOpaqueToken) {

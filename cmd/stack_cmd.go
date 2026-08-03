@@ -27,9 +27,13 @@ git worktrees, reusing base's copies for everything else. Only the services you
 change (and the services that call them) get a worktree and a dynamically
 allocated port; the rest resolve to base's copies.
 
-"base" is the workspace running without any stack: your normal checkouts and the
-copies started from them. It is not itself a stack, and no stack may be named
-"base" — a command that starts, stops or writes, given no --stack, acts on base.
+"base" is the workspace running without any stack. It does not run from your
+checkouts: it runs from a replica devstack keeps, one git worktree per service at
+the default branch tip, and your checkout is the template that replica is built
+from. It is not itself a stack, and no stack may be named "base" — but a command
+that starts, stops or writes takes --stack base to act on it. That command has no
+default: with no --stack it acts on the stack or replica your directory is in, and
+refuses anywhere else.
 
 The telemetry queries are the exception: 'devstack otel traces' with no --stack
 searches every copy, base and stacks together. Pass --stack base for base alone.`,

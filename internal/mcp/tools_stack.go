@@ -23,13 +23,13 @@ import (
 const stackShortNameDesc = "Feature stack SHORT name, for example 'import-review'. This is not the '<base>--<name>' full identity that stack_list and telemetry print. " +
 	baseTermDesc +
 	"So no stack is ever called \"base\": omit this parameter instead of passing \"base\". " +
-	"The service-control and telemetry tools accept \"base\" as a synonym for omitting it. The stack tools do not, and stack_rm rejects it."
+	"The telemetry tools accept \"base\" as a synonym for omitting it. The tools that start, stop or restart a service require it, and there \"base\" is not a synonym for omitting it: omitting it means the instance is read from the working directory, or the call fails. The stack tools take stack names only, and stack_rm rejects \"base\"."
 
 // baseTermDesc is the one definition of "base". It is shared rather than
 // restated because the restatements disagreed: the same word was used for a
 // checkout, for a workspace, for a stack, and for the absence of a stack, and
 // the disagreeing paragraph was pasted into eight parameter descriptions.
-const baseTermDesc = "\"base\" is this workspace running without any stack — the normal checkouts and the service copies started from them. It is not itself a stack. "
+const baseTermDesc = "\"base\" is this workspace running without any stack. It does not run from the user's checkouts. It runs from a managed replica of the workspace — one git worktree per service, detached at that service's default branch tip, under a .devstack-base sibling — and the checkout is the template that replica is built from. base is not itself a stack. "
 
 // serviceLinksDesc defines the "service links" these tools return: one
 // http://localhost:<port> URL per port the stack allocated.

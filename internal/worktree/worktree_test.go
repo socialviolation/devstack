@@ -97,8 +97,6 @@ func TestCreate_DependentDetachedWhileBaseBranchLive(t *testing.T) {
 	_ = res
 }
 
-// park moves the repo onto an unrelated branch with a commit of its own, so a
-// worktree cut from the named ref is provably not cut from HEAD.
 func park(t *testing.T, repo string) (parkedTip string) {
 	t.Helper()
 	git(t, repo, "checkout", "-q", "-b", "parked")

@@ -608,7 +608,7 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 		mcp.WithString("group",
 			mcp.Description("Group name to restart. All services in the group are restarted in parallel. Cannot be combined with service."),
 		),
-		mcp.WithString("stack", mcp.Description(stackParamDesc)),
+		mcp.WithString("stack", mcp.Description(mutatingStackParamDesc)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -626,7 +626,7 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 			return mcp.NewToolResultError("specify either service or group, not both"), nil
 		}
 
-		t, err := resolveLocalTarget(ws, localTarget{client: tiltClient, cfg: cfg, defaultSvc: defaultService}, request.GetString("stack", ""))
+		t, err := resolveMutatingTarget(ws, localTarget{client: tiltClient, cfg: cfg, defaultSvc: defaultService}, request.GetString("stack", ""))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -758,7 +758,7 @@ func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, def
 		mcp.WithString("group",
 			mcp.Description("Group name to start. Every service in the group is started, dependencies first. Cannot be combined with service."),
 		),
-		mcp.WithString("stack", mcp.Description(stackParamDesc)),
+		mcp.WithString("stack", mcp.Description(mutatingStackParamDesc)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -777,7 +777,7 @@ func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, def
 			return mcp.NewToolResultError("specify either service or group, not both"), nil
 		}
 
-		t, err := resolveLocalTarget(ws, localTarget{client: tiltClient, cfg: cfg, defaultSvc: defaultService}, request.GetString("stack", ""))
+		t, err := resolveMutatingTarget(ws, localTarget{client: tiltClient, cfg: cfg, defaultSvc: defaultService}, request.GetString("stack", ""))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -879,7 +879,7 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 		mcp.WithString("group",
 			mcp.Description("Group name to stop. All services in the group are stopped in parallel, in the targeted instance only. Cannot be combined with service or all."),
 		),
-		mcp.WithString("stack", mcp.Description(stackParamDesc)),
+		mcp.WithString("stack", mcp.Description(mutatingStackParamDesc)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -900,7 +900,7 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 			return mcp.NewToolResultError("all cannot be combined with service or group"), nil
 		}
 
-		t, err := resolveLocalTarget(ws, localTarget{client: tiltClient, cfg: cfg, defaultSvc: defaultService}, request.GetString("stack", ""))
+		t, err := resolveMutatingTarget(ws, localTarget{client: tiltClient, cfg: cfg, defaultSvc: defaultService}, request.GetString("stack", ""))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

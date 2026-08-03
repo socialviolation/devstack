@@ -7,11 +7,6 @@ import (
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
-// The replica's manifest is written by the stack generator, which carries
-// neither block because a stack legitimately owns neither: it exports to base's
-// collector and runs against base's infra. The replica is not a stack — it is
-// the workspace — so both have to survive the round trip, or a caller reading
-// them off it sees a workspace with observability configured as one without.
 func TestResolveInheritsObservabilityAndRuntime(t *testing.T) {
 	ws := newInstrumentedTemplate(t)
 	if _, err := Ensure(ws); err != nil {
