@@ -123,41 +123,9 @@ func allocatedPorts() (map[int]bool, error) {
 func AllocatePorts(stackName string, keys []string) (map[string]int, error) {
 	var result map[string]int
 	err := withPortAllocLock(func() error {
-		workspaces, err := Load()
+		out, err := allocateKeys(nil, keys)
 		if err != nil {
 			return err
-		}
-		reserved := map[int]bool{}
-		for _, ws := range workspaces {
-			if ws.TiltPort != 0 {
-				reserved[ws.TiltPort] = true
-			}
-		}
-		allocated, err := allocatedPorts()
-		if err != nil {
-			return err
-		}
-		for p := range allocated {
-			reserved[p] = true
-		}
-
-		out := make(map[string]int, len(keys))
-		candidate := servicePortBase
-		limit := servicePortBase + servicePortScanLimit
-		for _, key := range keys {
-			for {
-				if candidate >= limit {
-					return fmt.Errorf("no free service port found in range %d-%d", servicePortBase, limit-1)
-				}
-				c := candidate
-				candidate++
-				if reserved[c] || portInUse(c) {
-					continue
-				}
-				reserved[c] = true
-				out[key] = c
-				break
-			}
 		}
 		if err := savePorts(stackName, out); err != nil {
 			return err
@@ -169,4 +137,86 @@ func AllocatePorts(stackName string, keys []string) (map[string]int, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+// AllocateAdditionalPorts extends a stack's allocation with the keys it does not
+// already hold and returns the union, leaving every port it already holds on the
+// same number.
+//
+// Adding a service to a live stack cannot go through AllocatePorts: that saves
+// exactly the keys it was handed, and every port on the machine is reserved
+// against it, so re-allocating a stack's whole key set moves every one of its
+// running services to a different port.
+func AllocateAdditionalPorts(stackName string, keys []string) (map[string]int, error) {
+	var result map[string]int
+	err := withPortAllocLock(func() error {
+		held, err := LoadPorts(stackName)
+		if err != nil {
+			return err
+		}
+		var missing []string
+		for _, key := range keys {
+			if _, ok := held[key]; !ok {
+				missing = append(missing, key)
+			}
+		}
+		out, err := allocateKeys(held, missing)
+		if err != nil {
+			return err
+		}
+		if err := savePorts(stackName, out); err != nil {
+			return err
+		}
+		result = out
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// allocateKeys returns held plus one free localhost port per key. Callers hold
+// the allocation lock.
+func allocateKeys(held map[string]int, keys []string) (map[string]int, error) {
+	workspaces, err := Load()
+	if err != nil {
+		return nil, err
+	}
+	reserved := map[int]bool{}
+	for _, ws := range workspaces {
+		if ws.TiltPort != 0 {
+			reserved[ws.TiltPort] = true
+		}
+	}
+	allocated, err := allocatedPorts()
+	if err != nil {
+		return nil, err
+	}
+	for p := range allocated {
+		reserved[p] = true
+	}
+
+	out := make(map[string]int, len(held)+len(keys))
+	for k, v := range held {
+		out[k] = v
+	}
+	candidate := servicePortBase
+	limit := servicePortBase + servicePortScanLimit
+	for _, key := range keys {
+		for {
+			if candidate >= limit {
+				return nil, fmt.Errorf("no free service port found in range %d-%d", servicePortBase, limit-1)
+			}
+			c := candidate
+			candidate++
+			if reserved[c] || portInUse(c) {
+				continue
+			}
+			reserved[c] = true
+			out[key] = c
+			break
+		}
+	}
+	return out, nil
 }

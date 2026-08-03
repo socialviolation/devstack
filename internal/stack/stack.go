@@ -201,21 +201,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 	}
 	res.ManifestPath = manifestPath
 
-	var keys []string
-	for _, s := range overlay {
-		svc := baseRW.Services[s]
-		if svc.Manifest == nil {
-			continue
-		}
-		portKeys := make([]string, 0, len(svc.Manifest.Ports))
-		for k := range svc.Manifest.Ports {
-			portKeys = append(portKeys, k)
-		}
-		sort.Strings(portKeys)
-		for _, k := range portKeys {
-			keys = append(keys, QualifyPortKey(s, k))
-		}
-	}
+	keys := portKeys(baseRW, overlay)
 	if len(keys) > 0 {
 		allocated, err := workspace.AllocatePorts(stackName, keys)
 		if err != nil {

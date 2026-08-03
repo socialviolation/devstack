@@ -914,8 +914,8 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"### MCP tools\n\n" +
 		"The `.mcp.json` in this repo wires up the devstack MCP server: " +
 		"`environment`, `status`, `start`, `stop`, `restart`, `topology`, `process_logs`, `configure`, `service_env`, `observability`, `hooks`, `tunnel`, `investigate`, " +
-		"`stack_create`, `stack_up`, `stack_down`, `stack_list`, `stack_rm`, `stack_note`, `env_use`, `env_which`, `env_set`. " +
-		"Two are conditional: `investigate` only while observability is on, `tunnel` only with an ssh client. " +
+		"`stack_create`, `stack_add`, `stack_up`, `stack_down`, `stack_list`, `stack_rm`, `stack_note`, `env_use`, `env_which`, `env_set`. " +
+		"Two are conditional: `investigate` needs observability on, `tunnel` an ssh client. " +
 		"Call `environment` first — it reports what this workspace registered, and each tool's own description is more current than this file.\n\n" +
 		"`status`, `process_logs` and `configure` take an optional `stack`: omit it, or pass `\"base\"`, for base. " +
 		"On `start`, `restart`, `stop` and `env_use`, omitting it does NOT mean base — the copy is read from the server's working directory, and the call fails where that is neither a stack nor the replica. Say `\"base\"` when you mean base. " +

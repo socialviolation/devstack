@@ -62,6 +62,25 @@ contain that work, not an error.`,
 	RunE:         runStackCreate,
 }
 
+var stackAddCmd = &cobra.Command{
+	Use:   "add <name> <service|group> [service|group...]",
+	Short: "Add services to a stack that already exists",
+	Long: `Put another service into a stack without disturbing what is already in it: the
+worktrees it has keep their branches and their work, and its running copies keep
+the ports they are on.
+
+Each named service gets a worktree on the stack's branch, and the services that
+call it are pulled in the same way 'stack create' pulls them in. A name already
+in the stack is reported, not an error; naming nothing new is.
+
+The stack is left exactly as up or down as it was. If it is up, the added copies
+become resources in the host daemon but are not started — start them with
+'devstack service start <service> --stack <name>'.`,
+	Args:         cobra.MinimumNArgs(2),
+	SilenceUsage: true,
+	RunE:         runStackAdd,
+}
+
 var stackRemoveCmd = &cobra.Command{
 	Use:     "rm <name>",
 	Aliases: []string{"remove"},
@@ -136,6 +155,7 @@ var stackDownCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(stackCmd)
 	stackCmd.AddCommand(stackCreateCmd)
+	stackCmd.AddCommand(stackAddCmd)
 	stackCmd.AddCommand(stackRemoveCmd)
 	stackCmd.AddCommand(stackListCmd)
 	stackCmd.AddCommand(stackNoteCmd)
@@ -148,6 +168,7 @@ func init() {
 	stackCreateCmd.Flags().String("branch", "", "Branch for the changed repos (default: the stack name). Attaches if it already exists.")
 	stackCreateCmd.Flags().String("from", "", "Ref the worktrees are cut from (default: each repo's default branch, origin's copy of it when there is one). Not what your checkout has checked out.")
 	stackCreateCmd.Flags().String("note", "", "What this stack is for — a ticket URL, an issue key, a sentence. Shown by 'devstack stack list'.")
+	stackAddCmd.Flags().String("from", "", "Ref the new worktrees are cut from (default: each repo's default branch, origin's copy of it when there is one)")
 	stackNoteCmd.Flags().String("add", "", "Append a dated entry — where the work got to — instead of replacing the note")
 	stackRemoveCmd.Flags().Bool("force", false, "Remove worktrees even if they have uncommitted changes. Destroys that work; it cannot be recovered")
 	stackConfigCmd.Flags().String("stack", "", "Stack name (default: the stack containing the current directory)")
@@ -214,6 +235,90 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("\nStack %q ready. Start it: devstack stack up %s\n", res.StackName, args[0])
 	return nil
+}
+
+func runStackAdd(cmd *cobra.Command, args []string) error {
+	base, err := resolveWorkspace(viper.GetString("workspace"))
+	if err != nil {
+		return err
+	}
+	fromFlag, _ := cmd.Flags().GetString("from")
+	res, err := stack.Add(stack.AddInput{Base: base, Name: args[0], Members: args[1:], From: fromFlag})
+	if err != nil {
+		return err
+	}
+
+	added := make([]string, 0, len(res.Added))
+	for _, m := range res.Added {
+		added = append(added, m.Service)
+	}
+	fmt.Printf("Added to stack %q (branch %s):\n", res.StackName, res.Branch)
+	for _, m := range res.Added {
+		note := "pulled in (calls an added service)"
+		if m.Reason == "changed" {
+			note = "added"
+		}
+		fmt.Printf("  %-16s %s\n", m.Service, note)
+	}
+	for _, wt := range res.Worktrees {
+		branchNote := "detached at " + wt.Ref
+		if wt.Branch != "" {
+			branchNote = "branch " + wt.Branch
+		}
+		fmt.Printf("  ✓ worktree %-16s %s (%s)\n", wt.Service, wt.Path, branchNote)
+		if len(wt.Materialized) > 0 {
+			fmt.Printf("    ↳ materialized %d local config file(s): %s\n", len(wt.Materialized), strings.Join(wt.Materialized, ", "))
+		}
+	}
+	fmt.Printf("  ✓ regenerated %s\n", res.ManifestPath)
+	if len(res.Ports) > 0 {
+		fmt.Printf("Allocated service ports (the stack's existing ports are unchanged):\n")
+		for _, k := range sortedKeys(res.Ports) {
+			fmt.Printf("  %-24s http://localhost:%d\n", k, res.Ports[k])
+		}
+	}
+	if len(res.AlreadyPresent) > 0 {
+		fmt.Printf("Already in the stack, left alone: %s\n", strings.Join(res.AlreadyPresent, ", "))
+	}
+	fmt.Printf("Overlay is now: %s\n", strings.Join(res.Overlay, ", "))
+	for _, w := range res.Warnings {
+		fmt.Fprintf(os.Stderr, "WARNING: %s\n", w)
+	}
+
+	if err := fireHooks(base, args[0], config.EventStackCreate, added); err != nil {
+		return fmt.Errorf("%w\n%s was added to stack %q but its %s hooks did not finish, so it is not fully provisioned. Fix the hook, then re-run them:\n  devstack hooks run %s --stack %s --services %s",
+			err, strings.Join(added, ", "), res.StackName, config.EventStackCreate, config.EventStackCreate, args[0], strings.Join(added, ","))
+	}
+
+	if !res.Active {
+		fmt.Printf("\nStack %q is down. Bring it up: devstack stack up %s\n", res.StackName, args[0])
+		return nil
+	}
+
+	// The stack stays up: regenerating the Tiltfile adds the new resources and
+	// leaves the blocks of the copies already running untouched, so nothing that
+	// is serving is stopped or restarted here.
+	if _, err := regenerateHostTiltfile(); err != nil {
+		return fmt.Errorf("failed to regenerate host Tiltfile: %w", err)
+	}
+	syncHostTiltfile(tilt.NewClient("localhost", workspace.HostTiltPort))
+	fmt.Printf("  ✓ host Tiltfile now carries %s (not started)\n", strings.Join(added, ", "))
+
+	if err := fireHooks(base, args[0], config.EventStackUp, added); err != nil {
+		return fmt.Errorf("%w\n%s was added to the running stack %q but its %s hooks did not finish, so it is not fully provisioned. Fix the hook, then re-run them:\n  devstack hooks run %s --stack %s --services %s",
+			err, strings.Join(added, ", "), res.StackName, config.EventStackUp, config.EventStackUp, args[0], strings.Join(added, ","))
+	}
+
+	fmt.Printf("\nStart the added service(s): %s\n", strings.Join(startCommands(added, args[0]), "  ·  "))
+	return nil
+}
+
+func startCommands(services []string, stackName string) []string {
+	out := make([]string, 0, len(services))
+	for _, s := range services {
+		out = append(out, fmt.Sprintf("devstack service start %s --stack %s", s, stackName))
+	}
+	return out
 }
 
 func runStackRemove(cmd *cobra.Command, args []string) error {

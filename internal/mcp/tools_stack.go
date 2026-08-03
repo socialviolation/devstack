@@ -38,6 +38,7 @@ const serviceLinksDesc = "A service link is 'service/portKey=http://localhost:<p
 
 func registerStackTools(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	registerStackCreateTool(mcpServer, ws)
+	registerStackAddTool(mcpServer, ws)
 	registerStackListTool(mcpServer, ws)
 	registerStackNoteTool(mcpServer, ws)
 	registerStackRemoveTool(mcpServer, ws)
@@ -145,6 +146,126 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		}
 
 		fmt.Fprintf(&sb, "\nStart it: (cd %s && devstack workspace up)\n", res.StackRoot)
+		return mcp.NewToolResultText(sb.String()), nil
+	})
+}
+
+func registerStackAddTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
+	tool := mcp.NewTool("stack_add",
+		mcp.WithDescription("Add services to a feature stack of THIS workspace that already exists. Use this for 'the stack needs service C as well' — the alternative is stack_rm plus stack_create, which throws away the stack's branches, its worktrees and any uncommitted work in them. "+
+			"Each named service gets its own git worktree on the stack's existing branch and its own allocated port, and the services that call it are pulled in exactly as stack_create pulls them in. Everything already in the stack is left alone: same worktrees, same branch tips, and the same ports its copies are already serving on. "+
+			"The stack is left as up or as down as it was. If it is up, the added copies become resources in the host daemon but are NOT started — start them with the start tool, or report the command to the user. A service already in the stack is reported as already present, not an error; if every name given is already there the call fails because there is nothing to add. "+
+			"This workspace may declare lifecycle HOOKS: shell commands devstack runs automatically, scoped here to the ADDED services only, so nothing already in the stack is re-provisioned. stack.create fires for them, and stack.up fires too when the stack is up. Their output is included below. A hook failure is returned as an error and means the services were added but are NOT fully provisioned — do not report success; see the hooks tool. "+serviceLinksDesc),
+		mcp.WithString("name", mcp.Required(),
+			mcp.Description(stackShortNameDesc)),
+		mcp.WithString("services", mcp.Required(),
+			mcp.Description("Comma-separated exact service OR group names to add (for example 'billing' or 'core'). A group expands to its members and is recorded on the stack. Services that call any of them are pulled into the overlay automatically.")),
+		mcp.WithString("from",
+			mcp.Description("Git ref the NEW worktrees are cut from, for example 'origin/release-2' or a commit SHA. Defaults to each repo's default branch as origin has it. Applies only where the stack's branch does not yet exist in that repo: where it does, the worktree attaches to it with the history it already has. Never affects the worktrees the stack already has.")),
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(false),
+		mcp.WithOpenWorldHintAnnotation(false),
+	)
+
+	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if ws == nil {
+			return mcp.NewToolResultError("no base workspace resolved for stacks"), nil
+		}
+		name := strings.TrimSpace(request.GetString("name", ""))
+		if name == "" {
+			return mcp.NewToolResultError("name must not be empty"), nil
+		}
+		var members []string
+		for _, s := range strings.Split(request.GetString("services", ""), ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				members = append(members, s)
+			}
+		}
+		if len(members) == 0 {
+			return mcp.NewToolResultError("services must name at least one service or group to add"), nil
+		}
+
+		res, err := stack.Add(stack.AddInput{
+			Base:    ws,
+			Name:    name,
+			Members: members,
+			From:    strings.TrimSpace(request.GetString("from", "")),
+		})
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		added := make([]string, 0, len(res.Added))
+		for _, m := range res.Added {
+			added = append(added, m.Service)
+		}
+
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Added %s to stack %q (branch %s).\n", strings.Join(added, ", "), res.StackName, res.Branch)
+		for _, m := range res.Added {
+			reason := "calls an added service"
+			if m.Reason == "changed" {
+				reason = "added"
+			}
+			fmt.Fprintf(&sb, "  %-16s %s\n", m.Service, reason)
+		}
+		sb.WriteString("\nNew worktrees:\n")
+		for _, wt := range res.Worktrees {
+			branchNote := "detached at " + wt.Ref
+			if wt.Branch != "" {
+				branchNote = "branch " + wt.Branch
+			}
+			fmt.Fprintf(&sb, "  %-16s %s (%s)\n", wt.Service, wt.Path, branchNote)
+		}
+		if len(res.Ports) > 0 {
+			sb.WriteString("\nNewly allocated ports (service/portKey; the stack's existing ports are unchanged):\n")
+			for _, k := range sortedPortKeys(res.Ports) {
+				fmt.Fprintf(&sb, "  %-24s http://localhost:%d\n", k, res.Ports[k])
+			}
+		}
+		if len(res.AlreadyPresent) > 0 {
+			fmt.Fprintf(&sb, "\nAlready in the stack, left alone: %s\n", strings.Join(res.AlreadyPresent, ", "))
+		}
+		fmt.Fprintf(&sb, "\nOverlay is now: %s\n", strings.Join(res.Overlay, ", "))
+		for _, w := range res.Warnings {
+			fmt.Fprintf(&sb, "WARNING: %s\n", w)
+		}
+
+		var createOut strings.Builder
+		createErr := hooks.Fire(ws, name, config.EventStackCreate, added, &createOut)
+		appendHookOutput(&sb, config.EventStackCreate, createOut.String(), createErr)
+		if createErr != nil {
+			return mcp.NewToolResultError(sb.String()), nil
+		}
+
+		if !res.Active {
+			fmt.Fprintf(&sb, "\nStack %q is down, and adding to it did not change that. Bring it up with stack_up.\n", res.StackName)
+			return mcp.NewToolResultText(sb.String()), nil
+		}
+
+		// The stack stays up: regenerating adds the new resources and leaves the
+		// blocks of the copies already running untouched, so nothing serving is
+		// stopped or restarted here.
+		_, genWarnings, err := hostdaemon.Regenerate()
+		if err != nil {
+			return mcp.NewToolResultError(sb.String() + fmt.Sprintf("\nfailed to regenerate host Tiltfile: %v", err)), nil
+		}
+		for _, w := range genWarnings {
+			fmt.Fprintf(&sb, "WARNING: %s\n", w)
+		}
+		for _, note := range hostdaemon.SyncAndReload(tilt.NewClient("localhost", workspace.HostTiltPort)) {
+			fmt.Fprintf(&sb, "%s\n", note)
+		}
+
+		var upOut strings.Builder
+		upErr := hooks.Fire(ws, name, config.EventStackUp, added, &upOut)
+		appendHookOutput(&sb, config.EventStackUp, upOut.String(), upErr)
+		if upErr != nil {
+			return mcp.NewToolResultError(sb.String()), nil
+		}
+
+		fmt.Fprintf(&sb, "\nThe stack was already up and still is — nothing it was running was stopped or restarted. The added copies are registered but NOT started; start each with the start tool (stack=%q), or leave them stopped.\n", name)
 		return mcp.NewToolResultText(sb.String()), nil
 	})
 }
