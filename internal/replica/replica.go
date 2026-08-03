@@ -94,7 +94,7 @@ func Ensure(ws *workspace.Workspace) (*EnsureResult, error) {
 		if err := requireGitRepo(name, repoPath); err != nil {
 			return nil, err
 		}
-		branch, ref, err := defaultRef(repoPath)
+		branch, ref, err := gitinfo.DefaultRef(repoPath)
 		if err != nil {
 			return nil, fmt.Errorf("service %q: %w", name, err)
 		}
@@ -163,7 +163,7 @@ func Sync(ws *workspace.Workspace) (*SyncResult, error) {
 				res.Warnings = append(res.Warnings, fmt.Sprintf("fetch for %q failed, syncing to the local ref instead: %v", name, err))
 			}
 		}
-		_, ref, err := defaultRef(repoPath)
+		_, ref, err := gitinfo.DefaultRef(repoPath)
 		if err != nil {
 			return nil, fmt.Errorf("service %q: %w", name, err)
 		}
@@ -187,7 +187,7 @@ func Sync(ws *workspace.Workspace) (*SyncResult, error) {
 		res.Services = append(res.Services, ServiceSync{
 			Service: name,
 			Path:    path,
-			Ref:     shortRef(ref),
+			Ref:     gitinfo.ShortRef(ref),
 			Before:  before,
 			After:   after,
 		})
@@ -274,28 +274,6 @@ func removeStale(root string, names []string) (removed []string, warnings []stri
 		removed = append(removed, e.Name())
 	}
 	return removed, warnings
-}
-
-// defaultRef resolves the ref a worktree should sit on: the default branch as
-// origin has it, falling back to the local branch when there is no remote copy.
-func defaultRef(repoPath string) (branch, ref string, err error) {
-	branch, err = gitinfo.DefaultBranch(repoPath)
-	if err != nil {
-		return "", "", err
-	}
-	remote := "refs/remotes/origin/" + branch
-	if _, err := git(repoPath, "rev-parse", "--verify", "--quiet", remote); err == nil {
-		return branch, remote, nil
-	}
-	local := "refs/heads/" + branch
-	if _, err := git(repoPath, "rev-parse", "--verify", "--quiet", local); err == nil {
-		return branch, local, nil
-	}
-	return "", "", fmt.Errorf("default branch %q exists in neither origin nor %s", branch, repoPath)
-}
-
-func shortRef(ref string) string {
-	return strings.TrimPrefix(strings.TrimPrefix(ref, "refs/remotes/"), "refs/heads/")
 }
 
 func shortSHA(path string) (string, error) {

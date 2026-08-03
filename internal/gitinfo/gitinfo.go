@@ -131,6 +131,31 @@ func DefaultBranch(dir string) (string, error) {
 	return "", fmt.Errorf("could not tell which branch is the default in %s: no origin/HEAD, and neither main nor master exists locally", dir)
 }
 
+// DefaultRef resolves the ref new work is cut from: the default branch as origin
+// has it, falling back to the local branch when there is no remote copy. Origin
+// wins because a local default branch goes stale the moment it is not pulled.
+func DefaultRef(dir string) (branch, ref string, err error) {
+	branch, err = DefaultBranch(dir)
+	if err != nil {
+		return "", "", err
+	}
+	remote := "refs/remotes/origin/" + branch
+	if _, ok := git(dir, "rev-parse", "--verify", "--quiet", remote); ok {
+		return branch, remote, nil
+	}
+	local := "refs/heads/" + branch
+	if _, ok := git(dir, "rev-parse", "--verify", "--quiet", local); ok {
+		return branch, local, nil
+	}
+	return "", "", fmt.Errorf("default branch %q exists in neither origin nor %s", branch, dir)
+}
+
+// ShortRef renders a full ref the way a person names it: refs/remotes/origin/main
+// as origin/main, refs/heads/main as main.
+func ShortRef(ref string) string {
+	return strings.TrimPrefix(strings.TrimPrefix(ref, "refs/remotes/"), "refs/heads/")
+}
+
 func git(dir string, args ...string) (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()

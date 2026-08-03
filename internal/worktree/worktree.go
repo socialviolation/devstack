@@ -17,25 +17,40 @@ import (
 // must not print itself.
 type Result struct {
 	// SourceDirty is true when the source repo had uncommitted changes at create
-	// time. The worktree still gets committed (HEAD) state; the caller decides
-	// whether to warn that the working-tree changes were left behind.
+	// time. The worktree still gets committed state; the caller decides whether
+	// to warn that the working-tree changes were left behind.
 	SourceDirty bool
+
+	// SourceOffRef is true when the source repo's HEAD is not the commit the
+	// worktree was cut from — the checkout is parked on other work, and the
+	// commits it holds beyond that ref are not in the worktree.
+	SourceOffRef bool
 }
 
-// Create adds a worktree at worktreePath for the repo at repoPath.
+// Create adds a worktree at worktreePath for the repo at repoPath, cut from
+// from — a ref or commit-ish, or "" for the repo's current HEAD.
 //
-// A changed repo gets a feature branch: a new branch named branch off the repo's
-// current HEAD, or, when branch already exists, an attach (checkout) of it. A
-// dependent repo (changed == false) is unmodified code isolated only for config,
-// so it gets a detached HEAD at current HEAD — this avoids git's refusal to check
-// out the base's branch a second time while it is live in the main working tree.
-func Create(repoPath, worktreePath, branch string, changed bool) (Result, error) {
+// A changed repo gets a feature branch: a new branch named branch cut from from,
+// or, when branch already exists, an attach (checkout) of it — an existing branch
+// keeps the history it already has, so from does not apply to it. A dependent
+// repo (changed == false) is unmodified code isolated only for config, so it gets
+// a detached HEAD at from — this avoids git's refusal to check out a branch a
+// second time while it is live in another working tree.
+func Create(repoPath, worktreePath, branch, from string, changed bool) (Result, error) {
 	dirty, err := HasUncommittedChanges(repoPath)
 	if err != nil {
 		return Result{}, err
 	}
 	res := Result{SourceDirty: dirty}
+	if from != "" {
+		offRef, err := headOffRef(repoPath, from)
+		if err != nil {
+			return res, err
+		}
+		res.SourceOffRef = offRef
+	}
 
+	cutFrom := from
 	var args []string
 	switch {
 	case !changed:
@@ -49,9 +64,13 @@ func Create(repoPath, worktreePath, branch string, changed bool) (Result, error)
 		}
 		if exists {
 			args = []string{"worktree", "add", worktreePath, branch}
+			cutFrom = ""
 		} else {
 			args = []string{"worktree", "add", "-b", branch, worktreePath}
 		}
+	}
+	if cutFrom != "" {
+		args = append(args, cutFrom)
 	}
 
 	cmd := exec.Command("git", args...)
@@ -207,6 +226,20 @@ func copyFile(src, dst string, overwrite bool) error {
 		return err
 	}
 	return out.Close()
+}
+
+func headOffRef(repoPath, ref string) (bool, error) {
+	cmd := exec.Command("git", "rev-parse", "HEAD", ref)
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("git rev-parse %s in %s failed: %w\n%s", ref, repoPath, err, strings.TrimSpace(string(out)))
+	}
+	lines := strings.Fields(string(out))
+	if len(lines) != 2 {
+		return false, fmt.Errorf("git rev-parse %s in %s returned %d revisions, want 2", ref, repoPath, len(lines))
+	}
+	return lines[0] != lines[1], nil
 }
 
 func branchExists(repoPath, branch string) (bool, error) {

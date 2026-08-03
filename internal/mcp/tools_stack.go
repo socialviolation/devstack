@@ -56,6 +56,8 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			mcp.Description("What this stack is for, in the author's words — a ticket URL, an issue key, a sentence. devstack never derives this: the branch says what changed, the note says why. Shown by stack_list. Optional, and editable later with the CLI: devstack stack note <name> \"...\"")),
 		mcp.WithString("branch",
 			mcp.Description("Git branch for the changed repos' worktrees. Created if absent, attached to if it already exists. Defaults to the stack name.")),
+		mcp.WithString("from",
+			mcp.Description("Git ref the worktrees are cut from, for example 'origin/release-2' or a commit SHA. Defaults to each repo's default branch as origin has it — never to whatever the user's checkout happens to have checked out, which is a template that may hold parked work. Applies only where the branch is created: an existing branch is attached to with the history it already has.")),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),
@@ -86,6 +88,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			Name:   name,
 			Repos:  repos,
 			Branch: strings.TrimSpace(request.GetString("branch", "")),
+			From:   strings.TrimSpace(request.GetString("from", "")),
 		})
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -113,7 +116,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 
 		sb.WriteString("\nWorktrees:\n")
 		for _, wt := range res.Worktrees {
-			branchNote := "detached at HEAD"
+			branchNote := "detached at " + wt.Ref
 			if wt.Branch != "" {
 				branchNote = "branch " + wt.Branch
 			}

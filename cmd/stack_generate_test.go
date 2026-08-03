@@ -29,7 +29,7 @@ func makeStackRepo(t *testing.T, dir, manifest string) {
 		t.Fatalf("mkdir %s: %v", dir, err)
 	}
 	writeFile(t, filepath.Join(dir, "devstack.service.yaml"), manifest)
-	gitCmd(t, dir, "init", "-q")
+	gitCmd(t, dir, "init", "-q", "-b", "main")
 	gitCmd(t, dir, "add", "-f", ".")
 	gitCmd(t, dir, "commit", "-q", "-m", "init")
 }
