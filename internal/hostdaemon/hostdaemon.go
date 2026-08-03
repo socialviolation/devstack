@@ -84,8 +84,16 @@ func render() (string, []string, error) {
 		// replica for yet runs from its checkout rather than taking the others down
 		// with it.
 		rw, err := replica.Resolve(&ws)
-		if errors.Is(err, replica.ErrNotBuilt) {
-			warnings = append(warnings, fmt.Sprintf("workspace %q has no replica, so it runs from your checkout. To build the replica, run devstack workspace up", ws.Name))
+		if err != nil {
+			// Any replica that will not resolve, not only one that was never
+			// built. One Tiltfile serves every workspace on this machine, so a
+			// replica devstack can not read would otherwise stop generation for
+			// every other workspace as well.
+			if errors.Is(err, replica.ErrNotBuilt) {
+				warnings = append(warnings, fmt.Sprintf("workspace %q has no replica, so it runs from your checkout. To build the replica, run devstack workspace up", ws.Name))
+			} else {
+				warnings = append(warnings, fmt.Sprintf("workspace %q has a replica that devstack can not read, so it runs from your checkout. To rebuild the replica, run devstack workspace up. The error was: %v", ws.Name, err))
+			}
 			rw, err = config.ResolveWorkspace(ws.Path)
 		}
 		if err != nil {

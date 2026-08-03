@@ -304,11 +304,36 @@ func hasOrigin(path string) bool {
 	return err == nil
 }
 
+// requireGitRepo refuses a service directory that is not the root of its own
+// repository.
+//
+// The test is the toplevel, not "is there a repository here": rev-parse walks up,
+// so a plain subdirectory of a repository answers yes. git worktree add then
+// cuts a worktree of the ENCLOSING repository and devstack files it under the
+// service's name — a directory holding the whole parent repository, with no
+// service manifest at its root, which every later resolve fails on.
 func requireGitRepo(name, repoPath string) error {
-	if _, err := git(repoPath, "rev-parse", "--git-dir"); err != nil {
+	top, err := git(repoPath, "rev-parse", "--show-toplevel")
+	if err != nil {
 		return fmt.Errorf("service %q at %s is not a git repository. The replica runs git worktrees, so every service must be a checkout", name, repoPath)
 	}
-	return nil
+	if samePath(top, repoPath) {
+		return nil
+	}
+	return fmt.Errorf("service %q at %s is not the root of its own git repository. It is a directory inside %s.\n"+
+		"The replica cuts one git worktree for each service, and git can only cut a worktree of a whole repository, so devstack would copy %s and file it under %q.\n"+
+		"Give this service its own repository, or drop it from the workspace manifest",
+		name, repoPath, top, top, name)
+}
+
+func samePath(a, b string) bool {
+	if ra, err := filepath.EvalSymlinks(a); err == nil {
+		a = ra
+	}
+	if rb, err := filepath.EvalSymlinks(b); err == nil {
+		b = rb
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 func serviceNames(rw *config.ResolvedWorkspace) []string {
