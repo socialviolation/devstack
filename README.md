@@ -12,8 +12,6 @@ go install github.com/socialviolation/devstack@main
 
 devstack needs Go 1.25+ and [Tilt](https://docs.tilt.dev/install.html) on `$PATH`. If you turn on local observability, devstack also needs Docker.
 
-If you already run devstack, read [docs/upgrading.md](docs/upgrading.md) first. This release moves base off your checkouts, and it makes every command that starts or stops a copy name the copy. Both changes stop a command that worked before.
-
 ## Quick start
 
 ```bash
