@@ -62,6 +62,9 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 	if err := workspace.SetWorkspaceActive(ws.Name, true); err != nil {
 		return nil, fmt.Errorf("failed to mark workspace active: %w", err)
 	}
+	if err := ensureReplica(ws); err != nil {
+		return nil, err
+	}
 	if _, err := regenerateHostTiltfile(); err != nil {
 		return nil, fmt.Errorf("failed to generate host Tiltfile: %w", err)
 	}

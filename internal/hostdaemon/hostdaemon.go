@@ -1,6 +1,7 @@
 package hostdaemon
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/tiltgen"
@@ -74,12 +76,20 @@ func render() (string, []string, error) {
 		return "", nil, err
 	}
 
+	var warnings []string
 	var gens []tiltgen.WorkspaceGen
 	for i := range active {
 		ws := active[i]
-		rw, err := config.ResolveWorkspace(ws.Path)
+		// One Tiltfile serves every workspace, so a workspace nobody has built a
+		// replica for yet runs from its checkout rather than taking the others down
+		// with it.
+		rw, err := replica.Resolve(&ws)
+		if errors.Is(err, replica.ErrNotBuilt) {
+			warnings = append(warnings, fmt.Sprintf("workspace %q has no replica, so it runs from your checkout; run devstack workspace up to build it", ws.Name))
+			rw, err = config.ResolveWorkspace(ws.Path)
+		}
 		if err != nil {
-			return "", nil, fmt.Errorf("workspace %q: failed to resolve manifests: %w", ws.Name, err)
+			return "", warnings, fmt.Errorf("workspace %q: failed to resolve manifests: %w", ws.Name, err)
 		}
 		names := make([]string, 0, len(rw.Services))
 		for name := range rw.Services {
@@ -87,7 +97,7 @@ func render() (string, []string, error) {
 		}
 		stackGens, err := ActiveStackGens(&ws)
 		if err != nil {
-			return "", nil, err
+			return "", warnings, err
 		}
 		gens = append(gens, tiltgen.WorkspaceGen{
 			Name:     ws.Name,
@@ -97,7 +107,8 @@ func render() (string, []string, error) {
 		})
 	}
 
-	return tiltgen.GenerateHost(gens)
+	out, genWarnings, err := tiltgen.GenerateHost(gens)
+	return out, append(warnings, genWarnings...), err
 }
 
 // TiltfileReloadTimeout bounds how long SyncAndReload waits for the running

@@ -7,6 +7,7 @@
 package replica
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -229,8 +230,12 @@ func Resolve(ws *workspace.Workspace) (*config.ResolvedWorkspace, error) {
 	return rw, nil
 }
 
+// ErrNotBuilt is what every "no replica yet" error wraps, so a caller that can
+// carry on with the template can tell it from a manifest that will not resolve.
+var ErrNotBuilt = errors.New("no replica built yet; run devstack workspace up to build it")
+
 func notBuilt(ws *workspace.Workspace, root string) error {
-	return fmt.Errorf("workspace %q has no replica at %s yet; run devstack workspace up to build it", ws.Name, root)
+	return fmt.Errorf("workspace %q at %s: %w", ws.Name, root, ErrNotBuilt)
 }
 
 func writeManifest(template *config.ResolvedWorkspace, name, root string, names []string, paths map[string]string) (string, error) {
