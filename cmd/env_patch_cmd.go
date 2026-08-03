@@ -27,10 +27,10 @@ devstack defines every environment once, in the base workspace manifest. Feature
 stacks inherit them.
 
 CAUTION: do not put a secret here. This command writes the value into
-devstack.workspace.yaml in plaintext. devstack masks a credential when it shows
-it, and never at rest. If somebody commits that file, the secret becomes a
-committed secret. The value also reaches every service and every stack that
-points at this environment.
+devstack.workspace.yaml in plaintext. You commit that file to git, so the secret
+becomes a committed secret. devstack masks a credential when it shows it, and
+never at rest. The value also reaches every service and every stack that points
+at this environment.
 
 A value set here lands on the 'active env' rung, which is second from the top of
 the ladder. It overrides the service's own env.values, its env files, and its

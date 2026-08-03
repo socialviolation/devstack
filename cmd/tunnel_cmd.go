@@ -91,9 +91,9 @@ func init() {
 
 With no flags, this command repeats the last successful push or pull. It uses the
 same direction, the same services and the same stack mapping, and it says what it
-repeats. Without that, a restart after 'push --as-base agent' puts base back on
-those ports and says nothing. A restart on the machine you ran 'pull' from
-reverses the direction.
+repeats. Without that record, a restart after 'push --as-base agent' puts base
+back on those ports and says nothing. Without that record, a restart on the
+machine you ran 'pull' from reverses the direction.
 
 A flag that you pass overrides the saved one:
 

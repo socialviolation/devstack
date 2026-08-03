@@ -51,6 +51,16 @@ func registerStackTools(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	registerStackDownTool(mcpServer, ws)
 }
 
+func stackBranchNote(wt stack.WorktreeResult) string {
+	if wt.Branch != "" {
+		return "branch " + wt.Branch
+	}
+	if wt.Ref == "" {
+		return "detached"
+	}
+	return "detached at " + wt.Ref
+}
+
 func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_create",
 		mcp.WithDescription("Create a feature stack that overlays THIS workspace (the base). A stack runs its own copy of only the services it changes, plus the services that call them. Each one runs in its own git worktree, on a port devstack allocates. Every other service resolves to base's copy. Use this tool for the request 'I need a stack to work on X in services A and B'.\n"+
@@ -126,11 +136,10 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 
 		sb.WriteString("\nWorktrees:\n")
 		for _, wt := range res.Worktrees {
-			branchNote := "detached at " + wt.Ref
-			if wt.Branch != "" {
-				branchNote = "branch " + wt.Branch
+			fmt.Fprintf(&sb, "  %-16s %s (%s)\n", wt.Service, wt.Path, stackBranchNote(wt))
+			if wt.Path != wt.RepoPath {
+				fmt.Fprintf(&sb, "                   in the worktree of the repository %s at %s\n", wt.Repo, wt.RepoPath)
 			}
-			fmt.Fprintf(&sb, "  %-16s %s (%s)\n", wt.Service, wt.Path, branchNote)
 		}
 
 		if len(res.Ports) > 0 {
@@ -209,7 +218,11 @@ func registerStackAddTool(mcpServer *server.MCPServer, ws *workspace.Workspace) 
 		}
 
 		var sb strings.Builder
-		fmt.Fprintf(&sb, "Added %s to stack %q (branch %s).\n", strings.Join(added, ", "), res.StackName, res.Branch)
+		if len(added) == 0 {
+			fmt.Fprintf(&sb, "Nothing was added to stack %q (branch %s).\n", res.StackName, res.Branch)
+		} else {
+			fmt.Fprintf(&sb, "Added %s to stack %q (branch %s).\n", strings.Join(added, ", "), res.StackName, res.Branch)
+		}
 		for _, m := range res.Added {
 			reason := "calls an added service"
 			if m.Reason == "changed" {
@@ -219,11 +232,14 @@ func registerStackAddTool(mcpServer *server.MCPServer, ws *workspace.Workspace) 
 		}
 		sb.WriteString("\nNew worktrees:\n")
 		for _, wt := range res.Worktrees {
-			branchNote := "detached at " + wt.Ref
-			if wt.Branch != "" {
-				branchNote = "branch " + wt.Branch
+			fmt.Fprintf(&sb, "  %-16s %s (%s)\n", wt.Service, wt.Path, stackBranchNote(wt))
+			if wt.Path != wt.RepoPath {
+				fmt.Fprintf(&sb, "                   in the worktree of the repository %s at %s\n", wt.Repo, wt.RepoPath)
 			}
-			fmt.Fprintf(&sb, "  %-16s %s (%s)\n", wt.Service, wt.Path, branchNote)
+		}
+		if len(res.Promoted) > 0 {
+			fmt.Fprintf(&sb, "\nPromoted to branch %s: %s. These services were in the stack on a detached HEAD. Their worktrees are on the stack's branch now, so you can commit in them.\n",
+				res.Branch, strings.Join(res.Promoted, ", "))
 		}
 		if len(res.Ports) > 0 {
 			sb.WriteString("\nNewly allocated ports (service/portKey). The existing ports of the stack do not change:\n")

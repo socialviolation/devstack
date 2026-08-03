@@ -1,9 +1,10 @@
 // Package replica keeps the runnable copy of a workspace: one git worktree per
-// service, detached at that service repo's default branch tip, generated from
-// the user's checkout but never running out of it. The checkout is the template
-// — the source of git objects, the workspace manifest, and machine-local
-// gitignored config — so half-finished work parked there neither runs nor
-// blocks, and nothing here is a place anyone edits.
+// repository, detached at that repository's default branch tip, generated from
+// the user's checkout but never running out of it. A repository that holds
+// several services gets one worktree, and each service is a directory in it.
+// The checkout is the template — the source of git objects, the workspace
+// manifest, and machine-local gitignored config — so half-finished work parked
+// there neither runs nor blocks, and nothing here is a place anyone edits.
 package replica
 
 import (
@@ -25,10 +26,13 @@ import (
 
 const rootDirName = ".devstack-base"
 
+// Worktree is one repository's worktree in the replica. It carries the services
+// that live in it, because a repository can hold more than one.
 type Worktree struct {
-	Service      string
+	Repo         string
 	Path         string
 	Branch       string
+	Services     []string
 	Materialized []string
 }
 
@@ -106,20 +110,25 @@ func Ensure(ws *workspace.Workspace) (*EnsureResult, error) {
 
 	res := &EnsureResult{Root: root}
 	names := serviceNames(template)
-	paths := make(map[string]string, len(names))
-	for _, name := range names {
-		repoPath := template.Services[name].RepoPath
-		path := filepath.Join(root, name)
-		paths[name] = path
+	repos, err := plan(template, names)
+	if err != nil {
+		return nil, err
+	}
 
-		if err := requireGitRepo(name, repoPath); err != nil {
-			return nil, err
+	paths := make(map[string]string, len(names))
+	keep := make(map[string]bool, len(repos))
+	for _, r := range repos {
+		path := r.Path(root)
+		keep[r.Dir] = true
+		for _, name := range r.Services {
+			paths[name] = r.ServicePath(root, name)
 		}
-		branch, ref, err := gitinfo.DefaultRef(repoPath)
+
+		branch, ref, err := gitinfo.DefaultRef(r.Toplevel)
 		if err != nil {
-			return nil, fmt.Errorf("service %q: %w", name, err)
+			return nil, fmt.Errorf("repository %s: %w", r.Toplevel, err)
 		}
-		wt := Worktree{Service: name, Path: path, Branch: branch}
+		wt := Worktree{Repo: r.Dir, Path: path, Branch: branch, Services: r.Services}
 
 		if _, err := os.Stat(path); err == nil {
 			res.Existing = append(res.Existing, wt)
@@ -127,18 +136,18 @@ func Ensure(ws *workspace.Workspace) (*EnsureResult, error) {
 		}
 		// Detached, never on a branch: the template checkout usually holds the
 		// default branch, and git refuses to check one branch out twice.
-		if _, err := git(repoPath, "worktree", "add", "--detach", path, ref); err != nil {
-			return nil, fmt.Errorf("worktree for %q: %w", name, err)
+		if _, err := git(r.Toplevel, "worktree", "add", "--detach", path, ref); err != nil {
+			return nil, fmt.Errorf("worktree for the repository %s: %w", r.Dir, err)
 		}
-		materialized, err := worktree.MaterializeIgnoredConfig(repoPath, path)
+		materialized, err := worktree.MaterializeIgnoredConfig(r.Toplevel, path)
 		if err != nil {
-			return nil, fmt.Errorf("can not materialize the local configuration for %q: %w", name, err)
+			return nil, fmt.Errorf("can not materialize the local configuration for the repository %s: %w", r.Dir, err)
 		}
 		wt.Materialized = materialized
 		res.Created = append(res.Created, wt)
 	}
 
-	removed, warnings := removeStale(root, names)
+	removed, warnings := removeStale(root, keep)
 	res.Removed = removed
 	res.Warnings = append(res.Warnings, warnings...)
 
@@ -165,53 +174,65 @@ func Sync(ws *workspace.Workspace) (*SyncResult, error) {
 		return nil, fmt.Errorf("can not resolve the workspace %q at %s: %w", ws.Name, ws.Path, err)
 	}
 
+	repos, err := plan(template, serviceNames(template))
+	if err != nil {
+		return nil, err
+	}
+
 	res := &SyncResult{Root: root}
-	for _, name := range serviceNames(template) {
-		repoPath := template.Services[name].RepoPath
-		path := filepath.Join(root, name)
+	for _, r := range repos {
+		path := r.Path(root)
 		if _, err := os.Stat(path); err != nil {
-			res.Warnings = append(res.Warnings, fmt.Sprintf("service %q has no worktree at %s. To build it, run devstack workspace up", name, path))
+			res.Warnings = append(res.Warnings, fmt.Sprintf("the services %s have no worktree at %s. To build it, run devstack workspace up", strings.Join(r.Services, ", "), path))
 			continue
-		}
-		if err := requireGitRepo(name, repoPath); err != nil {
-			return nil, err
 		}
 
 		if hasOrigin(path) {
 			if _, err := git(path, "fetch", "origin"); err != nil {
-				res.Warnings = append(res.Warnings, fmt.Sprintf("the fetch for %q failed, so devstack syncs to the local ref instead: %v", name, err))
+				res.Warnings = append(res.Warnings, fmt.Sprintf("the fetch for the repository %q failed, so devstack syncs to the local ref instead: %v", r.Dir, err))
 			}
 		}
-		_, ref, err := gitinfo.DefaultRef(repoPath)
+		_, ref, err := gitinfo.DefaultRef(r.Toplevel)
 		if err != nil {
-			return nil, fmt.Errorf("service %q: %w", name, err)
+			return nil, fmt.Errorf("repository %s: %w", r.Toplevel, err)
 		}
 		before, err := shortSHA(path)
 		if err != nil {
-			return nil, fmt.Errorf("service %q: %w", name, err)
+			return nil, fmt.Errorf("repository %s: %w", r.Dir, err)
 		}
 		// --force because the replica's working tree is disposable: a plain
 		// checkout refuses when materialized config collides with the new tip.
 		if _, err := git(path, "checkout", "--force", "--detach", ref); err != nil {
-			return nil, fmt.Errorf("can not sync the worktree for %q: %w", name, err)
+			return nil, fmt.Errorf("can not sync the worktree for the repository %q: %w", r.Dir, err)
 		}
 		after, err := shortSHA(path)
 		if err != nil {
-			return nil, fmt.Errorf("service %q: %w", name, err)
+			return nil, fmt.Errorf("repository %s: %w", r.Dir, err)
 		}
-		if _, err := worktree.MaterializeIgnoredConfigForce(repoPath, path); err != nil {
-			return nil, fmt.Errorf("can not materialize the local configuration for %q: %w", name, err)
+		if _, err := worktree.MaterializeIgnoredConfigForce(r.Toplevel, path); err != nil {
+			return nil, fmt.Errorf("can not materialize the local configuration for the repository %q: %w", r.Dir, err)
 		}
 
-		res.Services = append(res.Services, ServiceSync{
-			Service: name,
-			Path:    path,
-			Ref:     gitinfo.ShortRef(ref),
-			Before:  before,
-			After:   after,
-		})
+		for _, name := range r.Services {
+			res.Services = append(res.Services, ServiceSync{
+				Service: name,
+				Path:    r.ServicePath(root, name),
+				Ref:     gitinfo.ShortRef(ref),
+				Before:  before,
+				After:   after,
+			})
+		}
 	}
+	sort.Slice(res.Services, func(i, j int) bool { return res.Services[i].Service < res.Services[j].Service })
 	return res, nil
+}
+
+// plan groups the workspace's services by the repository that holds them. git
+// cuts a worktree of a whole repository, so a repository that holds several
+// services in subdirectories gets one worktree, and each service is a directory
+// in it.
+func plan(template *config.ResolvedWorkspace, names []string) ([]worktree.Repo, error) {
+	return worktree.Plan(names, func(s string) string { return template.Services[s].RepoPath }, nil)
 }
 
 // The replica's manifest comes from the stack generator, which carries no
@@ -270,11 +291,9 @@ func writeManifest(template *config.ResolvedWorkspace, name, root string, names 
 	return path, nil
 }
 
-func removeStale(root string, names []string) (removed []string, warnings []string) {
-	keep := make(map[string]bool, len(names))
-	for _, name := range names {
-		keep[name] = true
-	}
+// removeStale drops a worktree directory that no repository in the manifest
+// claims. keep holds the directory name of every repository the replica needs.
+func removeStale(root string, keep map[string]bool) (removed []string, warnings []string) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, []string{fmt.Sprintf("devstack can not read the replica root %s: %v", root, err)}
@@ -287,7 +306,7 @@ func removeStale(root string, names []string) (removed []string, warnings []stri
 		// Forced: the replica holds no work anyone owns, so there is nothing to
 		// refuse over.
 		if err := worktree.Remove(path, true); err != nil {
-			warnings = append(warnings, fmt.Sprintf("devstack can not remove the worktree %s of the dropped service %q: %v", path, e.Name(), err))
+			warnings = append(warnings, fmt.Sprintf("devstack can not remove the worktree %s. The manifest no longer lists the repository %q: %v", path, e.Name(), err))
 			continue
 		}
 		removed = append(removed, e.Name())
@@ -302,38 +321,6 @@ func shortSHA(path string) (string, error) {
 func hasOrigin(path string) bool {
 	_, err := git(path, "remote", "get-url", "origin")
 	return err == nil
-}
-
-// requireGitRepo refuses a service directory that is not the root of its own
-// repository.
-//
-// The test is the toplevel, not "is there a repository here": rev-parse walks up,
-// so a plain subdirectory of a repository answers yes. git worktree add then
-// cuts a worktree of the ENCLOSING repository and devstack files it under the
-// service's name — a directory holding the whole parent repository, with no
-// service manifest at its root, which every later resolve fails on.
-func requireGitRepo(name, repoPath string) error {
-	top, err := git(repoPath, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return fmt.Errorf("service %q at %s is not a git repository. The replica runs git worktrees, so every service must be a checkout", name, repoPath)
-	}
-	if samePath(top, repoPath) {
-		return nil
-	}
-	return fmt.Errorf("service %q at %s is not the root of its own git repository. It is a directory inside %s.\n"+
-		"The replica cuts one git worktree for each service, and git can only cut a worktree of a whole repository, so devstack would copy %s and file it under %q.\n"+
-		"Give this service its own repository, or drop it from the workspace manifest",
-		name, repoPath, top, top, name)
-}
-
-func samePath(a, b string) bool {
-	if ra, err := filepath.EvalSymlinks(a); err == nil {
-		a = ra
-	}
-	if rb, err := filepath.EvalSymlinks(b); err == nil {
-		b = rb
-	}
-	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 func serviceNames(rw *config.ResolvedWorkspace) []string {

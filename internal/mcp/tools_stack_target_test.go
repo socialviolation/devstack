@@ -3,7 +3,6 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -23,22 +22,27 @@ import (
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
-// serveHostDaemon starts an httptest server bound to the fixed host daemon port so
-// resolveLocalTarget's DaemonReachable(HostTiltPort) check succeeds. If the port is
-// unavailable the test is skipped rather than reported as a failure.
-func serveHostDaemon(t *testing.T) *httptest.Server {
+// serveHostDaemon answers the daemon view on a port of its own, and points
+// workspace.HostTiltPort at it for the length of the test, so the
+// DaemonReachable check of resolveLocalTarget succeeds. The real daemon of the
+// machine holds the default port, so a test that bound it would never run here.
+func serveHostDaemon(t *testing.T) {
 	t.Helper()
-	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", workspace.HostTiltPort))
+	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("host port %d unavailable: %v", workspace.HostTiltPort, err)
+		t.Fatalf("listen: %v", err)
 	}
+	previous := workspace.HostTiltPort
+	workspace.HostTiltPort = l.Addr().(*net.TCPAddr).Port
+	t.Cleanup(func() { workspace.HostTiltPort = previous })
+
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"uiResources":[]}`))
 	}))
 	srv.Listener.Close()
 	srv.Listener = l
 	srv.Start()
-	return srv
+	t.Cleanup(srv.Close)
 }
 
 const targetService = `version: 1
@@ -250,8 +254,7 @@ func TestResolveLocalTargetStackNotUp(t *testing.T) {
 func TestResolveLocalTargetActiveStackReusesBaseClientAndNamespaces(t *testing.T) {
 	ws, _, _ := seedStack(t)
 
-	srv := serveHostDaemon(t)
-	defer srv.Close()
+	serveHostDaemon(t)
 
 	if err := stack.SetActive("testws", "feat", true); err != nil {
 		t.Fatalf("SetActive: %v", err)
@@ -404,8 +407,7 @@ func TestMutatingToolsDocumentThatAbsentIsNotBase(t *testing.T) {
 func TestStackTargetServiceDirsAreTheStacksWorktrees(t *testing.T) {
 	ws, basePath, worktree := seedStack(t)
 
-	srv := serveHostDaemon(t)
-	defer srv.Close()
+	serveHostDaemon(t)
 
 	if err := stack.SetActive("testws", "feat", true); err != nil {
 		t.Fatalf("SetActive: %v", err)
@@ -605,8 +607,7 @@ groups:
   core:
     - api
 `)
-	srv := serveHostDaemon(t)
-	defer srv.Close()
+	serveHostDaemon(t)
 	if err := stack.SetActive("testws", "feat", true); err != nil {
 		t.Fatalf("SetActive: %v", err)
 	}

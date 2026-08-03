@@ -18,6 +18,8 @@ import (
 	"github.com/socialviolation/devstack/internal/worktree"
 )
 
+const stacksDirName = ".devstack-stacks"
+
 type CreateInput struct {
 	Base   *workspace.Workspace
 	Name   string
@@ -34,9 +36,15 @@ type OverlayMember struct {
 	Reason  string
 }
 
+// WorktreeResult is where one service of a stack lives. The worktree is cut per
+// repository, so Repo and RepoPath name the worktree, and Path names the
+// directory of this service in it. A service at the root of its own repository
+// has Path equal to RepoPath.
 type WorktreeResult struct {
 	Service      string
 	Path         string
+	Repo         string
+	RepoPath     string
 	Branch       string
 	Ref          string
 	Detached     bool
@@ -129,85 +137,136 @@ func Create(in CreateInput) (*CreateResult, error) {
 		res.Overlay = append(res.Overlay, OverlayMember{Service: s, Reason: reason})
 	}
 
+	// The workspace name is in the path because two workspaces can share a
+	// parent directory. Without it, a stack name taken in one workspace blocks
+	// the same name in the other.
 	parent := filepath.Dir(base.Path)
-	stackRoot := filepath.Join(parent, ".devstack-stacks", in.Name)
+	stackRoot := filepath.Join(parent, stacksDirName, base.Name, in.Name)
 	if stackRoot == base.Path || strings.HasPrefix(stackRoot, base.Path+string(os.PathSeparator)) {
 		return nil, fmt.Errorf("devstack can not use the stack root %s. The root is under base %s, and a nested root breaks workspace detection", stackRoot, base.Path)
 	}
 	res.StackRoot = stackRoot
 
-	worktreePaths := map[string]string{}
-	for _, s := range overlay {
-		worktreePaths[s] = filepath.Join(stackRoot, s)
+	repos, err := worktree.Plan(overlay, func(s string) string { return baseRW.Services[s].RepoPath }, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireEmptyRoot(stackRoot); err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(stackRoot, 0755); err != nil {
 		return nil, fmt.Errorf("can not create the stack root %s: %w", stackRoot, err)
+	}
+
+	stackName := base.Name + "--" + in.Name
+	res.StackName = stackName
+
+	// A failed create must leave nothing behind. The worktrees hold no work yet,
+	// so devstack removes them, and the retry starts from a clean root instead
+	// of dying on "already exists".
+	var built []string
+	allocated := false
+	unwind := func() {
+		for i := len(built) - 1; i >= 0; i-- {
+			_ = worktree.Remove(built[i], true)
+		}
+		if allocated {
+			_ = workspace.ReleasePorts(stackName)
+		}
+		_ = os.Remove(config.WorkspaceManifestPath(stackRoot))
+		_ = os.Remove(stackRoot)
 	}
 
 	branch := in.Branch
 	if branch == "" {
 		branch = in.Name
 	}
+	worktreePaths := map[string]string{}
 	var leftBehind []string
-	for _, s := range overlay {
-		repoPath := baseRW.Services[s].RepoPath
+	for _, r := range repos {
+		repoWorktree := r.Path(stackRoot)
+		changedRepo := r.Changed(changedSet)
 		ref := in.From
 		if ref == "" {
-			_, resolved, err := gitinfo.DefaultRef(repoPath)
+			_, resolved, err := gitinfo.DefaultRef(r.Toplevel)
 			if err != nil {
-				return nil, fmt.Errorf("service %q: %w. Name a ref to cut from with --from", s, err)
+				unwind()
+				return nil, fmt.Errorf("repository %s: %w. Name a ref to cut from with --from", r.Dir, err)
 			}
 			ref = resolved
 		}
-		wt, err := worktree.Create(repoPath, worktreePaths[s], branch, ref, changedSet[s])
+		wt, err := worktree.Create(r.Toplevel, repoWorktree, branch, ref, changedRepo)
 		if err != nil {
-			return nil, fmt.Errorf("worktree for %q: %w", s, err)
+			unwind()
+			return nil, fmt.Errorf("worktree for the repository %q: %w", r.Dir, err)
 		}
-		wr := WorktreeResult{Service: s, Path: worktreePaths[s], Ref: gitinfo.ShortRef(ref), Dirty: wt.SourceDirty}
-		if changedSet[s] {
-			wr.Branch = branch
-		} else {
-			wr.Detached = true
-		}
-		materialized, err := worktree.MaterializeIgnoredConfig(repoPath, worktreePaths[s])
+		built = append(built, repoWorktree)
+		materialized, err := worktree.MaterializeIgnoredConfig(r.Toplevel, repoWorktree)
 		if err != nil {
-			return nil, fmt.Errorf("can not materialize the local configuration for %q: %w", s, err)
+			unwind()
+			return nil, fmt.Errorf("can not materialize the local configuration for the repository %q: %w", r.Dir, err)
 		}
-		wr.Materialized = materialized
-		res.Worktrees = append(res.Worktrees, wr)
+
+		for i, s := range r.Services {
+			path := r.ServicePath(stackRoot, s)
+			worktreePaths[s] = path
+			wr := WorktreeResult{
+				Service:  s,
+				Path:     path,
+				Repo:     r.Dir,
+				RepoPath: repoWorktree,
+				Ref:      gitinfo.ShortRef(ref),
+				Dirty:    wt.SourceDirty,
+			}
+			if changedRepo {
+				wr.Branch = branch
+			} else {
+				wr.Detached = true
+			}
+			// The copied files belong to the worktree, so they are reported once
+			// and not once for each service in it.
+			if i == 0 {
+				wr.Materialized = materialized
+			}
+			res.Worktrees = append(res.Worktrees, wr)
+		}
 		if wt.SourceDirty || wt.SourceOffRef {
-			leftBehind = append(leftBehind, fmt.Sprintf("%s (%s)", wr.Ref, s))
+			leftBehind = append(leftBehind, fmt.Sprintf("%s (%s)", gitinfo.ShortRef(ref), r.Dir))
 		}
 	}
+	sort.Slice(res.Worktrees, func(i, j int) bool { return res.Worktrees[i].Service < res.Worktrees[j].Service })
 	if len(leftBehind) > 0 {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack cut the worktrees from %s, not from the base checkout. This stack does not have the uncommitted work in the checkout. This stack does not have the commits that the checkout holds beyond that ref.",
 			strings.Join(leftBehind, ", ")))
 	}
-
-	stackName := base.Name + "--" + in.Name
-	res.StackName = stackName
+	res.Warnings = append(res.Warnings, sharedRepoWarnings(baseRW, repos, overlay, in.Name)...)
 
 	manifest, err := config.GenerateStackManifest(baseRW, stackName, overlay, func(s string) string { return worktreePaths[s] })
 	if err != nil {
+		unwind()
 		return nil, err
 	}
 	data, err := yaml.Marshal(manifest)
 	if err != nil {
+		unwind()
 		return nil, fmt.Errorf("can not encode the stack manifest: %w", err)
 	}
 	manifestPath := config.WorkspaceManifestPath(stackRoot)
 	if err := os.WriteFile(manifestPath, data, 0644); err != nil {
+		unwind()
 		return nil, fmt.Errorf("can not write the stack manifest: %w", err)
 	}
 	res.ManifestPath = manifestPath
 
 	keys := portKeys(baseRW, overlay)
 	if len(keys) > 0 {
-		allocated, err := workspace.AllocatePorts(stackName, keys)
+		ports, err := workspace.AllocatePorts(stackName, keys)
 		if err != nil {
+			unwind()
 			return nil, fmt.Errorf("can not allocate the service ports: %w", err)
 		}
-		res.Ports = allocated
+		allocated = true
+		res.Ports = ports
 	}
 
 	worktrees := map[string]string{}
@@ -228,6 +287,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 		Ports:     res.Ports,
 		CreatedAt: time.Now(),
 	}); err != nil {
+		unwind()
 		return nil, fmt.Errorf("can not record the stack: %w", err)
 	}
 
@@ -237,6 +297,103 @@ func Create(in CreateInput) (*CreateResult, error) {
 	}
 
 	return res, nil
+}
+
+// requireEmptyRoot refuses a stack root that already holds files. devstack
+// unwinds a failed create, so files here come from a create that this version
+// did not clean up. git worktree add would die on "already exists" and say
+// nothing about how to get past it.
+func requireEmptyRoot(stackRoot string) error {
+	entries, err := os.ReadDir(stackRoot)
+	if err != nil || len(entries) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	return fmt.Errorf("the stack root %s already holds %s. An earlier create did not finish.\nRemove the directory, then create the stack again:\n  rm -rf %s\nIf git still records a worktree there, run 'git worktree prune' in the source repository",
+		stackRoot, strings.Join(names, ", "), stackRoot)
+}
+
+// sharedRepoWarnings names the services that share a repository with the
+// overlay but stay on base.
+//
+// A repository holds one checkout and one branch, so a stack that overlays one
+// service of a repository gets the code of every other service in it. devstack
+// does NOT put those services in the overlay: the overlay is what the stack
+// runs, and it takes a port, a resource and a hook for each member. A service
+// nobody named must not start running a second copy. Base keeps serving it, and
+// this warning says so, because the code in the worktree makes the opposite
+// look true.
+func sharedRepoWarnings(baseRW *config.ResolvedWorkspace, repos []worktree.Repo, overlay []string, stackName string) []string {
+	inOverlay := stringSet(overlay)
+	byToplevel := make(map[string]string, len(repos))
+	for _, r := range repos {
+		byToplevel[r.Toplevel] = r.Dir
+	}
+
+	others := map[string][]string{}
+	names := make([]string, 0, len(baseRW.Services))
+	for n := range baseRW.Services {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		if inOverlay[n] {
+			continue
+		}
+		top, err := worktree.Toplevel(baseRW.Services[n].RepoPath)
+		if err != nil {
+			continue
+		}
+		if dir, ok := byToplevel[top]; ok {
+			others[dir] = append(others[dir], n)
+		}
+	}
+	if len(others) == 0 {
+		return nil
+	}
+
+	dirs := make([]string, 0, len(others))
+	for d := range others {
+		dirs = append(dirs, d)
+	}
+	sort.Strings(dirs)
+	out := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		out = append(out, fmt.Sprintf("The repository %s holds more services than this stack overlays: %s. The worktree holds their code. Base runs them, and this stack does not run them. To run them in this stack, run: devstack stack add %s %s",
+			d, strings.Join(others[d], ", "), stackName, strings.Join(others[d], " ")))
+	}
+	return out
+}
+
+// stackWorktreeRoots lists the worktree of every service in a stack, once for
+// each repository. Two services in one repository share one worktree, so
+// removing it twice fails on the second attempt.
+func stackWorktreeRoots(rw *config.ResolvedWorkspace) []string {
+	names := make([]string, 0, len(rw.Services))
+	for n := range rw.Services {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	seen := map[string]bool{}
+	var roots []string
+	for _, n := range names {
+		path := rw.Services[n].RepoPath
+		top, err := worktree.Toplevel(path)
+		if err != nil {
+			top = path
+		}
+		if seen[top] {
+			continue
+		}
+		seen[top] = true
+		roots = append(roots, top)
+	}
+	return roots
 }
 
 // CheckRemovable reports the refusal Remove will raise, before anything runs.
@@ -263,13 +420,7 @@ func CheckRemovable(base *workspace.Workspace, name string, force bool) error {
 	if err != nil {
 		return nil
 	}
-	names := make([]string, 0, len(rw.Services))
-	for n := range rw.Services {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		p := rw.Services[n].RepoPath
+	for _, p := range stackWorktreeRoots(rw) {
 		dirty, err := worktree.HasUncommittedChanges(p)
 		if err != nil || !dirty {
 			continue
@@ -291,13 +442,7 @@ func Remove(base *workspace.Workspace, name string, force bool) (*RemoveResult, 
 	res := &RemoveResult{Name: rec.FullName(), BaseName: rec.Base, StackRoot: rec.Root}
 
 	if rw, err := config.ResolveWorkspace(rec.Root); err == nil {
-		svcNames := make([]string, 0, len(rw.Services))
-		for n := range rw.Services {
-			svcNames = append(svcNames, n)
-		}
-		sort.Strings(svcNames)
-		for _, n := range svcNames {
-			p := rw.Services[n].RepoPath
+		for _, p := range stackWorktreeRoots(rw) {
 			if err := worktree.Remove(p, force); err != nil {
 				return res, fmt.Errorf("devstack can not remove the worktree %s: %w\nTo discard the uncommitted work, use --force", p, err)
 			}

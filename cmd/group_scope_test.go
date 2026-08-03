@@ -60,7 +60,9 @@ func TestGroupActionInAStackNamesWhatStaysOnBase(t *testing.T) {
 		}
 	})
 
-	for _, want := range []string{"1 of 3", "feat", "frontend", "orbit", "base"} {
+	// The wording is Coverage.Sentence, the one formatter every shortfall
+	// notice shares. A second hand-rolled sentence here drifted from it.
+	for _, want := range []string{"(1/3)", "feat", "frontend", "orbit", "base"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("shortfall notice must mention %q, got: %s", want, out)
 		}

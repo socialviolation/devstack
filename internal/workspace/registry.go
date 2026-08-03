@@ -177,8 +177,10 @@ func LogFile(name string) string {
 const hostKey = "_devstack-host"
 
 // HostTiltPort is the fixed API port the one host Tilt daemon listens on. It is
-// distinct from the per-workspace TiltPort range (10350+).
-const HostTiltPort = 10300
+// distinct from the per-workspace TiltPort range (10350+). It is a variable so a
+// test can point the code at a daemon of its own, on a port the machine has
+// free; nothing outside a test writes it.
+var HostTiltPort = 10300
 
 // HostPIDFile returns the PID file path for the host Tilt daemon.
 func HostPIDFile() string { return PIDFile(hostKey) }

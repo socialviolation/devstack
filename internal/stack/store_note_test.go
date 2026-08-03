@@ -178,3 +178,20 @@ func TestAppendNoteUnknownStack(t *testing.T) {
 		t.Fatal("AppendNote on an unknown stack returned no error")
 	}
 }
+
+// Every other lookup in the store folds case, so a name that FindStack,
+// AppendNote and SetActive all accept must not be the one name SetNote rejects.
+func TestSetNoteMatchesTheNameWithoutCase(t *testing.T) {
+	seedStack(t)
+
+	if err := SetNote("navexa", "PERF", "NAV-500 rewrite"); err != nil {
+		t.Fatalf("SetNote with a name in another case: %v", err)
+	}
+	rec, err := FindStack("navexa", "perf")
+	if err != nil {
+		t.Fatalf("FindStack: %v", err)
+	}
+	if rec.Note != "NAV-500 rewrite" {
+		t.Errorf("Note = %q, want the note SetNote was given", rec.Note)
+	}
+}

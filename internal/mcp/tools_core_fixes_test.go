@@ -215,8 +215,8 @@ func TestCoreLogEmptyNoteNamesFiltersAndWidening(t *testing.T) {
 	}
 
 	base := coreLogEmptyNote(coreLogFilters{Lines: 100})
-	if !strings.Contains(base, "scope=every service") {
-		t.Errorf("unscoped note should say it covered every service; got:\n%s", base)
+	if !strings.Contains(base, "scope=every service of this target") {
+		t.Errorf("unscoped note should say it covered every service of the one target, not of base and every stack; got:\n%s", base)
 	}
 	if !strings.Contains(base, "stack=base") {
 		t.Errorf("unscoped note should name the base stack scope; got:\n%s", base)

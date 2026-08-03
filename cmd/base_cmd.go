@@ -17,9 +17,10 @@ var baseCmd = &cobra.Command{
 	Use:   "base",
 	Short: "Inspect the replica that the base workspace runs from",
 	Long: `"base" is the workspace that runs with no stack, and it does not run out of your
-checkouts. devstack keeps a replica: one git worktree for each service, detached
-at that service's default branch tip, under a .devstack-base sibling of the
-workspace.
+checkouts. devstack keeps a replica: one git worktree for each repository,
+detached at that repository's default branch tip, under a .devstack-base sibling
+of the workspace. A repository that holds several services gets one worktree,
+and each service is a directory in it.
 
 Your checkout is the template that devstack builds the replica from. The
 template holds the git objects, the workspace manifest and the machine-local
@@ -34,7 +35,7 @@ SUBCOMMANDS
   devstack base sync    move every service's worktree to its default branch tip
   devstack base path    print the replica root, or one service's worktree
 
-Both have one MCP tool: 'base', with action="path" or action="sync".`,
+These commands have one MCP tool: 'base', with action="path" or action="sync".`,
 	SilenceUsage: true,
 	RunE:         runBasePath,
 }
@@ -75,7 +76,10 @@ func ensureReplica(ws *workspace.Workspace) error {
 		return err
 	}
 	for _, wt := range res.Created {
-		fmt.Printf("  ✓ replica worktree %-16s %s (%s)\n", wt.Service, wt.Path, wt.Branch)
+		fmt.Printf("  ✓ replica worktree %-16s %s (%s)\n", wt.Repo, wt.Path, wt.Branch)
+		if len(wt.Services) > 1 || (len(wt.Services) == 1 && wt.Services[0] != wt.Repo) {
+			fmt.Printf("    ↳ holds the services %s\n", strings.Join(wt.Services, ", "))
+		}
 	}
 	for _, name := range res.Removed {
 		fmt.Printf("  ✓ removed replica worktree %s — the manifest no longer lists it\n", name)

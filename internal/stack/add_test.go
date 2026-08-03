@@ -282,7 +282,9 @@ func TestAddNothingNewIsAnError(t *testing.T) {
 	base := newAddBase(t)
 	newStack(t, base, "api")
 
-	_, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"api", "web"}})
+	// api is on the stack's branch already. web is in the stack too, but on a
+	// detached HEAD, so naming it is a promotion and not nothing.
+	_, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"api"}})
 	if err == nil {
 		t.Fatal("Add of services the stack already has = nil, want an error")
 	}

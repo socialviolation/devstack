@@ -1,5 +1,6 @@
 // Package worktree manages the git worktree lifecycle for feature stacks: one
-// worktree per overlay service, always created as a sibling of the base checkout.
+// worktree per repository that holds an overlay service, always created as a
+// sibling of the base checkout.
 package worktree
 
 import (

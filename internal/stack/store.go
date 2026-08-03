@@ -130,7 +130,7 @@ func SetNote(base, name, note string) error {
 		return err
 	}
 	for i := range recs {
-		if recs[i].Name == name {
+		if strings.EqualFold(recs[i].Name, name) {
 			recs[i].Note = note
 			if note == "" {
 				recs[i].Log = nil

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/otel"
@@ -181,8 +182,15 @@ func init() {
 	otelConfigSetCmd.Flags().StringArray("set", nil, "Set one plugin configuration key, as key=value. Repeat the flag for more")
 }
 
+// resolveOtelWorkspace reads the local --workspace flag of an otel subcommand.
+// That flag shadows the persistent one of the root command, which is the flag
+// viper binds to DEVSTACK_WORKSPACE, so the viper key is the fallback that makes
+// the environment variable apply here too.
 func resolveOtelWorkspace(cmd *cobra.Command) (*workspace.Workspace, error) {
 	wsFlag, _ := cmd.Flags().GetString("workspace")
+	if wsFlag == "" {
+		wsFlag = viper.GetString("workspace")
+	}
 	var (
 		ws  *workspace.Workspace
 		err error

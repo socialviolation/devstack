@@ -1080,7 +1080,7 @@ type coreLogFilters struct {
 // it and how to widen them. Silence from a narrow query reads as "the service is
 // fine" unless the query is stated alongside it.
 func coreLogEmptyNote(f coreLogFilters) string {
-	scope := "every service"
+	scope := "every service of this target"
 	switch {
 	case f.Service != "":
 		scope = "service " + f.Service
@@ -1124,7 +1124,7 @@ func coreLogEmptyNote(f coreLogFilters) string {
 		widen = append(widen, "omit stack to read base instead of this stack")
 	}
 	if f.Service != "" || f.Group != "" {
-		widen = append(widen, "omit service and group to read every service")
+		widen = append(widen, "omit service and group to read every service of this target")
 	}
 	widen = append(widen, "status to make sure that the service runs")
 

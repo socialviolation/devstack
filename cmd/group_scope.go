@@ -38,9 +38,7 @@ func resolveInstanceTarget(cmd *cobra.Command, ws *workspace.Workspace, wsPath, 
 
 	for _, cov := range stack.CoverageOf([]string{name}, services, baseGroups) {
 		if !cov.Complete() {
-			color.New(color.Faint).Printf("group %s: %d of %d in stack %q. %s %s on base\n",
-				cov.Group, len(cov.In), len(cov.In)+len(cov.Missing), stackName,
-				joinServices(cov.Missing), isAre(len(cov.Missing)))
+			color.New(color.Faint).Printf("stack %s %s\n", stackName, cov.Sentence())
 		}
 	}
 	return services, nil
@@ -78,11 +76,4 @@ func joinComma(names []string) string {
 		out += n
 	}
 	return out
-}
-
-func isAre(n int) string {
-	if n == 1 {
-		return "stays"
-	}
-	return "stay"
 }

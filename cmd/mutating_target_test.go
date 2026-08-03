@@ -89,8 +89,6 @@ func TestEnvUseNeedsATargetUnlessAServiceIsNamed(t *testing.T) {
 	}
 }
 
-// env set writes environments, which are defined once in base and inherited, so
-// it demands the same explicit target and can only accept base.
 // env set defines an environment in the workspace manifest, which every stack
 // inherits. There is no instance to pick, so the target rule does not apply to
 // it — requiring one would be friction with nothing behind it, and would refuse

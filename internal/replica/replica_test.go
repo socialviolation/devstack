@@ -131,7 +131,7 @@ func newClonedTemplate(t *testing.T) (ws *workspace.Workspace, upstream, origin 
 func services(wts []Worktree) []string {
 	var names []string
 	for _, wt := range wts {
-		names = append(names, wt.Service)
+		names = append(names, wt.Repo)
 	}
 	return names
 }
@@ -166,7 +166,7 @@ func TestEnsureCreatesDetachedWorktrees(t *testing.T) {
 	}
 	for _, wt := range res.Created {
 		if wt.Branch != "main" {
-			t.Errorf("%s Branch = %q, want main", wt.Service, wt.Branch)
+			t.Errorf("%s Branch = %q, want main", wt.Repo, wt.Branch)
 		}
 	}
 

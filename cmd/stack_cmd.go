@@ -127,8 +127,14 @@ var stackListCmd = &cobra.Command{
 }
 
 var stackConfigCmd = &cobra.Command{
-	Use:          "config <service>",
-	Short:        "Show the effective configuration of a service in a stack (read-only)",
+	Use:   "config <service>",
+	Short: "Show the configuration a service would run with in a stack (read-only)",
+	Long: `Show the configuration that devstack gives a service in a stack: the effective
+service configuration, and the environment ladder that the process receives.
+
+This command reads the stack's files. It does not ask the daemon what runs. If
+the stack is down, the command says so, and it prints the configuration that the
+stack would run with.`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackConfig,
@@ -217,11 +223,10 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("Stack root (sibling of base): %s\n", res.StackRoot)
 	for _, wt := range res.Worktrees {
-		branchNote := "detached at " + wt.Ref
-		if wt.Branch != "" {
-			branchNote = "branch " + wt.Branch
+		fmt.Printf("  ✓ worktree %-16s %s (%s)\n", wt.Service, wt.Path, branchNote(wt))
+		if wt.Path != wt.RepoPath {
+			fmt.Printf("    ↳ in the worktree of the repository %s at %s\n", wt.Repo, wt.RepoPath)
 		}
-		fmt.Printf("  ✓ worktree %-16s %s (%s)\n", wt.Service, wt.Path, branchNote)
 		if len(wt.Materialized) > 0 {
 			fmt.Printf("    ↳ copied %d machine-local configuration file(s): %s\n", len(wt.Materialized), strings.Join(wt.Materialized, ", "))
 		}
@@ -264,23 +269,28 @@ func runStackAdd(cmd *cobra.Command, args []string) error {
 	for _, m := range res.Added {
 		added = append(added, m.Service)
 	}
-	fmt.Printf("Added to stack %q (branch %s):\n", res.StackName, res.Branch)
-	for _, m := range res.Added {
-		note := "pulled in (calls an added service)"
-		if m.Reason == "changed" {
-			note = "added"
+	if len(res.Added) > 0 {
+		fmt.Printf("Added to stack %q (branch %s):\n", res.StackName, res.Branch)
+		for _, m := range res.Added {
+			note := "pulled in (calls an added service)"
+			if m.Reason == "changed" {
+				note = "added"
+			}
+			fmt.Printf("  %-16s %s\n", m.Service, note)
 		}
-		fmt.Printf("  %-16s %s\n", m.Service, note)
 	}
 	for _, wt := range res.Worktrees {
-		branchNote := "detached at " + wt.Ref
-		if wt.Branch != "" {
-			branchNote = "branch " + wt.Branch
+		fmt.Printf("  ✓ worktree %-16s %s (%s)\n", wt.Service, wt.Path, branchNote(wt))
+		if wt.Path != wt.RepoPath {
+			fmt.Printf("    ↳ in the worktree of the repository %s at %s\n", wt.Repo, wt.RepoPath)
 		}
-		fmt.Printf("  ✓ worktree %-16s %s (%s)\n", wt.Service, wt.Path, branchNote)
 		if len(wt.Materialized) > 0 {
 			fmt.Printf("    ↳ copied %d machine-local configuration file(s): %s\n", len(wt.Materialized), strings.Join(wt.Materialized, ", "))
 		}
+	}
+	if len(res.Promoted) > 0 {
+		fmt.Printf("Promoted to branch %s (these services were in the stack on a detached HEAD, and you can commit in them now): %s\n",
+			res.Branch, strings.Join(res.Promoted, ", "))
 	}
 	fmt.Printf("  ✓ regenerated %s\n", res.ManifestPath)
 	if len(res.Ports) > 0 {
@@ -295,6 +305,11 @@ func runStackAdd(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Overlay is now: %s\n", strings.Join(res.Overlay, ", "))
 	for _, w := range res.Warnings {
 		fmt.Fprintf(os.Stderr, "WARNING: %s\n", w)
+	}
+
+	if len(added) == 0 {
+		fmt.Printf("\nStack %q is unchanged apart from the promotion. Nothing was added, so devstack ran no hooks.\n", res.StackName)
+		return nil
 	}
 
 	if err := fireHooks(base, args[0], config.EventStackCreate, added); err != nil {
@@ -323,6 +338,16 @@ func runStackAdd(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("\nStart the added service(s): %s\n", strings.Join(startCommands(added, args[0]), "  ·  "))
 	return nil
+}
+
+func branchNote(wt stack.WorktreeResult) string {
+	if wt.Branch != "" {
+		return "branch " + wt.Branch
+	}
+	if wt.Ref == "" {
+		return "detached"
+	}
+	return "detached at " + wt.Ref
 }
 
 func startCommands(services []string, stackName string) []string {
@@ -579,7 +604,12 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("Effective configuration for %s in stack %s (read-only: the configuration it runs with)\n", service, rec.FullName())
+	tense := "the configuration it runs with"
+	if !rec.Active {
+		tense = "the configuration it would run with"
+		fmt.Printf("Stack %s is down. Nothing runs with this configuration now. To start the stack, run: devstack stack up %s\n", rec.FullName(), rec.Name)
+	}
+	fmt.Printf("Effective configuration for %s in stack %s (read-only: %s)\n", service, rec.FullName(), tense)
 	fmt.Printf("  %-42s %-12s %s\n", "KEY", "SOURCE", "VALUE")
 	fmt.Println(strings.Repeat("-", 90))
 	for _, e := range entries {

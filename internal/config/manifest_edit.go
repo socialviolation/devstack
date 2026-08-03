@@ -178,7 +178,7 @@ func SetObservabilitySettings(workspacePath string, settings map[string]string) 
 	keys := make([]string, 0, len(settings))
 	for key := range settings {
 		if IsCredentialKey(key) {
-			return fmt.Errorf("devstack can not write %q to %s, because git holds that file. Supply the value through the environment (.envrc), or through env.required of the service", key, WorkspaceManifestFileName)
+			return fmt.Errorf("devstack never writes a credential to %s, so it refuses the key %q. Supply the value through the environment (.envrc), or through env.required of the service", WorkspaceManifestFileName, key)
 		}
 		keys = append(keys, key)
 	}

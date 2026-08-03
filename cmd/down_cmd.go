@@ -73,21 +73,21 @@ func runDown(cmd *cobra.Command, args []string) error {
 	var hostErr error
 	if anyActive {
 		fmt.Printf("Removed '%s' from the host daemon. Other workspaces are still active, so the daemon keeps running.\n", ws.Name)
+		fmt.Printf("  The collector serves every workspace, so it keeps running too.\n")
 	} else {
 		fmt.Printf("No workspace is active, so devstack stops the host daemon.\n")
 		hostErr = stopHostDaemon()
-	}
 
-	// Stop observability stack
-	if isOtelRunning(ws) {
-		plugin := activePlugin(ws)
-		if err := stopOtelStack(ws, plugin); err != nil {
-			fmt.Fprintf(os.Stderr, "  warning: OTEL stop failed: %v\n", err)
+		if isOtelRunning(ws) {
+			plugin := activePlugin(ws)
+			if err := stopOtelStack(ws, plugin); err != nil {
+				fmt.Fprintf(os.Stderr, "  warning: OTEL stop failed: %v\n", err)
+			} else {
+				fmt.Printf("  ✓ OTEL stopped\n")
+			}
 		} else {
-			fmt.Printf("  ✓ OTEL stopped\n")
+			fmt.Printf("  OTEL not running\n")
 		}
-	} else {
-		fmt.Printf("  OTEL not running\n")
 	}
 
 	if composeSpec, err := infra.ResolveComposeSpec(ws.Path); err != nil {
