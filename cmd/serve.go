@@ -26,19 +26,37 @@ This is configured automatically in each service's .mcp.json by 'devstack init'.
 You do not normally need to run this manually.
 
 TOOLS EXPOSED TO AI AGENTS
-  environment     active environment + capability orientation (start here)
-  status          live state of all services (running, error, ports)
-  restart         trigger a rebuild and restart of a service  [local only]
-  stop            disable one or all services                 [local only]
-  process_logs    fetch stdout/stderr from a service          [local only]
+  environment     which workspace, which copies, which tools (start here)
+  status          live state of every copy: state, port, path, branch, env
+  topology        the declared service graph: groups, deps, callers
+  start           start a service or a group, dependencies first
+  restart         trigger a rebuild and restart of a service or a group
+  stop            disable one service, a group, or (with all=true) an instance
+  process_logs    fetch stdout/stderr from a running copy
+  service_env     read and write a service's env files, and audit them
+  configure       read or set a dev daemon runtime argument
+  hooks           list the declared lifecycle hooks, or fire an event's by hand
+  observability   inspect/enable/disable OTEL + telemetry evidence
+  stack_create    cut a feature stack from the default branch
+  stack_add       put another service into a stack that already exists
+  stack_list      the stacks in flight, with their overlays, links and notes
+  stack_note      read, set or append to what a stack is for
+  stack_up        bring a stack up in the host daemon
+  stack_down      stop a stack's copies, keeping its worktrees
+  stack_rm        tear a stack down: worktrees, ports and record
+  env_use         point a scope at a named config env
+  env_which       the env a service resolves to, rung by rung
+  env_set         set a config var on a named env
   investigate     correlated traces + logs in one call        [when observability enabled]
-  observability   inspect/enable/disable OTEL + telemetry evidence [local only]
-  configure       set a Tilt runtime argument                 [local only]
-  tunnel          forward local service ports to/from a remote over SSH [local, when an ssh client is available]
+  tunnel          forward local service ports to/from a remote over SSH [when an ssh client is available]
 
 The exact tool set adapts to the active workspace: trace/telemetry tools appear only
 when observability is enabled in the manifest, and tunnel tools only when an ssh client is available.
 Call the 'environment' tool first to see what's available.
+
+The tools do not cover every command. These are shell only: workspace up and down,
+base sync and base path, ports, dependencies, group add and remove, env list, show
+and remove, stack config, and init.
 
 TRANSPORT
   stdio (default)   used by Claude Code and most AI tooling

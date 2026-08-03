@@ -17,7 +17,7 @@ import (
 
 var upCmd = &cobra.Command{
 	Use:   "up",
-	Short: "Start this workspace's services in the dev daemon",
+	Short: "Build the replica base runs from, and start its services in the dev daemon",
 	Long: `Fold this workspace's services into the dev daemon, starting the daemon as a
 detached background process if it is not already up.
 

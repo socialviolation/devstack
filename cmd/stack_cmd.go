@@ -420,7 +420,8 @@ func runStackList(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	color.New(color.Faint).Println("SERVICES is the overlay: the services this stack runs its own copy of. Everything else it borrows from base.")
 	color.New(color.Faint).Println("STATUS up means registered, not running. Each copy has its own state — see it with: devstack status --stack <name>")
-	color.New(color.Faint).Println("Set what a stack is for with: devstack stack note <name> \"...\"")
+	color.New(color.Faint).Println("\"covers group g (3/4 — x serves from base)\" is a group this stack was cut to cover: it overlays 3 of the 4 members and x is base's copy, shared with everyone. A group action reaches only the members it overlays.")
+	color.New(color.Faint).Println("Set what a stack is for with: devstack stack note <name> \"...\", and log where it got to with --add")
 	return nil
 }
 

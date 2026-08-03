@@ -50,7 +50,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 	tool := mcp.NewTool("stack_create",
 		mcp.WithDescription("Create a feature stack overlaying THIS workspace (the base). A stack instantiates only the services it changes plus the services that call them, each in its own git worktree on a dynamically allocated port; every other service resolves to base's copy. Use this for the request 'I need a stack to work on X in services A and B'. "+
 			"Each worktree is cut from that repo's DEFAULT BRANCH as origin has it, not from whatever the user's checkout has checked out — so a stack starts from what the team shipped, and half-finished work parked in a checkout is not dragged into it. Override with the 'from' parameter. "+
-			"The base workspace must be running — a stack reuses its services. Returns the overlay set with reasons, worktree paths and the ref each was cut from, service links, and any warnings (a checkout holding work the stack does not have, base daemon not running). This workspace may declare lifecycle HOOKS: shell commands devstack runs automatically on this action, which can change state outside this machine (registering callback URLs, provisioning resources). They fire on their own and their output is included below. A hook failure is returned as an error and means the stack exists but is NOT fully provisioned — do not report success; see the hooks tool. Run the hooks tool with action=\"list\" first if you do not know what this workspace fires. "+serviceLinksDesc),
+			"Creating a stack does not start it: it comes back down, and stack_up is what runs it. Base does not have to be running to create one — a base that is down is returned as a warning, not an error — but a stack reuses base's copies for every service it does not overlay, so bring base up before using it. Returns the overlay set with reasons, worktree paths and the ref each was cut from, service links, and any warnings (a checkout holding work the stack does not have, base daemon not running). This workspace may declare lifecycle HOOKS: shell commands devstack runs automatically on this action, which can change state outside this machine (registering callback URLs, provisioning resources). They fire on their own and their output is included below. A hook failure is returned as an error and means the stack exists but is NOT fully provisioned — do not report success; see the hooks tool. Run the hooks tool with action=\"list\" first if you do not know what this workspace fires. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description("Short stack name (for example 'import-review'). The full stack identity becomes '<base>--<name>'; every stack parameter across these tools takes the short name.")),
 		mcp.WithString("repos", mcp.Required(),
@@ -145,7 +145,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			return mcp.NewToolResultError(sb.String()), nil
 		}
 
-		fmt.Fprintf(&sb, "\nStart it: (cd %s && devstack workspace up)\n", res.StackRoot)
+		fmt.Fprintf(&sb, "\nIt is created but down — nothing of it runs yet. Bring it up with the stack_up tool (name=%q), or in a shell: devstack stack up %s\n", name, name)
 		return mcp.NewToolResultText(sb.String()), nil
 	})
 }
@@ -272,7 +272,9 @@ func registerStackAddTool(mcpServer *server.MCPServer, ws *workspace.Workspace) 
 
 func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_list",
-		mcp.WithDescription("List the feature stacks of THIS workspace: which services each one overlays (runs its own copy of), its branch, its env, the note saying what it is for, its allocated links, and its base, status (up = its resources are folded into the host daemon; down = worktrees and record exist but nothing of it is registered, so tools that act on running services error \"not up\" for it), the base daemon port their services run in while up, and allocated service links. A stack that is up can still have copies that are not running: \"up\" is about the stack, and each copy has its own state (running, starting, building, erroring, stopped, disabled, down, unknown) — read them with status. The STACK column prints each stack's full identity '<base>--<name>' (the form telemetry and daemon resources use); every stack parameter across these tools takes the short '<name>' half. "+serviceLinksDesc),
+		mcp.WithDescription("List the feature stacks of THIS workspace: which services each one overlays (runs its own copy of), its branch, its env, the note saying what it is for, the latest dated entry from its note log, how much of each group it was cut to cover, its allocated links, and its base, status (up = its resources are folded into the host daemon; down = worktrees and record exist but nothing of it is registered, so tools that act on running services error \"not up\" for it), the base daemon port their services run in while up, and allocated service links. A stack that is up can still have copies that are not running: \"up\" is about the stack, and each copy has its own state (running, starting, building, erroring, stopped, disabled, down, unknown) — read them with status. Telemetry and daemon resources name a stack by its full identity '<base>--<name>'; this tool prints, and every stack parameter across these tools takes, the short '<name>' half. "+
+			"A 'covers group ...' line appears for each group the stack was cut to cover: 'covers group core (3/4 — importer serves from base)' means the stack overlays three of that group's four members and the fourth is base's copy, shared with everyone. A group action against the stack reaches only the members it overlays. "+
+			"A 'latest:' line is the newest entry of the stack's note log — where the work got to, written by stack_note. "+serviceLinksDesc),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -314,7 +316,7 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 				fmt.Fprintf(&sb, "  latest:   %s  %s\n", s.Log[n-1].At.Format("2006-01-02"), s.Log[n-1].Text)
 			}
 			for _, cov := range stack.CoverageOf(s.Groups, s.Services, baseGroups) {
-				fmt.Fprintf(&sb, "  covers:   %s\n", cov.Sentence())
+				fmt.Fprintf(&sb, "  %s\n", cov.Sentence())
 			}
 			links := make([]string, 0, len(s.Ports))
 			for _, k := range sortedPortKeys(s.Ports) {

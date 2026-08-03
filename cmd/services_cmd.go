@@ -32,7 +32,12 @@ workspaces and their daemon status instead.
 
 Groups and feature stacks with nothing running collapse to a single line, unless
 one of their services is erroring, starting or building. Pass --all to table
-every group and stack, and to show each service's source path.
+every group and stack, and to show the directory each copy runs from.
+
+That directory, and the BRANCH beside it, are the code the process is executing:
+the replica worktree for base, the stack's own worktree for a stack — never your
+checkout. A branch you did not expect there means the copy does not contain the
+work you are looking for.
 
 A stack is up or down: up means its services are registered in the daemon, not
 that they run. Each copy has its own state below.

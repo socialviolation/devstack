@@ -844,10 +844,11 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"There is no default — with no flag devstack uses the copy whose directory you are in, and in a plain checkout it refuses and lists the choices. " +
 		"Read-only commands need no flag (`status`, `env which`, `stack list`, `stack config`, `workspace topology`, log and trace queries), nor does `env set`.\n\n" +
 		"### Service states\n\n" +
-		"`devstack status` reports one of seven, not a running/stopped pair, so read it before you draw a conclusion: " +
+		"`devstack status` reports one of eight, not a running/stopped pair, so read it before you draw a conclusion: " +
 		"`running` (the process is up), `starting`, `building` (the daemon is building or updating it), " +
 		"`stopped` (registered and not started — this is not a fault), `erroring` (it or its build failed; read the logs), " +
-		"`disabled` (switched off in the daemon), `unknown` (the daemon reported no state).\n\n" +
+		"`disabled` (switched off in the daemon), `down` (not registered at all: its stack is down), " +
+		"`unknown` (the daemon reported no state).\n\n" +
 		"### After you edit code\n\n" +
 		"A running service keeps the old code until it reloads. A service reloads on its own only when it watches its own source " +
 		"(`dotnet watch run`, `air`, `vite`, `next dev`, `uvicorn --reload`), or when `runtime.watch` is set in its `devstack.service.yaml`. " +
@@ -898,6 +899,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"devstack service restart " + svc + " " + inst + " # reload a copy after an edit\n" +
 		"devstack service stop " + svc + " " + inst + "    # stop one copy\n" +
 		"devstack stack create <name> --repos " + svc + "    # a new stack, cut from the default branch\n" +
+		"devstack stack add <name> " + svc + "               # add a repo to a stack, disturbing nothing in it\n" +
 		"devstack stack up|down|status|rm|list <name> # operate one stack\n" +
 		"devstack stack note <name> --add \"...\"       # log where the work got to\n" +
 		"devstack stack config " + svc + " --stack <name>    # the config a copy will run with\n" +
@@ -908,9 +910,8 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"devstack env set <name> KEY=VALUE            # define the values of an environment\n" +
 		"devstack env use <name> --stack base|<name>  # point base or a stack at it (--service for one service)\n" +
 		"```\n\n" +
-		"`--stack <name>` targets the copy of that stack, and `--stack base` the copy base runs. " +
 		"A group is a named set of services that start and stop together. `devstack group list` shows them, " +
-		"and `devstack group start|stop <group> --stack base` operates one.\n\n" +
+		"and `devstack group start|stop <group> --stack base` operates one. Against a stack it reaches only the members that stack overlays.\n\n" +
 		"### MCP tools\n\n" +
 		"The `.mcp.json` in this repo wires up the devstack MCP server: " +
 		"`environment`, `status`, `start`, `stop`, `restart`, `topology`, `process_logs`, `configure`, `service_env`, `observability`, `hooks`, `tunnel`, `investigate`, " +
@@ -923,8 +924,7 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"A bare `stop` acts on the default service. To stop every service you must pass `all=true`, so one forgotten parameter cannot take the workspace down.\n\n" +
 		"`service_env` reports the resolved environment of a service and the rung each value came from. " +
 		"A rung is one level of the ladder: `.envrc`, then env files, then manifest `env.values`, then the active environment, then the values devstack computed. Each one overrides the one before. " +
-		"`service_env` with `action=\"drift\"` compares that against what the repo of the service declares it needs. " +
-		"Run drift before you trust a local run of code that reads configuration: a key the repo declares and the machine does not set raises no error, and the code falls back to its default in silence.\n\n" +
+		"`service_env` with `action=\"drift\"` compares that against what the repo of the service declares it needs — run it before you trust a local run of code that reads configuration.\n\n" +
 		"What these tools report is evidence: live daemon state, real process output, what the telemetry backend received. Prefer it to a guess. " +
 		"An empty result is not proof — the service can be uninstrumented, or the traffic can belong to a stack you did not name.\n\n" +
 		observabilityInstructions(workspacePath, svc)

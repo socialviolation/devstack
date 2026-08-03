@@ -21,8 +21,14 @@ var envCmd = &cobra.Command{
 
 An environment is a named config-var patch (DB URLs, feature flags, endpoints).
 Define them with set (which creates the env on demand) and drop them with remove;
-apply them with use (at workspace, service, or stack scope, most-specific winning);
-inspect with show/which. status shows where each instance points.`,
+apply them with use; inspect with show/which. status shows where each instance
+points.
+
+use applies at one of three scopes, the most specific winning: stack beats
+service, which beats the workspace default. It changes what services run with, so
+it names its scope — --service <svc>, --stack <name>, or --stack base for the
+workspace default — and has no default. set, show, which and remove need no
+scope.`,
 }
 
 var envListCmd = &cobra.Command{

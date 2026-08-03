@@ -119,10 +119,10 @@ func TestAgentInstructionsDoNotDuplicateTheLiveBriefing(t *testing.T) {
 		t.Error("the block never sends the reader to the live briefing")
 	}
 
-	// The seven service states and the two safety rules are the parts prime does
+	// The eight service states and the two safety rules are the parts prime does
 	// not cover, so they have to survive the shrink.
 	for _, want := range []string{
-		"`running`", "`starting`", "`building`", "`stopped`", "`erroring`", "`disabled`", "`unknown`",
+		"`running`", "`starting`", "`building`", "`stopped`", "`erroring`", "`disabled`", "`down`", "`unknown`",
 		"Never commit `devstack.service.yaml`",
 		"If that manifest is committed, keep real secrets out of it",
 		"`env.required`",

@@ -28,14 +28,21 @@ services run inside it, namespaced as <workspace>:<service>. Each workspace has 
 own service list (declared in <workspace>/devstack.workspace.yaml) and its own share
 of the machine-wide observability stack.
 
+The daemon does not run your checkouts. It runs a replica devstack builds beside
+the workspace, one git worktree per service at its default branch tip; your
+checkout is the template it is built from. 'devstack workspace up' builds it and
+'devstack base' inspects it.
+
 SUBCOMMANDS
   devstack workspace            show all registered workspaces and service counts
-  devstack workspace up         start this workspace's services in the dev daemon
+  devstack workspace up         build the replica and start its services in the dev daemon
   devstack workspace down       stop them, and the daemon if no workspace needs it
   devstack workspace add        register a directory as a workspace
   devstack workspace remove     unregister a workspace
   devstack workspace topology   the service graph: groups, dependencies, dependents
-  devstack workspace doctor     check the manifests and topology for problems`,
+  devstack workspace doctor     check the manifests and topology for problems
+  devstack workspace generate   rebuild the host daemon's Tiltfile from the manifests
+  devstack workspace open       open the dev daemon dashboard in the browser`,
 	// Default action: list
 	RunE: runWorkspaceList,
 }

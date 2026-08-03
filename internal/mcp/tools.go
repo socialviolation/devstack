@@ -1430,7 +1430,8 @@ func registerConfigureTool(mcpServer *server.MCPServer, tiltClient *tilt.Client,
 	tool := mcp.NewTool("configure",
 		mcp.WithDescription("Read or set a dev daemon runtime argument. A Tiltfile only sees an argument if it calls config.parse or config.define_*, and the Tiltfile devstack generates calls neither — so on a devstack-managed daemon a write is refused rather than restarting every service to no effect. Where a Tiltfile does read arguments: call this with no key first to read the ones set, because setting one REPLACES the whole list and silently drops anything not passed again. Use this to change feature flags, modes, or other runtime config. Affected services will restart automatically. "+
 			"Boundary: this sets arguments the daemon itself reads when it generates the stack — for config values a service reads, use env_use (point a scope at a named config env), env_set (edit a named env's vars) or service_env (edit one service's vars) instead. "+
-			"Setting an argument REPLACES the daemon's entire argument list: this tool sets one key, so every argument set earlier is silently dropped."),
+			"Setting an argument REPLACES the daemon's entire argument list: this tool sets one key, so every argument set earlier is silently dropped. "+
+			"An argument belongs to the one host daemon, not to an instance, so unlike every other tool the stack parameter scopes nothing here: it only requires that the named stack is up, and a write with it set changes the same single list as a write without it."),
 		mcp.WithString("key",
 			mcp.Description("The argument key (for example 'env', 'debug', 'profile'). Omit it, with no value, to read the arguments currently set instead of writing one."),
 		),

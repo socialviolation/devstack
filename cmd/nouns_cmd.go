@@ -38,7 +38,12 @@ group starts every service in it, in dependency order.
 The name must be a group: to act on one service, use 'devstack service <action> <name>'.
 
 start, stop and restart change what is running, so they need the copy to act on
-too: --stack <name>, or --stack base. There is no default.`,
+too: --stack <name>, or --stack base. There is no default.
+
+A stack rarely overlays a whole group. Against --stack <name> the action reaches
+only the members that stack runs its own copy of, and names the ones still
+serving from base; a group with no member in the stack is refused, not silently
+narrowed. To act on those, run the same command with --stack base.`,
 	RunE: runGroupsList,
 }
 

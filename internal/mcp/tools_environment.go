@@ -55,8 +55,9 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		if line := stacksSummary(ws); line != "" {
 			sb.WriteString(line)
 		}
-		sb.WriteString("instances: base runs from a replica of the workspace (CLI: devstack base path), never from the user's checkouts — those are the template it is built from, and nothing runs in them.\n" +
-			"  start, stop, restart and env_use have no default instance: pass stack=\"<name>\" or stack=\"base\", or the call is read from the working directory and fails where that is neither. The read-only tools still default to base.\n")
+		sb.WriteString("instances: base runs from a replica of the workspace, never from the user's checkouts — those are the template it is built from, and nothing runs in them.\n" +
+			"  start, stop, restart and env_use have no default instance: pass stack=\"<name>\" or stack=\"base\", or the call is read from the working directory and fails where that is neither. The read-only tools still default to base.\n" +
+			"  The replica has no tool. In a shell: `devstack base path` prints where base runs from, `devstack base sync` moves it to each service's default branch tip. An edit in a checkout reaches base only once it is on the default branch and that sync has run; to see a change run now, put it in a stack.\n")
 		if line := servicesSummary(workspacePath, defaultService); line != "" {
 			sb.WriteString(line)
 		}
@@ -198,7 +199,7 @@ func hooksSummary(ws *workspace.Workspace) string {
 		}
 	}
 	return fmt.Sprintf("hooks: %d declared, firing on %s\n"+
-		"  These run automatically on stack_create/stack_up/stack_down/stack_rm/start/stop and can change state outside this machine. "+
+		"  These run automatically on stack_create/stack_add/stack_up/stack_down/stack_rm/start/stop and can change state outside this machine. "+
 		"List them with the hooks tool before creating or tearing down a stack. A failed SETUP hook means the thing exists but is not provisioned; a failed TEARDOWN hook means teardown finished but external cleanup probably did not.\n",
 		total, strings.Join(parts, ", "))
 }

@@ -27,8 +27,12 @@ so work parked half-finished in it neither runs nor blocks.
 manifest.
 
 SUBCOMMANDS
+  devstack base         print the replica root (the same as 'base path')
   devstack base sync    move every service's worktree to its default branch tip
-  devstack base path    print the replica root, or one service's worktree`,
+  devstack base path    print the replica root, or one service's worktree
+
+Neither has an MCP tool. An agent that needs the replica moved, or needs to know
+where it is, runs the command in a shell.`,
 	SilenceUsage: true,
 	RunE:         runBasePath,
 }
