@@ -47,7 +47,7 @@ func TestCreate_ChangedNewBranch(t *testing.T) {
 	root, repo := newRepo(t)
 	wt := filepath.Join(root, "base-feat")
 
-	res, err := Create(repo, wt, "feature/x", true)
+	res, err := Create(repo, wt, "feature/x", "", true)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestCreate_ChangedBranchAlreadyExists(t *testing.T) {
 	git(t, repo, "branch", "feature/x")
 	wt := filepath.Join(root, "base-feat")
 
-	res, err := Create(repo, wt, "feature/x", true)
+	res, err := Create(repo, wt, "feature/x", "", true)
 	if err != nil {
 		t.Fatalf("Create should attach to existing branch, got: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestCreate_DependentDetachedWhileBaseBranchLive(t *testing.T) {
 	root, repo := newRepo(t)
 	wt := filepath.Join(root, "base-dep")
 
-	res, err := Create(repo, wt, "", false)
+	res, err := Create(repo, wt, "", "", false)
 	if err != nil {
 		t.Fatalf("dependent Create should succeed via detached HEAD, got: %v", err)
 	}
@@ -97,12 +97,87 @@ func TestCreate_DependentDetachedWhileBaseBranchLive(t *testing.T) {
 	_ = res
 }
 
+// park moves the repo onto an unrelated branch with a commit of its own, so a
+// worktree cut from the named ref is provably not cut from HEAD.
+func park(t *testing.T, repo string) (parkedTip string) {
+	t.Helper()
+	git(t, repo, "checkout", "-q", "-b", "parked")
+	write(t, filepath.Join(repo, "parked.txt"), "half-finished\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "parked work")
+	return git(t, repo, "rev-parse", "HEAD")
+}
+
+func TestCreate_CutsFromNamedRefNotHead(t *testing.T) {
+	root, repo := newRepo(t)
+	mainTip := git(t, repo, "rev-parse", "HEAD")
+	park(t, repo)
+
+	feat := filepath.Join(root, "base-feat")
+	res, err := Create(repo, feat, "feature/x", "refs/heads/main", true)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := git(t, feat, "rev-parse", "HEAD"); got != mainTip {
+		t.Errorf("new branch cut at %s, want the named ref %s", got, mainTip)
+	}
+	if _, err := os.Stat(filepath.Join(feat, "parked.txt")); !os.IsNotExist(err) {
+		t.Errorf("parked commit leaked into the worktree")
+	}
+	if !res.SourceOffRef {
+		t.Errorf("SourceOffRef = false, want true when the checkout is parked elsewhere")
+	}
+
+	dep := filepath.Join(root, "base-dep")
+	if _, err := Create(repo, dep, "", "refs/heads/main", false); err != nil {
+		t.Fatalf("dependent Create: %v", err)
+	}
+	if got := git(t, dep, "rev-parse", "--abbrev-ref", "HEAD"); got != "HEAD" {
+		t.Errorf("dependent worktree = %q, want detached", got)
+	}
+	if got := git(t, dep, "rev-parse", "HEAD"); got != mainTip {
+		t.Errorf("dependent worktree detached at %s, want the named ref %s", got, mainTip)
+	}
+}
+
+// An existing branch carries the history it already has: the cutting point
+// applies to a branch being created, never to one being attached.
+func TestCreate_ExistingBranchIgnoresFrom(t *testing.T) {
+	root, repo := newRepo(t)
+	mainTip := git(t, repo, "rev-parse", "HEAD")
+	git(t, repo, "checkout", "-q", "-b", "feature/x")
+	write(t, filepath.Join(repo, "started.txt"), "earlier work\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "earlier work")
+	featTip := git(t, repo, "rev-parse", "HEAD")
+	git(t, repo, "checkout", "-q", "main")
+
+	wt := filepath.Join(root, "base-feat")
+	if _, err := Create(repo, wt, "feature/x", "refs/heads/main", true); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := git(t, wt, "rev-parse", "HEAD"); got != featTip {
+		t.Errorf("attached branch is at %s, want its own tip %s (mainTip is %s)", got, featTip, mainTip)
+	}
+}
+
+func TestCreate_SourceOffRefFalseWhenHeadIsTheRef(t *testing.T) {
+	root, repo := newRepo(t)
+	res, err := Create(repo, filepath.Join(root, "base-feat"), "feature/x", "refs/heads/main", true)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if res.SourceOffRef {
+		t.Errorf("SourceOffRef = true while the checkout sits on the ref itself")
+	}
+}
+
 func TestCreate_DirtyBaseSucceedsAndSignals(t *testing.T) {
 	root, repo := newRepo(t)
 	write(t, filepath.Join(repo, "README.md"), "uncommitted change\n")
 	wt := filepath.Join(root, "base-feat")
 
-	res, err := Create(repo, wt, "feature/y", true)
+	res, err := Create(repo, wt, "feature/y", "", true)
 	if err != nil {
 		t.Fatalf("Create on dirty base should proceed, got: %v", err)
 	}
@@ -118,7 +193,7 @@ func TestRemove_CleanDirtyAndForce(t *testing.T) {
 	root, repo := newRepo(t)
 
 	clean := filepath.Join(root, "base-clean")
-	if _, err := Create(repo, clean, "feat-clean", true); err != nil {
+	if _, err := Create(repo, clean, "feat-clean", "", true); err != nil {
 		t.Fatal(err)
 	}
 	if err := Remove(clean, false); err != nil {
@@ -129,7 +204,7 @@ func TestRemove_CleanDirtyAndForce(t *testing.T) {
 	}
 
 	dirty := filepath.Join(root, "base-dirty")
-	if _, err := Create(repo, dirty, "feat-dirty", true); err != nil {
+	if _, err := Create(repo, dirty, "feat-dirty", "", true); err != nil {
 		t.Fatal(err)
 	}
 	write(t, filepath.Join(dirty, "README.md"), "local edit\n")
@@ -161,10 +236,10 @@ func TestCreate_TwoWorktreesCoexist(t *testing.T) {
 	wtA := filepath.Join(root, "base-a")
 	wtB := filepath.Join(root, "base-b")
 
-	if _, err := Create(repo, wtA, "feat-a", true); err != nil {
+	if _, err := Create(repo, wtA, "feat-a", "", true); err != nil {
 		t.Fatalf("Create A: %v", err)
 	}
-	if _, err := Create(repo, wtB, "feat-b", true); err != nil {
+	if _, err := Create(repo, wtB, "feat-b", "", true); err != nil {
 		t.Fatalf("Create B: %v", err)
 	}
 	if got := git(t, wtA, "rev-parse", "--abbrev-ref", "HEAD"); got != "feat-a" {
@@ -199,7 +274,7 @@ func TestMaterializeIgnoredConfig(t *testing.T) {
 	write(t, filepath.Join(repo, "obj", "junk"), "build output\n")
 
 	wt := filepath.Join(root, "base-feat")
-	if _, err := Create(repo, wt, "feature/x", true); err != nil {
+	if _, err := Create(repo, wt, "feature/x", "", true); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
@@ -235,7 +310,7 @@ func TestMaterializeIgnoredConfig(t *testing.T) {
 func TestPrune_ReclaimsHandDeletedWorktree(t *testing.T) {
 	root, repo := newRepo(t)
 	wt := filepath.Join(root, "base-gone")
-	if _, err := Create(repo, wt, "feat-gone", true); err != nil {
+	if _, err := Create(repo, wt, "feat-gone", "", true); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.RemoveAll(wt); err != nil {

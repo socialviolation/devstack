@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/gitinfo"
 	"github.com/socialviolation/devstack/internal/tiltgen"
 	"github.com/socialviolation/devstack/internal/workspace"
 	"github.com/socialviolation/devstack/internal/worktree"
@@ -22,7 +23,10 @@ type CreateInput struct {
 	Name   string
 	Repos  []string
 	Branch string
-	Note   string
+	// From is the ref every worktree is cut from. Empty resolves each service
+	// repo's default branch instead, origin's copy of it when there is one.
+	From string
+	Note string
 }
 
 type OverlayMember struct {
@@ -34,6 +38,7 @@ type WorktreeResult struct {
 	Service      string
 	Path         string
 	Branch       string
+	Ref          string
 	Detached     bool
 	Dirty        bool
 	Materialized []string
@@ -142,14 +147,22 @@ func Create(in CreateInput) (*CreateResult, error) {
 	if branch == "" {
 		branch = in.Name
 	}
-	var dirty []string
+	var leftBehind []string
 	for _, s := range overlay {
 		repoPath := baseRW.Services[s].RepoPath
-		wt, err := worktree.Create(repoPath, worktreePaths[s], branch, changedSet[s])
+		ref := in.From
+		if ref == "" {
+			_, resolved, err := gitinfo.DefaultRef(repoPath)
+			if err != nil {
+				return nil, fmt.Errorf("service %q: %w; name a ref to cut from with --from", s, err)
+			}
+			ref = resolved
+		}
+		wt, err := worktree.Create(repoPath, worktreePaths[s], branch, ref, changedSet[s])
 		if err != nil {
 			return nil, fmt.Errorf("worktree for %q: %w", s, err)
 		}
-		wr := WorktreeResult{Service: s, Path: worktreePaths[s], Dirty: wt.SourceDirty}
+		wr := WorktreeResult{Service: s, Path: worktreePaths[s], Ref: gitinfo.ShortRef(ref), Dirty: wt.SourceDirty}
 		if changedSet[s] {
 			wr.Branch = branch
 		} else {
@@ -161,12 +174,13 @@ func Create(in CreateInput) (*CreateResult, error) {
 		}
 		wr.Materialized = materialized
 		res.Worktrees = append(res.Worktrees, wr)
-		if wt.SourceDirty {
-			dirty = append(dirty, s)
+		if wt.SourceDirty || wt.SourceOffRef {
+			leftBehind = append(leftBehind, fmt.Sprintf("%s (%s)", wr.Ref, s))
 		}
 	}
-	if len(dirty) > 0 {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("uncommitted changes left in the base checkout — worktrees hold committed HEAD only: %s", strings.Join(dirty, ", ")))
+	if len(leftBehind) > 0 {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("worktrees were cut from %s, not from the base checkout — uncommitted work, and commits the checkout holds beyond that ref, are not in this stack",
+			strings.Join(leftBehind, ", ")))
 	}
 
 	stackName := base.Name + "--" + in.Name

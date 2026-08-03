@@ -128,6 +128,7 @@ func init() {
 
 	stackCreateCmd.Flags().String("repos", "", "Comma-separated service names that this stack changes")
 	stackCreateCmd.Flags().String("branch", "", "Branch for the changed repos (default: the stack name). Attaches if it already exists.")
+	stackCreateCmd.Flags().String("from", "", "Ref the worktrees are cut from (default: each repo's default branch, origin's copy of it when there is one). Not what your checkout has checked out.")
 	stackCreateCmd.Flags().String("note", "", "What this stack is for — a ticket URL, an issue key, a sentence. Shown by 'devstack stack list'.")
 	stackNoteCmd.Flags().String("add", "", "Append a dated entry — where the work got to — instead of replacing the note")
 	stackRemoveCmd.Flags().Bool("force", false, "Remove worktrees even if they have uncommitted changes. Destroys that work; it cannot be recovered")
@@ -147,8 +148,9 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	branchFlag, _ := cmd.Flags().GetString("branch")
+	fromFlag, _ := cmd.Flags().GetString("from")
 	noteFlag, _ := cmd.Flags().GetString("note")
-	res, err := stack.Create(stack.CreateInput{Base: base, Name: args[0], Repos: changed, Branch: branchFlag, Note: noteFlag})
+	res, err := stack.Create(stack.CreateInput{Base: base, Name: args[0], Repos: changed, Branch: branchFlag, From: fromFlag, Note: noteFlag})
 	if err != nil {
 		return err
 	}
@@ -164,7 +166,7 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("Stack root (sibling of base): %s\n", res.StackRoot)
 	for _, wt := range res.Worktrees {
-		branchNote := "detached at HEAD"
+		branchNote := "detached at " + wt.Ref
 		if wt.Branch != "" {
 			branchNote = "branch " + wt.Branch
 		}

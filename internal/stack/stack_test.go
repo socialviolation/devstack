@@ -60,7 +60,7 @@ func writeFile(t *testing.T, path, content string) {
 func makeRepo(t *testing.T, dir, manifest string) {
 	t.Helper()
 	writeFile(t, filepath.Join(dir, "devstack.service.yaml"), manifest)
-	git(t, dir, "init", "-q")
+	git(t, dir, "init", "-q", "-b", "main")
 	git(t, dir, "add", "-f", ".")
 	git(t, dir, "commit", "-q", "-m", "init")
 }
