@@ -34,9 +34,10 @@ WORKSPACE AUTO-DETECTION
 
 TYPICAL WORKFLOW
   devstack workspace add              register this directory as a workspace
-  devstack workspace up               start the dev daemon
+  devstack workspace up               start the daemon, and build the replica base runs from
   devstack init --name=api ...        register a service and wire up observability
-  devstack service start <service>            start a service and all its dependencies
+  devstack service start <service> --stack base
+                                      start a service and all its dependencies
   devstack status                     live grouped view of every service
   devstack otel traces                query traces from the configured backend
   devstack otel open                  open the trace UI in the browser
@@ -47,8 +48,11 @@ AI AGENT WORKFLOW
 }
 
 func Execute() {
+	// Cobra prints the error itself; printing it here as well put every message
+	// on stderr twice, once prefixed "Error:" and once bare.
+	rootCmd.SilenceErrors = true
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
 }

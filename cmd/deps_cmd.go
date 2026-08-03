@@ -14,7 +14,7 @@ var depsCmd = &cobra.Command{
 	Aliases: []string{"deps"},
 	Short:   "Declare startup dependencies between services",
 	Long: `Dependencies tell devstack which services must be running before a given service
-can start. When you run 'devstack service start api', devstack resolves the full dependency
+can start. When you run 'devstack service start api --stack base', devstack resolves the full dependency
 graph and starts everything in the correct order automatically.
 
 Dependencies are stored in <workspace>/devstack.workspace.yaml and visualised
@@ -23,7 +23,7 @@ inline in the output of 'devstack group list' and 'devstack status'.
 Example: if 'api' depends on 'postgres' and 'redis':
   devstack dependencies add api postgres
   devstack dependencies add api redis
-  devstack service start api          ← starts postgres, redis, then api
+  devstack service start api --stack base   ← starts postgres, redis, then api
 
 SUBCOMMANDS
   devstack dependencies add <svc> <dep>    declare that svc requires dep to be running first
@@ -50,7 +50,8 @@ var depsOrderCmd = &cobra.Command{
 	Aliases: []string{"order"},
 	Short:   "Show the full resolved startup sequence for a service",
 	Long: `Resolves the complete dependency graph for a service and prints the startup
-order — the sequence devstack will use when you run 'devstack service start <service>'.
+order — the sequence devstack will use when you run 'devstack service start <service>'
+with the copy to start named.
 Useful for verifying that dependencies are declared correctly.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runDepsOrder,

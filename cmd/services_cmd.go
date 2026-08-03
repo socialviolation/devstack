@@ -14,6 +14,7 @@ import (
 	"github.com/socialviolation/devstack/internal/gitinfo"
 	"github.com/socialviolation/devstack/internal/infra"
 	"github.com/socialviolation/devstack/internal/otel"
+	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -153,14 +154,31 @@ func runStackStatus(base *workspace.Workspace, rec *stack.Record) error {
 	return nil
 }
 
+// baseServiceDirs is where base's copies actually run: the replica worktrees,
+// not the checkouts they were built from. The DIR and BRANCH columns are read to
+// answer "is my work what is running", and pointing them at the template answers
+// it wrongly — the checkout can sit on any branch, dirty, while base runs a
+// detached worktree at the default branch tip. Falls back to the checkouts,
+// which is then the truth, when no replica is built.
+func baseServiceDirs(ws *workspace.Workspace, cfg *config.WorkspaceConfig) map[string]string {
+	if rw, err := replica.Resolve(ws); err == nil {
+		dirs := make(map[string]string, len(rw.Services))
+		for name, svc := range rw.Services {
+			dirs[name] = svc.RepoPath
+		}
+		return dirs
+	}
+	if cfg != nil {
+		return cfg.ServicePaths
+	}
+	return map[string]string{}
+}
+
 func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 	ws.TiltPort = workspace.HostTiltPort
 
 	cfg, _ := config.Load(ws.Path)
-	serviceDirs := map[string]string{}
-	if cfg != nil {
-		serviceDirs = cfg.ServicePaths
-	}
+	serviceDirs := baseServiceDirs(ws, cfg)
 
 	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
 	view, tiltErr := tiltClient.GetView()
@@ -339,7 +357,7 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 	fmt.Println()
 
 	color.New(color.Faint).Printf("  within a group, top-to-bottom = startup order   ·   blank ENV = no env\n")
-	color.New(color.Faint).Printf("  devstack service start <service>   ·   devstack group start <group>\n")
+	color.New(color.Faint).Printf("  devstack service start <service> --stack base   ·   devstack group start <group> --stack base\n")
 	color.New(color.Faint).Printf("  devstack stack up <name>   ·   devstack stack config <svc> --stack <name>\n")
 	color.New(color.Faint).Printf("  groups with nothing running, starting, building or erroring are condensed   ·   devstack status --all shows every one\n")
 
@@ -559,7 +577,12 @@ func printServiceOrientation(ws *workspace.Workspace, rw *config.ResolvedWorkspa
 	sort.Slice(rows, func(i, j int) bool { return rows[i].stack < rows[j].stack })
 
 	faint := color.New(color.Faint)
-	where := "base"
+	// Not "base": base runs from its replica, and naming this directory base was
+	// read as "the code here is the code base runs".
+	where := "template checkout"
+	if _, rerr := replica.DetectFromCwd(); rerr == nil {
+		where = "base replica"
+	}
 	if hereStack != "" {
 		where = "stack " + hereStack
 	}

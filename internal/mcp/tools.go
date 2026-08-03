@@ -184,7 +184,7 @@ func availableGroups(cfg *config.WorkspaceConfig) string {
 
 func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, serviceDirs map[string]string, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
 	tool := mcp.NewTool("status",
-		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack. Status reflects the current state of locally running dev services, not production. Returns SERVICE, STATUS (one of running/starting/building/stopped/erroring/disabled/down/unknown), PORT(S), PATH (source directory), BRANCH (the git branch that directory is on, with * for uncommitted changes — this is the code the process is running), GROUP, ENV (the active environment/config-patch the instance is pointed at, blank if none), and last error. Also shows a groups summary. 'running' means the process is up. 'starting' means it is coming up; 'building' means the daemon is building/updating it. 'stopped' means the service is known but not currently running (not started yet, or was stopped). 'erroring' means the service or its build failed — check logs. 'disabled' means the resource is switched off in the daemon. 'down' means the copy is not registered in the daemon at all, because its stack is down — bring it up with stack_up. 'unknown' means the daemon reported no state for it. Pass stack to see a feature stack's instances. RELOAD says whether a service reloads on its own (auto) or needs an explicit restart after an edit (manual)."),
+		mcp.WithDescription("Show the current status of all services in the LOCAL dev stack. Status reflects the current state of locally running dev services, not production. Returns SERVICE, STATUS (one of running/starting/building/stopped/erroring/disabled/down/unknown), PORT(S), PATH (the source directory this instance's config was read from — a stack's own worktree, or for base the template checkout), BRANCH (the git branch that directory is on, with * for uncommitted changes). For a stack that is the code its process runs; for base it is NOT — base runs a replica of the workspace, not the checkout, and the CLI 'devstack base path' prints it. GROUP, ENV (the active environment/config-patch the instance is pointed at, blank if none), and last error. Also shows a groups summary. 'running' means the process is up. 'starting' means it is coming up; 'building' means the daemon is building/updating it. 'stopped' means the service is known but not currently running (not started yet, or was stopped). 'erroring' means the service or its build failed — check logs. 'disabled' means the resource is switched off in the daemon. 'down' means the copy is not registered in the daemon at all, because its stack is down — bring it up with stack_up. 'unknown' means the daemon reported no state for it. Pass stack to see a feature stack's instances. RELOAD says whether a service reloads on its own (auto) or needs an explicit restart after an edit (manual)."),
 		mcp.WithString("stack", mcp.Description(stackParamDesc)),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
@@ -270,7 +270,7 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 		sb.WriteString(targetHeader(t.label))
 		sb.WriteString("Tilt is running.\n\n")
 		sb.WriteString(renderColumns(rows))
-		sb.WriteString("\nBRANCH is the git checkout each service runs from; * marks uncommitted changes.\nA service runs the code on that branch — if it is not the branch you expect, the running process does not contain the work you are looking for.\nRELOAD auto = source edits apply on their own; manual = restart it after editing or it keeps running the old code.\n")
+		sb.WriteString("\nPATH and BRANCH are the directory this instance's config was read from; * marks uncommitted changes.\nFor a stack that directory is what its process runs, so a branch you did not expect means the process does not contain the work you are looking for.\nFor base it is the template checkout, and base runs a replica of it at its default branch tip instead — the CLI 'devstack base path' prints it.\nRELOAD auto = edits in the directory a copy runs from apply on their own; manual = restart that copy after editing or it keeps running the old code.\n")
 
 		// Groups summary section.
 		if len(cfg.Groups) > 0 {
@@ -1739,7 +1739,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 				svcs, skipped = tunnel.PartitionServing(svcs)
 			}
 			if len(svcs) == 0 {
-				return mcp.NewToolResultText("No serving ports to forward right now. Start the services first (devstack service start)."), nil
+				return mcp.NewToolResultText("No serving ports to forward right now. Start the services first — the start tool, with stack=\"base\" or a stack name."), nil
 			}
 
 			if cerr := tunnel.CheckConnectivity(ruser, rhost); cerr != nil {

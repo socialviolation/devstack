@@ -12,6 +12,7 @@ import (
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/gitinfo"
+	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/selfcheck"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
@@ -165,12 +166,15 @@ func buildPrime() (string, error) {
 	// is about: a stack whose branch matches, or the only stack that runs this
 	// service, is a guess about intent and says nothing about the directory.
 	here := "base"
+	inReplica := false
 	if _, rec, derr := stack.DetectFromCwd(); derr == nil && rec != nil {
 		here = rec.Name
 		if wt, ok := rec.Worktrees[service]; ok && wt != "" {
 			repo = wt
 			branch = gitinfo.ReadAll(map[string]string{wt: wt})[wt].Label()
 		}
+	} else if rws, rerr := replica.DetectFromCwd(); rerr == nil && rws != nil && strings.EqualFold(rws.Name, ws.Name) {
+		inReplica = true
 	}
 
 	working := inferWorkingStack(ws, service, branch)
@@ -180,12 +184,12 @@ func buildPrime() (string, error) {
 	writePrimeTerms(&b)
 
 	section(&b, "WHERE YOU ARE")
-	writePrimeIdentity(&b, ws, service, repo, branch, here, working)
+	writePrimeIdentity(&b, ws, service, repo, branch, here, inReplica, working)
 
 	if service != "" {
 		section(&b, "THIS SERVICE — "+service)
 		writePrimeInstances(&b, ws, rw, service, here, working)
-		writePrimeReload(&b, rw, service, working)
+		writePrimeReload(&b, rw, service, here, inReplica, config.HasWorkspaceManifest(replica.Root(ws)), working)
 	}
 
 	section(&b, "THIS WORKSPACE — "+ws.Name)
@@ -197,15 +201,23 @@ func buildPrime() (string, error) {
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
-func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, repo, branch, here string, working *workingStack) {
+func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, repo, branch, here string, inReplica bool, working *workingStack) {
 	fmt.Fprintf(b, "workspace %s", ws.Name)
 	if service != "" {
 		fmt.Fprintf(b, " · service %s", service)
 	}
-	if here == "base" {
-		b.WriteString(" · base (not a stack)\n")
-	} else {
+	switch {
+	case here != "base":
 		fmt.Fprintf(b, " · stack %s\n", here)
+	case inReplica:
+		b.WriteString(" · base replica (not a stack)\n")
+		b.WriteString("  This directory is generated. `devstack base sync` overwrites it, so do not edit here.\n")
+	case config.HasWorkspaceManifest(replica.Root(ws)):
+		b.WriteString(" · template checkout (not a stack, and not what base runs)\n")
+		fmt.Fprintf(b, "  Nothing runs here. base runs a replica of this workspace at %s.\n", replica.Root(ws))
+	default:
+		b.WriteString(" · base (not a stack)\n")
+		fmt.Fprintf(b, "  No replica is built yet, so base is running this checkout. `devstack workspace up` builds one\n  at %s, and after that nothing here runs.\n", replica.Root(ws))
 	}
 	if here != "base" {
 		// Standing in a stack. The fact that matters is that commits land on its
@@ -339,13 +351,18 @@ func writePrimeTerms(b *strings.Builder) {
 	section(b, "TERMS")
 	b.WriteString("  workspace  the set of repositories that run together\n")
 	b.WriteString("  service    one process that devstack runs\n")
-	b.WriteString("  base       your normal checkout. If you do not give --stack, a command uses base\n")
+	b.WriteString("  template   your normal checkout. devstack builds from it and runs nothing in it. Park work here freely\n")
+	b.WriteString("  base       the workspace with no stack. It runs from a replica: one git worktree per service at the\n")
+	b.WriteString("             default branch tip, under a `.devstack-base` directory. `devstack base path` prints it\n")
 	b.WriteString("  stack      a parallel copy of some services. Each stack has its own branch, its own directory, and its own ports\n")
 	b.WriteString("  worktree   the directory of a stack. Git checks out the branch of the stack in this directory\n")
 	b.WriteString("  copy       one running instance of a service. base runs one copy, and each stack runs another copy\n")
 	b.WriteString("Each copy has a different port. Run `devstack status` before you decide that a service is down.\n")
+	b.WriteString("Every command that starts, stops or restarts a copy needs `--stack <name>`, or `--stack base` for base.\n")
+	b.WriteString("It has no default: with no flag it acts on the stack or replica your directory is in, and refuses elsewhere.\n")
 	b.WriteString("To work on a stack, change to the directory of that stack. The branch is already checked out there.\n")
-	b.WriteString("Do not use `git checkout` in your normal checkout. That command changes base, and it does not change the stack.\n")
+	b.WriteString("An edit in your checkout does not reach base. It reaches base once it is on the default branch and\n")
+	b.WriteString("`devstack base sync` has run. To see a change run now, put it in a stack.\n")
 	writePrimeStates(b)
 }
 
@@ -426,7 +443,7 @@ func writePrimeBuild(b *strings.Builder) {
 // the general rule, because the general rule is what an agent skips. A service
 // that does not self-watch keeps executing old code after an edit, and the
 // resulting "my fix did nothing" is expensive to debug from the wrong end.
-func writePrimeReload(b *strings.Builder, rw *config.ResolvedWorkspace, service string, working *workingStack) {
+func writePrimeReload(b *strings.Builder, rw *config.ResolvedWorkspace, service, here string, inReplica, replicaBuilt bool, working *workingStack) {
 	if service == "" {
 		return
 	}
@@ -439,21 +456,36 @@ func writePrimeReload(b *strings.Builder, rw *config.ResolvedWorkspace, service 
 		return
 	}
 
-	target := service
-	if working != nil && working.Certain {
-		target += " --stack " + working.Rec.Name
+	// A restart names an instance or it is refused, so the hint always carries
+	// one. Base is the honest fallback: it is the copy a directory that settles
+	// nothing is nearest to.
+	target := service + " --stack base"
+	switch {
+	case here != "base":
+		target = service + " --stack " + here
+	case working != nil && working.Certain:
+		target = service + " --stack " + working.Rec.Name
 	}
 
+	// Reload is a property of the directory the copy runs from, not of yours.
+	// For base that directory is the replica, which nobody edits, so "applies
+	// without a restart" is a claim about a stack's worktree only.
 	switch {
 	case looksHotReloading(runCmd) || looksHotReloading(resolveRunScript(runCmd, svc.RepoPath)):
-		fmt.Fprintf(b, "\n  reload        automatic (run command: `%s`). Your code changes apply without a restart.\n", runCmd)
+		fmt.Fprintf(b, "\n  reload        automatic (run command: `%s`). An edit in the directory a copy runs from applies\n", runCmd)
+		b.WriteString("                to that copy without a restart.\n")
 	case len(svc.Manifest.Runtime.Watch) > 0:
-		b.WriteString("\n  reload        automatic, because runtime.watch is set. Your code changes apply without a restart.\n")
+		b.WriteString("\n  reload        automatic, because runtime.watch is set. An edit in the directory a copy runs from\n")
+		b.WriteString("                applies to that copy without a restart.\n")
 	default:
 		fmt.Fprintf(b, "\n  reload        MANUAL (run command: `%s`). After you change the code, it runs the old code.\n", runCmd)
 		fmt.Fprintf(b, "                To load your changes, run: devstack service restart %s\n", target)
 		fmt.Fprintf(b, "                If the table above shows that copy as stopped, disabled or down, restart does not\n")
 		fmt.Fprintf(b, "                apply. Start it: devstack service start %s\n", target)
+	}
+	if here == "base" && !inReplica && replicaBuilt {
+		b.WriteString("                Neither applies to an edit you make here: base runs the replica, so your change\n")
+		b.WriteString("                reaches it only via the default branch and `devstack base sync`.\n")
 	}
 	b.WriteString("                If you change the configuration or an environment variable, you must restart the service.\n")
 }
@@ -490,8 +522,12 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 	type instance struct{ name, port, state, branch, dir, note string }
 
 	rows := []instance{{name: "base", port: "-", state: orDash(states[service])}}
+	replicaBuilt := false
 	if svc, ok := rw.Services[service]; ok {
-		rows[0].dir = svc.RepoPath
+		// The directory base RUNS from, which is the replica's worktree and never
+		// the checkout this command was typed in. Printing the checkout here sent
+		// an agent to edit a directory whose code no process executes.
+		rows[0].dir, replicaBuilt = replicaDir(ws, service, svc.RepoPath)
 		if svc.Manifest != nil {
 			if p, ok := svc.Manifest.Ports["http"]; ok {
 				rows[0].port = fmt.Sprintf(":%d", p)
@@ -563,10 +599,30 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 	if suggested != "" {
 		fmt.Fprintf(b, "  The marker ? shows a guess. %s is the only stack that runs %s, but you are not in it.\n  Ask the user before you work on it.\n", suggested, service)
 	}
-	b.WriteString("  To make a command change the copy of a stack, add `--stack <name>`. Your directory does not do this.\n")
-	b.WriteString("  In the worktree of a stack, `devstack service restart <svc>` restarts the copy of base.\n")
-	b.WriteString("  Some read-only commands do read your directory: `stack config` and `env which` name the stack you\n")
-	b.WriteString("  are in. No command that starts, stops or writes does. To reach a copy over the network, use its port.\n")
+	if replicaBuilt {
+		b.WriteString("  The directory under each copy is the directory that copy RUNS. base runs the replica, not your checkout.\n")
+	} else {
+		b.WriteString("  The directory under each copy is the directory that copy RUNS. base has no replica built yet, so for now\n")
+		b.WriteString("  it runs your checkout. `devstack workspace up` builds one, and after that your checkout runs nothing.\n")
+	}
+	b.WriteString("  To start, stop or restart one, name it: `--stack <name>`, or `--stack base`. There is no default.\n")
+	b.WriteString("  With no flag the command uses the copy whose directory you are standing in — a stack worktree, or the\n")
+	b.WriteString("  replica — and refuses in a plain checkout instead of guessing. Read-only commands need no flag.\n")
+	b.WriteString("  To reach a copy over the network, use its port.\n")
+}
+
+// replicaDir is the worktree base runs a service from, and whether there is one.
+// Until the replica is built the daemon really does run the checkout, so saying
+// otherwise here would be as wrong as the path it replaced.
+func replicaDir(ws *workspace.Workspace, service, fallback string) (string, bool) {
+	rw, err := replica.Resolve(ws)
+	if err != nil {
+		return fallback, false
+	}
+	if svc, ok := rw.Services[service]; ok && svc.RepoPath != "" {
+		return svc.RepoPath, true
+	}
+	return fallback, false
 }
 
 // pluralCopy keeps the count grammatical. "1 copy(s)" makes a reader stop and

@@ -103,7 +103,7 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("\nValues: devstack env show <name>\n")
-	fmt.Printf("To switch: devstack env use <name> [--service <svc>|--stack <name>]\n")
+	fmt.Printf("To switch: devstack env use <name> --stack base (or --stack <name>, or --service <svc>)\n")
 	return nil
 }
 

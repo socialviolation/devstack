@@ -21,9 +21,17 @@ var upCmd = &cobra.Command{
 	Long: `Fold this workspace's services into the dev daemon, starting the daemon as a
 detached background process if it is not already up.
 
+This also builds the replica base runs from: one git worktree per service,
+detached at that service's default branch tip, under a .devstack-base sibling of
+the workspace. Your checkout is the template it is built from, and nothing runs
+there. 'devstack base path' prints the replica; 'devstack base sync' moves it to
+the current default branch tip.
+
 One daemon serves the whole machine. It runs every workspace's services, watches
-their source files, and hot-reloads them when code changes. 'devstack service start' also
-brings it up on demand, so you rarely need this command first.
+the files of the directory each copy runs from — the replica for base, its own
+worktree for a stack — and hot-reloads them when that code changes. 'devstack
+service start' also brings the daemon up on demand, so you rarely need this
+command first.
 
 The shared observability stack is also started automatically so services can
 begin shipping traces and logs immediately.
@@ -139,17 +147,19 @@ func ensureHostDaemon() error {
 // its instances a command acts on: stack.ResolveTarget decides that.
 func resolveWorkspace(flag string) (*workspace.Workspace, error) {
 	if flag == "" {
-		ws, err := workspace.DetectFromCwd()
-		if err == nil {
-			return ws, nil
-		}
+		// A stack root and a replica root are siblings of the workspace they
+		// belong to, so a workspace registered at an ancestor path also matches
+		// them by prefix — and wins, being the only one the registry knows. They
+		// are asked first because owning the directory outright beats containing
+		// it: otherwise standing in one workspace's worktree resolves to another
+		// workspace, and --stack base there acts on the wrong base.
 		if base, _, derr := stack.DetectFromCwd(); derr == nil && base != nil {
 			return base, nil
 		}
 		if base, derr := replica.DetectFromCwd(); derr == nil && base != nil {
 			return base, nil
 		}
-		return nil, err
+		return workspace.DetectFromCwd()
 	}
 
 	// Try by name first, then by path

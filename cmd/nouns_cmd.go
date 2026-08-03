@@ -20,7 +20,13 @@ var serviceCmd = &cobra.Command{
 	Long: `Act on one service. The name must be a service: to act on a group, use
 'devstack group <action> <name>'.
 
-With no name, devstack works out the service from the working directory.`,
+With no name, devstack works out the service from the working directory.
+
+These actions change what is running, so they also need the copy to act on:
+--stack <name> for a feature stack, or --stack base for base — which runs from
+the replica devstack keeps, not from your checkout. There is no default. With no
+flag devstack uses the copy whose directory you are standing in, and refuses in
+a plain checkout rather than acting on code you are not looking at.`,
 }
 
 var groupCmd = &cobra.Command{
@@ -29,7 +35,10 @@ var groupCmd = &cobra.Command{
 	Long: `A group is a named set of services that you operate on together. Starting a
 group starts every service in it, in dependency order.
 
-The name must be a group: to act on one service, use 'devstack service <action> <name>'.`,
+The name must be a group: to act on one service, use 'devstack service <action> <name>'.
+
+start, stop and restart change what is running, so they need the copy to act on
+too: --stack <name>, or --stack base. There is no default.`,
 	RunE: runGroupsList,
 }
 

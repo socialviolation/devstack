@@ -21,8 +21,9 @@ import (
 func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	tool := mcp.NewTool("service_env",
 		mcp.WithDescription(
-			"Read and write the environment variables of a local service, in the config FILES of its checkout. This tool does not touch the running process. A write takes effect on the next generate and restart.\n\n"+
+			"Read and write the environment variables of a local service, in the config FILES of its checkout. This tool does not touch the running process. A write takes effect on the next generate and restart of the copy that runs those files.\n\n"+
 				"Its stack parameter picks which CHECKOUT to read or write. Every other tool uses stack to pick which running copy to act on.\n\n"+
+				"With no stack, it reads and writes the base workspace's checkout. That checkout is the TEMPLATE base is built from, not the replica base runs, so a write there reaches base's running copy only after 'devstack base sync' has copied the machine-local config across. A write with a stack named lands in that stack's worktree, which its copy runs directly.\n\n"+
 				"Actions:\n"+
 				"  get    show the environment a service resolves to, with the rung that each value comes from.\n"+
 				"  diff   compare the resolved environment across several services, or across a group, side by side.\n"+
@@ -65,8 +66,8 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 			mcp.Description(
 				"Optional. "+stackShortNameDesc+" "+
 					"Source-tree semantics, unlike the running-process semantics 'stack' has on every other tool: it names the checkout to read/write. "+
-					"Absent (default) reads/writes the BASE workspace's service repos, unchanged. "+
-					"When set, reads/writes the named stack's worktree of the service instead of base — so an agent edits its "+
+					"Absent (default) reads/writes the BASE workspace's service repos — the template, which is where this config is meant to be edited, and which reaches base's running copy only after 'devstack base sync'. Never the replica: nothing edits that. "+
+					"When set, reads/writes the named stack's worktree of the service instead — so an agent edits its "+
 					"stack's config, never base's.",
 			),
 		),
@@ -422,9 +423,10 @@ func handleServiceEnvSet(ws *workspace.Workspace, workspacePath, stackEnv, servi
 	}
 
 	return mcp.NewToolResultText(fmt.Sprintf(
-		"wrote %s to %s (%s) — no higher rung overrides it. Takes effect for %s on its next restart: the restart tool "+
-			"(CLI: devstack service restart %s) regenerates the Tiltfile from the manifests before triggering, so there is no separate generate step.",
-		key, written, rung, serviceName, serviceName)), nil
+		"wrote %s to %s (%s) — no higher rung overrides it. It reaches the copy that runs this directory on its next restart: the restart tool "+
+			"(CLI: devstack service restart %s --stack <name>) regenerates the Tiltfile from the manifests before triggering, so there is no separate generate step. "+
+			"A write with no stack targeted lands in the BASE workspace's checkout, which is the template base is built from and not what base runs — run 'devstack base sync' to copy it into the replica, then restart with --stack base.",
+		key, written, rung, serviceName)), nil
 }
 
 // reresolveLadder re-reads the workspace from disk so the ladder reflects a write

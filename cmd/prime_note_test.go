@@ -22,7 +22,7 @@ func TestBriefingCarriesTheLatestEntryOfTheInferredStack(t *testing.T) {
 	}
 
 	var b strings.Builder
-	writePrimeIdentity(&b, &workspace.Workspace{Name: "navexa"}, "navexa-api", "", "master", "base",
+	writePrimeIdentity(&b, &workspace.Workspace{Name: "navexa"}, "navexa-api", "", "master", "base", false,
 		&workingStack{Rec: rec, Reason: "branch match"})
 
 	got := b.String()
@@ -41,7 +41,7 @@ func TestBriefingOmitsTheEntryLineWhenAStackHasNoLog(t *testing.T) {
 	rec := &stack.Record{Name: "perf", Base: "navexa", Note: "NAV-412 daily value spike"}
 
 	var b strings.Builder
-	writePrimeIdentity(&b, &workspace.Workspace{Name: "navexa"}, "navexa-api", "", "master", "base",
+	writePrimeIdentity(&b, &workspace.Workspace{Name: "navexa"}, "navexa-api", "", "master", "base", false,
 		&workingStack{Rec: rec, Reason: "branch match"})
 
 	if got := b.String(); strings.Contains(got, "latest") {

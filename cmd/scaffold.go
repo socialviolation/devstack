@@ -15,6 +15,12 @@ const workspaceManifestTemplate = `# devstack workspace manifest — the SINGLE 
 # The dev daemon's Tiltfile is GENERATED from this file + each service's
 # devstack.service.yaml. Never edit the Tiltfile by hand — edit these manifests
 # and run 'devstack workspace up' (or 'devstack workspace generate') to regenerate it.
+#
+# This directory is the TEMPLATE, not what runs. 'devstack workspace up' builds a
+# replica from it — one git worktree per service at its default branch tip, under
+# a .devstack-base sibling — and the base workspace runs there. 'devstack base
+# path' prints it. Nothing runs out of your checkouts, so work parked in one
+# neither runs nor blocks.
 version: 1
 
 workspace:
@@ -36,8 +42,9 @@ env:
     # DATABASE_HOST: localhost
     # DATABASE_PORT: "5432"
 
-# groups BIND services into a unit you operate on together:
-#   devstack group start <group>   devstack group stop <group>   devstack status
+# groups BIND services into a unit you operate on together. start and stop name
+# the copy they act on — --stack base, or --stack <name> for a feature stack:
+#   devstack group start <group> --stack base   devstack status
 # Groups also drive the daemon UI labels. A service may belong to many groups.
 groups: {}
   # backend: [my-api]

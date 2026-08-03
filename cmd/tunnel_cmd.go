@@ -388,7 +388,7 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 		}
 		svcs = serving
 		if len(svcs) == 0 {
-			fmt.Println("No serving ports to forward right now. Start the services first (devstack service start).")
+			fmt.Println("No serving ports to forward right now. Start the services first (devstack service start <svc> --stack base).")
 			return nil
 		}
 	}
@@ -696,7 +696,7 @@ func runTunnelCheck(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if len(svcs) == 0 {
-		fmt.Println("No serving ports to check right now. Start the services first (devstack service start).")
+		fmt.Println("No serving ports to check right now. Start the services first (devstack service start <svc> --stack base).")
 		return nil
 	}
 

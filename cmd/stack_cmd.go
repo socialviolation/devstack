@@ -41,8 +41,22 @@ searches every copy, base and stacks together. Pass --stack base for base alone.
 }
 
 var stackCreateCmd = &cobra.Command{
-	Use:          "create <name> --repos a,b",
-	Short:        "Create a feature stack overlaying the base workspace",
+	Use:   "create <name> --repos a,b",
+	Short: "Create a feature stack overlaying the base workspace",
+	Long: `Create a feature stack: a git worktree and an allocated port for each service
+you name, plus the services that call them. Everything else resolves to base's
+copy.
+
+Each worktree is cut from that repo's default branch, origin's copy of it where
+there is one — never from whatever your checkout happens to have checked out. So
+a stack starts from what the team shipped, and work parked half-finished in a
+checkout is not dragged into it. --from names a different ref (a release branch,
+a tag, a commit). A branch that already exists is attached to with the history it
+already has, and --from does not apply to it.
+
+If a checkout holds uncommitted work, or commits the stack's ref does not have,
+the command says so and carries on: it is a warning that this stack does not
+contain that work, not an error.`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackCreate,

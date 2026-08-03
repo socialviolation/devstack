@@ -115,14 +115,13 @@ func runBasePath(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(args) == 0 {
-		fmt.Println(replica.Root(ws))
-		return nil
-	}
-
 	rw, err := replica.Resolve(ws)
 	if err != nil {
 		return err
+	}
+	if len(args) == 0 {
+		fmt.Println(replica.Root(ws))
+		return nil
 	}
 	svc, ok := rw.Services[args[0]]
 	if !ok {

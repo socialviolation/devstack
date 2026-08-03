@@ -396,7 +396,7 @@ func runInitOnboard(cmd *cobra.Command, claudeHook bool) error {
 		fmt.Printf("  devstack group add %s %s\n", group, name)
 	}
 	fmt.Printf("  devstack dependencies add %s <dep>   # declare dependencies\n", name)
-	fmt.Printf("  devstack service start %s            # start it\n", name)
+	fmt.Printf("  devstack service start %s --stack base   # start it\n", name)
 
 	return nil
 }
@@ -698,9 +698,17 @@ func buildAIInstructionPointer(serviceName, stackName string) string {
 		svc = serviceName
 	}
 
+	// Every mutating example carries the instance it acts on, because devstack
+	// refuses one that does not name it. The instance this directory belongs to
+	// is the one to show: base for a checkout, the stack for its worktree.
+	inst := "--stack base"
 	stackLine := ""
 	if stackName != "" {
-		stackLine = fmt.Sprintf("This directory is feature stack `%s`'s git worktree — target its instance with `--stack %s`, or commands act on base.\n\n", stackName, stackName)
+		inst = "--stack " + stackName
+		stackLine = fmt.Sprintf("This directory is feature stack `%s`'s git worktree, so a command run here already means that stack. From anywhere else, name it with `--stack %s`.\n\n", stackName, stackName)
+	} else {
+		stackLine = "This checkout is a **template**, not what runs. `base` — the workspace with no stack — runs from a replica devstack keeps: one git worktree per service at the default branch tip, under a `.devstack-base` directory (`devstack base path`). " +
+			"Nothing runs out of this directory, so work parked here neither runs nor blocks, and an edit here reaches base only once it is on the default branch and `devstack base sync` has run.\n\n"
 	}
 
 	return "## devstack (local dev services)\n\n" +
@@ -708,17 +716,18 @@ func buildAIInstructionPointer(serviceName, stackName string) string {
 		stackLine +
 		"**A service can have more than one running copy.** The base workspace and every active *feature stack* each run their own instance, on their own port, named `<workspace>:<service>[:<stack>]`. " +
 		"Before concluding a service is down, broken, or on the wrong port, run `devstack status` — it lists every instance with its port and env. " +
-		"A stack's copy is served from its own git worktree, not this checkout.\n\n" +
-		"**Services are not all running by default.** An instance shown as `stopped` is registered but not started — start it yourself with `devstack service start " + svc + "` (add `--stack <name>` for a stack's instance). " +
+		"Each copy is served from its own directory: a stack's from its worktree, base's from the replica.\n\n" +
+		"**A command that starts, stops or restarts a copy must name it**, with `--stack <name>` or `--stack base`. There is no default: with no flag devstack acts on the copy whose directory you are standing in, and refuses in a plain checkout rather than guessing. Read-only commands (`status`, `env which`, `stack list`) need no flag.\n\n" +
+		"**Services are not all running by default.** An instance shown as `stopped` is registered but not started — start it yourself with `devstack service start " + svc + " " + inst + "`. " +
 		"State is not binary: `running`, `starting`, `building`, `stopped`, `erroring`, `disabled`, `unknown`. " +
 		"Do not report a service as down or broken until you have checked `devstack status` and started it.\n\n" +
-		"**After editing code**, a service only picks up the change if it self-watches (`dotnet watch`, `ng serve`, `vite`, `--reload`) or has `runtime.watch` set in its `devstack.service.yaml`. " +
-		"Otherwise run `devstack service restart " + svc + "` or it keeps running the old code.\n\n" +
+		"**After editing code**, a service only picks up the change if it self-watches (`dotnet watch`, `ng serve`, `vite`, `--reload`) or has `runtime.watch` set in its `devstack.service.yaml` — and only in the directory that copy runs from. " +
+		"Otherwise run `devstack service restart " + svc + " " + inst + "` or it keeps running the old code.\n\n" +
 		"```bash\n" +
-		fmt.Sprintf("%-39s# every instance, its port and env\n", "devstack status") +
-		fmt.Sprintf("%-39s# start a stopped instance (add --stack <name>)\n", "devstack service start "+svc) +
-		fmt.Sprintf("%-39s# reload after an edit\n", "devstack service restart "+svc) +
-		fmt.Sprintf("%-39s# feature stacks currently in flight\n", "devstack stack list") +
+		fmt.Sprintf("%-52s# every instance, its port and env\n", "devstack status") +
+		fmt.Sprintf("%-52s# start a stopped instance\n", "devstack service start "+svc+" "+inst) +
+		fmt.Sprintf("%-52s# reload after an edit\n", "devstack service restart "+svc+" "+inst) +
+		fmt.Sprintf("%-52s# feature stacks currently in flight\n", "devstack stack list") +
 		"```\n\n" +
 		"Full reference: `AGENTS.md` in this repo.\n"
 }
@@ -810,44 +819,45 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		svc = defaultService
 	}
 
+	inst := "--stack base"
 	stackLine := ""
 	if stackName != "" {
+		inst = "--stack " + stackName
 		stackLine = fmt.Sprintf("This directory is the worktree of feature stack `%s`. Your commits go on the branch of that stack, not on base. "+
-			"To act on this copy, add `--stack %s` to a command. Without it, the command acts on base.\n\n", stackName, stackName)
+			"A command run here acts on that stack's copy; from any other directory, name it with `--stack %s`.\n\n", stackName, stackName)
 	}
 
 	return "## Dev Stack (devstack MCP)\n\n" +
-		"devstack runs the local development services of this machine. It is a CLI and an MCP server. " +
-		"Use devstack only for local development. Do not use it with a staging or a production system.\n\n" +
+		"devstack runs this machine's local development services. It is a CLI and an MCP server. " +
+		"Use it for local development only. Do not point it at a staging or a production system.\n\n" +
 		contextLine +
 		stackLine +
-		"**Run `devstack prime` first.** It prints the live picture of this directory: the workspace, the service, " +
-		"every copy of that service with its port and state, and whether your code changes reload on their own. " +
-		"This file holds only the parts that do not change between sessions.\n\n" +
-		"One service can run more than one copy. Each copy is a daemon resource, and its name says which copy you touch: " +
-		"`<workspace>:<service>` for base, and `<workspace>:<service>:<stack>` for the copy of a feature stack. " +
-		"Each copy listens on a different port.\n\n" +
+		"**Run `devstack prime` first.** It prints the live picture of this directory: workspace, service, every copy with its port and state, and how that service reloads. " +
+		"This file holds only what does not change between sessions.\n\n" +
+		"One service runs more than one copy, each a daemon resource on its own port: `<workspace>:<service>` for base, `<workspace>:<service>:<stack>` for a stack's.\n\n" +
+		"### base runs from a replica; name the copy you act on\n\n" +
+		"`base` is the workspace with no stack, and it does not run out of the checkouts. devstack keeps a **replica**: one git worktree per service at its default branch tip, under a `.devstack-base` directory beside the workspace. " +
+		"`devstack workspace up` builds it, `devstack base path` prints it, `devstack base sync` moves it to the tip. " +
+		"Your checkout is the **template** it is built from — git objects, manifests, machine-local gitignored config — and nothing runs there. " +
+		"Work parked in it neither runs nor blocks, and an edit in it changes no running copy: it reaches base once it is on the default branch and `devstack base sync` has run. To see a change run now, put it in a stack.\n\n" +
+		"So `service start|stop|restart`, `group start|stop|restart` and `env use` must be told which copy: `--stack <name>`, or `--stack base`. " +
+		"There is no default — with no flag devstack uses the copy whose directory you are in, and in a plain checkout it refuses and lists the choices. " +
+		"Read-only commands need no flag (`status`, `env which`, `stack list`, `stack config`, `workspace topology`, log and trace queries), nor does `env set`.\n\n" +
 		"### Service states\n\n" +
-		"`devstack status` reports one of seven states. The state is not a running or stopped pair, so read it before you draw a conclusion.\n\n" +
-		"| State | Meaning |\n" +
-		"|---|---|\n" +
-		"| `running` | the process is up |\n" +
-		"| `starting` | the process starts |\n" +
-		"| `building` | the daemon is building or updating it |\n" +
-		"| `stopped` | registered, and not started. This is not a fault |\n" +
-		"| `erroring` | the service or its build failed. Read the logs |\n" +
-		"| `disabled` | switched off in the daemon |\n" +
-		"| `unknown` | the daemon reported no state |\n\n" +
+		"`devstack status` reports one of seven, not a running/stopped pair, so read it before you draw a conclusion: " +
+		"`running` (the process is up), `starting`, `building` (the daemon is building or updating it), " +
+		"`stopped` (registered and not started — this is not a fault), `erroring` (it or its build failed; read the logs), " +
+		"`disabled` (switched off in the daemon), `unknown` (the daemon reported no state).\n\n" +
 		"### After you edit code\n\n" +
 		"A running service keeps the old code until it reloads. A service reloads on its own only when it watches its own source " +
 		"(`dotnet watch run`, `air`, `vite`, `next dev`, `uvicorn --reload`), or when `runtime.watch` is set in its `devstack.service.yaml`. " +
-		"For every other service you must run `devstack service restart " + svc + "` after an edit, or the change has no effect. " +
-		"Add `--stack <name>` to restart the copy of a stack. `devstack prime` gives the verdict for the service you are in.\n\n" +
+		"For every other service you must run `devstack service restart " + svc + " " + inst + "` after an edit, or the change has no effect. " +
+		"Either way it watches the directory that copy runs from — for base the replica, never your checkout. `devstack prime` gives the verdict for the service you are in.\n\n" +
 		"A configuration change or an environment change always needs a restart. It changes how the process starts, and not the watched source.\n\n" +
 		"When a service cannot start because its port is still held, set `runtime.prep.freePorts: true` in its `devstack.service.yaml`. " +
-		"Do not write a `fuser -k <port>/tcp` prep. devstack frees the ports of that copy only, so base frees what it pins and a stack frees what it was allocated. " +
-		"A literal port number is a bug: the worktree of a stack copies it, and the stack then kills base at every start. " +
-		"To look or to act by hand, run `devstack ports check <port>` and `devstack ports free <port>`.\n\n" +
+		"Do not write a `fuser -k <port>/tcp` prep. devstack frees the ports of that copy only. " +
+		"A literal port number is a bug — a stack's worktree copies it, and the stack then kills base at every start. " +
+		"By hand: `devstack ports check <port>` and `devstack ports free <port>`.\n\n" +
 		"### Safety rules\n\n" +
 		"1. Never commit `devstack.service.yaml`. It is machine-local, because it holds absolute tool paths. Add it to `.gitignore`.\n" +
 		"2. `devstack env set` writes values into `devstack.workspace.yaml` in plaintext. The masking is display only. " +
@@ -855,19 +865,23 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"Check with `git check-ignore -v devstack.workspace.yaml`.\n" +
 		"3. Do not point devstack at staging or at production.\n" +
 		"4. Stop only what you started.\n\n" +
+		"### Starting a feature stack\n\n" +
+		"`devstack stack create <name> --repos a,b` cuts each worktree from that repo's **default branch** as origin has it — never from what the checkout has checked out, so parked work is not dragged in. " +
+		"`--from <ref>` cuts from something else; an existing branch is attached to with the history it already has.\n\n" +
+		"`devstack stack note <name> --add \"...\"` appends a dated line on where the work got to. Add one when the answer to \"what would the next person need to know?\" changed — a decision, a blocker, work parked mid-way — not per file edited. Only the last few are kept, so one per step deletes the ones worth reading.\n\n" +
 		"### Finishing a feature stack\n\n" +
-		"When the work of a feature is done, close its stack. Stale worktrees, branches and stack records accumulate, and they mislead the next session.\n\n" +
+		"When a feature is done, close its stack: stale worktrees, branches and records accumulate and mislead the next session.\n\n" +
 		"1. Commit the work on the branch of the stack, inside its worktree.\n" +
 		"2. Ask the human whether to merge the branch or to discard it. Never merge without an answer.\n" +
 		"3. After a merge, run `git branch -d <branch>`. `devstack stack rm` does not delete the branch.\n" +
-		"4. Run `devstack stack rm <name>`. It stops the stack, removes its worktrees, releases its ports, and deletes its record. " +
-		"It refuses a worktree that holds uncommitted work, so commit or discard first. `--force` discards that work.\n\n" +
+		"4. Run `devstack stack rm <name>`: it stops the stack, removes its worktrees, releases its ports, and deletes its record. " +
+		"It refuses a worktree holding uncommitted work, so commit or discard first; `--force` destroys it.\n\n" +
 		hooksInstructions() +
 		"### Environments\n\n" +
-		"An environment is a named set of configuration values in `environments:` in the workspace manifest. " +
-		"It repoints services without a code change. Three scopes apply, and the most specific one wins: " +
-		"the environment of a stack beats the environment of a service, which beats the workspace default. " +
-		"So base can run against `local` while one stack runs against `prod`. " +
+		"An environment is a named set of configuration values under `environments:` in the workspace manifest, and it repoints services without a code change. " +
+		"Three scopes apply, and the most specific one wins: " +
+		"the environment of a stack beats the environment of a service, which beats the workspace default, " +
+		"so base can run against `local` while one stack runs against `prod`. " +
 		"`devstack status` shows the active environment of each copy. " +
 		"Set values with `devstack env set`, and point a scope with `devstack env use`.\n\n" +
 		"### Commands\n\n" +
@@ -878,38 +892,41 @@ func buildAgentInstructions(defaultService, servicePath, workspacePath, stackNam
 		"devstack workspace doctor                    # check the manifests and the topology\n" +
 		"devstack workspace up                        # start the daemon and this workspace\n" +
 		"devstack workspace down                      # stop this workspace\n" +
-		"devstack service start " + svc + "                          # start this service and its dependencies\n" +
-		"devstack service restart " + svc + " [--stack <name>]       # restart base, or the copy of a stack\n" +
-		"devstack service stop " + svc + " [--stack <name>]          # stop base, or the copy of a stack\n" +
-		"devstack stack create <name> --repos " + svc + "    # a new feature stack over base\n" +
+		"devstack base path [" + svc + "]                       # where base runs from\n" +
+		"devstack base sync                           # move the replica to the default branch tip\n" +
+		"devstack service start " + svc + " " + inst + "   # start this service and its dependencies\n" +
+		"devstack service restart " + svc + " " + inst + " # reload a copy after an edit\n" +
+		"devstack service stop " + svc + " " + inst + "    # stop one copy\n" +
+		"devstack stack create <name> --repos " + svc + "    # a new stack, cut from the default branch\n" +
 		"devstack stack up|down|status|rm|list <name> # operate one stack\n" +
-		"devstack stack note <name> \"...\"             # record what a stack is for\n" +
+		"devstack stack note <name> --add \"...\"       # log where the work got to\n" +
 		"devstack stack config " + svc + " --stack <name>    # the config a copy will run with\n" +
 		"devstack hooks list                          # what runs automatically, and when\n" +
 		"devstack otel status                         # which copies emit telemetry\n" +
 		"devstack tunnel push [--stacks] [--otel]     # forward local ports over SSH\n" +
 		"devstack tunnel status [--planned]           # what is forwarded now\n" +
 		"devstack env set <name> KEY=VALUE            # define the values of an environment\n" +
-		"devstack env use <name> [--service|--stack]  # point base, a service, or a stack at it\n" +
+		"devstack env use <name> --stack base|<name>  # point base or a stack at it (--service for one service)\n" +
 		"```\n\n" +
-		"`--stack <name>` targets the copy of that stack. Without it, a command acts on base. " +
+		"`--stack <name>` targets the copy of that stack, and `--stack base` the copy base runs. " +
 		"A group is a named set of services that start and stop together. `devstack group list` shows them, " +
-		"and `devstack group start|stop <group>` operates one.\n\n" +
+		"and `devstack group start|stop <group> --stack base` operates one.\n\n" +
 		"### MCP tools\n\n" +
-		"The `.mcp.json` in this repo wires up the devstack MCP server. The tools are " +
-		"`environment`, `status`, `start`, `stop`, `restart`, `topology`, `process_logs`, `configure`, `service_env`, `observability`, `hooks`, `tunnel` and `investigate`; " +
-		"the stack tools `stack_create`, `stack_up`, `stack_down`, `stack_list`, `stack_rm`, `stack_note`; and the env tools `env_use`, `env_which`, `env_set`. " +
-		"Two are conditional: `investigate` is registered only while observability is on, and `tunnel` only when an ssh client exists. " +
-		"Call `environment` first. It reports what this workspace registered, and each description of a tool is more current than this file.\n\n" +
-		"The service-control tools (`status`, `start`, `restart`, `stop`, `process_logs`, `configure`) take an optional `stack` parameter. " +
-		"Omit it, or pass `\"base\"`, for base. `investigate` takes `stack` as a telemetry filter: absent means base only, a name means that stack, and `\"all\"` means every copy. " +
+		"The `.mcp.json` in this repo wires up the devstack MCP server: " +
+		"`environment`, `status`, `start`, `stop`, `restart`, `topology`, `process_logs`, `configure`, `service_env`, `observability`, `hooks`, `tunnel`, `investigate`, " +
+		"`stack_create`, `stack_up`, `stack_down`, `stack_list`, `stack_rm`, `stack_note`, `env_use`, `env_which`, `env_set`. " +
+		"Two are conditional: `investigate` only while observability is on, `tunnel` only with an ssh client. " +
+		"Call `environment` first — it reports what this workspace registered, and each tool's own description is more current than this file.\n\n" +
+		"`status`, `process_logs` and `configure` take an optional `stack`: omit it, or pass `\"base\"`, for base. " +
+		"On `start`, `restart`, `stop` and `env_use`, omitting it does NOT mean base — the copy is read from the server's working directory, and the call fails where that is neither a stack nor the replica. Say `\"base\"` when you mean base. " +
+		"`investigate` takes `stack` as a telemetry filter: absent means base only, a name means that stack, and `\"all\"` means every copy. " +
 		"A bare `stop` acts on the default service. To stop every service you must pass `all=true`, so one forgotten parameter cannot take the workspace down.\n\n" +
 		"`service_env` reports the resolved environment of a service and the rung each value came from. " +
 		"A rung is one level of the ladder: `.envrc`, then env files, then manifest `env.values`, then the active environment, then the values devstack computed. Each one overrides the one before. " +
 		"`service_env` with `action=\"drift\"` compares that against what the repo of the service declares it needs. " +
-		"Run drift before you trust a local run of code that reads configuration. A key the repo declares and the machine does not set raises no error. The code falls back to its default in silence.\n\n" +
-		"What these tools report is evidence: the live state of the daemon, real process output, and what the telemetry backend received. Prefer it to a guess. " +
-		"An empty result is not proof. The service can be uninstrumented, or the traffic can belong to a stack you did not name.\n\n" +
+		"Run drift before you trust a local run of code that reads configuration: a key the repo declares and the machine does not set raises no error, and the code falls back to its default in silence.\n\n" +
+		"What these tools report is evidence: live daemon state, real process output, what the telemetry backend received. Prefer it to a guess. " +
+		"An empty result is not proof — the service can be uninstrumented, or the traffic can belong to a stack you did not name.\n\n" +
 		observabilityInstructions(workspacePath, svc)
 }
 
@@ -930,13 +947,12 @@ func observabilityInstructions(workspacePath, svc string) string {
 		"devstack resolves the backend, the endpoint and the credentials for you, so a query needs no configuration:\n\n" +
 		"```bash\n" +
 		"devstack otel services                  # which copies report, with their stack and env\n" +
-		"devstack otel traces [--stack <name>]   # recent traces (no --stack means base only)\n" +
+		"devstack otel traces [--stack <name>]   # recent traces (no --stack searches every copy; --stack base for base alone)\n" +
 		"devstack otel logs --trace <trace-id>   # the logs of one trace\n" +
 		"devstack otel status                    # which copies emit\n" +
 		"```\n\n" +
-		"A service usually reports itself under a name of its own choosing, and not the name devstack uses for it. " +
-		"devstack `" + svc + "` can report as something else. A filter accepts either name, and `devstack otel services` prints both. " +
-		"Check there before you call a service silent.\n\n"
+		"A service usually reports itself under a name of its own choosing, so devstack `" + svc + "` can report as something else. " +
+		"A filter accepts either name, and `devstack otel services` prints both. Check there before you call a service silent.\n\n"
 }
 
 // hooksInstructions renders the lifecycle-hook guidance. `devstack prime` reports
@@ -945,22 +961,21 @@ func observabilityInstructions(workspacePath, svc string) string {
 // one of them cannot be retried at all.
 func hooksInstructions() string {
 	return "### Lifecycle hooks\n\n" +
-		"A hook is a shell command devstack runs when a lifecycle event fires. Hooks exist so a stack can provision real external state and remove it again. " +
+		"A hook is a shell command devstack runs when a lifecycle event fires, so a stack can provision real external state and remove it again. " +
 		"They fire on their own: `stack_create`, `stack_up`, `stack_down`, `stack_rm`, `start` and `stop` each fire their event and report what ran. " +
-		"Run `devstack hooks list`, or the `hooks` tool with `action=\"list\"`, before you create or destroy a stack in a workspace you do not know. " +
-		"A hook can call an external API and change state outside this machine.\n\n" +
+		"Run `devstack hooks list`, or the `hooks` tool with `action=\"list\"`, before you create or destroy a stack in a workspace you do not know: " +
+		"a hook can call an external API and change state outside this machine.\n\n" +
 		"Events: `" + strings.Join(config.HookEvents(), "`, `") + "`.\n\n" +
 		"A failure means a different thing in each direction, so read the result:\n\n" +
 		"- A **setup** hook (`stack.create`, `stack.up`, `service.start`, `workspace.up`) that fails stops the hooks behind it and is reported as an error. " +
-		"The action itself already happened. The stack exists, and it is not fully provisioned. Do not report success. " +
-		"Fix the hook, then run the hooks again with `devstack hooks run <event>` or the `hooks` tool. You do not recreate the stack.\n" +
-		"- A **teardown** hook (`stack.destroy`, `stack.down`, `service.stop`, `workspace.down`) that fails is reported, and the teardown still completes. " +
-		"This is deliberate: a broken hook must never leave a stack that nobody can remove. " +
-		"The external state it was to clean up is probably still there, so say so. Do not report a clean teardown.\n" +
+		"The action itself already happened: the stack exists and is not fully provisioned, so do not report success. " +
+		"Fix the hook, then run the hooks again with `devstack hooks run <event>` or the `hooks` tool — you do not recreate the stack.\n" +
+		"- A **teardown** hook (`stack.destroy`, `stack.down`, `service.stop`, `workspace.down`) that fails is reported, and the teardown still completes: " +
+		"a broken hook must never leave a stack nobody can remove. " +
+		"The external state it was to clean up is probably still there, so say so rather than reporting a clean teardown.\n" +
 		"- `stack.destroy` is the one failure you cannot retry. Removing the stack deletes the record its `${self...}` references resolve against. " +
 		"At the point of failure devstack prints the resolved URLs, and those printed URLs are the only surviving record. Pass them on.\n\n" +
-		"Hooks are declared in `devstack.workspace.yaml`, and in the `devstack.service.yaml` of one service. A feature stack inherits the hooks of its workspace. " +
-		"A hook cannot hardcode a port, because devstack allocates the ports of a stack when it is created. " +
-		"It writes `${self.url}`, `${self.port.<key>}`, or `${<service>.url}` for another service in the event. " +
-		"A hook also receives `DEVSTACK_*` variables and the whole event as JSON on stdin.\n\n"
+		"Hooks are declared in `devstack.workspace.yaml`, and in one service's `devstack.service.yaml`; a stack inherits its workspace's. " +
+		"A hook cannot hardcode a port, because devstack allocates a stack's ports when it is created — it writes `${self.url}`, `${self.port.<key>}`, or `${<service>.url}` for another service in the event. " +
+		"It also receives `DEVSTACK_*` variables and the whole event as JSON on stdin.\n\n"
 }
