@@ -144,7 +144,7 @@ func init() {
 	stackCmd.AddCommand(stackDownCmd)
 	stackCmd.AddCommand(stackStatusCmd)
 
-	stackCreateCmd.Flags().String("repos", "", "Comma-separated service names that this stack changes")
+	stackCreateCmd.Flags().String("repos", "", "Comma-separated service or group names that this stack changes. A group expands to its members")
 	stackCreateCmd.Flags().String("branch", "", "Branch for the changed repos (default: the stack name). Attaches if it already exists.")
 	stackCreateCmd.Flags().String("from", "", "Ref the worktrees are cut from (default: each repo's default branch, origin's copy of it when there is one). Not what your checkout has checked out.")
 	stackCreateCmd.Flags().String("note", "", "What this stack is for — a ticket URL, an issue key, a sentence. Shown by 'devstack stack list'.")
@@ -281,6 +281,7 @@ func runStackList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	baseGroups := baseGroupMembers(base)
 	if len(stacks) == 0 {
 		fmt.Printf("No stacks in workspace %q. Create one with: devstack stack create <name> --repos <svc>\n", base.Name)
 		return nil
@@ -296,6 +297,9 @@ func runStackList(cmd *cobra.Command, args []string) error {
 			truncateCell(s.Branch, 30), stackAge(s.Created))
 		if s.Note != "" {
 			color.New(color.Faint).Printf("  %s\n", s.Note)
+		}
+		for _, cov := range stack.CoverageOf(s.Groups, s.Services, baseGroups) {
+			color.New(color.Faint).Printf("  %s\n", cov.Sentence())
 		}
 		if n := len(s.Log); n > 0 {
 			color.New(color.Faint).Printf("  %s ago  %s\n", stackAge(s.Log[n-1].At), s.Log[n-1].Text)

@@ -38,7 +38,7 @@ func runRestart(cmd *cobra.Command, args []string) error {
 		targetName = args[0]
 	}
 
-	services, err := resolveTargetKind(wsPath, targetName, cfg, targetKindOf(cmd))
+	services, err := resolveInstanceTarget(cmd, ws, wsPath, targetName, cfg, stackName)
 	if err != nil {
 		return err
 	}

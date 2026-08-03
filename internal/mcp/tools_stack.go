@@ -53,7 +53,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description("Short stack name (for example 'import-review'). The full stack identity becomes '<base>--<name>'; every stack parameter across these tools takes the short name.")),
 		mcp.WithString("repos", mcp.Required(),
-			mcp.Description("Comma-separated exact service names this stack changes (for example 'frontend,backend'). Services that call these are pulled into the overlay automatically.")),
+			mcp.Description("Comma-separated exact service OR group names this stack changes (for example 'frontend,backend' or 'core'). A group expands to its members. Services that call any of them are pulled into the overlay automatically. A group only reaches as far as the overlay does: members not pulled in keep serving from base, and stack_list reports the shortfall.")),
 		mcp.WithString("note",
 			mcp.Description("What this stack is for, in the author's words — a ticket URL, an issue key, a sentence. devstack never derives this: the branch says what changed, the note says why. Shown by stack_list. Optional, and editable later with the CLI: devstack stack note <name> \"...\"")),
 		mcp.WithString("branch",
@@ -166,6 +166,10 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		baseGroups := map[string][]string{}
+		if cfg, cerr := config.Load(ws.Path); cerr == nil && cfg != nil {
+			baseGroups = cfg.Groups
+		}
 		if len(stacks) == 0 {
 			return mcp.NewToolResultText(fmt.Sprintf("No stacks in workspace %q.", ws.Name)), nil
 		}
@@ -187,6 +191,9 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			}
 			if n := len(s.Log); n > 0 {
 				fmt.Fprintf(&sb, "  latest:   %s  %s\n", s.Log[n-1].At.Format("2006-01-02"), s.Log[n-1].Text)
+			}
+			for _, cov := range stack.CoverageOf(s.Groups, s.Services, baseGroups) {
+				fmt.Fprintf(&sb, "  covers:   %s\n", cov.Sentence())
 			}
 			links := make([]string, 0, len(s.Ports))
 			for _, k := range sortedPortKeys(s.Ports) {

@@ -26,6 +26,7 @@ type Record struct {
 	Env        string            `json:"env,omitempty"`         // active env name applied at the stack scope
 	Note       string            `json:"note,omitempty"`        // what this stack is for, in the author's words
 	Log        []NoteEntry       `json:"log,omitempty"`         // dated entries: where the work got to
+	Groups     []string          `json:"groups,omitempty"`      // groups this stack was created to cover
 	Overlay    []string          `json:"overlay"`               // overlay service names, sorted
 	Worktrees  map[string]string `json:"worktrees"`             // service -> worktree path
 	Ports      map[string]int    `json:"ports"`                 // service/portKey -> allocated port

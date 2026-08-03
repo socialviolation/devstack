@@ -49,6 +49,7 @@ type CreateResult struct {
 	StackRoot    string
 	BaseName     string
 	BasePath     string
+	Groups       []string
 	Overlay      []OverlayMember
 	Worktrees    []WorktreeResult
 	ManifestPath string
@@ -78,6 +79,7 @@ type StackInfo struct {
 	Env      string
 	Note     string
 	Log      []NoteEntry
+	Groups   []string
 	Created  time.Time
 }
 
@@ -102,11 +104,9 @@ func Create(in CreateInput) (*CreateResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, s := range changed {
-		if _, ok := topo.Services[s]; !ok {
-			return nil, fmt.Errorf("unknown service %q in workspace %q; known services: %s",
-				s, base.Name, strings.Join(topo.ServiceNames(), ", "))
-		}
+	changed, groups, err := expandGroups(topo, base.Name, changed)
+	if err != nil {
+		return nil, err
 	}
 
 	overlay, err := config.OverlaySet(topo, changed)
@@ -118,6 +118,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 	res := &CreateResult{
 		BaseName: base.Name,
 		BasePath: base.Path,
+		Groups:   groups,
 		Ports:    map[string]int{},
 	}
 	for _, s := range overlay {
@@ -235,6 +236,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 		Root:      stackRoot,
 		Branch:    branch,
 		Note:      in.Note,
+		Groups:    groups,
 		Overlay:   overlayNames,
 		Worktrees: worktrees,
 		Ports:     res.Ports,
@@ -366,6 +368,7 @@ func List(workspaceName string) ([]StackInfo, error) {
 			Env:      rec.Env,
 			Note:     rec.Note,
 			Log:      rec.Log,
+			Groups:   rec.Groups,
 			Created:  rec.CreatedAt,
 		})
 	}
@@ -492,6 +495,42 @@ var daemonReachable = func(port int) bool {
 	}
 	resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
+}
+
+// expandGroups turns a --repos list into the service names it means, replacing
+// any group with its members, and reports which groups were named so the stack
+// can record what it was cut to cover.
+//
+// A name that is both a service and a group is read as the service: --repos
+// takes the services a stack changes, and a group that happens to share a
+// service's name is the coincidence, not the intent.
+func expandGroups(topo *config.TopologyGraph, wsName string, names []string) (services, groups []string, err error) {
+	seen := map[string]bool{}
+	for _, name := range names {
+		if _, ok := topo.Services[name]; ok {
+			if !seen[name] {
+				seen[name] = true
+				services = append(services, name)
+			}
+			continue
+		}
+		members, ok := topo.Groups[name]
+		if !ok {
+			return nil, nil, fmt.Errorf("%q is neither a service nor a group in workspace %q\nservices: %s\ngroups:   %s",
+				name, wsName, strings.Join(topo.ServiceNames(), ", "), strings.Join(topo.GroupNames(), ", "))
+		}
+		if len(members) == 0 {
+			return nil, nil, fmt.Errorf("group %q in workspace %q has no services", name, wsName)
+		}
+		groups = append(groups, name)
+		for _, m := range members {
+			if !seen[m] {
+				seen[m] = true
+				services = append(services, m)
+			}
+		}
+	}
+	return services, groups, nil
 }
 
 func stringSet(items []string) map[string]bool {
