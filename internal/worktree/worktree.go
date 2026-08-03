@@ -139,6 +139,18 @@ func isConfigFile(rel string) bool {
 // already holds, and never reads or logs file contents (they carry secrets); it
 // copies bytes and returns the relative paths materialized.
 func MaterializeIgnoredConfig(baseRepo, worktreePath string) ([]string, error) {
+	return materializeIgnoredConfig(baseRepo, worktreePath, false)
+}
+
+// MaterializeIgnoredConfigForce is MaterializeIgnoredConfig for a worktree that
+// is a replica of the base repo rather than somewhere work happens: the base's
+// config wins every refresh, so a file the worktree already holds is replaced
+// instead of kept.
+func MaterializeIgnoredConfigForce(baseRepo, worktreePath string) ([]string, error) {
+	return materializeIgnoredConfig(baseRepo, worktreePath, true)
+}
+
+func materializeIgnoredConfig(baseRepo, worktreePath string, overwrite bool) ([]string, error) {
 	cmd := exec.Command("git", "ls-files", "--others", "--ignored", "--exclude-standard")
 	cmd.Dir = baseRepo
 	out, err := cmd.CombinedOutput()
@@ -154,13 +166,13 @@ func MaterializeIgnoredConfig(baseRepo, worktreePath string) ([]string, error) {
 		}
 		src := filepath.Join(baseRepo, rel)
 		dst := filepath.Join(worktreePath, rel)
-		if _, err := os.Stat(dst); err == nil {
+		if _, err := os.Stat(dst); err == nil && !overwrite {
 			continue
 		}
 		if fi, err := os.Stat(src); err != nil || !fi.Mode().IsRegular() {
 			continue
 		}
-		if err := copyFile(src, dst); err != nil {
+		if err := copyFile(src, dst, overwrite); err != nil {
 			return copied, fmt.Errorf("materialize %s into worktree: %w", rel, err)
 		}
 		copied = append(copied, rel)
@@ -169,7 +181,7 @@ func MaterializeIgnoredConfig(baseRepo, worktreePath string) ([]string, error) {
 	return copied, nil
 }
 
-func copyFile(src, dst string) error {
+func copyFile(src, dst string, overwrite bool) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
@@ -182,7 +194,11 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fi.Mode().Perm())
+	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	if overwrite {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	}
+	out, err := os.OpenFile(dst, flags, fi.Mode().Perm())
 	if err != nil {
 		return err
 	}

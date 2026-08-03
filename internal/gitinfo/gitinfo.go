@@ -5,6 +5,7 @@ package gitinfo
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"sort"
 	"strings"
@@ -110,6 +111,24 @@ func DirtyKeys(infos map[string]Info) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// DefaultBranch reports the branch a repo's work is cut from: what origin calls
+// HEAD, or, for a repo with no origin, whichever of main or master exists
+// locally. It never guesses — a repo naming neither is an error, because
+// checking out the wrong branch is worse than refusing.
+func DefaultBranch(dir string) (string, error) {
+	if ref, ok := git(dir, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"); ok {
+		if branch := strings.TrimPrefix(ref, "refs/remotes/origin/"); branch != "" && branch != ref {
+			return branch, nil
+		}
+	}
+	for _, branch := range []string{"main", "master"} {
+		if _, ok := git(dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); ok {
+			return branch, nil
+		}
+	}
+	return "", fmt.Errorf("could not tell which branch is the default in %s: no origin/HEAD, and neither main nor master exists locally", dir)
 }
 
 func git(dir string, args ...string) (string, bool) {
