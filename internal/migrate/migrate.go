@@ -95,7 +95,7 @@ func Apply(w io.Writer, patches []Patch, all []workspace.Workspace) error {
 		note = append(note, p.Next(changed)...)
 	}
 
-	writeNote(w, note)
+	writeNote(w, note, len(errs))
 	return errors.Join(errs...)
 }
 
@@ -146,7 +146,20 @@ func phrase(why string) string {
 // writeNote prints the next actions, last, so it is what an agent reads before
 // it decides what to do. A run that changed nothing asks for nothing: an
 // instruction to act on an empty diff teaches a reader to ignore the report.
-func writeNote(w io.Writer, note []string) {
+//
+// A failure changes nothing, so it reaches here with no next action. The closing
+// line is the one an agent acts on, and "every migration is applied" after a
+// patch failed is the one thing this output must never say.
+func writeNote(w io.Writer, note []string, failed int) {
+	if failed > 0 {
+		fmt.Fprintln(w, "\nNEXT")
+		fmt.Fprintf(w, "A MIGRATION FAILED. devstack did not apply %s. Read the failure above.\n", pluralMigrations(failed))
+		fmt.Fprintln(w, "After you fix the cause, run this command again: devstack migrate")
+		for _, l := range note {
+			fmt.Fprintln(w, l)
+		}
+		return
+	}
 	if len(note) == 0 {
 		fmt.Fprintln(w, "\ndevstack changed nothing. Every migration is applied. Do nothing.")
 		return
@@ -155,6 +168,13 @@ func writeNote(w io.Writer, note []string) {
 	for _, l := range note {
 		fmt.Fprintln(w, l)
 	}
+}
+
+func pluralMigrations(n int) string {
+	if n == 1 {
+		return "1 migration"
+	}
+	return fmt.Sprintf("%d migrations", n)
 }
 
 // WorkspaceStatus is what one patch has done, and still has to do, in one
