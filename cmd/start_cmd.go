@@ -17,26 +17,27 @@ import (
 
 var upCmd = &cobra.Command{
 	Use:   "up",
-	Short: "Build the replica base runs from, and start its services in the dev daemon",
-	Long: `Fold this workspace's services into the dev daemon, starting the daemon as a
-detached background process if it is not already up.
+	Short: "Build the replica that base runs from, and start its services in the dev daemon",
+	Long: `Fold this workspace's services into the dev daemon. If the daemon is not up
+already, devstack starts it as a detached background process.
 
-This also builds the replica base runs from: one git worktree per service,
-detached at that service's default branch tip, under a .devstack-base sibling of
-the workspace. Your checkout is the template it is built from, and nothing runs
-there. 'devstack base path' prints the replica; 'devstack base sync' moves it to
-the current default branch tip.
+This command also builds the replica that base runs from: one git worktree for
+each service, detached at that service's default branch tip, under a
+.devstack-base sibling of the workspace. Your checkout is the template that
+devstack builds the replica from, and nothing runs there. 'devstack base path'
+prints the replica root. 'devstack base sync' moves the replica to the current
+default branch tip.
 
-One daemon serves the whole machine. It runs every workspace's services, watches
-the files of the directory each copy runs from — the replica for base, its own
-worktree for a stack — and hot-reloads them when that code changes. 'devstack
-service start' also brings the daemon up on demand, so you rarely need this
-command first.
+One daemon serves the whole machine. It runs the services of every workspace. It
+watches the files of the directory that each copy runs from: the replica for
+base, and its own worktree for a stack. When that code changes, the daemon
+reloads the copy. 'devstack service start' starts the daemon on demand, so you
+rarely need this command first.
 
-The shared observability stack is also started automatically so services can
-begin shipping traces and logs immediately.
+devstack also starts the shared collector, so the services can send traces and
+logs immediately.
 
-Logs are written to ~/.local/share/devstack/<workspace-name>/tilt.log.`,
+devstack writes the logs to ~/.local/share/devstack/<workspace-name>/tilt.log.`,
 	RunE: runStart,
 }
 
@@ -65,17 +66,17 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 		return nil, err
 	}
 	if !config.HasWorkspaceManifest(ws.Path) {
-		return nil, fmt.Errorf("no %s in %s — this workspace is not manifest-based yet", config.WorkspaceManifestFileName, ws.Path)
+		return nil, fmt.Errorf("there is no %s in %s. This workspace does not use a manifest yet", config.WorkspaceManifestFileName, ws.Path)
 	}
 
 	if err := workspace.SetWorkspaceActive(ws.Name, true); err != nil {
-		return nil, fmt.Errorf("failed to mark workspace active: %w", err)
+		return nil, fmt.Errorf("can not mark the workspace active: %w", err)
 	}
 	if err := ensureReplica(ws); err != nil {
 		return nil, err
 	}
 	if _, err := regenerateHostTiltfile(); err != nil {
-		return nil, fmt.Errorf("failed to generate host Tiltfile: %w", err)
+		return nil, fmt.Errorf("can not generate the host Tiltfile: %w", err)
 	}
 	if err := ensureHostDaemon(); err != nil {
 		return nil, err
@@ -83,7 +84,7 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 	fmt.Printf("Service(s) for '%s' run in the host daemon on :%d as %s:<svc>.\n", ws.Name, workspace.HostTiltPort, ws.Name)
 
 	if composeSpec, err := infra.ResolveComposeSpec(ws.Path); err != nil {
-		fmt.Fprintf(os.Stderr, "compose infra config error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "compose infra configuration error: %v\n", err)
 	} else if composeSpec != nil {
 		fmt.Printf("Starting compose infra...\n")
 		if err := infra.Up(composeSpec); err != nil {
@@ -100,18 +101,18 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 	// (generation points its OTEL endpoint there), and two collectors cannot bind
 	// the same host ports anyway.
 	if !config.ObservabilityEnabled(ws.Path) {
-		fmt.Printf("Observability disabled for this workspace — skipping collector.\n")
+		fmt.Printf("Observability is off for this workspace, so devstack starts no collector.\n")
 		fmt.Printf("  Turn it on: devstack otel config on (writes %s), then: devstack otel start\n", config.WorkspaceManifestFileName)
 	} else if isOtelRunning(ws) {
-		fmt.Printf("OTEL stack already running\n")
+		fmt.Printf("OTEL collector already running\n")
 	} else {
 		plugin := activePlugin(ws)
 		if plugin == nil {
 			fmt.Fprintf(os.Stderr, "No OTEL plugin configured\n")
 		} else {
-			fmt.Printf("Starting OTEL stack (plugin: %s)...\n", plugin.Name())
+			fmt.Printf("Starting the OTEL collector (plugin: %s)...\n", plugin.Name())
 			if err := startOtelStack(ws, plugin); err != nil {
-				fmt.Fprintf(os.Stderr, "OTEL stack failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "OTEL collector failed: %v\n", err)
 			} else {
 				queryEndpoint := plugin.QueryEndpoint(ws)
 				if queryEndpoint != "" {

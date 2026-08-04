@@ -46,7 +46,7 @@ func ensureClaudeSessionHook(dir string) (bool, error) {
 			return false, fmt.Errorf("%s is not valid JSON, so devstack did not touch it: %w", path, uerr)
 		}
 	case !os.IsNotExist(err):
-		return false, fmt.Errorf("failed to read %s: %w", path, err)
+		return false, fmt.Errorf("devstack can not read %s: %w", path, err)
 	}
 
 	hooks, _ := settings["hooks"].(map[string]any)
@@ -68,10 +68,10 @@ func ensureClaudeSessionHook(dir string) (bool, error) {
 		return false, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return false, fmt.Errorf("failed to create %s: %w", filepath.Dir(path), err)
+		return false, fmt.Errorf("devstack can not create %s: %w", filepath.Dir(path), err)
 	}
 	if err := os.WriteFile(path, append(data, '\n'), 0644); err != nil {
-		return false, fmt.Errorf("failed to write %s: %w", path, err)
+		return false, fmt.Errorf("devstack can not write %s: %w", path, err)
 	}
 	return true, nil
 }

@@ -15,13 +15,16 @@ import (
 
 var baseCmd = &cobra.Command{
 	Use:   "base",
-	Short: "Inspect the replica the base workspace runs from",
-	Long: `"base" is the workspace running without any stack — and it does not run out of
-your checkouts. devstack keeps a replica: one git worktree per service, detached
+	Short: "Inspect the replica that the base workspace runs from",
+	Long: `"base" is the workspace that runs with no stack, and it does not run out of your
+checkouts. devstack keeps a replica: one git worktree for each service, detached
 at that service's default branch tip, under a .devstack-base sibling of the
-workspace. Your checkout is the template it is built from — the git objects, the
-workspace manifest, the machine-local gitignored config — and nothing runs there,
-so work parked half-finished in it neither runs nor blocks.
+workspace.
+
+Your checkout is the template that devstack builds the replica from. The
+template holds the git objects, the workspace manifest and the machine-local
+gitignored configuration. Nothing runs in the template, so half-finished work
+there neither runs nor blocks.
 
 'devstack workspace up' builds the replica and keeps it in step with the
 manifest.
@@ -31,7 +34,7 @@ SUBCOMMANDS
   devstack base sync    move every service's worktree to its default branch tip
   devstack base path    print the replica root, or one service's worktree
 
-Both have an MCP tool: 'base', with action="path" or action="sync".`,
+Both have one MCP tool: 'base', with action="path" or action="sync".`,
 	SilenceUsage: true,
 	RunE:         runBasePath,
 }
@@ -39,11 +42,15 @@ Both have an MCP tool: 'base', with action="path" or action="sync".`,
 var baseSyncCmd = &cobra.Command{
 	Use:   "sync",
 	Short: "Move every replica worktree to its service's default branch tip",
-	Long: `Fetch each service and move its replica worktree to the default branch tip,
-then refresh the machine-local config copied out of the template.
+	Long: `For each service, devstack fetches the repo and moves the replica worktree to
+the default branch tip. devstack then refreshes the machine-local configuration
+that it copies out of the template.
 
-A fetch that fails is a warning, not an error: being offline leaves the worktree
-on the ref it already has, and base keeps running.`,
+This command restarts nothing. A copy that runs keeps the old code until
+somebody restarts it.
+
+A fetch that fails is a warning, not an error. If the machine is offline, the
+worktree stays on the ref that it already has, and base keeps running.`,
 	SilenceUsage: true,
 	RunE:         runBaseSync,
 }
@@ -71,7 +78,7 @@ func ensureReplica(ws *workspace.Workspace) error {
 		fmt.Printf("  ✓ replica worktree %-16s %s (%s)\n", wt.Service, wt.Path, wt.Branch)
 	}
 	for _, name := range res.Removed {
-		fmt.Printf("  ✓ removed replica worktree %s — no longer in the manifest\n", name)
+		fmt.Printf("  ✓ removed replica worktree %s — the manifest no longer lists it\n", name)
 	}
 	for _, w := range res.Warnings {
 		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
@@ -108,7 +115,7 @@ func runBaseSync(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 	}
 	if moved == 0 {
-		fmt.Println("Nothing moved — every service was already at its default branch tip.")
+		fmt.Println("Nothing moved. Every service was already at its default branch tip.")
 	}
 	return nil
 }
@@ -133,7 +140,7 @@ func runBasePath(cmd *cobra.Command, args []string) error {
 			names = append(names, n)
 		}
 		sort.Strings(names)
-		return fmt.Errorf("service %q is not in workspace %q; services: %s", args[0], ws.Name, strings.Join(names, ", "))
+		return fmt.Errorf("service %q is not in workspace %q. Its services: %s", args[0], ws.Name, strings.Join(names, ", "))
 	}
 	fmt.Println(svc.RepoPath)
 	return nil

@@ -142,7 +142,7 @@ func TestForwardRecordsAndRestartRepeatsIt(t *testing.T) {
 	if err := runTunnelRestart(restartCommand(t), nil); err != nil {
 		t.Fatalf("restart: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "repeating last run: pull --services api") {
+	if got := out.String(); !strings.Contains(got, "This repeats the last run: pull --services api") {
 		t.Errorf("restart did not say what it was repeating: %q", got)
 	}
 	if ports := tunnel.TrackedPorts("navexa"); len(ports) != 1 || ports[0] != api {

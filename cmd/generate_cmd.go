@@ -15,12 +15,13 @@ import (
 var workspaceGenerateCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Regenerate the host daemon's Tiltfile from devstack manifests",
-	Long: `Regenerate the host daemon's Tiltfile — the single file the running Tilt
-daemon reads — composing every active workspace's base services plus each
-active feature stack's overlay services.
+	Long: `Regenerate the host daemon's Tiltfile. That is the one file that the running
+Tilt daemon reads. It holds the base services of every active workspace, and the
+overlay services of every active feature stack.
 
-The Tiltfile is a build artifact — edit the manifests, not the Tiltfile.
-Runs automatically as part of 'devstack workspace up'.`,
+The Tiltfile is a build artifact. Edit the manifests, not the Tiltfile.
+
+'devstack workspace up' runs this command for you.`,
 	SilenceUsage: true,
 	RunE:         runGenerate,
 }

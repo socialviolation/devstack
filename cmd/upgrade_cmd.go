@@ -16,19 +16,24 @@ import (
 var upgradeCmd = &cobra.Command{
 	Use:   "upgrade",
 	Short: "Install the current devstack, and report what it leaves out of date",
-	Long: `Install the current devstack from its source, then report the generated files
-an older devstack wrote.
+	Long: `Install the current devstack from its source. Then report the generated files
+that an older devstack wrote.
 
-Upgrading is explicit on purpose. devstack manages a daemon that is running
-services right now, and replacing the binary underneath a live MCP server leaves
-the running process on the old code while every new invocation is on the new
-one — which is worse than the stale build it fixes. So nothing upgrades on its
-own; the session briefing tells you when it is worth doing.
+An upgrade is explicit on purpose. devstack manages a daemon that runs services
+right now. If you replace the binary under a live MCP server, the running process
+stays on the old code while every new run is on the new code. That is worse than
+the stale build it corrects. So nothing upgrades on its own. The session briefing
+tells you when an upgrade is worth doing.
 
-Migrating is a second, separate decision. AGENTS.md is committed into every
-service repo, so regenerating it produces a real git diff in repos devstack does
-not own. This command reports what is out of date and stops. Pass --migrate to
-regenerate it, which runs the newly installed devstack, never this one.
+An MCP server reads its tool descriptions once, when it starts. A session that
+already runs therefore keeps the old tool list. Restart that session after the
+upgrade.
+
+A migration is a second and separate decision. Every service repo commits its
+AGENTS.md, so a regeneration produces a real git diff in repos that devstack does
+not own. This command reports what is out of date, and then it stops. Pass
+--migrate to regenerate the files. The migration runs the devstack that was just
+installed, and never this one.
 
   devstack upgrade             install, then report what is now out of date
   devstack upgrade --migrate   also regenerate the files an older devstack wrote
@@ -39,7 +44,7 @@ regenerate it, which runs the newly installed devstack, never this one.
 
 func init() {
 	rootCmd.AddCommand(upgradeCmd)
-	upgradeCmd.Flags().Bool("migrate", false, "Regenerate the generated files an older devstack wrote")
+	upgradeCmd.Flags().Bool("migrate", false, "Also regenerate the files that an older devstack wrote")
 	upgradeCmd.Flags().Bool("force", false, "Install even when this build is already current, or is a local build")
 }
 
@@ -49,7 +54,7 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 
 	mod := modulePath()
 	if mod == "" {
-		return fmt.Errorf("this binary carries no module path, so there is nothing to install from")
+		return fmt.Errorf("this binary carries no module path, so devstack has nothing to install from")
 	}
 	fmt.Printf("installed: %s\n", buildStamp())
 
@@ -92,11 +97,11 @@ func checkUpgradeWorthDoing(res selfcheck.Result, force bool) error {
 	}
 	switch res.Status {
 	case selfcheck.StatusLocal:
-		return fmt.Errorf("this is a local build, and its commit is not published — installing would replace it with the published branch\nTo do that anyway: devstack upgrade --force")
+		return fmt.Errorf("this is a local build, and its commit is not published. An install replaces it with the published branch\nTo do that anyway, run: devstack upgrade --force")
 	case selfcheck.StatusAhead:
-		return fmt.Errorf("this build is %d commit(s) ahead of the published branch — installing would move it backwards\nTo do that anyway: devstack upgrade --force", res.AheadBy)
+		return fmt.Errorf("this build is %d commit(s) ahead of the published branch. An install moves it backwards\nTo do that anyway, run: devstack upgrade --force", res.AheadBy)
 	case selfcheck.StatusCurrent:
-		fmt.Println("This is the current build; nothing to install.")
+		fmt.Println("This is the current build. devstack has nothing to install.")
 		return nil
 	}
 	return nil
@@ -104,7 +109,7 @@ func checkUpgradeWorthDoing(res selfcheck.Result, force bool) error {
 
 func goInstallLatest(mod string) error {
 	target := mod + "@latest"
-	fmt.Printf("installing %s ...\n", target)
+	fmt.Printf("devstack installs %s ...\n", target)
 	c := exec.Command("go", "install", target)
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
@@ -172,7 +177,7 @@ func parseVersionOutput(out string) string {
 func reportAndMigrate(version string, migrate bool) error {
 	stale, order := staleByWorkspace(version)
 	if len(order) == 0 {
-		fmt.Println("Every workspace's generated files match this build.")
+		fmt.Println("The generated files of every workspace match this build.")
 		return nil
 	}
 
@@ -188,18 +193,18 @@ func reportAndMigrate(version string, migrate bool) error {
 	if !migrate {
 		fmt.Println("\ndevstack upgrade --migrate brings these up to date. In every service above,")
 		fmt.Println("and in each stack worktree, it writes:")
-		fmt.Println("  AGENTS.md              the devstack block, replacing whatever an older one left")
+		fmt.Println("  AGENTS.md              the devstack block, which replaces what an older one left")
 		fmt.Println("  .mcp.json              the MCP server entry")
 		fmt.Println("  CLAUDE.md and friends  a pointer block, in the files a repo already has")
 		fmt.Println("  .claude/settings.json  the SessionStart hook, so every session runs devstack prime")
-		fmt.Println("\nAll of these are committed, so this is a real diff in every repo. Nothing else")
-		fmt.Println("in them is touched, and no file is created that is not already there.")
+		fmt.Println("\nEvery repo commits these files, so this is a real diff in each one. devstack")
+		fmt.Println("touches nothing else in them, and it creates no file that is not already there.")
 		return nil
 	}
 
 	bin := installedBinary()
 	if bin == "" {
-		return fmt.Errorf("can not find the installed devstack to migrate with; run 'devstack init --all' in each workspace instead")
+		return fmt.Errorf("devstack can not find the installed binary to migrate with. Run 'devstack init --all' in each workspace instead")
 	}
 	fmt.Println()
 	return migrateWorkspaces(bin, order)
@@ -237,8 +242,8 @@ func migrateWorkspaces(bin string, order []workspace.Workspace) error {
 		fmt.Printf("✓ %s regenerated\n", ws.Name)
 	}
 	if len(failed) > 0 {
-		return fmt.Errorf("migration failed for: %s", strings.Join(failed, ", "))
+		return fmt.Errorf("the migration failed for: %s", strings.Join(failed, ", "))
 	}
-	fmt.Println("\nReview the diff in each repo before committing.")
+	fmt.Println("\nRead the diff in each repo before you commit.")
 	return nil
 }

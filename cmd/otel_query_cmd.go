@@ -20,11 +20,14 @@ import (
 var otelTracesCmd = &cobra.Command{
 	Use:   "traces [trace-id]",
 	Short: "Query traces from whatever backend this workspace uses",
-	Long: `Query traces without naming a backend, URL or credential — devstack resolves
-the workspace's configured backend and talks to it for you.
+	Long: `Query traces without a backend name, a URL or a credential. devstack resolves
+the configured backend of this workspace, and talks to it for you.
 
-With no argument it lists recent root spans. With a trace ID it prints that
-trace's full span tree.
+With no argument, this command lists the recent root spans. With a trace ID, it
+prints the full span tree of that trace.
+
+With no --stack, the query covers every copy together, base and stacks. Pass
+--stack <name> for one stack. Pass --stack base for base alone.
 
 Examples:
   devstack otel traces
@@ -38,7 +41,10 @@ Examples:
 var otelLogsCmd = &cobra.Command{
 	Use:   "logs",
 	Short: "Query collected logs from whatever backend this workspace uses",
-	Long: `Query OTEL logs without naming a backend, URL or credential.
+	Long: `Query OTEL logs without a backend name, a URL or a credential.
+
+This command has no --stack flag. To read the logs of one execution, pass
+--trace <id>.
 
 Examples:
   devstack otel logs --service=api
@@ -48,14 +54,14 @@ Examples:
 
 var otelServicesCmd = &cobra.Command{
 	Use:   "services",
-	Short: "List the service variants reporting telemetry (base, each stack, each env)",
-	Long: `List every distinguishable variant reporting telemetry, so it is obvious
-which one to query. The same service runs many times over — in the base
-workspace, in each feature stack, under each config env — and all of them report
-to the one shared backend.
+	Short: "List the copies that report telemetry (base, each stack, each environment)",
+	Long: `List every copy that reports telemetry, so it is obvious which one to query. The
+same service runs many times over — in the base workspace, in each feature stack,
+and under each environment. All of them report to the one shared backend.
 
-Where a service reports itself under a different name than devstack knows it by,
-both are shown; the devstack name is the one --service filters on.`,
+A service can report itself under a name that differs from the name devstack
+knows it by. devstack then shows both names. The --service flag filters on the
+name that devstack uses.`,
 	RunE: runOtelServices,
 }
 
@@ -65,16 +71,16 @@ func init() {
 	otelCmd.AddCommand(otelServicesCmd)
 
 	for _, sub := range []*cobra.Command{otelTracesCmd, otelLogsCmd, otelServicesCmd} {
-		sub.Flags().String("workspace", "", "Workspace name or path (default: auto-detect from current directory)")
-		sub.Flags().Duration("since", 15*time.Minute, "Lookback window")
+		sub.Flags().String("workspace", "", "Workspace name or path. Default: the workspace of the current directory (env: DEVSTACK_WORKSPACE)")
+		sub.Flags().Duration("since", 15*time.Minute, "How far back to look")
 	}
 
-	otelTracesCmd.Flags().String("service", "", "Only traces from this service (default: the service you are standing in; \"all\" for the whole workspace)")
-	otelTracesCmd.Flags().String("stack", "", "Only traces from this stack. Omit and every copy is searched, base and stacks together; \"base\" for base alone")
-	otelTracesCmd.Flags().String("attr", "", "Only traces with this attribute (format: key=value)")
+	otelTracesCmd.Flags().String("service", "", "Only traces from this service. Default: the service you stand in. Pass \"all\" for the whole workspace")
+	otelTracesCmd.Flags().String("stack", "", "Only traces from this stack. Omit it, and devstack searches every copy, base and stacks together. Pass \"base\" for base alone")
+	otelTracesCmd.Flags().String("attr", "", "Only traces with this attribute, as key=value")
 	otelTracesCmd.Flags().Int("limit", 10, "Maximum traces to return")
 
-	otelLogsCmd.Flags().String("service", "", "Only logs from this service (default: the service you are standing in; \"all\" for the whole workspace)")
+	otelLogsCmd.Flags().String("service", "", "Only logs from this service. Default: the service you stand in. Pass \"all\" for the whole workspace")
 	otelLogsCmd.Flags().String("trace", "", "Only logs correlated with this trace ID")
 	otelLogsCmd.Flags().Int("limit", 50, "Maximum log lines to return")
 }
@@ -149,7 +155,7 @@ func explainEmptyTraceResult(cmd *cobra.Command, stackName string) {
 	faint.Println("Empty means nothing matched — not that the service is healthy.")
 
 	if stackName == "" {
-		faint.Println("  This searched every copy, base and stacks. Narrow it with --stack <name>, or --stack base.")
+		faint.Println("  This query covered every copy, base and stacks. To narrow it, pass --stack <name>, or --stack base.")
 		return
 	}
 	if stackName == "base" {
@@ -164,10 +170,10 @@ func explainEmptyTraceResult(cmd *cobra.Command, stackName string) {
 		return
 	}
 	if !rec.Active {
-		faint.Printf("  Stack %q is down, so nothing of it is running to emit. Bring it up: devstack stack up %s\n", stackName, stackName)
+		faint.Printf("  Stack %q is down. Nothing of it runs, so nothing emits telemetry. To bring it up, run: devstack stack up %s\n", stackName, stackName)
 		return
 	}
-	faint.Printf("  Stack %q is up. Check the copy is running, and that it emits: devstack status --stack %s · devstack otel status\n", stackName, stackName)
+	faint.Printf("  Stack %q is up. Make sure that the copy runs, and that it emits: devstack status --stack %s · devstack otel status\n", stackName, stackName)
 }
 
 func runOtelTraces(cmd *cobra.Command, args []string) error {
@@ -205,7 +211,7 @@ func runOtelTraces(cmd *cobra.Command, args []string) error {
 	if attr != "" {
 		key, value, found := strings.Cut(attr, "=")
 		if !found {
-			return fmt.Errorf("--attr must be key=value, got %q", attr)
+			return fmt.Errorf("--attr must be key=value. devstack read %q", attr)
 		}
 		req.Attribute, req.Value = key, value
 	}
@@ -331,7 +337,7 @@ func runOtelServices(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if len(variants) == 0 {
-		fmt.Printf("No services have reported telemetry in the last %s.\n", since)
+		fmt.Printf("No service reported telemetry in the last %s.\n", since)
 		return nil
 	}
 

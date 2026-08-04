@@ -118,7 +118,7 @@ func TestWriteAIInstructionPointersAppendsAndIsIdempotent(t *testing.T) {
 	for _, want := range []string{
 		"## devstack (local dev services)",
 		"A service can have more than one running copy.",
-		"Services are not all running by default.",
+		"By default, not every service runs.",
 		"devstack status",
 		"devstack service start api",
 		"devstack service restart api",

@@ -20,7 +20,7 @@ func ensureCollector(ws *workspace.Workspace) (started bool, err error) {
 	}
 	plugin := activePlugin(ws)
 	if plugin == nil {
-		return false, fmt.Errorf("no OTEL plugin configured")
+		return false, fmt.Errorf("no OTEL plugin is configured for this workspace")
 	}
 	if isOtelRunning(ws) && !plugin.CompanionStale(ws) {
 		return false, nil

@@ -76,14 +76,14 @@ func runEnable(cmd *cobra.Command, args []string) error {
 	view, err := tiltClient.GetView()
 	if err != nil {
 		if stackName != "" {
-			return fmt.Errorf("dev daemon not reachable on :%d — start the stack first with: devstack stack up %s\n(%w)", tiltPort, stackName, err)
+			return fmt.Errorf("the dev daemon does not answer on :%d. Start the stack first with: devstack stack up %s\n(%w)", tiltPort, stackName, err)
 		}
 		// Daemon not running — bring it up automatically, then retry.
 		// bringWorkspaceUp is idempotent and self-resolves the workspace, so this
 		// is a no-op if it is already up by the time we get here. Its hooks are
 		// fired separately: a broken workspace.up hook is not a daemon failure,
 		// and it must not abandon a service start whose daemon is up.
-		fmt.Println("Dev daemon not running — starting it...")
+		fmt.Println("The dev daemon is not running, so devstack starts it...")
 		upWS, startErr := bringWorkspaceUp()
 		var hookErr error
 		if startErr == nil {
@@ -98,7 +98,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		}
 		view, err = tiltClient.GetView()
 		if err != nil {
-			return fmt.Errorf("dev daemon started but not reachable yet — retry: devstack service start %s --stack base\n(%w)", targetName, err)
+			return fmt.Errorf("the dev daemon started, but it does not answer yet. Try again: devstack service start %s --stack base\n(%w)", targetName, err)
 		}
 	}
 
@@ -114,7 +114,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 
 	here, inBase := splitByPresence(ws.Name, namespace, stackName, toTrigger, present)
 	for _, svc := range inBase {
-		fmt.Printf("  (dep %s runs in base — not started here)\n", svc)
+		fmt.Printf("  (the dependency %s runs in base, so devstack does not start it here)\n", svc)
 	}
 
 	for _, svc := range here {
@@ -124,7 +124,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 				if out != "" {
 					fmt.Print(out)
 				}
-				return fmt.Errorf("enable %s failed: %w", rn, err)
+				return fmt.Errorf("can not enable %s: %w", rn, err)
 			}
 		}
 		out, err := tiltClient.RunCLI("trigger", rn)
@@ -132,7 +132,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 			if out != "" {
 				fmt.Print(out)
 			}
-			return fmt.Errorf("trigger %s failed: %w", rn, err)
+			return fmt.Errorf("can not trigger %s: %w", rn, err)
 		}
 		if out != "" {
 			fmt.Print(out)
@@ -172,13 +172,13 @@ func splitByPresence(wsName, namespace, stackName string, want []string, present
 // worked.
 func autoStartOutcome(daemonErr, hookErr error, services []string) (error, []string) {
 	if daemonErr != nil {
-		return fmt.Errorf("failed to auto-start dev daemon: %w", daemonErr), nil
+		return fmt.Errorf("can not auto-start the dev daemon: %w", daemonErr), nil
 	}
 	if hookErr == nil {
 		return nil, nil
 	}
 	return nil, []string{
 		fmt.Sprintf("the dev daemon is up, but a workspace.up hook failed: %v", hookErr),
-		fmt.Sprintf("%s starts anyway. Fix the hook, then re-run it: devstack hooks run workspace.up", strings.Join(services, ", ")),
+		fmt.Sprintf("%s starts anyway. Fix the hook, then run it again: devstack hooks run workspace.up", strings.Join(services, ", ")),
 	}
 }

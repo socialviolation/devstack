@@ -12,7 +12,7 @@ func TestAutoStartDaemonFailureIsFatal(t *testing.T) {
 	if fatal == nil {
 		t.Fatal("autoStartOutcome() = nil, want a daemon failure to stop the start")
 	}
-	if !strings.Contains(fatal.Error(), "auto-start dev daemon") {
+	if !strings.Contains(fatal.Error(), "auto-start the dev daemon") {
 		t.Errorf("error = %v, want it to name the daemon", fatal)
 	}
 	if len(warnings) != 0 {
@@ -32,7 +32,7 @@ func TestAutoStartHookFailureIsNotFatalAndDoesNotBlameTheDaemon(t *testing.T) {
 		t.Fatalf("warnings = %v, want the failure and the remedy", warnings)
 	}
 	joined := strings.Join(warnings, "\n")
-	if strings.Contains(joined, "failed to auto-start dev daemon") {
+	if strings.Contains(joined, "can not auto-start the dev daemon") {
 		t.Errorf("a hook failure must not be reported as a daemon failure:\n%s", joined)
 	}
 	for _, want := range []string{"daemon is up", "workspace.up", "api, web", "devstack hooks run workspace.up"} {

@@ -32,13 +32,13 @@ func resolveInstanceTarget(cmd *cobra.Command, ws *workspace.Workspace, wsPath, 
 		if !isBaseGroup {
 			return nil, err
 		}
-		return nil, fmt.Errorf("group %q has no services in stack %q — it runs entirely on base (%s)\nact on base's copies: devstack group %s %s --stack base",
+		return nil, fmt.Errorf("group %q has no services in stack %q. It runs entirely on base (%s).\nAct on base's copies: devstack group %s %s --stack base",
 			name, stackName, joinServices(members), cmd.Name(), name)
 	}
 
 	for _, cov := range stack.CoverageOf([]string{name}, services, baseGroups) {
 		if !cov.Complete() {
-			color.New(color.Faint).Printf("group %s: %d of %d in stack %q — %s %s on base\n",
+			color.New(color.Faint).Printf("group %s: %d of %d in stack %q. %s %s on base\n",
 				cov.Group, len(cov.In), len(cov.In)+len(cov.Missing), stackName,
 				joinServices(cov.Missing), isAre(len(cov.Missing)))
 		}

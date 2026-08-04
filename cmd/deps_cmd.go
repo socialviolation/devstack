@@ -13,12 +13,12 @@ var depsCmd = &cobra.Command{
 	Use:     "dependencies",
 	Aliases: []string{"deps"},
 	Short:   "Declare startup dependencies between services",
-	Long: `Dependencies tell devstack which services must be running before a given service
-can start. When you run 'devstack service start api --stack base', devstack resolves the full dependency
-graph and starts everything in the correct order automatically.
+	Long: `A dependency tells devstack which services must run before a given service can
+start. When you run 'devstack service start api --stack base', devstack resolves
+the full dependency graph. It then starts every service in the correct order.
 
-Dependencies are stored in <workspace>/devstack.workspace.yaml and visualised
-inline in the output of 'devstack group list' and 'devstack status'.
+devstack stores the dependencies in <workspace>/devstack.workspace.yaml.
+'devstack group list' and 'devstack status' show them in their output.
 
 Example: if 'api' depends on 'postgres' and 'redis':
   devstack dependencies add api postgres
@@ -26,7 +26,7 @@ Example: if 'api' depends on 'postgres' and 'redis':
   devstack service start api --stack base   ← starts postgres, redis, then api
 
 SUBCOMMANDS
-  devstack dependencies add <svc> <dep>    declare that svc requires dep to be running first
+  devstack dependencies add <svc> <dep>    declare that svc needs dep to run first
   devstack dependencies remove <svc> <dep> remove a declared dependency
   devstack dependencies list <svc>         show the full resolved startup sequence for a service`,
 }
@@ -49,10 +49,11 @@ var depsOrderCmd = &cobra.Command{
 	Use:     "list <service>",
 	Aliases: []string{"order"},
 	Short:   "Show the full resolved startup sequence for a service",
-	Long: `Resolves the complete dependency graph for a service and prints the startup
-order — the sequence devstack will use when you run 'devstack service start <service>'
-with the copy to start named.
-Useful for verifying that dependencies are declared correctly.`,
+	Long: `devstack resolves the complete dependency graph for a service and prints the
+startup order. That is the sequence devstack uses when you run
+'devstack service start <service>' and name the copy to start.
+
+Use this command to make sure that the dependencies are correct.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runDepsOrder,
 }
@@ -75,7 +76,7 @@ func runDepsAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	if !config.HasWorkspaceManifest(ws.Path) {
-		return fmt.Errorf("workspace %q has no %s — dependencies can only be edited in a manifest-based workspace", ws.Name, config.WorkspaceManifestFileName)
+		return fmt.Errorf("workspace %q has no %s. devstack can edit dependencies only in a workspace that has a manifest", ws.Name, config.WorkspaceManifestFileName)
 	}
 
 	cfg, err := config.Load(ws.Path)
@@ -86,7 +87,7 @@ func runDepsAdd(cmd *cobra.Command, args []string) error {
 	// Check for duplicate
 	for _, existing := range cfg.Deps[service] {
 		if existing == dep {
-			fmt.Printf("%s already declared as a dependency of %s\n", dep, service)
+			fmt.Printf("%s is already a declared dependency of %s\n", dep, service)
 			return nil
 		}
 	}
@@ -99,7 +100,7 @@ func runDepsAdd(cmd *cobra.Command, args []string) error {
 		// Restore original state (remove the dep we just added)
 		deps := cfg.Deps[service]
 		cfg.Deps[service] = deps[:len(deps)-1]
-		return fmt.Errorf("dependency cycle detected: adding %q as a dep of %q would create a cycle", dep, service)
+		return fmt.Errorf("dependency cycle detected: %q as a dependency of %q makes a cycle", dep, service)
 	}
 
 	if err := config.SetServiceDependencies(ws.Path, service, cfg.Deps[service]); err != nil {
@@ -108,9 +109,9 @@ func runDepsAdd(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("✓ %s now depends on %s\n", service, dep)
 	if _, err := regenerateHostTiltfile(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: can not regenerate host config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: can not regenerate the host configuration: %v\n", err)
 	} else {
-		fmt.Println("Regenerated host config.")
+		fmt.Println("Regenerated the host configuration.")
 	}
 	return nil
 }
@@ -126,7 +127,7 @@ func runDepsRemove(cmd *cobra.Command, args []string) error {
 	}
 
 	if !config.HasWorkspaceManifest(ws.Path) {
-		return fmt.Errorf("workspace %q has no %s — dependencies can only be edited in a manifest-based workspace", ws.Name, config.WorkspaceManifestFileName)
+		return fmt.Errorf("workspace %q has no %s. devstack can edit dependencies only in a workspace that has a manifest", ws.Name, config.WorkspaceManifestFileName)
 	}
 
 	cfg, err := config.Load(ws.Path)
@@ -146,7 +147,7 @@ func runDepsRemove(cmd *cobra.Command, args []string) error {
 	}
 
 	if !found {
-		fmt.Printf("%s not found in %s dependencies\n", dep, service)
+		fmt.Printf("%s is not a dependency of %s\n", dep, service)
 		return nil
 	}
 
@@ -158,9 +159,9 @@ func runDepsRemove(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("✓ Removed %s from %s dependencies\n", dep, service)
 	if _, err := regenerateHostTiltfile(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: can not regenerate host config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: can not regenerate the host configuration: %v\n", err)
 	} else {
-		fmt.Println("Regenerated host config.")
+		fmt.Println("Regenerated the host configuration.")
 	}
 	return nil
 }

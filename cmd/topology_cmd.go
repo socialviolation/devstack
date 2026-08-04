@@ -11,10 +11,12 @@ import (
 
 var topologyCmd = &cobra.Command{
 	Use:   "topology [service]",
-	Short: "Explain the workspace, or a single service's resolved config",
-	Long: `With no arguments, shows the resolved workspace/environment plus the service
-graph (groups, dependencies, dependents). With a service name, shows that
-service's fully resolved configuration and where each value came from.`,
+	Short: "Explain the workspace, or one service's resolved configuration",
+	Long: `With no arguments, devstack shows the resolved workspace and environment. It
+also shows the service graph: the groups, the dependencies and the dependents.
+
+With a service name, devstack shows that service's fully resolved configuration.
+It also shows where each value comes from.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runTopology,
 }

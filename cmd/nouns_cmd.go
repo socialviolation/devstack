@@ -17,33 +17,36 @@ var serviceCmd = &cobra.Command{
 	Use:     "service",
 	Aliases: []string{"svc"},
 	Short:   "Start, stop and restart the services of this workspace",
-	Long: `Act on one service. The name must be a service: to act on a group, use
+	Long: `Act on one service. The name must be a service. To act on a group, run
 'devstack group <action> <name>'.
 
-With no name, devstack works out the service from the working directory.
+With no name, devstack finds the service from the working directory.
 
-These actions change what is running, so they also need the copy to act on:
---stack <name> for a feature stack, or --stack base for base — which runs from
-the replica devstack keeps, not from your checkout. There is no default. With no
-flag devstack uses the copy whose directory you are standing in, and refuses in
-a plain checkout rather than acting on code you are not looking at.`,
+These actions change what runs, so they must also name the copy to act on. Pass
+--stack <name> for a feature stack, or --stack base for base. Base runs from the
+replica that devstack keeps, not from your checkout.
+
+There is no default. With no flag, devstack acts on the copy whose directory you
+are in. In a plain checkout, devstack refuses. No copy runs the code of a plain
+checkout, so devstack does not act on code that you are not looking at.`,
 }
 
 var groupCmd = &cobra.Command{
 	Use:   "group",
 	Short: "Start, stop and restart a named set of services, and manage the sets",
-	Long: `A group is a named set of services that you operate on together. Starting a
-group starts every service in it, in dependency order.
+	Long: `A group is a named set of services that you act on together. When you start a
+group, devstack starts every service in it, in dependency order.
 
-The name must be a group: to act on one service, use 'devstack service <action> <name>'.
+The name must be a group. To act on one service, run 'devstack service <action> <name>'.
 
-start, stop and restart change what is running, so they need the copy to act on
-too: --stack <name>, or --stack base. There is no default.
+start, stop and restart change what runs, so they must also name the copy to act
+on: --stack <name>, or --stack base. There is no default.
 
-A stack rarely overlays a whole group. Against --stack <name> the action reaches
-only the members that stack runs its own copy of, and names the ones still
-serving from base; a group with no member in the stack is refused, not silently
-narrowed. To act on those, run the same command with --stack base.`,
+A stack rarely overlays a whole group. With --stack <name>, the action reaches
+only the members that the stack runs its own copy of. devstack names the members
+that still serve from base. If no member of the group is in the stack, devstack
+refuses. It does not narrow the group without a word to you. To act on the
+members that stay on base, run the same command with --stack base.`,
 	RunE: runGroupsList,
 }
 
@@ -72,7 +75,7 @@ func groupAction(use, short string, run func(*cobra.Command, []string) error) *c
 var (
 	serviceStartCmd   = serviceAction("start [service]", "Start a service and all the services it depends on", runEnable, cobra.MaximumNArgs(1))
 	serviceStopCmd    = serviceAction("stop [service]", "Stop a service", runStop, cobra.MaximumNArgs(1))
-	serviceRestartCmd = serviceAction("restart [service]", "Restart a service, without restarting what it depends on", runRestart, cobra.MaximumNArgs(1))
+	serviceRestartCmd = serviceAction("restart [service]", "Restart a service, but not the services it depends on", runRestart, cobra.MaximumNArgs(1))
 
 	groupStartCmd   = groupAction("start <group>", "Start every service in a group, in dependency order", runEnable)
 	groupStopCmd    = groupAction("stop <group>", "Stop every service in a group", runStop)
@@ -91,6 +94,6 @@ func init() {
 		serviceStartCmd, serviceStopCmd, serviceRestartCmd,
 		groupStartCmd, groupStopCmd, groupRestartCmd,
 	} {
-		c.Flags().String("stack", "", "Which copy to act on: a feature stack's name, or \"base\" for the replica base runs from. Required unless the working directory is inside one of them")
+		c.Flags().String("stack", "", "The copy to act on: a feature stack name, or \"base\" for the replica that base runs from. Required unless the working directory is inside one of them")
 	}
 }

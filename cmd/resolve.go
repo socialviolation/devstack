@@ -14,7 +14,7 @@ import (
 func detectServicesFromCwd(workspacePath string, cfg *config.WorkspaceConfig) ([]string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get current directory: %w", err)
+		return nil, fmt.Errorf("can not read the current directory: %w", err)
 	}
 
 	ctx, err := config.ResolveContext(config.ResolveOptions{StartPath: cwd, WorkspacePath: workspacePath})
@@ -30,7 +30,7 @@ func detectServicesFromCwd(workspacePath string, cfg *config.WorkspaceConfig) ([
 	}
 
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("must specify a service name or group name\nUsage: devstack service start <service>\n       devstack group start <group>")
+		return nil, fmt.Errorf("name a service or a group\nUsage: devstack service start <service>\n       devstack group start <group>")
 	}
 	return matches, nil
 }
@@ -43,7 +43,7 @@ func detectServiceFromCwd(workspacePath string, cfg *config.WorkspaceConfig) (st
 		return "", err
 	}
 	if len(matches) > 1 {
-		return "", fmt.Errorf("multiple services match (%s); please specify explicitly", strings.Join(matches, ", "))
+		return "", fmt.Errorf("more than one service matches (%s). Name the one you want", strings.Join(matches, ", "))
 	}
 	return matches[0], nil
 }
@@ -94,7 +94,7 @@ func resolveTargetKind(workspacePath, name string, cfg *config.WorkspaceConfig, 
 		if isGroup {
 			return nil, fmt.Errorf("%q is a group, not a service — did you mean: devstack group <action> %s", name, name)
 		}
-		return nil, fmt.Errorf("'%s' is not a known service\nRun 'devstack status' to see available services", name)
+		return nil, fmt.Errorf("'%s' is not a known service\nRun 'devstack status' to see the services", name)
 	case targetGroup:
 		if isGroup {
 			return members, nil
@@ -102,7 +102,7 @@ func resolveTargetKind(workspacePath, name string, cfg *config.WorkspaceConfig, 
 		if isService {
 			return nil, fmt.Errorf("%q is a service, not a group — did you mean: devstack service <action> %s", name, name)
 		}
-		return nil, fmt.Errorf("'%s' is not a known group\nRun 'devstack group list' to see groups", name)
+		return nil, fmt.Errorf("'%s' is not a known group\nRun 'devstack group list' to see the groups", name)
 	}
 
 	if isService {
@@ -117,5 +117,5 @@ func resolveTargetKind(workspacePath, name string, cfg *config.WorkspaceConfig, 
 		return members, nil
 	}
 
-	return nil, fmt.Errorf("'%s' is not a known service or group\nRun 'devstack status' to see available services or 'devstack group list' to see groups", name)
+	return nil, fmt.Errorf("'%s' is not a known service or group\nRun 'devstack status' to see the services, or 'devstack group list' to see the groups", name)
 }

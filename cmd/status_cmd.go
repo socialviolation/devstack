@@ -531,7 +531,7 @@ func readBranchLabels(rows []statusRow) map[string]string {
 func runStatusAll() error {
 	workspaces, err := workspace.All()
 	if err != nil {
-		return fmt.Errorf("failed to load workspace registry: %w", err)
+		return fmt.Errorf("can not load the workspace registry: %w", err)
 	}
 
 	if len(workspaces) == 0 {

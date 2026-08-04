@@ -16,7 +16,7 @@ import (
 
 var workspaceDoctorCmd = &cobra.Command{
 	Use:   "doctor",
-	Short: "Check workspace manifests and topology integrity",
+	Short: "Examine the workspace manifests and the topology for problems",
 	RunE:  runWorkspaceDoctor,
 }
 
@@ -127,7 +127,7 @@ func reportConfigDrift(workspacePath string) int {
 			continue
 		}
 		if drifted == 0 {
-			fmt.Println("\nconfig drift (declared by the service's own config.sources, not supplied locally):")
+			fmt.Println("\nconfiguration drift (the service declares these keys in config.sources, and the local env does not supply them):")
 		}
 		drifted++
 		fmt.Print(svcconfig.Render(name, entries))

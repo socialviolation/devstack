@@ -22,41 +22,49 @@ import (
 var stackCmd = &cobra.Command{
 	Use:   "stack",
 	Short: "Create and manage feature stacks that overlay a base workspace",
-	Long: `A feature stack runs a subset of a base workspace's services from their own
-git worktrees, reusing base's copies for everything else. Only the services you
-change (and the services that call them) get a worktree and a dynamically
-allocated port; the rest resolve to base's copies.
+	Long: `A feature stack runs some of a base workspace's services from their own git
+worktrees. For every other service the stack uses base's copy.
 
-"base" is the workspace running without any stack. It does not run from your
-checkouts: it runs from a replica devstack keeps, one git worktree per service at
-the default branch tip, and your checkout is the template that replica is built
-from. It is not itself a stack, and no stack may be named "base" — but a command
-that starts, stops or writes takes --stack base to act on it. That command has no
-default: with no --stack it acts on the stack or replica your directory is in, and
-refuses anywhere else.
+Only the services that you change get a worktree and an allocated port. The
+services that call them get one too. All the other services resolve to base's
+copies.
 
-The telemetry queries are the exception: 'devstack otel traces' with no --stack
-searches every copy, base and stacks together. Pass --stack base for base alone.`,
+"base" is the workspace that runs with no stack. Base does not run from your
+checkouts. Base runs from a replica that devstack keeps: one git worktree for
+each service, at the default branch tip. Your checkout is the template, and
+devstack builds the replica from it.
+
+Base is not a stack, and no stack can carry the name "base". A command that
+starts, stops or writes takes --stack base to act on base. That command has no
+default. With no --stack, it acts on the stack or the replica that your directory
+is in. Anywhere else, it refuses.
+
+The telemetry queries are the exception. 'devstack otel traces' with no --stack
+searches every copy, base and the stacks together. Pass --stack base to search
+base alone.`,
 	RunE: runStackList,
 }
 
 var stackCreateCmd = &cobra.Command{
 	Use:   "create <name> --repos a,b",
 	Short: "Create a feature stack overlaying the base workspace",
-	Long: `Create a feature stack: a git worktree and an allocated port for each service
-you name, plus the services that call them. Everything else resolves to base's
-copy.
+	Long: `Create a feature stack. devstack makes a git worktree and allocates a port for
+each service that you name. It does the same for the services that call them.
+Every other service resolves to base's copy.
 
-Each worktree is cut from that repo's default branch, origin's copy of it where
-there is one — never from whatever your checkout happens to have checked out. So
-a stack starts from what the team shipped, and work parked half-finished in a
-checkout is not dragged into it. --from names a different ref (a release branch,
-a tag, a commit). A branch that already exists is attached to with the history it
-already has, and --from does not apply to it.
+A stack starts from what the team shipped. devstack cuts each worktree from that
+repo's default branch. Where the repo has a remote, devstack uses origin's copy
+of that branch. devstack never cuts from what your checkout has checked out, so
+half-finished work in a checkout does not come into the stack. --from names a
+different ref: a release branch, a tag, or a commit.
 
-If a checkout holds uncommitted work, or commits the stack's ref does not have,
-the command says so and carries on: it is a warning that this stack does not
-contain that work, not an error.`,
+If the branch already exists, devstack attaches to it with the history that it
+already has. --from does not apply to a branch that already exists.
+
+If a checkout holds uncommitted work, the command says so and carries on. It
+does the same if the checkout holds commits that the stack's ref does not have.
+That is a warning that this stack does not contain that work. It is not an
+error.`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackCreate,
@@ -65,17 +73,18 @@ contain that work, not an error.`,
 var stackAddCmd = &cobra.Command{
 	Use:   "add <name> <service|group> [service|group...]",
 	Short: "Add services to a stack that already exists",
-	Long: `Put another service into a stack without disturbing what is already in it: the
-worktrees it has keep their branches and their work, and its running copies keep
-the ports they are on.
+	Long: `Put another service into a stack, and disturb nothing that is already in it.
+The worktrees that the stack has keep their branches and their work. The copies
+that it runs keep their ports.
 
-Each named service gets a worktree on the stack's branch, and the services that
-call it are pulled in the same way 'stack create' pulls them in. A name already
-in the stack is reported, not an error; naming nothing new is.
+Each named service gets a worktree on the stack's branch. The services that call
+it come in too, in the same way that 'stack create' brings them in. A name that
+is already in the stack is reported, and that is not an error. If you name
+nothing new at all, that is an error.
 
-The stack is left exactly as up or down as it was. If it is up, the added copies
-become resources in the host daemon but are not started — start them with
-'devstack service start <service> --stack <name>'.`,
+The stack stays exactly as up, or as down, as it was. If the stack is up, the
+added copies become resources in the host daemon, and devstack does not start
+them. Start each one with 'devstack service start <service> --stack <name>'.`,
 	Args:         cobra.MinimumNArgs(2),
 	SilenceUsage: true,
 	RunE:         runStackAdd,
@@ -84,24 +93,26 @@ become resources in the host daemon but are not started — start them with
 var stackRemoveCmd = &cobra.Command{
 	Use:     "rm <name>",
 	Aliases: []string{"remove"},
-	Short:   "Stop a stack, remove its worktrees, release its ports, and deregister it",
-	Long: `Tear down a feature stack: stop its services, delete its worktrees, release
-its ports, and delete its record and its stack root.
+	Short:   "Stop a stack, remove its worktrees, release its ports, and delete its record",
+	Long: `Tear a feature stack down. devstack stops its services, deletes its worktrees,
+releases its ports, and deletes its record and its stack root.
 
-The branch stays. Commits you pushed stay. Work that is only in a worktree does
-not: deleting the worktree deletes it.
+The branch stays. The commits that you pushed stay. Work that is only in a
+worktree does not stay. devstack deletes the worktree, and that work goes with
+it.
 
-CAUTION: this command cannot be undone.
+CAUTION: You can not undo this command.
 
-  --force  Deletes worktrees that have uncommitted changes, and destroys those
-           changes. Without it the command refuses and names the dirty
-           worktrees, which is your chance to commit them.
+  --force  devstack deletes worktrees that have uncommitted changes, and
+           destroys those changes. Without --force, the command refuses and
+           names the dirty worktrees. That is your chance to commit them.
 
-If this workspace declares stack.destroy hooks, they fire first, while the ports
-and the record can still be read. A hook failure does not stop the teardown, so
-it means the external cleanup probably did not happen — and you cannot retry it
-afterwards, because the record its ${self...} references resolve against is gone.
-The resolved URLs are printed at the point of failure. Keep them.`,
+If this workspace declares stack.destroy hooks, they run first, while devstack
+can still read the ports and the record. A hook failure does not stop the
+teardown. A hook failure therefore means that the external cleanup probably did
+not happen. You can not run that hook again afterwards: the record that its
+${self...} references resolve against is gone. devstack prints the resolved URLs
+at the point of failure. Keep them.`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackRemove,
@@ -117,7 +128,7 @@ var stackListCmd = &cobra.Command{
 
 var stackConfigCmd = &cobra.Command{
 	Use:          "config <service>",
-	Short:        "Show the effective config a service would run with in a stack (read-only)",
+	Short:        "Show the effective configuration of a service in a stack (read-only)",
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackConfig,
@@ -125,7 +136,7 @@ var stackConfigCmd = &cobra.Command{
 
 var stackUpCmd = &cobra.Command{
 	Use:          "up <name>",
-	Short:        "Bring a feature stack's services up on their own ports in the one host daemon",
+	Short:        "Start a feature stack's services on their own ports, in the one host daemon",
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackUp,
@@ -134,10 +145,11 @@ var stackUpCmd = &cobra.Command{
 var stackStatusCmd = &cobra.Command{
 	Use:   "status <name>",
 	Short: "Show a feature stack's services as they run in the host daemon",
-	Long: `Show one stack's service instances: their state, ports and env, read from the
-one host daemon and printed de-namespaced.
+	Long: `Show the copies of the services in one stack: the state, the ports and the env
+of each one. devstack reads them from the one host daemon, and prints them
+without the namespace prefix.
 
-'devstack status' is the workspace-level view and takes --stack for the same
+'devstack status' is the workspace-level view. It takes --stack for this same
 report.`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
@@ -146,7 +158,7 @@ report.`,
 
 var stackDownCmd = &cobra.Command{
 	Use:          "down <name>",
-	Short:        "Stop a feature stack's services in the host daemon (leaves its worktrees and record)",
+	Short:        "Stop a feature stack's services in the host daemon, and keep its worktrees and record",
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackDown,
@@ -164,21 +176,21 @@ func init() {
 	stackCmd.AddCommand(stackDownCmd)
 	stackCmd.AddCommand(stackStatusCmd)
 
-	stackCreateCmd.Flags().String("repos", "", "Comma-separated service or group names that this stack changes. A group expands to its members")
-	stackCreateCmd.Flags().String("branch", "", "Branch for the changed repos (default: the stack name). Attaches if it already exists.")
-	stackCreateCmd.Flags().String("from", "", "Ref the worktrees are cut from (default: each repo's default branch, origin's copy of it when there is one). Not what your checkout has checked out.")
-	stackCreateCmd.Flags().String("note", "", "What this stack is for — a ticket URL, an issue key, a sentence. Shown by 'devstack stack list'.")
-	stackAddCmd.Flags().String("from", "", "Ref the new worktrees are cut from (default: each repo's default branch, origin's copy of it when there is one)")
-	stackNoteCmd.Flags().String("add", "", "Append a dated entry — where the work got to — instead of replacing the note")
-	stackRemoveCmd.Flags().Bool("force", false, "Remove worktrees even if they have uncommitted changes. Destroys that work; it cannot be recovered")
-	stackConfigCmd.Flags().String("stack", "", "Stack name (default: the stack containing the current directory)")
+	stackCreateCmd.Flags().String("repos", "", "Service or group names that this stack changes, separated by commas. A group expands to its members")
+	stackCreateCmd.Flags().String("branch", "", "Branch for the changed repos (default: the stack name). devstack attaches to it if it already exists")
+	stackCreateCmd.Flags().String("from", "", "Ref that devstack cuts the worktrees from (default: each repo's default branch, origin's copy of it where there is one). Never what your checkout has checked out")
+	stackCreateCmd.Flags().String("note", "", "What this stack is for: a ticket URL, an issue key, or a sentence. 'devstack stack list' shows it")
+	stackAddCmd.Flags().String("from", "", "Ref that devstack cuts the new worktrees from (default: each repo's default branch, origin's copy of it where there is one)")
+	stackNoteCmd.Flags().String("add", "", "Append a dated entry that says where the work got to, instead of replacing the note")
+	stackRemoveCmd.Flags().Bool("force", false, "Remove worktrees even if they have uncommitted changes. This destroys that work. You can not recover it")
+	stackConfigCmd.Flags().String("stack", "", "Stack name (default: the stack that contains the current directory)")
 }
 
 func runStackCreate(cmd *cobra.Command, args []string) error {
 	reposFlag, _ := cmd.Flags().GetString("repos")
 	changed := splitCSV(reposFlag)
 	if len(changed) == 0 {
-		return fmt.Errorf("--repos is required: name the service(s) this stack changes")
+		return fmt.Errorf("--repos is required. Name the service or services that this stack changes")
 	}
 
 	base, err := resolveWorkspace(viper.GetString("workspace"))
@@ -195,7 +207,7 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Base workspace: %s (%s)\n", res.BaseName, res.BasePath)
-	fmt.Printf("Overlay set (changed ∪ transitive callers):\n")
+	fmt.Printf("Overlay (the services you changed, and the services that call them):\n")
 	for _, m := range res.Overlay {
 		note := "pulled in (calls a changed service)"
 		if m.Reason == "changed" {
@@ -211,7 +223,7 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("  ✓ worktree %-16s %s (%s)\n", wt.Service, wt.Path, branchNote)
 		if len(wt.Materialized) > 0 {
-			fmt.Printf("    ↳ materialized %d local config file(s): %s\n", len(wt.Materialized), strings.Join(wt.Materialized, ", "))
+			fmt.Printf("    ↳ copied %d machine-local configuration file(s): %s\n", len(wt.Materialized), strings.Join(wt.Materialized, ", "))
 		}
 	}
 	fmt.Printf("  ✓ generated %s\n", res.ManifestPath)
@@ -230,7 +242,7 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 		overlay = append(overlay, m.Service)
 	}
 	if err := fireHooks(base, args[0], config.EventStackCreate, overlay); err != nil {
-		return fmt.Errorf("%w\nStack %q was created but its setup hooks did not finish. Fix the hook, then either re-run them:\n  devstack hooks run stack.create --stack %s\nor discard the stack:\n  devstack stack rm %s", err, res.StackName, args[0], args[0])
+		return fmt.Errorf("%w\ndevstack created stack %q, but its setup hooks did not finish. Fix the hook. Then run the hooks again:\n  devstack hooks run stack.create --stack %s\nOr discard the stack:\n  devstack stack rm %s", err, res.StackName, args[0], args[0])
 	}
 
 	fmt.Printf("\nStack %q ready. Start it: devstack stack up %s\n", res.StackName, args[0])
@@ -267,7 +279,7 @@ func runStackAdd(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("  ✓ worktree %-16s %s (%s)\n", wt.Service, wt.Path, branchNote)
 		if len(wt.Materialized) > 0 {
-			fmt.Printf("    ↳ materialized %d local config file(s): %s\n", len(wt.Materialized), strings.Join(wt.Materialized, ", "))
+			fmt.Printf("    ↳ copied %d machine-local configuration file(s): %s\n", len(wt.Materialized), strings.Join(wt.Materialized, ", "))
 		}
 	}
 	fmt.Printf("  ✓ regenerated %s\n", res.ManifestPath)
@@ -286,12 +298,12 @@ func runStackAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := fireHooks(base, args[0], config.EventStackCreate, added); err != nil {
-		return fmt.Errorf("%w\n%s was added to stack %q but its %s hooks did not finish, so it is not fully provisioned. Fix the hook, then re-run them:\n  devstack hooks run %s --stack %s --services %s",
+		return fmt.Errorf("%w\ndevstack added %s to stack %q, but its %s hooks did not finish. It is not fully provisioned. Fix the hook. Then run the hooks again:\n  devstack hooks run %s --stack %s --services %s",
 			err, strings.Join(added, ", "), res.StackName, config.EventStackCreate, config.EventStackCreate, args[0], strings.Join(added, ","))
 	}
 
 	if !res.Active {
-		fmt.Printf("\nStack %q is down. Bring it up: devstack stack up %s\n", res.StackName, args[0])
+		fmt.Printf("\nStack %q is down. Start it: devstack stack up %s\n", res.StackName, args[0])
 		return nil
 	}
 
@@ -299,13 +311,13 @@ func runStackAdd(cmd *cobra.Command, args []string) error {
 	// leaves the blocks of the copies already running untouched, so nothing that
 	// is serving is stopped or restarted here.
 	if _, err := regenerateHostTiltfile(); err != nil {
-		return fmt.Errorf("failed to regenerate host Tiltfile: %w", err)
+		return fmt.Errorf("can not generate the host Tiltfile again: %w", err)
 	}
 	syncHostTiltfile(tilt.NewClient("localhost", workspace.HostTiltPort))
 	fmt.Printf("  ✓ host Tiltfile now carries %s (not started)\n", strings.Join(added, ", "))
 
 	if err := fireHooks(base, args[0], config.EventStackUp, added); err != nil {
-		return fmt.Errorf("%w\n%s was added to the running stack %q but its %s hooks did not finish, so it is not fully provisioned. Fix the hook, then re-run them:\n  devstack hooks run %s --stack %s --services %s",
+		return fmt.Errorf("%w\ndevstack added %s to the running stack %q, but its %s hooks did not finish. It is not fully provisioned. Fix the hook. Then run the hooks again:\n  devstack hooks run %s --stack %s --services %s",
 			err, strings.Join(added, ", "), res.StackName, config.EventStackUp, config.EventStackUp, args[0], strings.Join(added, ","))
 	}
 
@@ -392,7 +404,7 @@ func runStackList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Println("A stack that is up has its services registered in the one host daemon, namespaced <workspace>:<service>:<stack>.")
+	fmt.Println("A stack that is up registers its services in the one host daemon, as <workspace>:<service>:<stack>.")
 	fmt.Printf("%-16s %-8s %-34s %-30s %s\n", "STACK", "STATUS", "SERVICES", "BRANCH", "AGE")
 	fmt.Println(strings.Repeat("-", 100))
 	for _, s := range stacks {
@@ -418,10 +430,10 @@ func runStackList(cmd *cobra.Command, args []string) error {
 		}
 	}
 	fmt.Println()
-	color.New(color.Faint).Println("SERVICES is the overlay: the services this stack runs its own copy of. Everything else it borrows from base.")
-	color.New(color.Faint).Println("STATUS up means registered, not running. Each copy has its own state — see it with: devstack status --stack <name>")
-	color.New(color.Faint).Println("\"covers group g (3/4 — x serves from base)\" is a group this stack was cut to cover: it overlays 3 of the 4 members and x is base's copy, shared with everyone. A group action reaches only the members it overlays.")
-	color.New(color.Faint).Println("Set what a stack is for with: devstack stack note <name> \"...\", and log where it got to with --add")
+	color.New(color.Faint).Println("SERVICES is the overlay: the services this stack runs its own copy of. It uses base's copy of every other service.")
+	color.New(color.Faint).Println("STATUS up means registered, not running. Each copy has its own state. Show it with: devstack status --stack <name>")
+	color.New(color.Faint).Println("\"covers group g (3/4 — x serves from base)\" is a group this stack was cut to cover. The stack overlays 3 of the 4 members. x is base's copy, and everybody shares it. A group action reaches only the members the stack overlays.")
+	color.New(color.Faint).Println("Set what a stack is for with: devstack stack note <name> \"...\". Record where the work got to with --add")
 	return nil
 }
 
@@ -458,17 +470,17 @@ func stackAge(created time.Time) string {
 var stackNoteCmd = &cobra.Command{
 	Use:   "note <name> [text]",
 	Short: "Show or set what a stack is for",
-	Long: fmt.Sprintf(`Record what a stack is for, in your words — a ticket URL, an issue key, a
-sentence. devstack never derives this: a branch says what changed, a note says
-why, and a week later the note is the part you cannot reconstruct.
+	Long: fmt.Sprintf(`Record what a stack is for, in your own words: a ticket URL, an issue key, or a
+sentence. devstack never derives this text. A branch says what changed. A note
+says why. A week later, the note is the part that you can not reconstruct.
 
---add appends a dated entry instead of replacing the note: where the work got
-to, so picking it up next week does not start with reading the diff. The last
-%d entries are kept, each at most %d characters — an entry per step drops the
-one worth reading.
+--add appends a dated entry instead of replacing the note. Write where the work
+got to. Then you can pick the work up next week without a read of the diff.
+devstack keeps the last %d entries, each one of %d characters at most. One entry
+for each step pushes out the entry that is worth a read.
 
-With no text, prints the note and its entries. Pass an empty string to clear
-both.
+With no text, this command prints the note and its entries. Pass an empty string
+to clear both.
 
 Examples:
   devstack stack note perf "NAV-412 daily value spike"
@@ -492,7 +504,7 @@ func runStackNote(cmd *cobra.Command, args []string) error {
 
 	if add != "" {
 		if len(args) == 2 {
-			return fmt.Errorf("--add appends an entry and [text] replaces the note; pass one or the other")
+			return fmt.Errorf("--add appends an entry. [text] replaces the note. Pass one or the other")
 		}
 		appended, entry, err := stack.AppendNote(base.Name, rec.Name, add)
 		if err != nil {
@@ -546,7 +558,7 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 	} else {
 		_, rec, err = stack.DetectFromCwd()
 		if err != nil {
-			return fmt.Errorf("not inside a feature stack; pass --stack <name>")
+			return fmt.Errorf("this directory is not inside a feature stack. Pass --stack <name>")
 		}
 	}
 	if err != nil {
@@ -559,7 +571,7 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 	}
 	svc, ok := rw.Services[service]
 	if !ok {
-		return fmt.Errorf("service %q not found in stack %q; services: %s", service, rec.FullName(), strings.Join(sortedServiceNames(rw), ", "))
+		return fmt.Errorf("service %q is not in stack %q. Its services: %s", service, rec.FullName(), strings.Join(sortedServiceNames(rw), ", "))
 	}
 
 	entries, err := svcconfig.EffectiveConfig(svc, rec.RuntimeKey())
@@ -567,7 +579,7 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("Effective config for %s in stack %s (read-only: what it WOULD run with)\n", service, rec.FullName())
+	fmt.Printf("Effective configuration for %s in stack %s (read-only: the configuration it runs with)\n", service, rec.FullName())
 	fmt.Printf("  %-42s %-12s %s\n", "KEY", "SOURCE", "VALUE")
 	fmt.Println(strings.Repeat("-", 90))
 	for _, e := range entries {
@@ -577,7 +589,7 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("%s%-42s %-12s %s\n", marker, e.Key, e.Source, e.Value)
 	}
-	fmt.Printf("\n* = overridden by the stack (devstack-computed). Secret values shown as %s.\n", "••••")
+	fmt.Printf("\n* = the stack overrides this value, and devstack computes it. devstack shows a secret value as %s.\n", "••••")
 
 	names := make([]string, 0, len(rw.Services))
 	for n := range rw.Services {
@@ -638,14 +650,14 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := workspace.SetWorkspaceActive(base.Name, true); err != nil {
-		return fmt.Errorf("failed to mark base workspace active: %w", err)
+		return fmt.Errorf("can not mark the base workspace active: %w", err)
 	}
 	if err := stack.SetActive(base.Name, rec.Name, true); err != nil {
 		return err
 	}
 
 	if _, err := regenerateHostTiltfile(); err != nil {
-		return fmt.Errorf("failed to regenerate host Tiltfile: %w", err)
+		return fmt.Errorf("can not generate the host Tiltfile again: %w", err)
 	}
 	if err := ensureHostDaemon(); err != nil {
 		return err
@@ -659,7 +671,7 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if len(started) == 0 {
-		return fmt.Errorf("stack %q has no services in the host daemon — recreate it: devstack stack rm %s && devstack stack create %s --repos <svc>", rec.Name, rec.Name, rec.Name)
+		return fmt.Errorf("stack %q has no services in the host daemon. Create it again: devstack stack rm %s && devstack stack create %s --repos <svc>", rec.Name, rec.Name, rec.Name)
 	}
 
 	fmt.Printf("✓ Stack %q started: %s\n", rec.Name, strings.Join(started, ", "))
@@ -668,7 +680,7 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := fireHooks(base, rec.Name, config.EventStackUp, started); err != nil {
-		return fmt.Errorf("%w\nStack %q runs but its setup hooks did not finish. Fix the hook, then re-run them:\n  devstack hooks run stack.up --stack %s", err, rec.Name, rec.Name)
+		return fmt.Errorf("%w\nStack %q runs, but its setup hooks did not finish. Fix the hook. Then run the hooks again:\n  devstack hooks run stack.up --stack %s", err, rec.Name, rec.Name)
 	}
 	fmt.Printf("\n  devstack stack status %s   ·   devstack service restart <service> --stack %s\n", rec.Name, rec.Name)
 	return nil
@@ -710,11 +722,11 @@ func runStackDown(cmd *cobra.Command, args []string) error {
 	}
 
 	if _, err := regenerateHostTiltfile(); err != nil {
-		return fmt.Errorf("failed to regenerate host Tiltfile: %w", err)
+		return fmt.Errorf("can not generate the host Tiltfile again: %w", err)
 	}
-	fmt.Printf("✓ Regenerated host Tiltfile — host daemon will drop stack %q's resources.\n", rec.Name)
+	fmt.Printf("✓ Regenerated the host Tiltfile. The host daemon will drop the resources of stack %q.\n", rec.Name)
 
-	fmt.Printf("✓ Stack %q is now down (worktrees and record kept; remove with: devstack stack rm %s).\n", rec.Name, rec.Name)
+	fmt.Printf("✓ Stack %q is now down. devstack keeps its worktrees and its record. Remove them with: devstack stack rm %s\n", rec.Name, rec.Name)
 	return nil
 }
 

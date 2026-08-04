@@ -13,29 +13,30 @@ var cfgFile string
 var rootCmd = &cobra.Command{
 	Use:   "devstack",
 	Short: "Run and observe local development services across one or more workspaces",
-	Long: `devstack is a local development service manager built for teams working across
-multiple services and repositories. It is the backbone of an AI-assisted local
-development workflow.
+	Long: `devstack is a service manager for local development. It is built for a team that
+works across many services and repositories. It is the backbone of an AI-assisted
+local development workflow.
 
 WHAT IT DOES
-  devstack manages groups of locally running services (APIs, workers, importers,
-  etc.) organised into workspaces — one workspace per product or organisation.
-  It handles dependency-ordered startup, live status, and service restarts.
+  devstack manages the services that run on your machine: APIs, workers,
+  importers and more. It organizes them into workspaces, one workspace for each
+  product or organization. It starts the services in dependency order, shows
+  their live state, and restarts them.
 
-  It also runs one lightweight OpenTelemetry stack (OpenObserve) for the whole
-  machine, shared by every workspace, so every service ships traces and logs
-  that AI agents can query in real time. When something breaks during feature development, an AI agent
-  can call the MCP tools to pull correlated traces and logs and pinpoint the
-  root cause without leaving the editor.
+  devstack runs one OpenTelemetry collector (OpenObserve) for the whole machine.
+  Every workspace shares it. Each service sends its traces and logs there, and an
+  AI agent can query them as they arrive. When a feature breaks, the agent calls
+  the MCP tools, reads the correlated traces and logs, and finds the cause
+  without leaving the editor.
 
 WORKSPACE AUTO-DETECTION
-  Run any command from inside a workspace directory or any service subdirectory.
-  devstack will detect which workspace you are in automatically — no flags needed.
+  Run any command inside a workspace directory, or inside any service
+  subdirectory. devstack detects the workspace for you. No flag is necessary.
 
 TYPICAL WORKFLOW
   devstack workspace add              register this directory as a workspace
   devstack workspace up               start the daemon, and build the replica base runs from
-  devstack init --name=api ...        register a service and wire up observability
+  devstack init --name=api ...        register a service and connect observability
   devstack service start <service> --stack base
                                       start a service and all its dependencies
   devstack status                     live grouped view of every service
@@ -66,7 +67,7 @@ func init() {
 	rootCmd.Version = versionLine()
 	rootCmd.SetVersionTemplate("devstack {{.Version}}\n")
 
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./config.json)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "Configuration file (default: ./config.json)")
 	_ = rootCmd.PersistentFlags().MarkHidden("config")
 
 	// Dev daemon connection. There is no port knob: one daemon serves the whole
@@ -75,10 +76,10 @@ func init() {
 	_ = rootCmd.PersistentFlags().MarkHidden("daemon-host")
 
 	// Default service context
-	rootCmd.PersistentFlags().String("default-service", "", "Default service name when none is specified (env: DEVSTACK_DEFAULT_SERVICE)")
+	rootCmd.PersistentFlags().String("default-service", "", "Default service name, used when a command names none (env: DEVSTACK_DEFAULT_SERVICE)")
 
 	// Workspace root directory
-	rootCmd.PersistentFlags().String("workspace", "", "Workspace name or path (env: DEVSTACK_WORKSPACE)")
+	rootCmd.PersistentFlags().String("workspace", "", "Workspace name or path. Default: the workspace of the current directory (env: DEVSTACK_WORKSPACE)")
 
 	// Bind flags to viper (keep internal keys stable)
 	viper.BindPFlag("tilt.host", rootCmd.PersistentFlags().Lookup("daemon-host"))
@@ -104,6 +105,6 @@ func initConfig() {
 	viper.AutomaticEnv()
 
 	if err := viper.ReadInConfig(); err == nil {
-		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+		fmt.Fprintln(os.Stderr, "Using configuration file:", viper.ConfigFileUsed())
 	}
 }

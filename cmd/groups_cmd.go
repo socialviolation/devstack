@@ -21,7 +21,7 @@ var groupsListCmd = &cobra.Command{
 
 var groupsAddCmd = &cobra.Command{
 	Use:   "add <group> <service> [service...]",
-	Short: "Add services to a group (creates the group if it does not exist)",
+	Short: "Add services to a group. devstack creates the group if it does not exist",
 	Args:  cobra.MinimumNArgs(2),
 	RunE:  runGroupsAdd,
 }
@@ -174,7 +174,7 @@ func runGroupsAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	if !config.HasWorkspaceManifest(ws.Path) {
-		return fmt.Errorf("workspace %q has no %s — groups can only be edited in a manifest-based workspace", ws.Name, config.WorkspaceManifestFileName)
+		return fmt.Errorf("workspace %q has no %s. devstack can edit groups only in a workspace that has a manifest", ws.Name, config.WorkspaceManifestFileName)
 	}
 
 	cfg, err := config.Load(ws.Path)
@@ -201,7 +201,7 @@ func runGroupsAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	if added == 0 {
-		fmt.Printf("All services already in group %q\n", group)
+		fmt.Printf("Every one of these services is already in group %q\n", group)
 		return nil
 	}
 
@@ -211,9 +211,9 @@ func runGroupsAdd(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("✓ Group %q: %s\n", group, strings.Join(cfg.Groups[group], ", "))
 	if _, err := regenerateHostTiltfile(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: can not regenerate host config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: can not regenerate the host configuration: %v\n", err)
 	} else {
-		fmt.Println("Regenerated host config.")
+		fmt.Println("Regenerated the host configuration.")
 	}
 	return nil
 }
@@ -232,7 +232,7 @@ func runGroupsRemove(cmd *cobra.Command, args []string) error {
 	}
 
 	if !config.HasWorkspaceManifest(ws.Path) {
-		return fmt.Errorf("workspace %q has no %s — groups can only be edited in a manifest-based workspace", ws.Name, config.WorkspaceManifestFileName)
+		return fmt.Errorf("workspace %q has no %s. devstack can edit groups only in a workspace that has a manifest", ws.Name, config.WorkspaceManifestFileName)
 	}
 
 	cfg, err := config.Load(ws.Path)
@@ -241,7 +241,7 @@ func runGroupsRemove(cmd *cobra.Command, args []string) error {
 	}
 
 	if _, ok := cfg.Groups[group]; !ok {
-		return fmt.Errorf("group %q not found", group)
+		return fmt.Errorf("there is no group %q", group)
 	}
 
 	var remaining []string
@@ -262,9 +262,9 @@ func runGroupsRemove(cmd *cobra.Command, args []string) error {
 		fmt.Printf("✓ Group %q: %s\n", group, strings.Join(remaining, ", "))
 	}
 	if _, err := regenerateHostTiltfile(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: can not regenerate host config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: can not regenerate the host configuration: %v\n", err)
 	} else {
-		fmt.Println("Regenerated host config.")
+		fmt.Println("Regenerated the host configuration.")
 	}
 	return nil
 }

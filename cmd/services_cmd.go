@@ -23,41 +23,41 @@ import (
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show live service status (or all workspaces if run outside a workspace)",
-	Long: `Show a live table of every service in the current workspace — the group or
-feature stack it belongs to, its running state, exposed ports, and declared
+	Long: `Show a live table of every service in the current workspace: the group or the
+feature stack that it belongs to, its state, its ports, and its declared
 dependencies.
 
-If run from outside any registered workspace, shows a summary table of all
-workspaces and their daemon status instead.
+If you run this command outside every registered workspace, devstack shows a
+summary table of all the workspaces and their daemon status instead.
 
-Groups and feature stacks with nothing running collapse to a single line, unless
-one of their services is erroring, starting or building. Pass --all to table
-every group and stack, and to show the directory each copy runs from.
+A group or a feature stack with nothing running collapses to one line. It stays
+open when one of its services is erroring, starting or building. Pass --all to
+list every group and stack, and to show the directory that each copy runs from.
 
-That directory, and the BRANCH beside it, are the code the process is executing:
-the replica worktree for base, the stack's own worktree for a stack — never your
-checkout. A branch you did not expect there means the copy does not contain the
-work you are looking for.
+That directory, and the BRANCH beside it, are the code that the process runs:
+the replica worktree for base, and the stack's own worktree for a stack. It is
+never your checkout. If you do not expect that branch there, the copy does not
+contain the work that you look for.
 
-A stack is up or down: up means its services are registered in the daemon, not
-that they run. Each copy has its own state below.
+A stack is up or down. Up means that its services are registered in the daemon.
+It does not mean that they run. Each copy has its own state below.
 
 Copy states:
-  running   — process is up and healthy
-  starting  — process starts
-  building  — the daemon is building/updating the service
-  stopped   — service is registered but not currently running
-  erroring  — the service or its build failed (check logs)
-  disabled  — service has been explicitly stopped
+  running   — the process is up and healthy
+  starting  — the process starts
+  building  — the daemon builds or updates the service
+  stopped   — the service is registered, but it does not run now
+  erroring  — the service or its build failed (read the logs)
+  disabled  — somebody stopped the service
   down      — the copy is not registered at all, because its stack is down
               (run: devstack stack up <name>)
-  unknown   — daemon is not reachable (run: devstack workspace up)`,
+  unknown   — the daemon does not answer (run: devstack workspace up)`,
 	RunE: runStatus,
 }
 
 func init() {
 	rootCmd.AddCommand(statusCmd)
-	statusCmd.Flags().String("stack", "", "Show a feature stack's service instances (<ws>:<svc>:<stack>) instead of base")
+	statusCmd.Flags().String("stack", "", "Show a feature stack's copies (<ws>:<svc>:<stack>) instead of base's")
 	statusCmd.Flags().Bool("all", false, "Show the full table for every group and stack, including ones with nothing running")
 }
 
@@ -95,7 +95,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 func runStackStatus(base *workspace.Workspace, rec *stack.Record) error {
 	port := workspace.HostTiltPort
 	if !isTiltReachable(fmt.Sprintf("http://localhost:%d/api/view", port)) || !rec.Active {
-		fmt.Printf("stack %q is not up — run: devstack stack up %s\n", rec.Name, rec.Name)
+		fmt.Printf("stack %q is not up. Run: devstack stack up %s\n", rec.Name, rec.Name)
 		return nil
 	}
 
@@ -255,11 +255,11 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 		infraParts = append(infraParts, color.New(color.FgYellow).Sprint(otelText))
 	default:
 		if started, err := ensureCollector(ws); started {
-			infraParts = append(infraParts, color.New(color.FgGreen).Sprint("otel: collector was down — started it"))
+			infraParts = append(infraParts, color.New(color.FgGreen).Sprint("otel: the collector was down, and devstack started it"))
 		} else if err != nil {
-			infraParts = append(infraParts, color.New(color.FgRed).Sprintf("otel DOWN (auto-start failed: %v) — run: devstack otel start", err))
+			infraParts = append(infraParts, color.New(color.FgRed).Sprintf("otel DOWN (devstack can not start it: %v). Run: devstack otel start", err))
 		} else {
-			infraParts = append(infraParts, color.New(color.FgRed).Sprint("otel configured but collector DOWN — run: devstack otel start"))
+			infraParts = append(infraParts, color.New(color.FgRed).Sprint("otel is configured, but the collector is DOWN. Run: devstack otel start"))
 		}
 	}
 	if composeSpec, err := infra.ResolveComposeSpec(ws.Path); err == nil && composeSpec != nil {
@@ -272,7 +272,7 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 	if tiltErr != nil {
 		apiURL := fmt.Sprintf("http://localhost:%d/api/view", ws.TiltPort)
 		if isTiltReachable(apiURL) {
-			fmt.Println("  Dev daemon is starting — run 'devstack status' again in a moment.")
+			fmt.Println("  The dev daemon starts. Run 'devstack status' again in a moment.")
 		} else {
 			fmt.Println("  Run: devstack workspace up")
 		}
@@ -364,7 +364,7 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 	color.New(color.Faint).Printf("  within a group, top-to-bottom = startup order   ·   blank ENV = no env\n")
 	color.New(color.Faint).Printf("  devstack service start <service> --stack base   ·   devstack group start <group> --stack base\n")
 	color.New(color.Faint).Printf("  devstack stack up <name>   ·   devstack stack config <svc> --stack <name>\n")
-	color.New(color.Faint).Printf("  groups with nothing running, starting, building or erroring are condensed   ·   devstack status --all shows every one\n")
+	color.New(color.Faint).Printf("  devstack condenses a group with nothing running, starting, building or erroring   ·   devstack status --all shows every one\n")
 
 	return nil
 }
@@ -614,7 +614,7 @@ func printServiceOrientation(ws *workspace.Workspace, rw *config.ResolvedWorkspa
 		faint.Sprint(branchHere))
 
 	if len(rows) == 0 {
-		faint.Printf("%sno feature stack runs %s — start one: devstack stack create <name> --repos %s\n\n", orientIndent, service, service)
+		faint.Printf("%sno feature stack runs %s. Start one: devstack stack create <name> --repos %s\n\n", orientIndent, service, service)
 		return
 	}
 
@@ -637,7 +637,7 @@ func printServiceOrientation(ws *workspace.Workspace, rw *config.ResolvedWorkspa
 		}
 		fmt.Println()
 	}
-	faint.Printf("%s▸ = the checkout you are in · a stack is worked in its own worktree: devstack stack list\n", orientIndent)
+	faint.Printf("%s▸ = the checkout you are in · each stack has its own worktree: devstack stack list\n", orientIndent)
 	fmt.Println()
 }
 
