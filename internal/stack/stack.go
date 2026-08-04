@@ -257,6 +257,9 @@ func Create(in CreateInput) (*CreateResult, error) {
 		return nil, fmt.Errorf("can not write the stack manifest: %w", err)
 	}
 	res.ManifestPath = manifestPath
+	if copyWS, err := config.ResolveWorkspace(stackRoot); err == nil {
+		res.Warnings = append(res.Warnings, config.RebaseWorkDirs(baseRW, copyWS, stackRoot)...)
+	}
 
 	keys := portKeys(baseRW, overlay)
 	if len(keys) > 0 {
@@ -588,6 +591,10 @@ func GenerateOptions(rec *Record, names []string) (tiltgen.Options, error) {
 // ResolveWorktree resolves a stack's worktree workspace and folds in the base
 // workspace's environment definitions and workspace-scope env selection, since a
 // stack inherits — never redefines — base's environments.
+//
+// It also points an absolute runtime.workDir at the stack's own worktree. The
+// generator runs a service in that directory, so a stack that keeps the path
+// the manifest carries serves base's checkout and not the work in the stack.
 func ResolveWorktree(rec *Record) (*config.ResolvedWorkspace, error) {
 	base, err := workspace.FindByName(rec.Base)
 	if err != nil {
@@ -602,6 +609,7 @@ func ResolveWorktree(rec *Record) (*config.ResolvedWorkspace, error) {
 		return nil, err
 	}
 	inheritBaseEnv(rw.Manifest, baseRW.Manifest)
+	config.RebaseWorkDirs(baseRW, rw, rec.Root)
 	return rw, nil
 }
 

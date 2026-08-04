@@ -159,6 +159,9 @@ func Ensure(ws *workspace.Workspace) (*EnsureResult, error) {
 		return nil, err
 	}
 	res.ManifestPath = manifestPath
+	if copyWS, err := config.ResolveWorkspace(root); err == nil {
+		res.Warnings = append(res.Warnings, config.RebaseWorkDirs(template, copyWS, root)...)
+	}
 	return res, nil
 }
 
@@ -260,6 +263,10 @@ func plan(template *config.ResolvedWorkspace, names []string) ([]worktree.Repo, 
 // generated before that edit holds the old values, and base runs with no
 // dependency order and no group. The checkout is the source of truth for all of
 // them, so the template wins.
+//
+// An absolute runtime.workDir is folded in the other direction, for the same
+// reason: the generator runs a service in that directory, so a copy that keeps
+// the path the manifest carries runs the checkout and not the replica.
 func Resolve(ws *workspace.Workspace) (*config.ResolvedWorkspace, error) {
 	if ws == nil {
 		return nil, fmt.Errorf("devstack can not resolve the workspace")
@@ -287,6 +294,7 @@ func Resolve(ws *workspace.Workspace) (*config.ResolvedWorkspace, error) {
 	if rw.Manifest.Workspace.Env == "" {
 		rw.Manifest.Workspace.Env = template.Manifest.Workspace.Env
 	}
+	config.RebaseWorkDirs(template, rw, root)
 	return rw, nil
 }
 

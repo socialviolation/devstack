@@ -255,6 +255,7 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 		checkouts := gitinfo.ReadAll(serviceDirs)
 
 		rows := [][]string{{"SERVICE", "STATUS", "PORT(S)", "PATH", "BRANCH", "GROUP", "ENV", "RELOAD", "ERROR"}}
+		var failures []string
 		prefix := ws.Name + ":"
 		for _, r := range view.UiResources {
 			svc, stackNS, ok := splitHostResource(r.Metadata.Name, prefix)
@@ -271,6 +272,11 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			}
 			if len(lastError) > 50 {
 				lastError = lastError[:47] + "..."
+			}
+			if status == "erroring" {
+				if reason := t.client.FailureReason(r); len(reason) > 0 {
+					failures = append(failures, fmt.Sprintf("%s\n  %s", name, strings.Join(reason, "\n  ")))
+				}
 			}
 			path := shortenPath(serviceDirs[svc])
 			group := serviceGroup(name, cfg)
@@ -300,6 +306,13 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 		sb.WriteString("Tilt is running.\n\n")
 		sb.WriteString(renderColumns(rows))
 		sb.WriteString("\nPATH and BRANCH are the directory this copy runs from. A * marks uncommitted changes.\nA branch that you did not expect means that the process does not hold the work you look for.\nFor base that directory is the replica, and not the checkout devstack built it from. An edit in the checkout reaches a running base copy after three steps: put it on the default branch, run the base tool (action=\"sync\"), then restart that copy (restart tool, stack=\"base\"). In a shell, `devstack workspace up` does all three.\nRELOAD auto means that an edit in the directory a copy runs from applies on its own. RELOAD manual means that you must restart that copy after an edit. If you do not restart it, the copy keeps the old code.\n")
+
+		if len(failures) > 0 {
+			sb.WriteString("\nwhy the erroring copies stopped. Each block gives the command the copy ran and the output before it stopped:\n")
+			for _, f := range failures {
+				sb.WriteString(f + "\n")
+			}
+		}
 
 		// Groups summary section.
 		if len(cfg.Groups) > 0 {

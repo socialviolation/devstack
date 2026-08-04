@@ -180,6 +180,55 @@ func (c *Client) RunCLI(args ...string) (string, error) {
 	return string(out), err
 }
 
+// runningCmdPrefix is the line Tilt writes before it starts a command. It is
+// the only mark in a process log that separates one attempt from the one before.
+const runningCmdPrefix = "Running cmd: "
+
+// maxFailureLines caps a failure report. A reader needs the command and the
+// output that follows it, not the whole log.
+const maxFailureLines = 8
+
+// FailureReason tells why a resource is in error, as the lines to show. Tilt
+// keeps a build record for a build that fails, but a command that fails while it
+// serves leaves no build record, so the status alone reports an error and no
+// reason. The process log holds both: the command Tilt ran, and what that
+// command printed before it stopped.
+func (c *Client) FailureReason(r UIResource) []string {
+	if len(r.Status.BuildHistory) > 0 && r.Status.BuildHistory[0].Error != "" {
+		return []string{r.Status.BuildHistory[0].Error}
+	}
+	out, err := c.RunCLI("logs", "--tail=50", r.Metadata.Name)
+	if err != nil && strings.TrimSpace(out) == "" {
+		return nil
+	}
+	return lastAttempt(out)
+}
+
+// lastAttempt keeps the last command in a process log and every line after it.
+// A log with no command line falls back to its last lines.
+func lastAttempt(out string) []string {
+	var lines []string
+	for _, l := range strings.Split(out, "\n") {
+		l = strings.TrimRight(l, " \t\r")
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		lines = append(lines, l)
+	}
+	start := 0
+	for i, l := range lines {
+		if strings.HasPrefix(l, runningCmdPrefix) {
+			start = i
+		}
+	}
+	lines = lines[start:]
+	if len(lines) > maxFailureLines {
+		kept := []string{lines[0]}
+		lines = append(kept, lines[len(lines)-(maxFailureLines-1):]...)
+	}
+	return lines
+}
+
 // ResolveService resolves a human-friendly name to an exact Tilt resource name.
 // It checks for an exact match first, then falls back to the alias map.
 func ResolveService(name string, view *TiltView) (string, error) {
