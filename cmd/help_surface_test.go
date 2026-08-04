@@ -119,3 +119,44 @@ func TestEveryHiddenCommandKeepsItsOwnHelp(t *testing.T) {
 		}
 	}
 }
+
+// `base` is the repair for a replica, and it was reachable from nothing: hidden,
+// absent from `help more`, and named only in its own help and in the MCP tool.
+// Somebody who needs it can not find it.
+func TestHelpMoreNamesBase(t *testing.T) {
+	installHelp()
+	screen := moreScreen()
+
+	if !strings.Contains(screen, "devstack base") {
+		t.Errorf("`devstack help more` never names base:\n%s", screen)
+	}
+	if !strings.Contains(screen, "replica") {
+		t.Errorf("`devstack help more` never says what base is for:\n%s", screen)
+	}
+	if leafCommand("base") == nil {
+		t.Error("`devstack base` is not registered, and `help more` sends the reader to it")
+	}
+}
+
+// `init` is the command that registers a service, and it appeared on neither
+// screen. `workspace add` registers the directory, and nothing said what
+// registers the thing inside it.
+func TestTheFirstScreenNamesTheCommandThatRegistersAService(t *testing.T) {
+	help := rootHelp(t)
+
+	if !strings.Contains(help, "devstack init") {
+		t.Errorf("the first screen never names init:\n%s", help)
+	}
+	if strings.Index(help, "devstack init") < strings.Index(help, "SET UP THIS MACHINE") {
+		t.Errorf("init is not under SET UP THIS MACHINE:\n%s", help)
+	}
+	c := leafCommand("init")
+	if c == nil {
+		t.Fatal("`devstack init` is not registered")
+	}
+	for _, flag := range []string{"name", "path", "cmd"} {
+		if c.Flags().Lookup(flag) == nil {
+			t.Errorf("the first screen gives --%s, which init does not take", flag)
+		}
+	}
+}

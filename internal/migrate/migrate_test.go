@@ -75,7 +75,7 @@ func TestAPendingPatchRunsAndStampsTheNewVersion(t *testing.T) {
 	runs := 0
 
 	var b strings.Builder
-	if err := Apply(&b, []Patch{counter(&runs)}, []workspace.Workspace{ws}); err != nil {
+	if err := Apply(&b, []Patch{counter(&runs)}, []workspace.Workspace{ws}, false); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 	if runs != 1 {
@@ -96,12 +96,12 @@ func TestASecondRunDoesNothing(t *testing.T) {
 	runs := 0
 	p := counter(&runs)
 
-	if err := Apply(&strings.Builder{}, []Patch{p}, []workspace.Workspace{ws}); err != nil {
+	if err := Apply(&strings.Builder{}, []Patch{p}, []workspace.Workspace{ws}, false); err != nil {
 		t.Fatalf("first Apply() = %v", err)
 	}
 
 	var b strings.Builder
-	if err := Apply(&b, []Patch{p}, []workspace.Workspace{ws}); err != nil {
+	if err := Apply(&b, []Patch{p}, []workspace.Workspace{ws}, false); err != nil {
 		t.Fatalf("second Apply() = %v", err)
 	}
 	if runs != 1 {
@@ -122,7 +122,7 @@ func TestTheRunKeepsTheCommentsAndWritesWhoMigrated(t *testing.T) {
 	Stamp = "v0.9.9 (abc1234)"
 	runs := 0
 
-	if err := Apply(&strings.Builder{}, []Patch{counter(&runs)}, []workspace.Workspace{ws}); err != nil {
+	if err := Apply(&strings.Builder{}, []Patch{counter(&runs)}, []workspace.Workspace{ws}, false); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -153,7 +153,7 @@ func TestAFreshCloneOfAMigratedRepositoryHasNothingPending(t *testing.T) {
 
 	ws := at(t, "navexa", 1)
 	runs := 0
-	if err := Apply(&strings.Builder{}, []Patch{counter(&runs)}, []workspace.Workspace{ws}); err != nil {
+	if err := Apply(&strings.Builder{}, []Patch{counter(&runs)}, []workspace.Workspace{ws}, false); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -198,7 +198,7 @@ func TestAnUnknownFutureVersionIsRefusedAndNeverMigrated(t *testing.T) {
 	runs := 0
 
 	var b strings.Builder
-	err := Apply(&b, []Patch{counter(&runs)}, []workspace.Workspace{ws})
+	err := Apply(&b, []Patch{counter(&runs)}, []workspace.Workspace{ws}, false)
 	if err == nil {
 		t.Fatal("a manifest at an unknown version must be refused")
 	}
@@ -235,7 +235,7 @@ func TestAFailedRunLeavesTheOldVersion(t *testing.T) {
 	}
 
 	var b strings.Builder
-	if err := Apply(&b, []Patch{p}, []workspace.Workspace{ws}); err == nil {
+	if err := Apply(&b, []Patch{p}, []workspace.Workspace{ws}, false); err == nil {
 		t.Fatal("a failed patch must be reported as an error")
 	}
 	if got := versionOf(t, ws); got != 1 {
@@ -259,7 +259,7 @@ func TestFailingPatchDoesNotStopTheNextOne(t *testing.T) {
 	}
 
 	var b strings.Builder
-	err := Apply(&b, []Patch{bad, counter(&runs)}, []workspace.Workspace{ws})
+	err := Apply(&b, []Patch{bad, counter(&runs)}, []workspace.Workspace{ws}, false)
 	if err == nil {
 		t.Fatal("a failed patch must be reported as an error")
 	}
@@ -287,7 +287,7 @@ func TestNextReceivesOneResultPerMigratedWorkspace(t *testing.T) {
 	}
 
 	all := []workspace.Workspace{at(t, "navexa", 1), at(t, "shop", 2), at(t, "tsfc", 1)}
-	if err := Apply(&strings.Builder{}, []Patch{p}, all); err != nil {
+	if err := Apply(&strings.Builder{}, []Patch{p}, all, false); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 	if strings.Join(seen, ",") != "navexa,tsfc" {
@@ -310,7 +310,7 @@ func TestTheNextActionNamesTheWorkspaceRootEvenWhenNoOtherFileChanged(t *testing
 	}
 
 	var b strings.Builder
-	if err := Apply(&b, []Patch{p}, []workspace.Workspace{ws}); err != nil {
+	if err := Apply(&b, []Patch{p}, []workspace.Workspace{ws}, false); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 	if len(seen) != 1 || seen[0].Path != ws.Path {
@@ -336,7 +336,7 @@ func TestTheWorkspaceRootIsNamedOnce(t *testing.T) {
 		},
 	}
 
-	if err := Apply(&strings.Builder{}, []Patch{p}, []workspace.Workspace{ws}); err != nil {
+	if err := Apply(&strings.Builder{}, []Patch{p}, []workspace.Workspace{ws}, false); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 	if len(seen) != 1 {
@@ -388,7 +388,7 @@ func TestAWorkspaceWithNoManifestIsNotPending(t *testing.T) {
 	if st[0].Pending() || st[0].Rows[0].Err != nil {
 		t.Fatalf("a workspace with no manifest reads as %+v", st[0].Rows[0])
 	}
-	if err := Apply(&strings.Builder{}, []Patch{counter(&runs)}, []workspace.Workspace{ws}); err != nil {
+	if err := Apply(&strings.Builder{}, []Patch{counter(&runs)}, []workspace.Workspace{ws}, false); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 	if runs != 0 {
@@ -419,7 +419,7 @@ func TestApplyClosesABlockedRunWithTheWorkThatIsLeft(t *testing.T) {
 	ws := at(t, "navexa", 1)
 
 	var b strings.Builder
-	if err := Apply(&b, []Patch{blocked()}, []workspace.Workspace{ws}); err != nil {
+	if err := Apply(&b, []Patch{blocked()}, []workspace.Workspace{ws}, false); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 	got := b.String()

@@ -21,12 +21,18 @@ import (
 //
 // A workspace whose replica devstack can not build is a warning and not a stop:
 // the workspaces after it still get theirs.
-func ensureReplicas(w io.Writer) error {
+//
+// It names those workspaces beside the error. A copy can only serve a replica
+// that is built, so a restart there moves the copy onto the checkout. That is
+// true of the workspace that failed and of no other, so step 3 skips that
+// workspace and restarts the rest.
+func ensureReplicas(w io.Writer) (error, []string) {
 	all, err := migrate.Workspaces()
 	if err != nil {
-		return err
+		return err, nil
 	}
 	var errs []error
+	var unbuilt []string
 	for i := range all {
 		ws := &all[i]
 		if config.HasWorkspaceManifest(replica.Root(ws)) {
@@ -42,13 +48,14 @@ func ensureReplicas(w io.Writer) error {
 			fmt.Fprintf(w, "  FAILED: devstack can not build this replica: %v\n", err)
 			fmt.Fprintln(w, "  To build it after you fix the cause, run: devstack workspace up")
 			errs = append(errs, fmt.Errorf("%s: %w", ws.Name, err))
+			unbuilt = append(unbuilt, ws.Name)
 			continue
 		}
 		for _, warn := range res.Warnings {
 			fmt.Fprintf(w, "  warning: %s\n", warn)
 		}
 	}
-	return errors.Join(errs...)
+	return errors.Join(errs...), unbuilt
 }
 
 // writeDeprecations names the habits that still parse and no longer do what they

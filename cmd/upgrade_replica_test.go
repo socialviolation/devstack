@@ -24,7 +24,7 @@ func TestEnsureReplicasBuildsTheReplicaThatIsMissing(t *testing.T) {
 	}
 
 	var b strings.Builder
-	if err := ensureReplicas(&b); err != nil {
+	if err, _ := ensureReplicas(&b); err != nil {
 		t.Fatalf("ensureReplicas() = %v", err)
 	}
 	if !config.HasWorkspaceManifest(replica.Root(ws)) {
@@ -54,7 +54,7 @@ func TestEnsureReplicasLeavesABuiltReplicaAlone(t *testing.T) {
 	}
 
 	var b strings.Builder
-	if err := ensureReplicas(&b); err != nil {
+	if err, _ := ensureReplicas(&b); err != nil {
 		t.Fatalf("ensureReplicas() = %v", err)
 	}
 	if b.String() != "" {
@@ -83,7 +83,7 @@ func TestEnsureReplicasWarnsAndKeepsGoing(t *testing.T) {
 	}
 
 	var b strings.Builder
-	err := ensureReplicas(&b)
+	err, unbuilt := ensureReplicas(&b)
 	if err == nil {
 		t.Fatal("a replica that devstack can not build must be reported as an error")
 	}
@@ -97,6 +97,9 @@ func TestEnsureReplicasWarnsAndKeepsGoing(t *testing.T) {
 	}
 	if !config.HasWorkspaceManifest(replica.Root(shop)) {
 		t.Errorf("one blocked workspace stopped the workspaces after it:\n%s", b.String())
+	}
+	if len(unbuilt) != 1 || unbuilt[0] != "aloose" {
+		t.Errorf("the unbuilt workspaces are %v, want the one that failed. Step 3 skips these and\nrestarts the rest, so a wrong list keeps a good workspace on the old code", unbuilt)
 	}
 }
 

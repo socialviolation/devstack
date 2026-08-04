@@ -43,13 +43,21 @@ func Workspaces() ([]workspace.Workspace, error) {
 	return all, nil
 }
 
+// ErrRefused is the failure of a patch that stopped before it changed anything.
+// A caller that runs devstack in another process reads it from the exit status,
+// because a refusal and a failed write need different words.
+var ErrRefused = errors.New("the migration refused to run, and no file changed")
+
 // Sweep writes one migration report. It is the whole of what a caller reads:
 // the patches, what each one did or still has to do, and the next action.
 //
 // run=false previews, and it changes no file. run=true applies every pending
 // patch. The CLI and the MCP tool both call this, so neither one can print a
 // report the other does not.
-func Sweep(w io.Writer, patches []Patch, all []workspace.Workspace, run bool) error {
+//
+// force applies a patch that the pre-flight check refuses. The check finds work
+// that a patch destroys, so force is how a user says that they accept the loss.
+func Sweep(w io.Writer, patches []Patch, all []workspace.Workspace, run, force bool) error {
 	if len(all) == 0 {
 		fmt.Fprintln(w, "No workspace is registered on this machine, so devstack migrates nothing.")
 		return nil
@@ -59,7 +67,7 @@ func Sweep(w io.Writer, patches []Patch, all []workspace.Workspace, run bool) er
 		return nil
 	}
 	fmt.Fprintf(w, "devstack runs %s over %s.\n", pluralMigrations(len(patches)), pluralWorkspaces(len(all)))
-	return Apply(w, patches, all)
+	return Apply(w, patches, all, force)
 }
 
 // WriteList prints every migration, pending or done. It changes nothing.
@@ -118,12 +126,30 @@ type Result struct {
 // Next is the instruction the reader gets while the patch leaves work to do. It
 // receives the results of every workspace where the patch changed something, or
 // where it left an Item the reader still has to act on.
+//
+// Preflight reads the disk before the patch writes to it, and it names the work
+// the patch destroys. It receives the workspaces the patch applies to, and only
+// those. A patch that returns a Block stops, and it changes nothing in any
+// workspace.
 type Patch struct {
-	From  int
-	To    int
-	Title string
-	Run   func(*workspace.Workspace) (Result, error)
-	Next  func([]Result) []string
+	From      int
+	To        int
+	Title     string
+	Run       func(*workspace.Workspace) (Result, error)
+	Next      func([]Result) []string
+	Preflight func([]workspace.Workspace) []Block
+}
+
+// Block is one file that a patch removes content from or deletes, and that holds
+// a change nobody committed. git holds no copy of that change, so the change is
+// gone the moment the patch writes. devstack stops instead.
+type Block struct {
+	// Label names the repository or the directory, as the report calls it.
+	Label string
+	// Dir is the directory that holds the file.
+	Dir string
+	// File is the path of the file below Dir.
+	File string
 }
 
 // Name is how a report calls this patch.
@@ -134,12 +160,25 @@ func (p Patch) Name() string { return fmt.Sprintf("version %d to %d", p.From, p.
 // A patch that applies to nothing is reported and is not an error. A patch that
 // fails does not stop the patches after it, nor the workspaces after it: the
 // failures are collected and returned together.
-func Apply(w io.Writer, patches []Patch, all []workspace.Workspace) error {
+//
+// Each patch runs its pre-flight check first, over every workspace it applies
+// to. A check that finds work the patch destroys stops that patch, before the
+// patch has written in any workspace. force runs the patch over that refusal.
+func Apply(w io.Writer, patches []Patch, all []workspace.Workspace, force bool) error {
 	var errs []error
 	var note []string
 	incomplete := 0
+	refused := 0
 	for _, p := range patches {
 		fmt.Fprintf(w, "\n%s  %s\n", p.Name(), p.Title)
+		if blocks := preflight(p, all); len(blocks) > 0 {
+			writeBlocks(w, blocks, force)
+			if !force {
+				refused++
+				errs = append(errs, fmt.Errorf("%s: %w", p.Name(), ErrRefused))
+				continue
+			}
+		}
 		var changed []Result
 		for i := range all {
 			ws := &all[i]
@@ -164,8 +203,72 @@ func Apply(w io.Writer, patches []Patch, all []workspace.Workspace) error {
 		note = append(note, p.Next(changed)...)
 	}
 
-	writeNote(w, note, len(errs), incomplete)
+	writeNote(w, note, len(errs)-refused, incomplete, refused)
 	return errors.Join(errs...)
+}
+
+// preflight asks a patch what stops it, over the workspaces that the patch
+// applies to. A workspace at another version gets no patch, so a file that is
+// dirty there is not this patch's business, and a refusal about it is a refusal
+// the reader can do nothing with.
+func preflight(p Patch, all []workspace.Workspace) []Block {
+	if p.Preflight == nil {
+		return nil
+	}
+	var pending []workspace.Workspace
+	for i := range all {
+		if version, err := config.WorkspaceVersion(all[i].Path); err == nil && version == p.From {
+			pending = append(pending, all[i])
+		}
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	return p.Preflight(pending)
+}
+
+// writeBlocks names each file that holds a change nobody committed, and what to
+// do about it.
+//
+// devstack removes its own block from these files, and it deletes a file that
+// holds nothing else. Where the file is not committed, git holds no copy, so the
+// change can not come back. That is why this stops the whole patch, and why the
+// remedy is one of two: save the change, or say that you accept the loss.
+func writeBlocks(w io.Writer, blocks []Block, force bool) {
+	if force {
+		fmt.Fprintf(w, "  You gave --force. %s a change that nobody committed.\n", holdsPhrase(len(blocks)))
+		fmt.Fprintln(w, "  devstack migrates each one now, and each change is lost:")
+		writeBlockList(w, blocks)
+		return
+	}
+	fmt.Fprintln(w, "  devstack REFUSES to migrate. It changed no file, in any workspace.")
+	fmt.Fprintln(w, "  This migration removes the devstack block from a file, and it deletes a file that holds")
+	fmt.Fprintln(w, "  the block and nothing else. git holds no copy of a change that nobody committed, so that")
+	fmt.Fprintf(w, "  change can not come back. %s such a change:\n", holdsPhrase(len(blocks)))
+	writeBlockList(w, blocks)
+	fmt.Fprintln(w, "  To keep each change, commit it or stash it in its repository:")
+	fmt.Fprintln(w, "    git -C <directory> add <file> && git -C <directory> commit -m \"wip\"")
+	fmt.Fprintln(w, "    git -C <directory> stash push -- <file>")
+	fmt.Fprintln(w, "  Then run this command again: devstack migrate")
+	fmt.Fprintln(w, "  To migrate now, and lose every change above, run: devstack migrate --force")
+}
+
+func writeBlockList(w io.Writer, blocks []Block) {
+	dir := ""
+	for _, b := range blocks {
+		if b.Dir != dir {
+			dir = b.Dir
+			fmt.Fprintf(w, "    %-24s %s\n", b.Label, b.Dir)
+		}
+		fmt.Fprintf(w, "      %s\n", b.File)
+	}
+}
+
+func holdsPhrase(n int) string {
+	if n == 1 {
+		return "1 file holds"
+	}
+	return fmt.Sprintf("%d files hold", n)
 }
 
 // applyOne runs one patch in one workspace, and prints what it did. It returns
@@ -246,7 +349,22 @@ func why(version int, p Patch) string {
 // incomplete counts the workspaces where the patch left work that only a person
 // can do. devstack writes no new version there, so the migration is still
 // pending, and the closing line must send the reader back to the file.
-func writeNote(w io.Writer, note []string, failed, incomplete int) {
+//
+// refused counts the patches that stopped before they wrote. devstack changed
+// nothing there, so the reader has to hear the remedy and not a report of work
+// that is done.
+func writeNote(w io.Writer, note []string, failed, incomplete, refused int) {
+	if refused > 0 {
+		fmt.Fprintln(w, "\nNEXT")
+		fmt.Fprintf(w, "devstack REFUSED %s. It changed no file, in any workspace.\n", pluralMigrations(refused))
+		fmt.Fprintln(w, "The report above names each file that holds a change that nobody committed.")
+		fmt.Fprintln(w, "Commit or stash each one. Then run this command again: devstack migrate")
+		fmt.Fprintln(w, "To migrate now, and lose every change above, run: devstack migrate --force")
+		for _, l := range note {
+			fmt.Fprintln(w, l)
+		}
+		return
+	}
 	if failed > 0 {
 		fmt.Fprintln(w, "\nNEXT")
 		fmt.Fprintf(w, "A MIGRATION FAILED. devstack did not apply %s. Read the failure above.\n", pluralMigrations(failed))

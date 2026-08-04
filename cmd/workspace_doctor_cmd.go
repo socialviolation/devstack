@@ -104,7 +104,9 @@ func reportWorkspaceDrift(w io.Writer, wsPath string) int {
 		found++
 		fmt.Fprintf(w, "\nreplica: devstack has built no replica for this workspace, so base runs from your checkout\n")
 		fmt.Fprintf(w, "- [warn] %s\n", replica.Root(ws))
-		fmt.Fprintln(w, "  To build it, run: devstack workspace up")
+		fmt.Fprintln(w, "  To build it and restart what runs, run: devstack workspace up")
+		fmt.Fprintln(w, "  To build it and restart nothing, run: devstack base sync")
+		fmt.Fprintln(w, "  To read what a replica is, and the other repairs it takes, run: devstack base --help")
 	}
 	return found
 }

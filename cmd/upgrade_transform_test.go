@@ -52,7 +52,7 @@ func TestTheRestartStepTakesOnlyTheCopiesThatRun(t *testing.T) {
 		resourceWith("shop:jobs", "pending", false),
 	}}
 
-	got := strings.Join(runningBaseCopies(view, ""), ",")
+	got := strings.Join(runningBaseCopies(view, "", nil), ",")
 	if got != "shop:api,shop:jobs" {
 		t.Errorf("runningBaseCopies() = %q, want the two copies that run", got)
 	}
@@ -67,7 +67,7 @@ func TestTheRestartStepLeavesAStackCopyAlone(t *testing.T) {
 		resourceWith("shop:api:feat", "ok", false),
 	}}
 
-	got := runningBaseCopies(view, "")
+	got := runningBaseCopies(view, "", nil)
 	if len(got) != 1 || got[0] != "shop:api" {
 		t.Errorf("runningBaseCopies() = %v, want the base copy alone", got)
 	}
@@ -128,7 +128,7 @@ func TestTheTransformSaysSoWhenTheDaemonDoesNotRun(t *testing.T) {
 	withFreeHostPort(t)
 
 	var b strings.Builder
-	if err := transformRunningState(&b, ""); err != nil {
+	if err := transformRunningState(&b, "", nil); err != nil {
 		t.Fatalf("transformRunningState() = %v, want no error when there is no daemon", err)
 	}
 	got := b.String()

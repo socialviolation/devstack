@@ -115,7 +115,7 @@ func TestApplyCarriesAResultThatChangedNothingAndLeftWork(t *testing.T) {
 		Next: func(res []migrate.Result) []string { return []string{"FINISH THE JOB"} },
 	}
 
-	if err := migrate.Apply(&b, []migrate.Patch{p}, []workspace.Workspace{{Name: "shop", Path: root}}); err != nil {
+	if err := migrate.Apply(&b, []migrate.Patch{p}, []workspace.Workspace{{Name: "shop", Path: root}}, false); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 	if got := b.String(); !strings.Contains(got, "FINISH THE JOB") {
@@ -212,5 +212,26 @@ func TestTheUncommittedCheckAnswersFalseOutsideARepository(t *testing.T) {
 	}
 	if uncommittedAgentFiles(dir) {
 		t.Error("no repository holds this directory, so no commit is pending in it")
+	}
+}
+
+// `base` is the repair for a replica, and the replica report named only
+// `workspace up`. Somebody reading this line had no way to reach the command
+// that builds a replica and restarts nothing, or the help that says what a
+// replica is.
+func TestTheDoctorNamesBaseInTheReplicaReport(t *testing.T) {
+	ws, _ := setupCommittableWorkspace(t)
+
+	var b strings.Builder
+	reportWorkspaceDrift(&b, ws.Path)
+	got := b.String()
+
+	if !strings.Contains(got, "no replica") {
+		t.Fatalf("the fixture has a replica, so this checks nothing:\n%s", got)
+	}
+	for _, want := range []string{"devstack workspace up", "devstack base sync", "devstack base --help"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the replica report never names %q:\n%s", want, got)
+		}
 	}
 }

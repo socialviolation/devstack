@@ -11,7 +11,7 @@ import (
 // case where acting on it costs the most.
 func TestTheClosingLineNeverCallsAFailedRunApplied(t *testing.T) {
 	var b strings.Builder
-	writeNote(&b, nil, 1, 0)
+	writeNote(&b, nil, 1, 0, 0)
 
 	got := b.String()
 	if strings.Contains(got, "Every migration is applied") {
@@ -28,7 +28,7 @@ func TestTheClosingLineNeverCallsAFailedRunApplied(t *testing.T) {
 // reader needs both the next action and the failure.
 func TestAFailedRunStillCarriesTheNextActionOfWhatSucceeded(t *testing.T) {
 	var b strings.Builder
-	writeNote(&b, []string{"NOW COMMIT. these repositories hold uncommitted changes:"}, 1, 0)
+	writeNote(&b, []string{"NOW COMMIT. these repositories hold uncommitted changes:"}, 1, 0, 0)
 
 	got := b.String()
 	if !strings.Contains(got, "FAILED") || !strings.Contains(got, "NOW COMMIT") {
@@ -38,7 +38,7 @@ func TestAFailedRunStillCarriesTheNextActionOfWhatSucceeded(t *testing.T) {
 
 func TestACleanRunWithNothingToDoStillSaysSo(t *testing.T) {
 	var b strings.Builder
-	writeNote(&b, nil, 0, 0)
+	writeNote(&b, nil, 0, 0, 0)
 
 	if !strings.Contains(b.String(), "Every migration is applied") {
 		t.Errorf("a clean no-op run must still report that, got:\n%s", b.String())
@@ -50,7 +50,7 @@ func TestACleanRunWithNothingToDoStillSaysSo(t *testing.T) {
 // verdict this run must not close with.
 func TestTheClosingLineNeverCallsABlockedRunApplied(t *testing.T) {
 	var b strings.Builder
-	writeNote(&b, nil, 0, 1)
+	writeNote(&b, nil, 0, 1, 0)
 
 	got := b.String()
 	if strings.Contains(got, "Every migration is applied") {

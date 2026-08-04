@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -55,11 +57,21 @@ devstack removes only what devstack wrote. If a file holds text of your own, tha
 text stays, byte for byte. If devstack can not find the end of its own block, it
 changes nothing, and it names the file for you.
 
+BEFORE IT WRITES
+  devstack checks each file that it removes the devstack block from, and each
+  file that it deletes: AGENTS.md, CLAUDE.md, GEMINI.md, .cursorrules and
+  .github/copilot-instructions.md. If one of them holds a change that nobody
+  committed, devstack refuses, and it changes no file in any workspace. git holds
+  no copy of that change, so the change can not come back. Commit or stash the
+  file, or give --force.
+
 CAUTION: devstack does not own these repositories. Read the diff in each one
 before you commit it.
 
   devstack migrate          run every pending migration
   devstack migrate --list   print the version of each workspace, and what is pending
+  devstack migrate --force  migrate over the refusal above, and lose each
+                            uncommitted change in those files
 
 Run this command again at any time. A second run changes nothing.`,
 	SilenceUsage: true,
@@ -69,6 +81,7 @@ Run this command again at any time. A second run changes nothing.`,
 func init() {
 	rootCmd.AddCommand(migrateCmd)
 	migrateCmd.Flags().Bool("list", false, "Print the version of each workspace, and what is pending. Change nothing")
+	migrateCmd.Flags().Bool("force", false, "Migrate a file that holds a change nobody committed. devstack removes its block from that file, or deletes the file, and the change is lost")
 	migrate.Stamp = buildStamp()
 }
 
@@ -81,11 +94,12 @@ func patches() []migrate.Patch {
 
 func runMigrate(cmd *cobra.Command, args []string) error {
 	list, _ := cmd.Flags().GetBool("list")
+	force, _ := cmd.Flags().GetBool("force")
 	all, err := migrate.Workspaces()
 	if err != nil {
 		return err
 	}
-	return migrate.Sweep(os.Stdout, patches(), all, !list)
+	return migrate.Sweep(os.Stdout, patches(), all, !list, force)
 }
 
 // agentFilesPatch removes the instructions that an older devstack wrote into
@@ -103,12 +117,80 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 // older devstack wrote, and the version in the manifest says when it is done.
 func agentFilesPatch() migrate.Patch {
 	return migrate.Patch{
-		From:  1,
-		To:    2,
-		Title: "Remove the devstack instructions from every repository, and connect each one to devstack",
-		Run:   runAgentFiles,
-		Next:  nextAgentFiles,
+		From:      1,
+		To:        2,
+		Title:     "Remove the devstack instructions from every repository, and connect each one to devstack",
+		Run:       runAgentFiles,
+		Next:      nextAgentFiles,
+		Preflight: preflightAgentFiles,
 	}
+}
+
+// preflightAgentFiles names each file this patch destroys work in.
+//
+// The patch removes the devstack block from the instruction files, and it
+// deletes a file that holds the block and nothing else. Where such a file holds
+// a change nobody committed, that change goes with the block, and git can not
+// give it back.
+//
+// It names no other file. devstack writes .mcp.json and .claude/settings.json,
+// and it only adds to them: .mcp.json is generated whole, and the hook is merged
+// into settings that keep every other key. Both leave a diff a reader can read
+// and revert, so neither one is a reason to stop.
+//
+// It reads the workspace root, each service repository and each stack worktree,
+// because the patch writes in all three.
+func preflightAgentFiles(all []workspace.Workspace) []migrate.Block {
+	var out []migrate.Block
+	for i := range all {
+		targets, _ := migrateTargets(&all[i])
+		for _, t := range targets {
+			for _, rel := range uncommittedStripTargets(t.Dir) {
+				out = append(out, migrate.Block{Label: t.Label, Dir: t.Dir, File: rel})
+			}
+		}
+	}
+	return out
+}
+
+// uncommittedStripTargets names the files of dir that this patch strips or
+// deletes, and that git reports as changed and not committed.
+//
+// A file devstack leaves alone is not named. A file with a marker that has no
+// pair is one of those. Nothing in it changes, so nothing in it is lost, and a
+// refusal about it is a refusal nobody can act on.
+func uncommittedStripTargets(dir string) []string {
+	var out []string
+	for _, f := range contentFiles(dir) {
+		data, err := os.ReadFile(f.Path)
+		if err != nil || !hasDevstackContent(string(data), f.Legacy) {
+			continue
+		}
+		if !sentinelPairsAreSound(string(data)) {
+			continue
+		}
+		if fileIsUncommitted(dir, f.Rel) {
+			out = append(out, f.Rel)
+		}
+	}
+	return out
+}
+
+// fileIsUncommitted reports whether git holds no copy of what rel holds now. It
+// reads the index and the working tree, and it reaches no network.
+//
+// A directory that no git repository holds gets false. There is nothing to
+// compare the file against, and neither remedy this check offers — commit it, or
+// stash it — can run there. The migration report names such a directory on its
+// own.
+func fileIsUncommitted(dir, rel string) bool {
+	cmd := exec.Command("git", "status", "--porcelain", "--", rel)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return len(bytes.TrimSpace(out)) > 0
 }
 
 // devstackOwnedFiles are the files this patch writes, strips or deletes. The

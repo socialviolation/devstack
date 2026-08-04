@@ -1,12 +1,22 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"github.com/socialviolation/devstack/internal/migrate"
 )
+
+// exitMigrateRefused is the status of a migration that stopped before it wrote.
+// 'devstack upgrade' runs the migration in another process, so the exit status
+// is the only thing it reads. A refusal leaves every replica and every running
+// copy as they were, and a write that failed does not, so the two need different
+// statuses.
+const exitMigrateRefused = 3
 
 var cfgFile string
 
@@ -34,6 +44,9 @@ func Execute() {
 	rootCmd.SilenceErrors = true
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
+		if errors.Is(err, migrate.ErrRefused) {
+			os.Exit(exitMigrateRefused)
+		}
 		os.Exit(1)
 	}
 }

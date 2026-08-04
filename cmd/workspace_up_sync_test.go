@@ -83,7 +83,7 @@ func TestWorkspaceUpRestartsOnlyTheRunningBaseCopiesOfThisWorkspace(t *testing.T
 		resourceWith("other:api", "ok", false),
 	}}
 
-	got := strings.Join(runningBaseCopies(view, "shop"), ",")
+	got := strings.Join(runningBaseCopies(view, "shop", nil), ",")
 	if got != "shop:api" {
 		t.Errorf("runningBaseCopies() = %q, want the one running base copy of shop", got)
 	}
@@ -99,7 +99,7 @@ func TestWorkspaceUpSyncsTheReplicaAndThenRestartsWhatRuns(t *testing.T) {
 	if !strings.Contains(body, "syncBase(ws)") {
 		t.Error("'workspace up' does not move the replica, so base falls behind the default branch")
 	}
-	if !strings.Contains(body, "transformRunningState(os.Stdout, ws.Name)") {
+	if !strings.Contains(body, "transformRunningState(os.Stdout, ws.Name, nil)") {
 		t.Error("'workspace up' does not restart the copies that run, so they serve code that moved")
 	}
 	if strings.Index(body, "syncBase(ws)") > strings.Index(body, "transformRunningState") {

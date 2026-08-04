@@ -139,7 +139,7 @@ func TestTheAgentFilesMigrationStaysAppliedWhenAServiceIsAdded(t *testing.T) {
 	writeFile(t, filepath.Join(svcDir, agentsFileName), "# api\n\nMine.\n\n"+block("generated")+"\n")
 
 	only := []migrate.Patch{agentFilesPatch()}
-	if err := migrate.Apply(&strings.Builder{}, only, []workspace.Workspace{*ws}); err != nil {
+	if err := migrate.Apply(&strings.Builder{}, only, []workspace.Workspace{*ws}, false); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -217,7 +217,7 @@ func TestAFileThatNeedsAHumanLeavesTheVersionAlone(t *testing.T) {
 	writeFile(t, filepath.Join(svcDir, "CLAUDE.md"), "# api\n\n"+agentsSentinelBegin+"\n\ntruncated\n")
 
 	only := []migrate.Patch{agentFilesPatch()}
-	if err := migrate.Apply(&strings.Builder{}, only, []workspace.Workspace{*ws}); err != nil {
+	if err := migrate.Apply(&strings.Builder{}, only, []workspace.Workspace{*ws}, false); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 
@@ -242,7 +242,7 @@ func TestAFileThatNeedsAHumanLeavesTheVersionAlone(t *testing.T) {
 	if err := os.Remove(filepath.Join(svcDir, "CLAUDE.md")); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrate.Apply(&strings.Builder{}, only, []workspace.Workspace{*ws}); err != nil {
+	if err := migrate.Apply(&strings.Builder{}, only, []workspace.Workspace{*ws}, false); err != nil {
 		t.Fatalf("Apply() after the human acted = %v", err)
 	}
 	if v, err := config.WorkspaceVersion(ws.Path); err != nil || v != 2 {

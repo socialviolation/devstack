@@ -140,7 +140,7 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 	// Last, so that a restarted service finds its infrastructure and its
 	// collector up. A copy that does not restart is a warning: the workspace is
 	// up, and the report names the copy to restart by hand.
-	if err := transformRunningState(os.Stdout, ws.Name); err != nil {
+	if err := transformRunningState(os.Stdout, ws.Name, nil); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 

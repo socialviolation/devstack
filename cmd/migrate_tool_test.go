@@ -78,9 +78,16 @@ func migrateToolServer(t *testing.T, ws *workspace.Workspace) *server.MCPServer 
 // not the JSON envelope around it.
 func migrateToolText(t *testing.T, s *server.MCPServer, action string) string {
 	t.Helper()
+	return migrateToolCall(t, s, map[string]any{"action": action})
+}
+
+// migrateToolCall passes the arguments through as an agent gives them, so a test
+// can reach an argument that migrateToolText does not name.
+func migrateToolCall(t *testing.T, s *server.MCPServer, args map[string]any) string {
+	t.Helper()
 	req, err := json.Marshal(map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-		"params": map[string]any{"name": "migrate", "arguments": map[string]string{"action": action}},
+		"params": map[string]any{"name": "migrate", "arguments": args},
 	})
 	if err != nil {
 		t.Fatal(err)

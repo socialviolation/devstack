@@ -98,15 +98,34 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("\nSTEP 2 of 3: run each pending migration")
-	merr := reportAndMigrate(!noMigrate)
+	step2 := reportAndMigrate(!noMigrate)
 
 	fmt.Println("\nSTEP 3 of 3: transform the running state")
-	terr := transformStep(noMigrate, noRestart, merr)
+	terr := transformStep(noMigrate, noRestart, step2)
 
 	writeUpgradeNext(os.Stdout)
 	writeDeprecations(os.Stdout)
-	return errors.Join(merr, terr)
+	return errors.Join(step2.Err(), terr)
 }
+
+// step2Result is what step 2 leaves for step 3. The two failures of step 2 are
+// separate, because they permit different things: a migration that failed or
+// refused stops no service, and a replica that did not build is the one reason a
+// restart moves a copy onto the checkout.
+type step2Result struct {
+	// MigrateErr is the failure of the migration, or nil.
+	MigrateErr error
+	// ReplicaErr is every failure to build a replica, or nil.
+	ReplicaErr error
+	// Unbuilt names the workspaces whose replica did not build.
+	Unbuilt []string
+}
+
+func (s step2Result) Err() error { return errors.Join(s.MigrateErr, s.ReplicaErr) }
+
+// Refused reports whether the migration stopped before it wrote. A refusal
+// changes no file, so the state of the machine is the state step 3 expects.
+func (s step2Result) Refused() bool { return errors.Is(s.MigrateErr, migrate.ErrRefused) }
 
 // transformStep restarts what runs, unless the user asked devstack not to.
 //
@@ -114,10 +133,19 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 // must serve from, so a restart before it moves a copy onto a replica that is
 // not there.
 //
-// merr is the failure of step 2. A restart after that failure stops a service
-// that serves now and starts it again on a replica that step 2 did not build.
-// The copy then runs the checkout, which holds whatever work is parked there.
-func transformStep(noMigrate, noRestart bool, merr error) error {
+// A migration that failed stops the restart. It wrote part of a configuration,
+// and devstack can not say which part, so it changes nothing else.
+//
+// A migration that refused wrote nothing at all. It also stopped nothing: step 2
+// still built each replica, so each copy has a replica to serve. A machine that
+// installs a new binary and then keeps every copy on the old code is half
+// upgraded, so the restart goes ahead.
+//
+// A replica that did not build stops the restart of that workspace, and of that
+// workspace only. Its copies have no replica to serve, so a restart would move
+// them onto the checkout. Every other workspace has its replica, and one broken
+// workspace must not keep the whole machine on the old code.
+func transformStep(noMigrate, noRestart bool, step step2Result) error {
 	if noRestart {
 		fmt.Println("You gave --no-restart, so devstack restarts nothing.")
 		fmt.Println("Each copy that runs keeps serving the code it started with.")
@@ -129,13 +157,35 @@ func transformStep(noMigrate, noRestart bool, merr error) error {
 		fmt.Println("that is built. Run the migrations first: devstack migrate")
 		return nil
 	}
-	if merr != nil {
-		fmt.Println("STEP 2 FAILED, so devstack restarts nothing. A copy can only serve a replica that is")
-		fmt.Println("built. A restart now would move a copy onto your checkout instead.")
+	if step.MigrateErr != nil && !step.Refused() {
+		fmt.Println("STEP 2 FAILED, so devstack restarts nothing. The migration did not finish, and devstack")
+		fmt.Println("can not say how much of your configuration it wrote.")
 		fmt.Println("Read the failure in step 2. After you fix the cause, run: devstack upgrade")
 		return nil
 	}
-	return transformRunningState(os.Stdout, "")
+	if step.Refused() {
+		fmt.Println("STEP 2 REFUSED TO MIGRATE, and it changed no file in any repository. It built each")
+		fmt.Println("replica, so devstack restarts what runs, and every copy serves its replica.")
+		fmt.Println("Your configuration stays on its old version, and this migration stays pending.")
+		fmt.Println("Read the refusal in step 2. It names each file that holds a change nobody committed.")
+		fmt.Println("Commit or stash each one, then run: devstack migrate")
+	}
+	if len(step.Unbuilt) > 0 {
+		fmt.Printf("devstack restarts no copy of %s. The replica of each one did not build in step 2, so a\n", pluralWorkspaceList(step.Unbuilt))
+		fmt.Println("restart there would move a copy onto your checkout. Each copy keeps serving the old code.")
+		fmt.Println("To build a replica after you fix the cause, run in that workspace: devstack workspace up")
+		fmt.Println("devstack restarts every other workspace now.")
+	}
+	return transformRunningState(os.Stdout, "", step.Unbuilt)
+}
+
+// pluralWorkspaceList names the workspaces, in the order they failed, and it
+// keeps the sentence grammatical either way.
+func pluralWorkspaceList(names []string) string {
+	if len(names) == 1 {
+		return "the workspace " + names[0]
+	}
+	return "these workspaces: " + strings.Join(names, ", ")
 }
 
 // writeUpgradeNext is the work that is left for a human. devstack does not own
@@ -261,24 +311,28 @@ func parseVersionOutput(out string) string {
 //
 // The replica is machine state, so no migration owns it. An upgraded machine
 // must still have one, so the upgrade builds it here, directly.
-func reportAndMigrate(doMigrate bool) error {
+//
+// It keeps the two failures apart, because step 3 acts on them differently.
+func reportAndMigrate(doMigrate bool) step2Result {
 	all, err := migrate.Workspaces()
 	if err != nil {
-		return err
+		return step2Result{MigrateErr: err}
 	}
 	writePendingReport(os.Stdout, migrate.List(patches(), all), doMigrate)
 
 	if !doMigrate {
-		return nil
+		return step2Result{}
 	}
 
 	bin := installedBinary()
 	if bin == "" {
-		return fmt.Errorf("devstack can not find the installed binary to migrate with. Run 'devstack migrate' instead")
+		return step2Result{MigrateErr: fmt.Errorf("devstack can not find the installed binary to migrate with. Run 'devstack migrate' instead")}
 	}
 
 	fmt.Println()
-	return errors.Join(runMigration(bin), ensureReplicas(os.Stdout))
+	merr := runMigration(bin)
+	perr, unbuilt := ensureReplicas(os.Stdout)
+	return step2Result{MigrateErr: merr, ReplicaErr: perr, Unbuilt: unbuilt}
 }
 
 // writePendingReport names each patch that still has work, and the workspaces it
@@ -326,14 +380,23 @@ var migrateArgs = []string{"migrate"}
 // runMigration sweeps every workspace by running bin, which is the devstack that
 // was just installed and not this process. This one is the old build: asking it
 // to migrate would leave behind exactly what the new one removes.
+//
+// A migration that refused wrote nothing, and it names the files that stopped it
+// on the output above. That is a different outcome from a write that failed, and
+// the exit status is the only place this process can read it.
 func runMigration(bin string) error {
 	c := exec.Command(bin, migrateArgs...)
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
-	if err := c.Run(); err != nil {
-		return fmt.Errorf("devstack migrate failed: %w. To read the error, run: devstack migrate", err)
+	err := c.Run()
+	if err == nil {
+		return nil
 	}
-	return nil
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == exitMigrateRefused {
+		return fmt.Errorf("devstack migrate changed nothing: %w", migrate.ErrRefused)
+	}
+	return fmt.Errorf("devstack migrate failed: %w. To read the error, run: devstack migrate", err)
 }
 
 // writeUpgradeIntent states what the command changes, before it changes it. An

@@ -198,7 +198,7 @@ func buildPrime() (string, error) {
 	switch {
 	case service != "":
 		section(&b, "THIS SERVICE — "+service)
-		writePrimeInstances(&b, ws, rw, service, here, working)
+		writePrimeInstances(&b, ws, rw, service, here, working, inTemplateCheckout(ws, here, inReplica))
 		writePrimeReload(&b, rw, service, here, inReplica, config.HasWorkspaceManifest(replica.Root(ws)), working)
 	case hereRec != nil:
 		section(&b, "THIS DIRECTORY")
@@ -489,6 +489,13 @@ func siblingAt(siblings map[string]string, cwd string) string {
 	return ""
 }
 
+// inTemplateCheckout reports whether the caller stands in the template that
+// devstack builds the replica from. base runs the replica, so nothing in the
+// template runs, and the caller is in no copy at all.
+func inTemplateCheckout(ws *workspace.Workspace, here string, inReplica bool) bool {
+	return here == "base" && !inReplica && config.HasWorkspaceManifest(replica.Root(ws))
+}
+
 func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, here string, inReplica bool) {
 	fmt.Fprintf(b, "workspace %s", ws.Name)
 	if service != "" {
@@ -500,7 +507,7 @@ func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, he
 	case inReplica:
 		b.WriteString(" · base replica (not a stack)\n")
 		b.WriteString("  devstack generates this directory. `devstack workspace up` overwrites it, so do not edit here.\n")
-	case config.HasWorkspaceManifest(replica.Root(ws)):
+	case inTemplateCheckout(ws, here, inReplica):
 		b.WriteString(" · template checkout (not a stack, and not what base runs)\n")
 		fmt.Fprintf(b, "  Nothing runs here. base runs a replica of this workspace at %s.\n", replica.Root(ws))
 	default:
@@ -774,7 +781,10 @@ func writePrimeReload(b *strings.Builder, rw *config.ResolvedWorkspace, service,
 // what is that copy for. Base and every stack are the same kind of thing — an
 // instance — so splitting them across two blocks made the reader join them up,
 // and left base's own port stated nowhere at all.
-func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config.ResolvedWorkspace, service, here string, working *workingStack) {
+// template says that the caller stands in the template checkout. base runs the
+// replica there, so the caller is in no copy on this table, and the marker that
+// says otherwise has to go.
+func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config.ResolvedWorkspace, service, here string, working *workingStack, template bool) {
 	view, err := tilt.NewClient("localhost", workspace.HostTiltPort).GetView()
 	if err != nil {
 		b.WriteString("\nThe daemon is not started. To start it, run: `devstack workspace up`\n")
@@ -800,7 +810,15 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 
 	type instance struct{ name, port, state, branch, dir, note string }
 
-	rows := []instance{{name: "base", port: "-", state: orDash(states[service])}}
+	// A copy the daemon does not hold is down, and the STATES block on this same
+	// page defines that word. A stack row already prints it. The base row printed
+	// "(none)", which no surface of devstack defines, so a reader met a state word
+	// that the briefing beside it never explained.
+	baseState := states[service]
+	if baseState == "" {
+		baseState = "down"
+	}
+	rows := []instance{{name: "base", port: "-", state: baseState}}
 	replicaBuilt := false
 	if svc, ok := rw.Services[service]; ok {
 		// The directory base RUNS from, which is the replica's worktree and never
@@ -859,11 +877,16 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 		// guess about intent. Marking a guess with ▸ told an agent it was
 		// standing somewhere it was not, and the worktree path beside it made
 		// the claim look verified.
+		//
+		// The template checkout is no copy at all. This same page says that
+		// nothing runs there and that base runs the replica, and then it marked
+		// the base row ▸ and printed the replica's path beside it. So the one
+		// marker that is a filesystem fact contradicted the two lines above it.
 		marker := " "
-		switch r.name {
-		case here:
+		switch {
+		case r.name == here && !template:
 			marker = "▸"
-		case suggested:
+		case r.name == suggested:
 			marker = "?"
 		}
 		fmt.Fprintf(b, "  %s %-12s %-8s %-9s branch %s\n", marker, r.name, r.port, r.state, orDash(truncateCell(r.branch, 46)))
@@ -874,7 +897,11 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 			fmt.Fprintf(b, "      %s\n", r.note)
 		}
 	}
-	fmt.Fprintf(b, "  The marker ▸ shows the copy that you are in now: %s.\n", here)
+	if template {
+		b.WriteString("  No marker ▸ is on this table. You are in the template checkout, which is no copy.\n")
+	} else {
+		fmt.Fprintf(b, "  The marker ▸ shows the copy that you are in now: %s.\n", here)
+	}
 	if suggested != "" {
 		fmt.Fprintf(b, "  The marker ? shows a guess. %s is the only stack that runs %s, but you are not in it.\n  Ask the user before you work on it.\n", suggested, service)
 	}

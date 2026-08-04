@@ -27,7 +27,11 @@ import (
 // workspace's replica, so it must not restart another workspace's services. An
 // upgrade replaces the binary for the machine, so it passes an empty name and
 // reaches every copy.
-func transformRunningState(w io.Writer, wsName string) error {
+//
+// skip names the workspaces to leave alone. A copy can only serve a replica that
+// is built, so a workspace whose replica did not build keeps its copies on the
+// old code. That is true of that workspace and of no other.
+func transformRunningState(w io.Writer, wsName string, skip []string) error {
 	client := tilt.NewClient("localhost", workspace.HostTiltPort)
 	view, err := client.GetView()
 	if err != nil {
@@ -36,7 +40,7 @@ func transformRunningState(w io.Writer, wsName string) error {
 		return nil
 	}
 
-	copies := runningBaseCopies(view, wsName)
+	copies := runningBaseCopies(view, wsName, skip)
 	if len(copies) == 0 {
 		fmt.Fprintln(w, "The daemon runs, and no base copy runs in it. devstack restarts nothing.")
 		return nil
@@ -58,7 +62,8 @@ func transformRunningState(w io.Writer, wsName string) error {
 		}
 		return nil
 	})
-	writeRestartReport(w, restarted, readableReplicas())
+	readable, regErr := readableReplicas()
+	writeRestartReport(w, restarted, readable, regErr)
 	if len(errs) == 0 {
 		return nil
 	}
@@ -76,8 +81,18 @@ func transformRunningState(w io.Writer, wsName string) error {
 // replica. Where it can not, generation falls back to the checkout, and the copy
 // runs whatever work is parked there. One line for the whole machine can not say
 // that, so the report is per workspace.
-func writeRestartReport(w io.Writer, restarted []string, readable map[string]bool) {
+//
+// regErr is the failure to read the registry. devstack then knows nothing about
+// any replica, so it says that one time, and it makes no claim about a workspace
+// it never read.
+func writeRestartReport(w io.Writer, restarted []string, readable map[string]bool, regErr error) {
 	if len(restarted) == 0 {
+		return
+	}
+	if regErr != nil {
+		fmt.Fprintf(w, "devstack restarted %s.\n", pluralCopies(len(restarted)))
+		fmt.Fprintf(w, "devstack can not read the workspace registry, so it can not say what any copy serves: %v\n", regErr)
+		fmt.Fprintln(w, "To read what each copy runs, run: devstack status --all")
 		return
 	}
 	counts := map[string]int{}
@@ -114,17 +129,23 @@ func workspaceOfCopy(name string) string {
 // readableReplicas reports, for each registered workspace, whether devstack can
 // read its replica. It asks the same question the generator asks, because the
 // generator falls back to the checkout for every workspace it can not read.
-func readableReplicas() map[string]bool {
-	out := map[string]bool{}
+//
+// It returns the registry failure rather than an empty map. An empty map reads
+// as "no workspace has a readable replica", so one unreadable registry told
+// every restarted workspace that its copies serve the checkout. That is a claim
+// about each workspace, and the reader had no way to know that devstack never
+// looked at any of them.
+func readableReplicas() (map[string]bool, error) {
 	all, err := workspace.All()
 	if err != nil {
-		return out
+		return nil, err
 	}
+	out := map[string]bool{}
 	for i := range all {
 		_, err := replica.Resolve(&all[i])
 		out[all[i].Name] = err == nil
 	}
-	return out
+	return out, nil
 }
 
 // runningBaseCopies names the base copies that the daemon serves now, in name
@@ -135,13 +156,20 @@ func readableReplicas() map[string]bool {
 //
 // A feature stack runs out of its own worktree, and an upgrade does not move
 // that worktree, so a stack copy is left alone.
-func runningBaseCopies(view *tilt.TiltView, wsName string) []string {
+func runningBaseCopies(view *tilt.TiltView, wsName string, skip []string) []string {
+	skipped := map[string]bool{}
+	for _, name := range skip {
+		skipped[name] = true
+	}
 	var out []string
 	for _, r := range view.UiResources {
 		if !isBaseCopy(r.Metadata.Name) || !isRunningCopy(r) {
 			continue
 		}
 		if wsName != "" && !strings.HasPrefix(r.Metadata.Name, wsName+":") {
+			continue
+		}
+		if skipped[workspaceOfCopy(r.Metadata.Name)] {
 			continue
 		}
 		out = append(out, r.Metadata.Name)

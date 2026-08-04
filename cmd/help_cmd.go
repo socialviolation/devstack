@@ -37,12 +37,13 @@ var helpGroups = []helpGroup{
 	}},
 	{"SET UP THIS MACHINE", []helpRow{
 		{"devstack workspace add <path>", "register the directory of your services"},
+		{"devstack init --name <svc> --path <dir> --cmd <cmd>", "register one service in it"},
 		{"devstack workspace up", "start the daemon, and base"},
 		{"devstack upgrade", "new devstack, migrated"},
 	}},
 }
 
-var moreRow = helpRow{"devstack help more", "otel, tunnel, ports, hooks, deps"}
+var moreRow = helpRow{"devstack help more", "otel, tunnel, ports, hooks, deps, base"}
 
 // moreCommands are real and are needed now and then. They are not part of
 // learning the tool, so they leave the first screen and keep everything else.
@@ -53,6 +54,7 @@ var moreCommands = []helpRow{
 	{"dependencies", "declare which service starts before which"},
 	{"hooks", "run an action when a stack or a service changes state"},
 	{"group", "act on a named set of services at one time"},
+	{"base", "the replica that base runs from: print its path, or build it again"},
 }
 
 var helpCmd = &cobra.Command{
@@ -103,11 +105,11 @@ func workflowScreen() string {
 	for _, g := range helpGroups {
 		fmt.Fprintf(&b, "%s\n", g.title)
 		for _, r := range g.rows {
-			fmt.Fprintf(&b, "  %-50s %s\n", r.cmd, r.what)
+			fmt.Fprintf(&b, "  %-52s %s\n", r.cmd, r.what)
 		}
 		b.WriteString("\n")
 	}
-	fmt.Fprintf(&b, "  %-50s %s\n", moreRow.cmd, moreRow.what)
+	fmt.Fprintf(&b, "  %-52s %s\n", moreRow.cmd, moreRow.what)
 	return b.String()
 }
 
