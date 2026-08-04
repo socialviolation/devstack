@@ -26,13 +26,15 @@ the configured backend of this workspace, and talks to it for you.
 With no argument, this command lists the recent root spans. With a trace ID, it
 prints the full span tree of that trace.
 
-With no --stack, the query covers every copy together, base and stacks. Pass
---stack <name> for one stack. Pass --stack base for base alone.
+With no --stack, the query covers base alone. Pass --stack <name> for one stack.
+Pass --stack all for base and every stack together. The investigate MCP tool has
+the same default, so the two surfaces cover the same copies.
 
 Examples:
   devstack otel traces
   devstack otel traces --service=api --since=15m
   devstack otel traces --stack=feat-x
+  devstack otel traces --stack=all
   devstack otel traces 5b8efff798038103d269b633813fc60c`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runOtelTraces,
@@ -76,7 +78,7 @@ func init() {
 	}
 
 	otelTracesCmd.Flags().String("service", "", "Only traces from this service. Default: the service you stand in. Pass \"all\" for the whole workspace")
-	otelTracesCmd.Flags().String("stack", "", "Only traces from this stack. Omit it, and devstack searches every copy, base and stacks together. Pass \"base\" for base alone")
+	otelTracesCmd.Flags().String("stack", "", "Whose traces to search. "+observability.StackScopeDesc)
 	otelTracesCmd.Flags().String("attr", "", "Only traces with this attribute, as key=value")
 	otelTracesCmd.Flags().Int("limit", 10, "Maximum traces to return")
 
@@ -120,8 +122,13 @@ func resolveQueryService(cmd *cobra.Command) string {
 	return identity.ServiceName
 }
 
-// resolveStackFlag rejects a --stack naming no stack of this workspace, and
-// returns the stack's canonical name.
+// resolveStackFlag maps --stack to the query's stack filter, and rejects a value
+// naming no stack of this workspace.
+//
+// An absent flag searches base alone, which is what the investigate MCP tool
+// does with an absent stack. The two used to default opposite ways, so a human
+// and an agent comparing notes on the same unqualified query disagreed about
+// what it had covered.
 //
 // A telemetry query used to accept any string and answer "No traces", so
 // --stack with a typo, the wrong case, or the '<base>--<name>' identity that
@@ -133,14 +140,15 @@ func resolveQueryService(cmd *cobra.Command) string {
 // telemetry attribute is not: --stack Perf resolved to the perf record and then
 // filtered on "Perf", which matches nothing.
 func resolveStackFlag(cmd *cobra.Command, name string) (string, error) {
-	if name == "" || name == "base" || name == "all" || name == "*" {
-		return name, nil
+	filter := observability.ResolveStackFilter(name)
+	if filter == "" || filter == "base" {
+		return filter, nil
 	}
 	ws, err := resolveOtelWorkspace(cmd)
 	if err != nil {
-		return name, nil
+		return filter, nil
 	}
-	rec, err := stack.Resolve(ws.Name, name)
+	rec, err := stack.Resolve(ws.Name, filter)
 	if err != nil {
 		return "", err
 	}
@@ -159,6 +167,7 @@ func explainEmptyTraceResult(cmd *cobra.Command, stackName string) {
 		return
 	}
 	if stackName == "base" {
+		faint.Println("  This query covered base alone, which is the default. To include the stacks, pass --stack all, or --stack <name> for one.")
 		return
 	}
 	ws, err := resolveOtelWorkspace(cmd)

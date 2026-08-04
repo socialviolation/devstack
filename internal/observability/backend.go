@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -16,6 +17,27 @@ type TraceQuery struct {
 	Value     string        // Optional attribute value to match
 	Since     time.Duration // Lookback window (default: 5 minutes)
 	Limit     int           // Max traces to return (default: 3)
+}
+
+// StackScopeDesc states what a telemetry query covers when the caller names no
+// stack. The CLI flag and the MCP parameter both quote it, because a human and
+// an agent that compared notes on an unqualified query had each been told a
+// different answer.
+const StackScopeDesc = "The default is base only. Pass a stack's short name for that stack alone, or \"all\" for base and every stack together."
+
+// ResolveStackFilter maps what a caller wrote to a TraceQuery.Stack value. An
+// absent value is "base", which is the narrower of the two readings: a query
+// that silently spans every stack invites a wrong conclusion. "all" (or "*")
+// clears the filter. Any other value is a stack's short name.
+func ResolveStackFilter(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return "base"
+	case "all", "*":
+		return ""
+	default:
+		return raw
+	}
 }
 
 // LogQuery parameters for querying logs.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/socialviolation/devstack/internal/observability"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -22,8 +23,8 @@ func TestResolveInvestigateStack(t *testing.T) {
 		"base": "base",
 	}
 	for in, want := range cases {
-		if got := resolveInvestigateStack(in); got != want {
-			t.Errorf("resolveInvestigateStack(%q) = %q, want %q", in, got, want)
+		if got := observability.ResolveStackFilter(in); got != want {
+			t.Errorf("ResolveStackFilter(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -72,5 +73,23 @@ func TestStackAndEnvToolsRegistered(t *testing.T) {
 		if !strings.Contains(listing, `"`+name+`"`) {
 			t.Errorf("tools/list missing %q; got %s", name, listing)
 		}
+	}
+}
+
+// investigate and `devstack otel traces` are the same capability with the same
+// word, and they used to default opposite ways: a human and an agent comparing
+// notes on an unqualified query disagreed about what it had covered. Both
+// surfaces now quote one sentence, so neither can state a different default.
+func TestInvestigateStatesTheSharedStackDefault(t *testing.T) {
+	s := server.NewMCPServer("test", "0.0.0")
+	ws := &workspace.Workspace{Name: "navexa", Path: t.TempDir()}
+	registerInvestigateTool(s, nil, "", nil, "", ws.Path, ws)
+
+	desc := listTools(t, s)["investigate"].InputSchema.Properties["stack"].Description
+	if !strings.Contains(desc, observability.StackScopeDesc) {
+		t.Errorf("investigate's stack parameter must state the shared default %q; got %q", observability.StackScopeDesc, desc)
+	}
+	if !strings.Contains(observability.StackScopeDesc, "base only") || !strings.Contains(observability.StackScopeDesc, "\"all\"") {
+		t.Errorf("the shared sentence must state the default and how to widen it: %q", observability.StackScopeDesc)
 	}
 }

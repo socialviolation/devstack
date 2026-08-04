@@ -64,7 +64,7 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 		),
 		mcp.WithString("stack",
 			mcp.Description(
-				"Optional. "+stackShortNameDesc+" "+
+				optionalStackNameDesc+" "+
 					"Source-tree semantics, unlike the running-process semantics that 'stack' has on every other tool: it names the checkout to read and to write. "+
 					"Absent (the default) reads and writes the BASE workspace's service repos. Those repos are the template. You edit this config there, and it reaches base's running copy only after 'devstack base sync'. It is never the replica, because nothing edits the replica. "+
 					"When you set it, the tool reads and writes the named stack's worktree of the service instead. So an agent edits its own stack's config, and never base's.",

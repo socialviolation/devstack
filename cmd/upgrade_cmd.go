@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/socialviolation/devstack/internal/migrate"
 	"github.com/socialviolation/devstack/internal/selfcheck"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -35,13 +35,15 @@ upgrade.
 A migration is a second and separate decision. Every service repo commits its
 AGENTS.md, so a removal produces a real git diff in repos that devstack does not
 own. A replica is one git worktree for each repository, and each worktree needs
-its own dependency install. This command reports both, and then it stops. Pass
---migrate to remove the instructions and to build the replicas. The migration
-runs the devstack that was just installed, and never this one.
+its own dependency install. This command names each pending patch, and then it
+stops. Pass --migrate to run them. The migration runs 'devstack migrate' through
+the devstack that was just installed, and never through this one.
 
-  devstack upgrade             install, then report what is now out of date
-  devstack upgrade --migrate   also run devstack migrate, and build each replica
-  devstack upgrade --force     install even when this build is current or local`,
+  devstack upgrade             install, then report each pending migration
+  devstack upgrade --migrate   also run devstack migrate
+  devstack upgrade --force     install even when this build is current or local
+
+To read the same report without installing anything, run: devstack migrate --list`,
 	SilenceUsage: true,
 	RunE:         runUpgrade,
 }
@@ -169,14 +171,15 @@ func parseVersionOutput(out string) string {
 	return strings.TrimSpace(rest)
 }
 
-func reportAndMigrate(migrate bool) error {
-	residue, order := residueByWorkspace()
-	writeResidueReport(os.Stdout, residue, order, migrate)
-
+func reportAndMigrate(doMigrate bool) error {
 	all := registeredWorkspaces()
-	writeReplicaReport(os.Stdout, planReplicas(all), migrate)
+	statuses, err := migrate.List(patches(), all)
+	if err != nil {
+		return err
+	}
+	writePendingReport(os.Stdout, statuses, doMigrate)
 
-	if !migrate {
+	if !doMigrate {
 		writeDeprecations(os.Stdout)
 		return nil
 	}
@@ -186,19 +189,48 @@ func reportAndMigrate(migrate bool) error {
 		return fmt.Errorf("devstack can not find the installed binary to migrate with. Run 'devstack migrate' instead")
 	}
 
-	// The committed instructions come first. They tell an agent that a bare
-	// restart acts on base, which this release makes false, and a build takes
-	// long enough for an agent to read the old text and act on it.
-	var failures []error
 	fmt.Println()
-	if err := runMigration(bin); err != nil {
-		failures = append(failures, err)
-	}
-	if err := buildReplicas(bin, all); err != nil {
-		failures = append(failures, err)
-	}
+	merr := runMigration(bin)
 	writeDeprecations(os.Stdout)
-	return errors.Join(failures...)
+	return merr
+}
+
+// writePendingReport names each patch that still has work, and the workspaces it
+// has work in. It reads only, and it changes nothing: a user who runs `upgrade`
+// to see the damage must not have already taken it.
+func writePendingReport(w io.Writer, statuses []migrate.Status, doMigrate bool) {
+	pending := 0
+	for _, st := range statuses {
+		if !st.Pending() {
+			continue
+		}
+		pending++
+		fmt.Fprintf(w, "\n%s  %s\n", st.ID, st.Title)
+		for _, row := range st.Rows {
+			switch {
+			case row.Err != nil:
+				fmt.Fprintf(w, "  %-16s blocked: %v\n", row.Name, row.Err)
+			case row.Pending:
+				fmt.Fprintf(w, "  %-16s %s\n", row.Name, row.Why)
+			}
+		}
+	}
+
+	if pending == 0 {
+		fmt.Fprintln(w, "\nEvery migration is applied. devstack has nothing to migrate.")
+		return
+	}
+	if doMigrate {
+		return
+	}
+	if pending == 1 {
+		fmt.Fprintln(w, "\n1 migration is pending. devstack upgrade --migrate runs it, through the binary")
+	} else {
+		fmt.Fprintf(w, "\n%d migrations are pending. devstack upgrade --migrate runs them, through the binary\n", pending)
+	}
+	fmt.Fprintln(w, "it just installed. This command changes nothing.")
+	fmt.Fprintln(w, "Every repository commits its AGENTS.md, so the file sweep is a real git diff in")
+	fmt.Fprintln(w, "each one. Read the diff before you commit it. Do this when you are not mid-task.")
 }
 
 func registeredWorkspaces() []workspace.Workspace {
@@ -208,43 +240,6 @@ func registeredWorkspaces() []workspace.Workspace {
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
 	return all
-}
-
-// writeResidueReport counts the files that still hold instructions an older
-// devstack wrote, so a reader sees what `--migrate` will remove before it runs.
-// It reads only, and it changes nothing.
-func writeResidueReport(w io.Writer, residue map[string][]residueFile, order []workspace.Workspace, migrate bool) {
-	if len(order) == 0 {
-		fmt.Fprintln(w, "No workspace holds instructions that devstack wrote.")
-		return
-	}
-
-	fmt.Fprintf(w, "\n%d workspace(s) still hold instructions that devstack wrote:\n", len(order))
-	for _, ws := range order {
-		files := residue[ws.Name]
-		human := 0
-		for _, f := range files {
-			if f.NeedsHuman {
-				human++
-			}
-		}
-		fmt.Fprintf(w, "  %-16s %d file(s)\n", ws.Name, len(files))
-		if human > 0 {
-			fmt.Fprintf(w, "      %d of them hold a marker with no pair, so a human must remove that block\n", human)
-		}
-	}
-	if migrate {
-		return
-	}
-	fmt.Fprintln(w, "\ndevstack upgrade --migrate removes them. An agent gets the same facts from")
-	fmt.Fprintln(w, "`devstack prime`, at each session start. In every service above, and in each")
-	fmt.Fprintln(w, "stack worktree, the migration:")
-	fmt.Fprintln(w, "  removes the devstack block from AGENTS.md, CLAUDE.md and the files beside them")
-	fmt.Fprintln(w, "  deletes a file that held devstack content only")
-	fmt.Fprintln(w, "  writes .mcp.json, the MCP server entry")
-	fmt.Fprintln(w, "  writes .claude/settings.json, so every session runs devstack prime")
-	fmt.Fprintln(w, "\nEvery repo commits these files, so this is a real diff in each one. devstack")
-	fmt.Fprintln(w, "removes only what devstack wrote, and it creates no file that is not already there.")
 }
 
 // migrateArgs runs the sweep of every workspace. `devstack migrate` is one

@@ -3,16 +3,88 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"sort"
-	"strings"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/migrate"
 	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/workspace"
 	"github.com/socialviolation/devstack/internal/worktree"
 )
+
+// replicaPatch builds the replica that base runs from: one git worktree for
+// each repository of the workspace.
+//
+// It does not rescan. A build cuts a worktree for every repository, and each
+// worktree needs its own dependency install, so it is expensive to repeat. A
+// user who removes a replica did that on purpose, and a migration must not undo
+// the decision. The record decides, and the filesystem is read only to keep a
+// replica that is built already from being built twice.
+func replicaPatch() migrate.Patch {
+	return migrate.Patch{
+		ID:     "0.2.0-replica",
+		Title:  "Build the replica that base runs from",
+		Detect: detectReplica,
+		Run:    runReplicaPatch,
+		Next:   nextReplica,
+	}
+}
+
+func detectReplica(ws *workspace.Workspace) (bool, string, error) {
+	p := planReplica(ws)
+	if p.Blocker != nil {
+		return false, "", p.Blocker
+	}
+	if p.Built {
+		return false, fmt.Sprintf("the replica is built, and holds %s", countPhrase(p.Services, p.Repos)), nil
+	}
+	return true, fmt.Sprintf("no replica yet. A build cuts %s, and each worktree needs its own dependency install", countPhrase(p.Services, p.Repos)), nil
+}
+
+func runReplicaPatch(ws *workspace.Workspace) (migrate.Result, error) {
+	lines, res, err := replicaReport(ws)
+	if err != nil {
+		return migrate.Result{}, err
+	}
+	for _, w := range res.Warnings {
+		lines = append(lines, "  warning: "+w)
+	}
+	out := migrate.Result{Lines: indent(lines, "  ")}
+	out.Changed = len(res.Created) > 0 || len(res.Removed) > 0
+	if out.Changed {
+		out.Items = []migrate.Item{{Label: ws.Name, Path: replica.Root(ws)}}
+	}
+	return out, nil
+}
+
+// nextReplica is the instruction after a replica was built. A service that runs
+// now still serves the old code, and nothing else tells the reader that.
+func nextReplica(results []migrate.Result) []string {
+	out := []string{"RESTART YOUR SERVICES. base runs from the replica now, and not from your checkout.", "These workspaces have a new replica:"}
+	for _, r := range results {
+		for _, it := range r.Items {
+			out = append(out, fmt.Sprintf("  %-16s %s", it.Label, it.Path))
+		}
+	}
+	return append(out,
+		"A service that runs now still serves the old code. To move one service to the",
+		"replica, run:",
+		"  devstack service restart <svc> --stack base",
+		"Each worktree is a new checkout. Before a service starts, its worktree needs its",
+		"own dependency install: npm install, dotnet restore, or a virtual environment.",
+		"Your checkout is the template, and base does not read it. An edit there reaches",
+		"base after two steps:",
+		"  1. Put the edit on the default branch.",
+		"  2. Run: devstack base sync")
+}
+
+func indent(lines []string, pad string) []string {
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		out = append(out, pad+l)
+	}
+	return out
+}
 
 // replicaPlan is what a replica of one workspace will hold, read from the
 // manifest and from git. A plan is a report and never a build: the report runs
@@ -26,59 +98,27 @@ type replicaPlan struct {
 	Blocker  error
 }
 
-func planReplicas(all []workspace.Workspace) []replicaPlan {
-	out := make([]replicaPlan, 0, len(all))
-	for i := range all {
-		ws := all[i]
-		p := replicaPlan{Name: ws.Name, Built: config.HasWorkspaceManifest(replica.Root(&ws))}
-		template, err := config.ResolveWorkspace(ws.Path)
-		if err != nil {
-			p.Blocker = err
-			out = append(out, p)
-			continue
-		}
-		names := make([]string, 0, len(template.Services))
-		for name := range template.Services {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		p.Services = len(names)
+func planReplica(ws *workspace.Workspace) replicaPlan {
+	p := replicaPlan{Name: ws.Name, Built: config.HasWorkspaceManifest(replica.Root(ws))}
+	template, err := config.ResolveWorkspace(ws.Path)
+	if err != nil {
+		p.Blocker = err
+		return p
+	}
+	names := make([]string, 0, len(template.Services))
+	for name := range template.Services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	p.Services = len(names)
 
-		repos, err := worktree.Plan(names, func(s string) string { return template.Services[s].RepoPath }, nil)
-		if err != nil {
-			p.Blocker = err
-			out = append(out, p)
-			continue
-		}
-		p.Repos = len(repos)
-		out = append(out, p)
+	repos, err := worktree.Plan(names, func(s string) string { return template.Services[s].RepoPath }, nil)
+	if err != nil {
+		p.Blocker = err
+		return p
 	}
-	return out
-}
-
-func writeReplicaReport(w io.Writer, plans []replicaPlan, migrate bool) {
-	if len(plans) == 0 {
-		return
-	}
-	fmt.Fprintf(w, "\nBase now runs from a replica, and no longer from your checkout. Each workspace\nneeds one replica:\n")
-	for _, p := range plans {
-		switch {
-		case p.Blocker != nil:
-			fmt.Fprintf(w, "  %-16s devstack can not build a replica\n", p.Name)
-			fmt.Fprintf(w, "      %s\n", strings.TrimSpace(p.Blocker.Error()))
-		case p.Built:
-			fmt.Fprintf(w, "  %-16s replica built, and holds %s\n", p.Name, countPhrase(p.Services, p.Repos))
-		default:
-			fmt.Fprintf(w, "  %-16s no replica yet. A build cuts %s\n", p.Name, countPhrase(p.Services, p.Repos))
-		}
-	}
-	fmt.Fprintln(w, "\ndevstack cuts one git worktree for each repository. Each worktree is a new")
-	fmt.Fprintln(w, "checkout. Before a service starts, its worktree needs its own dependency")
-	fmt.Fprintln(w, "install: npm install, dotnet restore, or a virtual environment. A workspace of")
-	fmt.Fprintln(w, "15 repositories pays that cost 15 times. Do this when you are not mid-task.")
-	if !migrate {
-		fmt.Fprintln(w, "\ndevstack upgrade --migrate builds these replicas. This command builds nothing.")
-	}
+	p.Repos = len(repos)
+	return p
 }
 
 func countPhrase(services, repos int) string {
@@ -90,35 +130,6 @@ func countPhrase(services, repos int) string {
 		repo = "repository"
 	}
 	return fmt.Sprintf("%d %s in %d %s", services, svc, repos, repo)
-}
-
-// buildReplicas builds each workspace's replica by running bin, which is the
-// devstack that was just installed and not this process.
-//
-// One workspace failing does not stop the rest: a machine with four replicas
-// out of five is better than a machine with one, and the failures are named at
-// the end.
-func buildReplicas(bin string, all []workspace.Workspace) error {
-	if len(all) == 0 {
-		return nil
-	}
-	fmt.Println("\ndevstack builds the replica of each workspace. It starts nothing.")
-	var failed []string
-	for _, ws := range all {
-		c := exec.Command(bin, "base", "build", "--workspace", ws.Name)
-		c.Stdout = os.Stdout
-		c.Stderr = os.Stderr
-		if err := c.Run(); err != nil {
-			failed = append(failed, ws.Name)
-			fmt.Fprintf(os.Stderr, "✗ %s: %v\n", ws.Name, err)
-			continue
-		}
-		fmt.Printf("✓ %s replica built\n", ws.Name)
-	}
-	if len(failed) > 0 {
-		return fmt.Errorf("devstack did not build the replica of: %s. To read the error of one workspace, run: devstack base build --workspace <name>", strings.Join(failed, ", "))
-	}
-	return nil
 }
 
 // writeDeprecations names the habits that still parse and no longer do what they

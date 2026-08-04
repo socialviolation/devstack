@@ -204,6 +204,28 @@ func buildPrime() (string, error) {
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
+// writePrimeScope draws the edge of the work. A stack overlays a few services
+// and borrows every other one from base, and an agent sent to finish a feature
+// reads the whole workspace as its subject unless something says otherwise. The
+// services it does NOT overlay are base's copies, shared with the user and with
+// every other stack, so a change to one of them reaches work nobody asked this
+// session to touch.
+func writePrimeScope(b *strings.Builder, rec *stack.Record, here string) {
+	if len(rec.Overlay) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "  SCOPE: this stack is %s. It runs its own copy of: %s\n", here, strings.Join(rec.Overlay, ", "))
+	b.WriteString("  Change code in those services only. Their directories are:\n")
+	for _, svc := range rec.Overlay {
+		if path := rec.Worktrees[svc]; path != "" {
+			fmt.Fprintf(b, "    %-24s %s\n", svc, path)
+		}
+	}
+	b.WriteString("  Every other service is base's copy. base is shared with the user and with every\n")
+	b.WriteString("  other stack, so do not change one to finish this feature.\n")
+	fmt.Fprintf(b, "  If the feature needs another service, add it: devstack stack add %s <service>\n", here)
+}
+
 func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, repo, branch, here string, inReplica bool, working *workingStack) {
 	fmt.Fprintf(b, "workspace %s", ws.Name)
 	if service != "" {
@@ -232,6 +254,7 @@ func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, re
 			if e, ok := rec.LatestEntry(); ok {
 				fmt.Fprintf(b, "  latest  %s  %s\n", e.At.Format("2006-01-02"), firstLine(e.Text, 100))
 			}
+			writePrimeScope(b, rec, here)
 		}
 		b.WriteString("  Your changes here go on the branch of this stack, not on base.\n")
 		return
@@ -301,15 +324,15 @@ func writePrimeApplies(b *strings.Builder, ws *workspace.Workspace, rw *config.R
 		// itself. Naming the product invites an agent to go around devstack and
 		// query it directly, which is how you get a query that ignores the
 		// workspace scoping.
-		// The scoping sentence states what the commands do, which is not what
-		// they were once documented to do: `otel traces` with no flag returns
-		// every copy, base and stacks together, and `otel logs` has no --stack
-		// at all. An agent told the opposite reads a stack's traffic as base's.
+		// The scoping sentence states what the commands do: `otel traces` with
+		// no flag returns base alone, the same as the investigate tool with no
+		// stack, and `otel logs` has no --stack at all. An agent told the
+		// opposite reads a stack's traffic as base's.
 		lines = append(lines,
 			"  telemetry     every copy sends traces and logs. Query them with `devstack otel traces` and `devstack otel logs`,",
 			"                or with the investigate tool over MCP. The attribute devstack.stack identifies each copy.",
-			"                `devstack otel traces` with no --stack returns every copy together, base and stacks. To get one,",
-			"                give `--stack <name>`, or `--stack base` for base alone. `devstack otel logs` has no --stack:",
+			"                `devstack otel traces` with no --stack returns base alone. To get one stack, give `--stack <name>`.",
+			"                To get base and every stack together, give `--stack all`. `devstack otel logs` has no --stack:",
 			"                use `--trace <id>` to get the logs of one execution.")
 	}
 

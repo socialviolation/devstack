@@ -142,8 +142,50 @@ func TestBaseToolSyncMovesTheReplicaAndSaysNothingRestarted(t *testing.T) {
 func TestBaseToolRejectsAnUnknownAction(t *testing.T) {
 	ws, _ := baseWorkspace(t)
 	out := callTool(t, baseToolServer(t, ws), "base", map[string]string{"action": "move"})
-	if !strings.Contains(out, "unknown action") || !strings.Contains(out, "sync") {
-		t.Errorf("an unknown action must be refused and the real ones named; got %s", out)
+	for _, want := range []string{"unknown action", "build", "sync"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("an unknown action must be refused and the real ones named (%q); got %s", want, out)
+		}
+	}
+}
+
+// An agent that finds no replica had no way to build one: the CLI has 'devstack
+// base build' and the tool had nothing, so the only answer was to send the user
+// to a terminal.
+func TestBaseToolBuildsTheReplica(t *testing.T) {
+	ws, _ := baseWorkspace(t)
+	s := baseToolServer(t, ws)
+
+	out := callTool(t, s, "base", map[string]string{"action": "build"})
+	if !strings.Contains(out, replica.Root(ws)) || !strings.Contains(out, "api") {
+		t.Errorf("build must report the replica root and each worktree it cut; got %s", out)
+	}
+	if !strings.Contains(out, "nothing runs yet") {
+		t.Errorf("build must say that it started nothing; got %s", out)
+	}
+	if _, err := os.Stat(filepath.Join(replica.Root(ws), "api", ".git")); err != nil {
+		t.Fatalf("build must leave a real worktree at %s: %v", filepath.Join(replica.Root(ws), "api"), err)
+	}
+	if path := callTool(t, s, "base", map[string]string{"action": "path"}); strings.Contains(path, "has not built the replica") {
+		t.Errorf("after build, action=path must resolve; got %s", path)
+	}
+
+	again := callTool(t, s, "base", map[string]string{"action": "build"})
+	if !strings.Contains(again, "already") || !strings.Contains(again, "sync") {
+		t.Errorf("a second build must report that every worktree is there, and name sync; got %s", again)
+	}
+}
+
+// build has to answer the error the other two actions return, so the tool has
+// to say it can do that.
+func TestBaseToolPointsAMissingReplicaAtBuild(t *testing.T) {
+	ws, _ := baseWorkspace(t)
+	tool := listTools(t, baseToolServer(t, ws))["base"]
+	if !strings.Contains(tool.Description, "action=\"build\"") {
+		t.Errorf("the description must name the action that builds a replica: %s", tool.Description)
+	}
+	if !strings.Contains(tool.Description, "devstack base build") {
+		t.Errorf("the description must claim parity with 'devstack base build': %s", tool.Description)
 	}
 }
 
@@ -156,7 +198,7 @@ func TestBaseToolIsAnnotatedForTheActionThatWrites(t *testing.T) {
 	if tool.Annotations.ReadOnlyHint == nil || *tool.Annotations.ReadOnlyHint {
 		t.Error("base must not be annotated read-only: sync moves the code base runs")
 	}
-	for _, want := range []string{"action=\"path\" reads only", "action=\"sync\" is the one that changes something", "does not restart anything"} {
+	for _, want := range []string{"action=\"path\" reads only", "action=\"build\" builds the replica", "action=\"sync\" moves what base runs", "does not restart anything"} {
 		if !strings.Contains(tool.Description, want) {
 			t.Errorf("base's description must state %q: %s", want, tool.Description)
 		}

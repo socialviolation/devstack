@@ -1843,22 +1843,6 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 	})
 }
 
-// resolveInvestigateStack maps the investigate tool's raw stack param to a
-// TraceQuery.Stack value. An absent/empty param defaults to "base" — an
-// unqualified query means the base instance, not every instance co-mingled.
-// "all" (or "*") clears the filter to query every instance. Any other value is
-// the stack's short name, passed through unchanged.
-func resolveInvestigateStack(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "":
-		return "base"
-	case "all", "*":
-		return ""
-	default:
-		return raw
-	}
-}
-
 // coreInvestigateFilters records the filters an investigate search (mode 2 or 3)
 // applied, including how the service was chosen when the caller did not
 // name one.
@@ -1961,7 +1945,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			"  devstack.service    the name devstack uses. It often differs from the name the service reports for itself, and either name matches.\n"+
 			"  devstack.stack      base, or a feature stack's name.\n"+
 			"  devstack.env        the config env that copy runs under.\n"+
-			"In modes 2 and 3 you can isolate the results to one stack's service. 'service' pins the service, and 'stack' pins the devstack.stack resource attribute. Pass a stack's short name, or 'stack'='base' to select the base-workspace services.\n"+
+			"In modes 2 and 3 you can isolate the results to one stack's service. 'service' pins the service, and 'stack' pins the devstack.stack resource attribute. "+observability.StackScopeDesc+"\n"+
 			"To compare a feature stack against base, run the same query twice: once with stack='<name>', and once with stack='base'. Before you conclude that a service is silent, use the observability tool's status action to see which copies emit telemetry.\n"+
 			"Example: service='api-service' stack='perf' since_minutes=15 errors_only=true.\n"+
 			"The tool returns an ASCII span tree that shows service calls, durations and errors. Combine it with process_logs and status for the full debugging context.",
@@ -1980,7 +1964,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			mcp.Description("Exact service name (for example 'api-service'). NOT a description or partial match. The tool applies it in mode 2 (attribute search) and in mode 3 (recent executions). Only mode 3 falls back to this repo's default service when you omit it. A trace_id/span_id lookup ignores it, and it returns every service's spans in that trace."),
 		),
 		mcp.WithString("stack",
-			mcp.Description("Whose telemetry to query, through the devstack.stack resource attribute. The tool applies it in mode 2 (attribute search) and in mode 3 (recent executions) ONLY. A trace_id/span_id lookup is not stack-filtered, and it returns the trace whichever copy emitted it. Inside those two modes: ABSENT or empty = base only, which is the base-workspace services, and the default that an unqualified query means. A stack's short name (for example 'perf') = that stack only. 'all' (or '*') = base and every stack together. Combine it with 'service' to pin one copy's service."),
+			mcp.Description("Whose telemetry to query, through the devstack.stack resource attribute. "+observability.StackScopeDesc+" The tool applies this parameter in mode 2 (attribute search) and in mode 3 (recent executions) ONLY. A trace_id/span_id lookup is not stack-filtered, and it returns the trace whichever copy emitted it. 'devstack otel traces --stack' has the same three readings, so the CLI and this tool cover the same copies. Combine it with 'service' to pin one copy's service."),
 		),
 		mcp.WithString("attribute",
 			mcp.Description("Exact attribute key to search by (for example 'portfolio.id', 'user.id', 'process.id'). NOT natural language. Requires value parameter."),
@@ -2019,7 +2003,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		traceID := request.GetString("trace_id", "")
 		spanID := request.GetString("span_id", "")
 		service := request.GetString("service", "")
-		stack := resolveInvestigateStack(request.GetString("stack", ""))
+		stack := observability.ResolveStackFilter(request.GetString("stack", ""))
 		attribute := request.GetString("attribute", "")
 		value := request.GetString("value", "")
 		sinceMinutes := int(request.GetFloat("since_minutes", 30))

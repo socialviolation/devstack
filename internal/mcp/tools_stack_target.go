@@ -177,8 +177,8 @@ func targetGroupMembers(ws *workspace.Workspace, t localTarget, groupName string
 		if cov.Complete() {
 			continue
 		}
-		note = fmt.Sprintf("group %s: %d of %d members are in stack %q. %s stay on base, and this call does not touch them. To act on base's copies, use stack=\"base\".\n",
-			cov.Group, len(cov.In), len(cov.In)+len(cov.Missing), t.namespace, strings.Join(cov.Missing, ", "))
+		note = fmt.Sprintf("stack %s %s, and this call does not touch them. To act on base's copies, use stack=\"base\".\n",
+			t.namespace, cov.Sentence())
 	}
 	return members, note, nil
 }

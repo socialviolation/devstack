@@ -8,13 +8,12 @@ import (
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/replica"
-	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 // The reader has to see the size of the job before agreeing to it: a worktree
 // per repository, and a dependency install per worktree. The count is a
 // repository count, so a repository that holds two services is one worktree.
-func TestUpgradeReportCountsRepositoriesAndBuildsNothing(t *testing.T) {
+func TestReplicaDetectorCountsRepositoriesAndBuildsNothing(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -22,39 +21,27 @@ func TestUpgradeReportCountsRepositoriesAndBuildsNothing(t *testing.T) {
 	gitRepoWith(t, filepath.Join(root, "mono"), map[string]string{"api": "api", "web": "web"})
 	ws := workspaceAt(t, root, "shop", "mono/api", "mono/web")
 
-	plans := planReplicas([]workspace.Workspace{*ws})
-	if len(plans) != 1 {
-		t.Fatalf("planReplicas returned %d plans", len(plans))
+	pending, why, err := detectReplica(ws)
+	if err != nil {
+		t.Fatalf("detectReplica() = %v", err)
 	}
-	p := plans[0]
-	if p.Blocker != nil {
-		t.Fatalf("plan blocked: %v", p.Blocker)
+	if !pending {
+		t.Error("a workspace with no replica must read as pending")
 	}
-	if p.Built {
-		t.Errorf("a workspace with no replica is reported as built")
-	}
-	if p.Services != 2 || p.Repos != 1 {
-		t.Errorf("plan = %d services in %d repositories, want 2 in 1", p.Services, p.Repos)
-	}
-
-	var b strings.Builder
-	writeReplicaReport(&b, plans, false)
-	got := b.String()
-	for _, want := range []string{"shop", "no replica yet", "2 services in 1 repository", "dependency"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the report does not state %q:\n%s", want, got)
+	for _, want := range []string{"no replica yet", "2 services in 1 repository", "dependency install"} {
+		if !strings.Contains(why, want) {
+			t.Errorf("the detector says %q, which does not state %q", why, want)
 		}
 	}
-
 	if _, err := os.Stat(replica.Root(ws)); !os.IsNotExist(err) {
-		t.Errorf("the report built a replica at %s", replica.Root(ws))
+		t.Errorf("the detector built a replica at %s", replica.Root(ws))
 	}
 }
 
 // A service directory in no git repository stops the whole replica, because
 // devstack cuts git worktrees. The report has to name the service and the path,
 // or the reader has 16 services to search.
-func TestUpgradeReportNamesAServiceThatIsInNoRepository(t *testing.T) {
+func TestReplicaDetectorNamesAServiceThatIsInNoRepository(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -62,23 +49,20 @@ func TestUpgradeReportNamesAServiceThatIsInNoRepository(t *testing.T) {
 	writeAt(t, filepath.Join(root, "api", config.ServiceManifestFileName), serviceManifest("api"))
 	ws := workspaceAt(t, root, "loose", "api")
 
-	plans := planReplicas([]workspace.Workspace{*ws})
-	if plans[0].Blocker == nil {
+	_, _, err := detectReplica(ws)
+	if err == nil {
 		t.Fatal("a service in no git repository must block the replica")
 	}
-
-	var b strings.Builder
-	writeReplicaReport(&b, plans, false)
-	got := b.String()
-	for _, want := range []string{"can not build a replica", "api", filepath.Join(root, "api")} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the report does not state %q:\n%s", want, got)
+	for _, want := range []string{"api", filepath.Join(root, "api")} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the blocker does not state %q: %v", want, err)
 		}
 	}
 }
 
-// A replica that is already built must not read as work still to do.
-func TestUpgradeReportSaysWhenTheReplicaIsBuilt(t *testing.T) {
+// A replica that is already built must not read as work still to do, even where
+// no record says devstack built it.
+func TestReplicaDetectorSaysWhenTheReplicaIsBuilt(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -89,64 +73,41 @@ func TestUpgradeReportSaysWhenTheReplicaIsBuilt(t *testing.T) {
 		t.Fatalf("buildBase() = %v", err)
 	}
 
-	var b strings.Builder
-	writeReplicaReport(&b, planReplicas([]workspace.Workspace{*ws}), false)
-	if got := b.String(); !strings.Contains(got, "replica built") {
-		t.Errorf("the report does not report the replica as built:\n%s", got)
+	pending, why, err := detectReplica(ws)
+	if err != nil {
+		t.Fatalf("detectReplica() = %v", err)
+	}
+	if pending {
+		t.Errorf("a built replica reads as pending: %q", why)
+	}
+	if !strings.Contains(why, "the replica is built") {
+		t.Errorf("the detector says %q", why)
 	}
 }
 
-// The build runs the newly installed binary, and names the workspace. This
-// process is the old build: it does not hold the code that cuts the replica the
-// user is upgrading to.
-func TestReplicaBuildRunsTheInstalledBinaryPerWorkspace(t *testing.T) {
-	log := filepath.Join(t.TempDir(), "calls")
-	bin := stubDevstack(t, log, 0)
+// The patch builds the replica in this process. `upgrade --migrate` runs
+// `devstack migrate` through the binary it just installed, so the code that runs
+// here is already the new one.
+func TestReplicaPatchBuildsTheReplicaAndNamesIt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 
-	err := buildReplicas(bin, []workspace.Workspace{
-		{Name: "alpha", Path: t.TempDir()},
-		{Name: "beta", Path: t.TempDir()},
-	})
+	root := filepath.Join(home, "dev", "shop")
+	gitRepoWith(t, filepath.Join(root, "api"), map[string]string{".": "api"})
+	ws := workspaceAt(t, root, "shop", "api")
+
+	res, err := runReplicaPatch(ws)
 	if err != nil {
-		t.Fatalf("buildReplicas() = %v", err)
+		t.Fatalf("runReplicaPatch() = %v", err)
 	}
-
-	data, err := os.ReadFile(log)
-	if err != nil {
-		t.Fatal(err)
+	if !res.Changed {
+		t.Fatalf("the build reports no change:\n%s", strings.Join(res.Lines, "\n"))
 	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("want one invocation per workspace, got %d: %q", len(lines), lines)
+	if len(res.Items) != 1 || res.Items[0].Path != replica.Root(ws) {
+		t.Errorf("the result does not name the replica: %+v", res.Items)
 	}
-	for i, name := range []string{"alpha", "beta"} {
-		if !strings.HasSuffix(lines[i], "base build --workspace "+name) {
-			t.Errorf("invocation %d = %q, want a replica build for %s", i, lines[i], name)
-		}
-	}
-}
-
-// A machine with four replicas out of five is better than a machine with one,
-// so one failure must not strand the workspaces after it.
-func TestReplicaBuildReportsFailureAndStillAttemptsEveryWorkspace(t *testing.T) {
-	log := filepath.Join(t.TempDir(), "calls")
-	bin := stubDevstack(t, log, 1)
-
-	err := buildReplicas(bin, []workspace.Workspace{
-		{Name: "alpha", Path: t.TempDir()},
-		{Name: "beta", Path: t.TempDir()},
-	})
-	if err == nil {
-		t.Fatal("a failed replica build must be reported")
-	}
-	for _, name := range []string{"alpha", "beta"} {
-		if !strings.Contains(err.Error(), name) {
-			t.Errorf("error names no failure for %s: %v", name, err)
-		}
-	}
-	data, _ := os.ReadFile(log)
-	if n := len(strings.Split(strings.TrimSpace(string(data)), "\n")); n != 2 {
-		t.Errorf("every workspace must still be attempted, got %d", n)
+	if !config.HasWorkspaceManifest(replica.Root(ws)) {
+		t.Errorf("no replica at %s", replica.Root(ws))
 	}
 }
 

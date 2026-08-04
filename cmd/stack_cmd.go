@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -12,6 +13,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/svcconfig"
 	"github.com/socialviolation/devstack/internal/tilt"
@@ -40,8 +42,8 @@ default. With no --stack, it acts on the stack or the replica that your director
 is in. Anywhere else, it refuses.
 
 The telemetry queries are the exception. 'devstack otel traces' with no --stack
-searches every copy, base and the stacks together. Pass --stack base to search
-base alone.`,
+searches base alone. Pass --stack <name> for one stack, or --stack all for base
+and every stack together.`,
 	RunE: runStackList,
 }
 
@@ -128,13 +130,20 @@ var stackListCmd = &cobra.Command{
 
 var stackConfigCmd = &cobra.Command{
 	Use:   "config <service>",
-	Short: "Show the configuration a service would run with in a stack (read-only)",
-	Long: `Show the configuration that devstack gives a service in a stack: the effective
+	Short: "Show the configuration a service would run with in one copy (read-only)",
+	Long: `Show the configuration that devstack gives a service in one copy: the effective
 service configuration, and the environment ladder that the process receives.
 
-This command reads the stack's files. It does not ask the daemon what runs. If
-the stack is down, the command says so, and it prints the configuration that the
-stack would run with.`,
+This command reads files. It does not ask the daemon what runs. If that copy is
+down, the command says so, and it prints the configuration that the copy would
+run with.
+
+  --stack <name>  the stack's worktree of the service
+  --stack base    base's copy, read from the replica that base runs from
+  no --stack      the stack that holds the current directory
+
+For base, the replica is the truth, and not your checkout: base runs the replica
+worktrees. If devstack has built no replica yet, run 'devstack base build'.`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackConfig,
@@ -189,7 +198,7 @@ func init() {
 	stackAddCmd.Flags().String("from", "", "Ref that devstack cuts the new worktrees from (default: each repo's default branch, origin's copy of it where there is one)")
 	stackNoteCmd.Flags().String("add", "", "Append a dated entry that says where the work got to, instead of replacing the note")
 	stackRemoveCmd.Flags().Bool("force", false, "Remove worktrees even if they have uncommitted changes. This destroys that work. You can not recover it")
-	stackConfigCmd.Flags().String("stack", "", "Stack name (default: the stack that contains the current directory)")
+	stackConfigCmd.Flags().String("stack", "", "Which copy to read: a stack name, or \"base\" for base's copy (default: the stack that contains the current directory)")
 }
 
 func runStackCreate(cmd *cobra.Command, args []string) error {
@@ -572,6 +581,10 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 	service := args[0]
 	stackName, _ := cmd.Flags().GetString("stack")
 
+	if stackName == "base" {
+		return runBaseConfig(service)
+	}
+
 	var rec *stack.Record
 	var err error
 	if stackName != "" {
@@ -583,7 +596,7 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 	} else {
 		_, rec, err = stack.DetectFromCwd()
 		if err != nil {
-			return fmt.Errorf("this directory is not inside a feature stack. Pass --stack <name>")
+			return fmt.Errorf("this directory is not inside a feature stack. Pass --stack <name>, or --stack base for base")
 		}
 	}
 	if err != nil {
@@ -609,17 +622,8 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 		tense = "the configuration it would run with"
 		fmt.Printf("Stack %s is down. Nothing runs with this configuration now. To start the stack, run: devstack stack up %s\n", rec.FullName(), rec.Name)
 	}
-	fmt.Printf("Effective configuration for %s in stack %s (read-only: %s)\n", service, rec.FullName(), tense)
-	fmt.Printf("  %-42s %-12s %s\n", "KEY", "SOURCE", "VALUE")
-	fmt.Println(strings.Repeat("-", 90))
-	for _, e := range entries {
-		marker := "  "
-		if e.Overridden {
-			marker = "* "
-		}
-		fmt.Printf("%s%-42s %-12s %s\n", marker, e.Key, e.Source, e.Value)
-	}
-	fmt.Printf("\n* = the stack overrides this value, and devstack computes it. devstack shows a secret value as %s.\n", "••••")
+	printConfigTable(service, "stack "+rec.FullName(), tense, entries)
+	fmt.Printf("\n* = the stack overrides this value, and devstack computes it. devstack shows a secret value as %s.\n", svcconfig.MaskedValue)
 
 	names := make([]string, 0, len(rw.Services))
 	for n := range rw.Services {
@@ -641,6 +645,68 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 	}
+	printEnvLadder(layers)
+	return nil
+}
+
+// runBaseConfig is `stack config --stack base`. Base is not a stack and has no
+// record, so it resolves through the replica instead: base runs from the
+// replica worktrees, and the checkout is only the template they were built
+// from.
+func runBaseConfig(service string) error {
+	ws, err := resolveWorkspace(viper.GetString("workspace"))
+	if err != nil {
+		return err
+	}
+	rw, err := replica.Resolve(ws)
+	if errors.Is(err, replica.ErrNotBuilt) {
+		return fmt.Errorf("devstack has not built the replica of workspace %q, and base runs from it. There is no configuration to read yet. To build the replica, run: devstack base build", ws.Name)
+	}
+	if err != nil {
+		return err
+	}
+	svc, ok := rw.Services[service]
+	if !ok {
+		return fmt.Errorf("service %q is not in workspace %q. Its services: %s", service, ws.Name, strings.Join(sortedServiceNames(rw), ", "))
+	}
+
+	entries, err := svcconfig.EffectiveConfig(svc, ws.Name)
+	if err != nil {
+		return err
+	}
+
+	tense := "the configuration it runs with"
+	if !ws.Active {
+		tense = "the configuration it would run with"
+		fmt.Printf("Base is down. Nothing runs with this configuration now. To start base, run: devstack workspace up\n")
+	}
+	printConfigTable(service, "base", tense, entries)
+	fmt.Printf("\ndevstack reads this from the replica at %s. To change it, edit the checkout, then run: devstack base sync\n", svc.RepoPath)
+	fmt.Printf("A secret value appears as %s.\n", svcconfig.MaskedValue)
+
+	layers, lerr := resolvedEnvLadder(ws, rw, svc, nil)
+	if lerr != nil {
+		fmt.Printf("\nEnvironment (serve_env ladder): unavailable: %v\n", lerr)
+		return nil
+	}
+	printEnvLadder(layers)
+	return nil
+}
+
+func printConfigTable(service, scope, tense string, entries []svcconfig.ConfigEntry) {
+	fmt.Printf("Effective configuration for %s in %s (read-only: %s)\n", service, scope, tense)
+	fmt.Printf("  %-42s %-12s %s\n", "KEY", "SOURCE", "VALUE")
+	fmt.Println(strings.Repeat("-", 90))
+	for _, e := range entries {
+		marker := "  "
+		if e.Overridden {
+			marker = "* "
+		}
+		fmt.Printf("%s%-42s %-12s %s\n", marker, e.Key, e.Source, e.Value)
+	}
+}
+
+func printEnvLadder(layers []config.EnvLayer) {
 	merged := config.MergeEnvLadder(layers)
 	source := map[string]config.EnvRung{}
 	for _, l := range layers {
@@ -661,7 +727,6 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 		v := svcconfig.RedactValue(k, merged[k])
 		fmt.Printf("  %-42s %-22s %s\n", k, string(source[k]), v)
 	}
-	return nil
 }
 
 // runStackUp marks a stack active and folds its services into the one host Tilt

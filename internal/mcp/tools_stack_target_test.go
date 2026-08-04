@@ -521,7 +521,10 @@ groups:
 		if !equalStrings(members, []string{"api"}) {
 			t.Errorf("members = %v, want the stack's half %v", members, []string{"api"})
 		}
-		for _, want := range []string{"1 of 3", "frontend, orbit", "stay on base", `stack="base"`} {
+		// The CLI prints Coverage.Sentence() for the same fact, so the tool has
+		// to quote it rather than word the shortfall its own way.
+		shared := stack.Coverage{Group: "core", In: []string{"api"}, Missing: []string{"frontend", "orbit"}}.Sentence()
+		for _, want := range []string{shared, `stack="base"`, "does not touch them"} {
 			if !strings.Contains(note, want) {
 				t.Errorf("the shortfall note must state %q; got %q", want, note)
 			}
@@ -616,8 +619,9 @@ groups:
 	registerStopTool(s, tilt.NewClient("localhost", workspace.HostTiltPort), "", &config.WorkspaceConfig{}, ws)
 
 	out := safetyCallTool(t, s, "stop", map[string]any{"group": "core", "stack": "feat"})
-	if !strings.Contains(out, "1 of 2") || !strings.Contains(out, "frontend") {
-		t.Errorf("stop must return the group's shortfall in its text; got %s", out)
+	shared := stack.Coverage{Group: "core", In: []string{"api"}, Missing: []string{"frontend"}}.Sentence()
+	if !strings.Contains(out, shared) {
+		t.Errorf("stop must return the group's shortfall in its text, worded as the CLI words it (%q); got %s", shared, out)
 	}
 }
 

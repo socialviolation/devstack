@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/socialviolation/devstack/internal/migrate"
+	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/selfcheck"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -149,20 +151,50 @@ func TestUpgradeAndDoctorCountTheSameFiles(t *testing.T) {
 }
 
 // The report is a report. Reading it must change no file, or a user who ran
-// `upgrade` to see the damage has already taken it.
-func TestTheResidueReportChangesNothing(t *testing.T) {
-	dir := t.TempDir()
+// `upgrade` to see the damage has already taken it. It names each pending patch,
+// and the command that runs them.
+func TestThePendingReportChangesNothing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	root := filepath.Join(home, "dev", "shop")
+	gitRepoWith(t, filepath.Join(root, "api"), map[string]string{".": "api"})
+	ws := workspaceAt(t, root, "shop", "api")
+
 	seed := "# api\n\nMine.\n\n" + agentsSentinelBegin + "\ngenerated\n" + agentsSentinelEnd + "\n"
-	writeFile(t, filepath.Join(dir, agentsFileName), seed)
+	writeFile(t, filepath.Join(root, "api", agentsFileName), seed)
 
-	var b strings.Builder
-	writeResidueReport(&b, map[string][]residueFile{"navexa": scanResidue(dir)},
-		[]workspace.Workspace{{Name: "navexa"}}, false)
-
-	if got := readString(t, filepath.Join(dir, agentsFileName)); got != seed {
-		t.Fatalf("the report changed the file:\n%s", got)
+	st, err := migrate.List(patches(), []workspace.Workspace{*ws})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(b.String(), "devstack upgrade --migrate") {
-		t.Errorf("the report never names the command that cleans this up:\n%s", b.String())
+	var b strings.Builder
+	writePendingReport(&b, st, false)
+	got := b.String()
+
+	if readString(t, filepath.Join(root, "api", agentsFileName)) != seed {
+		t.Fatal("the report changed the file it reported on")
+	}
+	if _, err := os.Stat(replica.Root(ws)); !os.IsNotExist(err) {
+		t.Fatalf("the report built a replica at %s", replica.Root(ws))
+	}
+	for _, want := range []string{"0.2.0-agent-files", "0.2.0-replica", "shop", "devstack upgrade --migrate"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the report never states %q:\n%s", want, got)
+		}
+	}
+}
+
+// A machine with nothing to do must say so, and must not ask for a migration.
+func TestThePendingReportIsSilentWhenEveryPatchIsApplied(t *testing.T) {
+	var b strings.Builder
+	writePendingReport(&b, []migrate.Status{{ID: "0.2.0-replica", Title: "t"}}, false)
+	got := b.String()
+
+	if !strings.Contains(got, "Every migration is applied") {
+		t.Errorf("the report never says the machine is up to date:\n%s", got)
+	}
+	if strings.Contains(got, "--migrate") {
+		t.Errorf("nothing is pending, so the report must not ask for a migration:\n%s", got)
 	}
 }

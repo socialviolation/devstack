@@ -36,7 +36,8 @@ SUBCOMMANDS
   devstack base sync    move every service's worktree to its default branch tip
   devstack base path    print the replica root, or one service's worktree
 
-These commands have one MCP tool: 'base', with action="path" or action="sync".`,
+These commands have one MCP tool: 'base', with action="path", action="build"
+or action="sync".`,
 	SilenceUsage: true,
 	RunE:         runBasePath,
 }
@@ -114,23 +115,38 @@ func buildBase(ws *workspace.Workspace) error {
 }
 
 func ensureReplica(ws *workspace.Workspace) (*replica.EnsureResult, error) {
-	res, err := replica.Ensure(ws)
+	lines, res, err := replicaReport(ws)
+	for _, l := range lines {
+		fmt.Println(l)
+	}
 	if err != nil {
 		return nil, err
-	}
-	for _, wt := range res.Created {
-		fmt.Printf("  ✓ replica worktree %-16s %s (%s)\n", wt.Repo, wt.Path, wt.Branch)
-		if len(wt.Services) > 1 || (len(wt.Services) == 1 && wt.Services[0] != wt.Repo) {
-			fmt.Printf("    ↳ holds the services %s\n", strings.Join(wt.Services, ", "))
-		}
-	}
-	for _, name := range res.Removed {
-		fmt.Printf("  ✓ removed replica worktree %s — the manifest no longer lists it\n", name)
 	}
 	for _, w := range res.Warnings {
 		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 	}
 	return res, nil
+}
+
+// replicaReport builds the replica and returns the report lines it earned, so
+// `base build` can print them and the migration can nest them under its own
+// heading.
+func replicaReport(ws *workspace.Workspace) ([]string, *replica.EnsureResult, error) {
+	res, err := replica.Ensure(ws)
+	if err != nil {
+		return nil, nil, err
+	}
+	var lines []string
+	for _, wt := range res.Created {
+		lines = append(lines, fmt.Sprintf("  ✓ replica worktree %-16s %s (%s)", wt.Repo, wt.Path, wt.Branch))
+		if len(wt.Services) > 1 || (len(wt.Services) == 1 && wt.Services[0] != wt.Repo) {
+			lines = append(lines, fmt.Sprintf("    ↳ holds the services %s", strings.Join(wt.Services, ", ")))
+		}
+	}
+	for _, name := range res.Removed {
+		lines = append(lines, fmt.Sprintf("  ✓ removed replica worktree %s — the manifest no longer lists it", name))
+	}
+	return lines, res, nil
 }
 
 func runBaseSync(cmd *cobra.Command, args []string) error {

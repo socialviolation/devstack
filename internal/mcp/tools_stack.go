@@ -19,14 +19,22 @@ import (
 )
 
 // stackShortNameDesc states the short-name-vs-identity rule wherever a stack is
-// named: every parameter takes the short name, while output prints the identity.
-const stackShortNameDesc = "Feature stack SHORT name, for example 'import-review'. This is not the '<base>--<name>' full identity that stack_list and telemetry print. " +
+// named: every parameter takes the short name, while telemetry prints the
+// identity. It is never used on its own — a parameter is required or optional,
+// and the two say opposite things about an omitted value.
+const stackShortNameDesc = "Feature stack SHORT name, for example 'import-review'. This is not the '<base>--<name>' full identity that telemetry and the host daemon resource names print. " +
 	baseTermDesc +
-	"So no stack is ever called \"base\". On this tool, omit this parameter instead of passing \"base\". " +
-	"The telemetry tools accept \"base\" as a synonym for an omitted parameter. " +
-	"The tools that start, stop or restart a service require the parameter. There, \"base\" is not a synonym for an omitted parameter. " +
-	"If you omit it there, devstack reads the copy from the working directory, or the call fails. " +
-	"The stack tools take stack names only, and stack_rm rejects \"base\"."
+	"So no stack is ever called \"base\". "
+
+// requiredStackNameDesc is for a parameter that must name a stack. These tools
+// act on a stack and on nothing else, so an omitted value has no meaning here.
+const requiredStackNameDesc = stackShortNameDesc +
+	"This parameter is REQUIRED. Name a stack, and do not omit it. This tool takes a stack name only, and it refuses \"base\"."
+
+// optionalStackNameDesc is for a parameter that may be omitted. Omitted means
+// base, and "base" is not the way to write it.
+const optionalStackNameDesc = stackShortNameDesc +
+	"This parameter is OPTIONAL, and it defaults to base. To act on base, omit it, and do not pass \"base\"."
 
 // baseTermDesc is the one definition of "base". It is shared rather than
 // restated because the restatements disagreed: the same word was used for a
@@ -173,7 +181,7 @@ func registerStackAddTool(mcpServer *server.MCPServer, ws *workspace.Workspace) 
 			"The stack stays as up, or as down, as it was. If it is up, the added copies become resources in the host daemon, and devstack does NOT start them. Start them with the start tool, or report the command to the user. A service already in the stack is reported as already present, and it is not an error. If every name you give is already there, the call fails, because there is nothing to add.\n"+
 			"This workspace can declare lifecycle HOOKS: shell commands that devstack runs on its own. Here they are scoped to the ADDED services only, so devstack re-provisions nothing that is already in the stack. stack.create fires for them, and stack.up fires too when the stack is up. Their output is in the result below. A hook failure is returned as an error, and it means that the services were added and are NOT fully provisioned. Do not report success. See the hooks tool. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
-			mcp.Description(stackShortNameDesc)),
+			mcp.Description(requiredStackNameDesc)),
 		mcp.WithString("services", mcp.Required(),
 			mcp.Description("Comma-separated exact service OR group names to add (for example 'billing' or 'core'). A group expands to its members, and devstack records the group on the stack. devstack pulls the services that call any of them into the overlay.")),
 		mcp.WithString("from",
@@ -374,7 +382,7 @@ func registerStackNoteTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithString("name", mcp.Required(),
-			mcp.Description(stackShortNameDesc)),
+			mcp.Description(requiredStackNameDesc)),
 		mcp.WithString("note",
 			mcp.Description("What the stack is for. It replaces the current purpose. To read instead of write, omit it. To clear the purpose and its entries, pass \"\".")),
 		mcp.WithString("append",
@@ -447,7 +455,7 @@ func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			"A hook failure does NOT block the teardown. So it means that the external cleanup probably did not happen. You can not retry it afterwards, because the removal deletes the record that its ${self...} references resolve against. "+
 			"devstack prints the resolved URLs at the point of failure. Pass those on, rather than report a clean teardown."),
 		mcp.WithString("name", mcp.Required(),
-			mcp.Description(stackShortNameDesc)),
+			mcp.Description(requiredStackNameDesc)),
 		mcp.WithBoolean("force",
 			mcp.Description("Remove the worktrees even where they have uncommitted changes. CAUTION: this destroys uncommitted work. The default is false.")),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -520,7 +528,7 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 			"There is no daemon per stack. A stack's services run on their own ports inside the host daemon. The tool returns the stack's allocated service links and the daemon status.\n"+
 			"This workspace can declare lifecycle HOOKS: shell commands that devstack runs on its own for this action. They can change state outside this machine. They fire on their own, and their output is in the result. A hook failure is returned as an error, and it means that the action succeeded and the stack is NOT fully provisioned. Do not report success. Retry with the hooks tool (action=\"run\"). If you do not know what this workspace fires, call the hooks tool with action=\"list\" first. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
-			mcp.Description(stackShortNameDesc)),
+			mcp.Description(requiredStackNameDesc)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -598,7 +606,7 @@ func registerStackDownTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			"It leaves the stack's worktrees and its record intact. To remove those, use stack_rm. "+
 			"This workspace can declare lifecycle HOOKS on stack.down. They fire on their own. A failure does not block the stack from coming down, so it means that the external cleanup probably did not happen. Retry with the hooks tool (action=\"run\", event=\"stack.down\")."),
 		mcp.WithString("name", mcp.Required(),
-			mcp.Description(stackShortNameDesc)),
+			mcp.Description(requiredStackNameDesc)),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),

@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/socialviolation/devstack/internal/migrate"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -94,16 +96,26 @@ func TestMigrateRemovesTheBlockEverywhereAndIsIdempotent(t *testing.T) {
 		writeFile(t, filepath.Join(dir, "CLAUDE.md"), block("a pointer block")+"\n")
 	}
 
-	targets, _ := migrateTargets(ws)
-	var first migrateResult
-	var b strings.Builder
-	first.add(migrateWorkspace(&b, ws.Name, targets))
-
-	if first.Removed != 2 || first.Deleted != 2 {
-		t.Errorf("first run removed %d blocks and deleted %d files, want 2 and 2:\n%s", first.Removed, first.Deleted, b.String())
+	pending, why, err := detectAgentFiles(ws)
+	if err != nil {
+		t.Fatalf("detectAgentFiles() = %v", err)
 	}
-	if first.MCP != 2 || first.Hooks != 3 {
-		t.Errorf("first run wrote %d .mcp.json and %d hooks, want 2 and 3:\n%s", first.MCP, first.Hooks, b.String())
+	if !pending {
+		t.Fatal("a workspace that holds devstack blocks must read as pending")
+	}
+	if !strings.Contains(why, "4 files hold a devstack block") {
+		t.Errorf("the detector says %q, which does not count the files", why)
+	}
+
+	res, err := runAgentFiles(ws)
+	if err != nil {
+		t.Fatalf("runAgentFiles() = %v", err)
+	}
+	if !res.Changed {
+		t.Fatalf("the first run reports no change:\n%s", strings.Join(res.Lines, "\n"))
+	}
+	if len(res.Items) != 3 {
+		t.Errorf("the run names %d changed repositories, want 3: %+v", len(res.Items), res.Items)
 	}
 	for _, dir := range []string{svcDir, stackSvcDir} {
 		got := readString(t, filepath.Join(dir, agentsFileName))
@@ -121,42 +133,57 @@ func TestMigrateRemovesTheBlockEverywhereAndIsIdempotent(t *testing.T) {
 		}
 	}
 
-	var second migrateResult
-	var b2 strings.Builder
-	second.add(migrateWorkspace(&b2, ws.Name, targets))
-	if second.Changed() != 0 || second.NeedsHuman != 0 {
-		t.Fatalf("the second run changed %d files:\n%s", second.Changed(), b2.String())
+	pending, why, err = detectAgentFiles(ws)
+	if err != nil {
+		t.Fatalf("detectAgentFiles() = %v", err)
 	}
-	if b2.String() != "" {
-		t.Fatalf("the second run printed a report with nothing in it:\n%s", b2.String())
+	if pending {
+		t.Fatalf("the sweep is not idempotent: it is still pending with %q", why)
+	}
+
+	second, err := runAgentFiles(ws)
+	if err != nil {
+		t.Fatalf("second runAgentFiles() = %v", err)
+	}
+	if second.Changed || len(second.Lines) != 0 {
+		t.Fatalf("the second run changed something:\n%s", strings.Join(second.Lines, "\n"))
+	}
+}
+
+// The record is a log and never a gate for this patch: the sweep is cheap and
+// idempotent, so a repository cloned after the record was written still gets
+// cleaned. A record that could hide a stale AGENTS.md would be worse than none.
+func TestTheAgentFilesPatchAnswersToTheFilesystemAndNotTheRecord(t *testing.T) {
+	if !agentFilesPatch().Rescan {
+		t.Fatal("the file sweep must rescan, so a record can never hide a repository that still holds a block")
+	}
+	if replicaPatch().Rescan {
+		t.Error("the replica build must not rescan: a user who removed a replica did that on purpose")
 	}
 }
 
 // The note is the last thing an agent reads before it decides what to do, so it
-// has to say what changed, name every repository that changed, and give the
-// command that finishes the job.
-func TestTheSummaryNamesEveryChangedRepositoryAndTheCommitCommand(t *testing.T) {
-	res := migrateResult{
-		Removed: 2, Deleted: 1, MCP: 2, Hooks: 2,
-		Repos: []migrateTarget{
-			{Label: "api", Dir: "/home/nick/dev/navexa/api"},
-			{Label: "web (stack feat)", Dir: "/home/nick/dev/.devstack-stacks/navexa/feat/web"},
+// has to name every repository that changed and give the command that finishes
+// the job.
+func TestTheAgentFilesNoteNamesEveryChangedRepositoryAndTheCommitCommand(t *testing.T) {
+	got := strings.Join(nextAgentFiles([]migrate.Result{{
+		Workspace: "navexa",
+		Items: []migrate.Item{
+			{Label: "api", Path: "/home/nick/dev/navexa/api"},
+			{Label: "web (stack feat)", Path: "/home/nick/dev/.devstack-stacks/navexa/feat/web"},
 		},
-	}
-
-	var b strings.Builder
-	writeMigrateSummary(&b, res)
-	got := b.String()
+	}}), "\n")
 
 	for _, want := range []string{
-		"7 files", "2 repositories",
+		"NOW COMMIT",
+		"navexa",
 		"/home/nick/dev/navexa/api",
 		"/home/nick/dev/.devstack-stacks/navexa/feat/web",
 		commitCommand,
 		"next clone",
 	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("the summary never states %q:\n%s", want, got)
+			t.Errorf("the note never states %q:\n%s", want, got)
 		}
 	}
 	if strings.Contains(got, "push it") || strings.Contains(got, "git push") {
@@ -164,42 +191,70 @@ func TestTheSummaryNamesEveryChangedRepositoryAndTheCommitCommand(t *testing.T) 
 	}
 }
 
-// A run that changed nothing must not tell a reader to commit an empty diff.
-func TestTheSummaryIsSilentWhenNothingChanged(t *testing.T) {
-	var b strings.Builder
-	writeMigrateSummary(&b, migrateResult{})
-	got := b.String()
+// The replica note answers a different question from the file sweep. A commit is
+// the wrong next action here: the services that run are the thing that is now
+// out of date.
+func TestTheReplicaNoteAsksForARestartAndNeverForACommit(t *testing.T) {
+	got := strings.Join(nextReplica([]migrate.Result{{
+		Workspace: "navexa",
+		Items:     []migrate.Item{{Label: "navexa", Path: "/home/nick/dev/.devstack-base/navexa"}},
+	}}), "\n")
 
-	if !strings.Contains(got, "changed no file") {
-		t.Errorf("a run that changed nothing must say so:\n%s", got)
+	for _, want := range []string{
+		"RESTART YOUR SERVICES",
+		"/home/nick/dev/.devstack-base/navexa",
+		"devstack service restart <svc> --stack base",
+		"devstack base sync",
+		"default branch",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the note never states %q:\n%s", want, got)
+		}
 	}
-	if strings.Contains(got, commitCommand) || strings.Contains(got, "COMMIT") {
-		t.Errorf("nothing changed, so the summary must not ask for a commit:\n%s", got)
+	if strings.Contains(got, commitCommand) {
+		t.Errorf("a replica build produces no diff to commit:\n%s", got)
 	}
 }
 
 // A file devstack can not migrate is named, and it never becomes an instruction
 // to commit work that does not exist.
-func TestTheSummaryAsksForAHumanAndCountsNoChange(t *testing.T) {
-	var b strings.Builder
-	writeMigrateSummary(&b, migrateResult{NeedsHuman: 1})
-	got := b.String()
+func TestTheReportAsksForAHumanAndCountsNoChange(t *testing.T) {
+	got := strings.Join(agentFilesCounts(migrateResult{NeedsHuman: 1}), "\n")
 
 	if !strings.Contains(got, "needs a human") {
-		t.Errorf("the summary never asks for a human:\n%s", got)
+		t.Errorf("the report never asks for a human:\n%s", got)
 	}
 	if strings.Contains(got, commitCommand) {
 		t.Errorf("devstack changed nothing, so it must not ask for a commit:\n%s", got)
 	}
 }
 
-// A file that needs a human is not a reason to commit: devstack changed nothing,
-// so the note must say so and stop.
-func TestTheSummarySaysNothingChangedWhenOnlyAHumanIsNeeded(t *testing.T) {
-	var b strings.Builder
-	writeMigrateSummary(&b, migrateResult{NeedsHuman: 2})
+// --list is the read-only view: it shows the patch that is done and the patch
+// that is not, and it changes nothing.
+func TestListShowsEveryPatchAppliedAndPending(t *testing.T) {
+	ws, svcDir, _ := setupWorkspaceWithStack(t)
+	writeFile(t, filepath.Join(svcDir, agentsFileName), "# api\n\nMine.\n\n"+block("generated")+"\n")
+	if err := migrate.Append(migrate.Record{ID: "0.2.0-replica", Workspace: "navexa", AppliedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
 
-	if !strings.Contains(b.String(), "nothing to commit") {
-		t.Errorf("the summary never says that nothing changed:\n%s", b.String())
+	st, err := migrate.List(patches(), []workspace.Workspace{*ws})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	writePatchList(&b, st)
+	got := b.String()
+
+	for _, want := range []string{
+		"0.2.0-agent-files", "pending", "a devstack block",
+		"0.2.0-replica", "applied on",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("--list never states %q:\n%s", want, got)
+		}
+	}
+	if len(scanResidue(svcDir)) != 1 {
+		t.Error("--list changed a file")
 	}
 }

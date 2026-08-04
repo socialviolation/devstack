@@ -64,7 +64,7 @@ devstack base path <service>  # the replica worktree of one service
 devstack base sync            # move base to the current default branch tip
 ```
 
-The MCP `base` tool does both jobs. Pass `action="path"` to read a path, or `action="sync"` to move base.
+The MCP `base` tool does all three jobs. Pass `action="path"` to read a path, `action="build"` to build the replica, or `action="sync"` to move base to the default branch tip.
 
 CAUTION: `devstack base sync` restarts nothing. A running copy keeps serving the old code. It serves the old code until somebody restarts it.
 
@@ -380,7 +380,7 @@ stack_create stack_add stack_up  stack_down  stack_list  stack_rm  stack_note
 env_use      env_which env_set
 ```
 
-`base` reads the path of the replica with `action="path"`, and moves base to the default branch tip with `action="sync"`. `stack_add` adds services to a stack that already exists.
+`base` reads the path of the replica with `action="path"`, builds the replica with `action="build"`, and moves base to the default branch tip with `action="sync"`. `stack_add` adds services to a stack that already exists.
 
 The set of tools adapts to the workspace. `investigate` appears only when observability is on. `tunnel` appears only when the machine has an ssh client. Call `environment` first. It reports the observability state of the workspace, the stacks in flight, and the tools that exist here.
 
