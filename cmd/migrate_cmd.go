@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -78,45 +77,7 @@ func patches() []migrate.Patch {
 
 func runMigrate(cmd *cobra.Command, args []string) error {
 	list, _ := cmd.Flags().GetBool("list")
-	all := registeredWorkspaces()
-	if len(all) == 0 {
-		fmt.Println("No workspace is registered on this machine, so devstack migrates nothing.")
-		return nil
-	}
-
-	if list {
-		st, err := migrate.List(patches(), all)
-		if err != nil {
-			return err
-		}
-		writePatchList(os.Stdout, st)
-		return nil
-	}
-
-	fmt.Printf("devstack runs %d migrations over %s.\n", len(patches()), pluralWorkspaces(len(all)))
-	return migrate.Apply(os.Stdout, patches(), all)
-}
-
-// writePatchList prints every patch, applied or pending. It changes nothing.
-func writePatchList(w io.Writer, statuses []migrate.Status) {
-	for _, st := range statuses {
-		fmt.Fprintf(w, "\n%s  %s\n", st.ID, st.Title)
-		for _, row := range st.Rows {
-			switch {
-			case row.Err != nil:
-				fmt.Fprintf(w, "  %-16s blocked: %v\n", row.Name, row.Err)
-			case row.Pending && !row.AppliedAt.IsZero():
-				fmt.Fprintf(w, "  %-16s pending again (applied on %s): %s\n", row.Name, row.AppliedAt.Local().Format("2006-01-02 15:04"), row.Why)
-			case row.Pending:
-				fmt.Fprintf(w, "  %-16s pending: %s\n", row.Name, row.Why)
-			case !row.AppliedAt.IsZero():
-				fmt.Fprintf(w, "  %-16s applied on %s\n", row.Name, row.AppliedAt.Local().Format("2006-01-02 15:04"))
-			default:
-				fmt.Fprintf(w, "  %-16s nothing to do: %s\n", row.Name, row.Why)
-			}
-		}
-	}
-	fmt.Fprintln(w, "\ndevstack migrate runs each pending patch. This command changes nothing.")
+	return migrate.Sweep(os.Stdout, patches(), migrate.Workspaces(), !list)
 }
 
 // agentFilesPatch removes the instructions that an older devstack wrote into
@@ -584,13 +545,6 @@ func pluralRepos(n int) string {
 		return "1 repository"
 	}
 	return fmt.Sprintf("%d repositories", n)
-}
-
-func pluralWorkspaces(n int) string {
-	if n == 1 {
-		return "1 workspace"
-	}
-	return fmt.Sprintf("%d workspaces", n)
 }
 
 // workspaceResidue reports the files of one workspace that still hold devstack

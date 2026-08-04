@@ -59,7 +59,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		if line := servicesSummary(workspacePath, defaultService); line != "" {
 			sb.WriteString(line)
 		}
-		tools := []string{"status", "start", "restart", "stop", "topology", "configure", "process_logs", "service_env", "base", "observability", "hooks", "stack_create", "stack_add", "stack_list", "stack_note", "stack_up", "stack_down", "stack_rm", "env_use", "env_which", "env_set"}
+		tools := []string{"status", "start", "restart", "stop", "topology", "configure", "process_logs", "service_env", "base", "observability", "hooks", "migrate", "stack_create", "stack_add", "stack_list", "stack_note", "stack_up", "stack_down", "stack_rm", "env_use", "env_which", "env_set"}
 		if otelOn {
 			tools = append(tools, "investigate")
 		}

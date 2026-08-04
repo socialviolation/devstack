@@ -17,7 +17,7 @@ func registeredToolNames(t *testing.T) map[string]bool {
 	t.Setenv("HOME", t.TempDir())
 	s := server.NewMCPServer("test", "0.0.0")
 	ws := &workspace.Workspace{Name: "navexa", Path: t.TempDir()}
-	RegisterTools(s, nil, "", nil, ws.Name, ws.Path, ws)
+	RegisterTools(s, nil, "", nil, ws.Name, ws.Path, ws, nil)
 
 	resp := s.HandleMessage(context.Background(), json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
 	data, err := json.Marshal(resp)
@@ -50,7 +50,7 @@ func TestBriefingParityClaimHolds(t *testing.T) {
 	names := registeredToolNames(t)
 
 	// Named in the briefing as tools that exist.
-	for _, want := range []string{"status", "start", "stop", "restart", "stack_up", "env_use", "environment"} {
+	for _, want := range []string{"status", "start", "stop", "restart", "stack_up", "env_use", "environment", "migrate"} {
 		if !names[want] {
 			t.Errorf("the briefing names %q as a tool, and it is not registered", want)
 		}
@@ -69,7 +69,6 @@ func TestBriefingParityClaimHolds(t *testing.T) {
 		"groups":         "group add and remove",
 		"stack_config":   "stack config",
 		"init":           "init",
-		"migrate":        "migrate",
 	}
 	for tool, claim := range shellOnly {
 		if names[tool] {

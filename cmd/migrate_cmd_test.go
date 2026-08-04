@@ -249,7 +249,7 @@ func TestListShowsEveryPatchAppliedAndPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	var b strings.Builder
-	writePatchList(&b, st)
+	migrate.WriteList(&b, st)
 	got := b.String()
 
 	for _, want := range []string{

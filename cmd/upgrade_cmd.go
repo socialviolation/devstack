@@ -6,14 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/socialviolation/devstack/internal/migrate"
 	"github.com/socialviolation/devstack/internal/selfcheck"
-	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 var upgradeCmd = &cobra.Command{
@@ -172,7 +170,7 @@ func parseVersionOutput(out string) string {
 }
 
 func reportAndMigrate(doMigrate bool) error {
-	all := registeredWorkspaces()
+	all := migrate.Workspaces()
 	statuses, err := migrate.List(patches(), all)
 	if err != nil {
 		return err
@@ -231,15 +229,6 @@ func writePendingReport(w io.Writer, statuses []migrate.Status, doMigrate bool) 
 	fmt.Fprintln(w, "it just installed. This command changes nothing.")
 	fmt.Fprintln(w, "The file sweep writes files that a repository commits, so where it has work it makes")
 	fmt.Fprintln(w, "a real git diff. Read the diff before you commit it. Do this when you are not mid-task.")
-}
-
-func registeredWorkspaces() []workspace.Workspace {
-	all, err := workspace.All()
-	if err != nil {
-		return nil
-	}
-	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
-	return all
 }
 
 // migrateArgs runs the sweep of every workspace. `devstack migrate` is one

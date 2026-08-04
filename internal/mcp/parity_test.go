@@ -36,7 +36,7 @@ func TestRegisterToolsAlwaysRegistersServiceControl(t *testing.T) {
 	s := server.NewMCPServer("test", "0.0.0")
 	ws := &workspace.Workspace{Name: "navexa", Path: t.TempDir()}
 
-	RegisterTools(s, nil, "", nil, ws.Name, ws.Path, ws)
+	RegisterTools(s, nil, "", nil, ws.Name, ws.Path, ws, nil)
 
 	resp := s.HandleMessage(context.Background(), json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
 	data, err := json.Marshal(resp)

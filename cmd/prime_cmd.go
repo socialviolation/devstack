@@ -528,10 +528,10 @@ func writePrimeWhatThisIs(b *strings.Builder) {
 	b.WriteString("it collects their logs, and it sets their environment variables.\n\n")
 	b.WriteString("CAUTION: Use devstack only for local development. Do not use it with a staging or a production system.\n\n")
 	b.WriteString("devstack is a CLI and an MCP server. The tools do the same work as the commands, and they share their names:\n")
-	b.WriteString("status, start, stop, restart, stack_up, env_use. Use the one that your session has. Call the `environment` tool\n")
-	b.WriteString("first. It lists the tools that this workspace has. The tools do not cover every command. If there is no tool\n")
-	b.WriteString("for what you want, run the command in the shell. These have no tool: workspace up and down, ports,\n")
-	b.WriteString("dependencies, group add and remove, stack config, init, and migrate.\n")
+	b.WriteString("status, start, stop, restart, stack_up, env_use, migrate. Use the one that your session has. Call the\n")
+	b.WriteString("`environment` tool first. It lists the tools that this workspace has. The tools do not cover every command.\n")
+	b.WriteString("If there is no tool for what you want, run the command in the shell. These have no tool: workspace up and\n")
+	b.WriteString("down, ports, dependencies, group add and remove, stack config, and init.\n")
 }
 
 // writePrimeTerms defines the words the rest of the briefing uses. It is its own

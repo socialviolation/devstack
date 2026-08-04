@@ -20,6 +20,7 @@ import (
 	"github.com/socialviolation/devstack/internal/gitinfo"
 	"github.com/socialviolation/devstack/internal/hooks"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
+	"github.com/socialviolation/devstack/internal/migrate"
 	"github.com/socialviolation/devstack/internal/observability"
 	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/stack"
@@ -32,9 +33,13 @@ import (
 var errorRegex = regexp.MustCompile(`(?i)(error|exception|panic|fatal|fail)`)
 
 // RegisterTools registers devstack MCP tools: status, topology, start, restart,
-// stop, configure, process_logs, service_env, observability, stack and env tools,
-// plus investigate when observability is enabled and tunnel when an ssh client
-// is available.
+// stop, configure, process_logs, service_env, observability, migrate, stack and
+// env tools, plus investigate when observability is enabled and tunnel when an
+// ssh client is available.
+//
+// patches is the migration set the migrate tool runs. The patches are declared
+// where the commands are, so the caller passes them in rather than this package
+// importing that one.
 func RegisterTools(
 	mcpServer *server.MCPServer,
 	tiltClient *tilt.Client,
@@ -43,6 +48,7 @@ func RegisterTools(
 	workspaceName string,
 	workspacePath string,
 	ws *workspace.Workspace,
+	patches []migrate.Patch,
 ) {
 	var obsURL string
 	if ws != nil {
@@ -71,6 +77,7 @@ func RegisterTools(
 	registerProcessLogsTool(mcpServer, tiltClient, defaultService, cfg, ws)
 	registerServiceEnvTool(mcpServer, ws, workspacePath)
 	registerBaseTool(mcpServer, ws)
+	registerMigrateTool(mcpServer, patches)
 
 	// Observability control (status/enable/disable/configure) is always
 	// available so an agent can discover and turn it on.

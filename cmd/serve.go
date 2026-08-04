@@ -37,6 +37,7 @@ TOOLS EXPOSED TO AI AGENTS
   base            print the replica that base runs from, or sync it to the default branch tip
   configure       read or set a dev daemon runtime argument
   hooks           list the declared lifecycle hooks, or run the hooks of one event
+  migrate         list the migrations of this machine, or run the pending ones
   observability   show, enable or disable OTEL, and read the telemetry evidence
   stack_create    cut a feature stack from the default branch
   stack_add       put another service into a stack that already exists
@@ -124,6 +125,7 @@ func serveStdio() error {
 		ws.Name,
 		ws.Path,
 		ws,
+		patches(),
 	)
 
 	log.Printf("Starting devstack MCP server (workspace: %s, tilt-port: %d)", ws.Name, workspace.HostTiltPort)

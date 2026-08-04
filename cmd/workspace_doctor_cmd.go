@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -28,7 +30,7 @@ func init() {
 // wrote, and returns how many. It belongs here as well as in `upgrade` because a
 // repository carries whatever was committed months ago, with no upgrade
 // involved.
-func reportDevstackResidue(wsPath string) int {
+func reportDevstackResidue(w io.Writer, wsPath string) int {
 	ws, err := workspace.FindByPath(wsPath)
 	if err != nil {
 		return 0
@@ -37,15 +39,16 @@ func reportDevstackResidue(wsPath string) int {
 	if len(files) == 0 {
 		return 0
 	}
-	fmt.Printf("devstack instructions: %d file(s) still hold a block that devstack wrote\n", len(files))
+	fmt.Fprintf(w, "devstack instructions: %d file(s) still hold a block that devstack wrote\n", len(files))
 	for _, f := range files {
 		note := ""
 		if f.NeedsHuman {
 			note = " (a marker has no pair, so a human must remove that block)"
 		}
-		fmt.Printf("- [warn] %s%s\n", f.Path, note)
+		fmt.Fprintf(w, "- [warn] %s%s\n", f.Path, note)
 	}
-	fmt.Println("  remove them: devstack migrate")
+	fmt.Fprintln(w, "  read what devstack would remove, and change nothing: devstack migrate --list")
+	fmt.Fprintln(w, "  then remove it: devstack migrate")
 	return len(files)
 }
 
@@ -78,7 +81,7 @@ func runWorkspaceDoctor(cmd *cobra.Command, args []string) error {
 	}
 
 	drifted := reportConfigDrift(ctx.WorkspaceRoot.Value)
-	outdated := reportDevstackResidue(ctx.WorkspaceRoot.Value)
+	outdated := reportDevstackResidue(os.Stdout, ctx.WorkspaceRoot.Value)
 
 	if len(graph.Issues) == 0 {
 		if drifted == 0 && outdated == 0 {

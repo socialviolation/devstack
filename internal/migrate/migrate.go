@@ -11,10 +11,74 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"time"
 
 	"github.com/socialviolation/devstack/internal/workspace"
 )
+
+// Workspaces is every workspace registered on this machine, in name order. One
+// migration sweeps the whole machine, so this is the set each surface passes.
+func Workspaces() []workspace.Workspace {
+	all, err := workspace.All()
+	if err != nil {
+		return nil
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+	return all
+}
+
+// Sweep writes one migration report. It is the whole of what a caller reads:
+// the patches, what each one did or still has to do, and the next action.
+//
+// run=false previews, and it changes no file. run=true applies every pending
+// patch. The CLI and the MCP tool both call this, so neither one can print a
+// report the other does not.
+func Sweep(w io.Writer, patches []Patch, all []workspace.Workspace, run bool) error {
+	if len(all) == 0 {
+		fmt.Fprintln(w, "No workspace is registered on this machine, so devstack migrates nothing.")
+		return nil
+	}
+	if !run {
+		statuses, err := List(patches, all)
+		if err != nil {
+			return err
+		}
+		WriteList(w, statuses)
+		return nil
+	}
+	fmt.Fprintf(w, "devstack runs %d migrations over %s.\n", len(patches), pluralWorkspaces(len(all)))
+	return Apply(w, patches, all)
+}
+
+// WriteList prints every patch, applied or pending. It changes nothing.
+func WriteList(w io.Writer, statuses []Status) {
+	for _, st := range statuses {
+		fmt.Fprintf(w, "\n%s  %s\n", st.ID, st.Title)
+		for _, row := range st.Rows {
+			switch {
+			case row.Err != nil:
+				fmt.Fprintf(w, "  %-16s blocked: %v\n", row.Name, row.Err)
+			case row.Pending && !row.AppliedAt.IsZero():
+				fmt.Fprintf(w, "  %-16s pending again (applied on %s): %s\n", row.Name, row.AppliedAt.Local().Format("2006-01-02 15:04"), row.Why)
+			case row.Pending:
+				fmt.Fprintf(w, "  %-16s pending: %s\n", row.Name, row.Why)
+			case !row.AppliedAt.IsZero():
+				fmt.Fprintf(w, "  %-16s applied on %s\n", row.Name, row.AppliedAt.Local().Format("2006-01-02 15:04"))
+			default:
+				fmt.Fprintf(w, "  %-16s nothing to do: %s\n", row.Name, row.Why)
+			}
+		}
+	}
+	fmt.Fprintln(w, "\ndevstack migrate runs each pending patch. This command changes nothing.")
+}
+
+func pluralWorkspaces(n int) string {
+	if n == 1 {
+		return "1 workspace"
+	}
+	return fmt.Sprintf("%d workspaces", n)
+}
 
 // Item is one thing a patch changed, named so the reader can act on it. A count
 // with no path beside it tells a reader nothing.

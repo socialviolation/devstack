@@ -380,11 +380,12 @@ CAUTION: `--reclaim` kills what already holds those ports on the far host. What 
 ```
 environment  status  topology  start  stop  restart  process_logs  service_env
 configure    observability     investigate    tunnel      hooks       base
-stack_create stack_add stack_up  stack_down  stack_list  stack_rm  stack_note
+migrate      stack_create      stack_add   stack_up    stack_down
+stack_list   stack_rm  stack_note
 env_use      env_which env_set
 ```
 
-`base` reads the path of the replica with `action="path"`, builds the replica with `action="build"`, and moves base to the default branch tip with `action="sync"`. `stack_add` adds services to a stack that already exists.
+`base` reads the path of the replica with `action="path"`, builds the replica with `action="build"`, and moves base to the default branch tip with `action="sync"`. `stack_add` adds services to a stack that already exists. `migrate` lists the migrations of this machine with `action="list"`, and runs the pending ones with `action="run"`. A run writes and deletes files in the service repositories, so read the git diff it makes and commit it yourself.
 
 The set of tools adapts to the workspace. `investigate` appears only when observability is on. `tunnel` appears only when the machine has an ssh client. Call `environment` first. It reports the observability state of the workspace, the stacks in flight, and the tools that exist here.
 
@@ -406,7 +407,7 @@ The `stack` parameter scopes the search. An absent `stack` searches base. A name
 | `check` | Audit for placeholders and missing keys |
 | `drift` | Compare what devstack resolves with what the repository says it needs |
 
-Some commands have no tool and need a shell. Among them: `workspace up`, `workspace down`, `workspace doctor`, `workspace generate`, `stack config`, `ports`, `init`, `migrate`, `prime` and `upgrade`. The otel queries need a shell too: `otel traces`, `otel logs`, `otel services` and `otel open`. The `observability` and `investigate` tools cover the rest.
+Some commands have no tool and need a shell. Among them: `workspace up`, `workspace down`, `workspace doctor`, `workspace generate`, `stack config`, `ports`, `init`, `prime` and `upgrade`. The otel queries need a shell too: `otel traces`, `otel logs`, `otel services` and `otel open`. The `observability` and `investigate` tools cover the rest.
 
 ## Briefing an agent
 
@@ -457,7 +458,7 @@ devstack once wrote a block of instructions into `AGENTS.md`, and a shorter bloc
 devstack migrate
 ```
 
-The file sweep is one of the migrations that `devstack migrate` runs. The command runs every pending migration, and the other one builds the replica that base runs from. To read what is pending without changing anything, run `devstack migrate --list`.
+The file sweep is one of the migrations that `devstack migrate` runs. The command runs every pending migration, and the other one builds the replica that base runs from. To read what is pending without changing anything, run `devstack migrate --list`. An agent does the same with the `migrate` tool: `action="list"` to read, `action="run"` to apply.
 
 devstack removes only what devstack wrote. Your own text stays, byte for byte. Where devstack can not find the end of its own block, it changes nothing and it names the file for you. Run the command again at any time: a second run changes nothing.
 
