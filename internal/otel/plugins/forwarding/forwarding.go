@@ -128,9 +128,9 @@ func (p *ForwardingPlugin) QueryEndpoint(ws *workspace.Workspace) string { retur
 // locally to query.
 func (p *ForwardingPlugin) Backend(ws *workspace.Workspace) (observability.Backend, error) {
 	if upstream := ws.PluginConfig("upstream"); upstream != "" {
-		return nil, fmt.Errorf("workspace %q forwards telemetry to %s — query it there, or switch to a local backend with: devstack otel config set --plugin=openobserve", ws.Name, upstream)
+		return nil, fmt.Errorf("workspace %q forwards the telemetry to %s. Query it there, or change to a local backend with: devstack otel config set --plugin=openobserve", ws.Name, upstream)
 	}
-	return nil, fmt.Errorf("workspace %q has no upstream configured — telemetry goes to the collector log. Switch to a local backend with: devstack otel config set --plugin=openobserve", ws.Name)
+	return nil, fmt.Errorf("workspace %q has no upstream, so the telemetry goes to the collector log. Change to a local backend with: devstack otel config set --plugin=openobserve", ws.Name)
 }
 
 // Validate always passes — upstream is optional. When not set the collector
@@ -161,7 +161,7 @@ func (p *ForwardingPlugin) ConfigSchema() []otel.ConfigField {
 		},
 		{
 			Key:         "resource_attributes",
-			Description: "Extra resource attributes to inject, comma-separated key=value pairs (e.g. engineer=nick,team=platform)",
+			Description: "Extra resource attributes to inject, comma-separated key=value pairs (for example engineer=nick,team=platform)",
 			Required:    false,
 		},
 		{
@@ -171,7 +171,7 @@ func (p *ForwardingPlugin) ConfigSchema() []otel.ConfigField {
 		},
 		{
 			Key:         "api_key_header",
-			Description: "Header name for the API key (default: Authorization with Bearer prefix). Use e.g. signoz-ingestion-key for SigNoz cloud.",
+			Description: "Header name for the API key (default: Authorization with Bearer prefix). For SigNoz cloud, use signoz-ingestion-key.",
 			Required:    false,
 		},
 	}

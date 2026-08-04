@@ -61,7 +61,7 @@ func ResolveDeps(cfg *WorkspaceConfig, service string) ([]string, error) {
 	var visit func(s string) error
 	visit = func(s string) error {
 		if inStack[s] {
-			return fmt.Errorf("dependency cycle detected involving service %q", s)
+			return fmt.Errorf("the service %q is in a dependency cycle", s)
 		}
 		if visited[s] {
 			return nil

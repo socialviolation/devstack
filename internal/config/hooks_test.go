@@ -148,19 +148,19 @@ func TestValidateHooksRejectsBadDefinitions(t *testing.T) {
 			name:          "services in a service manifest",
 			hook:          Hook{Name: "x", On: []string{EventStackUp}, Run: "true", Services: []string{"api"}},
 			allowServices: false,
-			wantErr:       "only applies to workspace hooks",
+			wantErr:       "applies only to workspace hooks",
 		},
 		{
 			name:          "unparseable timeout",
 			hook:          Hook{Name: "x", On: []string{EventStackUp}, Run: "true", Timeout: "soon"},
 			allowServices: true,
-			wantErr:       "unparseable timeout",
+			wantErr:       "devstack can not parse it",
 		},
 		{
 			name:          "negative timeout",
 			hook:          Hook{Name: "x", On: []string{EventStackUp}, Run: "true", Timeout: "-5s"},
 			allowServices: true,
-			wantErr:       "non-positive timeout",
+			wantErr:       "a timeout must be more than zero",
 		},
 		{
 			name:          "bad error policy",

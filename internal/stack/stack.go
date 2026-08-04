@@ -86,19 +86,19 @@ type StackInfo struct {
 func Create(in CreateInput) (*CreateResult, error) {
 	base := in.Base
 	if base == nil {
-		return nil, fmt.Errorf("no base workspace resolved")
+		return nil, fmt.Errorf("devstack can not resolve the base workspace")
 	}
 	if _, err := FindStack(base.Name, in.Name); err == nil {
 		return nil, fmt.Errorf("stack %q already exists in workspace %q", in.Name, base.Name)
 	}
 	changed := in.Repos
 	if len(changed) == 0 {
-		return nil, fmt.Errorf("no repos given: name the service(s) this stack changes")
+		return nil, fmt.Errorf("no services given: name the services that this stack changes")
 	}
 
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve base workspace: %w", err)
+		return nil, fmt.Errorf("can not resolve the base workspace: %w", err)
 	}
 	topo, err := config.BuildTopology(base.Path)
 	if err != nil {
@@ -132,7 +132,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 	parent := filepath.Dir(base.Path)
 	stackRoot := filepath.Join(parent, ".devstack-stacks", in.Name)
 	if stackRoot == base.Path || strings.HasPrefix(stackRoot, base.Path+string(os.PathSeparator)) {
-		return nil, fmt.Errorf("refusing: stack root %s would be nested under base %s (breaks workspace detection)", stackRoot, base.Path)
+		return nil, fmt.Errorf("devstack can not use the stack root %s. The root is under base %s, and a nested root breaks workspace detection", stackRoot, base.Path)
 	}
 	res.StackRoot = stackRoot
 
@@ -141,7 +141,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 		worktreePaths[s] = filepath.Join(stackRoot, s)
 	}
 	if err := os.MkdirAll(stackRoot, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create stack root %s: %w", stackRoot, err)
+		return nil, fmt.Errorf("can not create the stack root %s: %w", stackRoot, err)
 	}
 
 	branch := in.Branch
@@ -155,7 +155,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 		if ref == "" {
 			_, resolved, err := gitinfo.DefaultRef(repoPath)
 			if err != nil {
-				return nil, fmt.Errorf("service %q: %w; name a ref to cut from with --from", s, err)
+				return nil, fmt.Errorf("service %q: %w. Name a ref to cut from with --from", s, err)
 			}
 			ref = resolved
 		}
@@ -171,7 +171,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 		}
 		materialized, err := worktree.MaterializeIgnoredConfig(repoPath, worktreePaths[s])
 		if err != nil {
-			return nil, fmt.Errorf("materialize local config for %q: %w", s, err)
+			return nil, fmt.Errorf("can not materialize the local configuration for %q: %w", s, err)
 		}
 		wr.Materialized = materialized
 		res.Worktrees = append(res.Worktrees, wr)
@@ -180,7 +180,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 		}
 	}
 	if len(leftBehind) > 0 {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("worktrees were cut from %s, not from the base checkout — uncommitted work, and commits the checkout holds beyond that ref, are not in this stack",
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack cut the worktrees from %s, not from the base checkout. This stack does not have the uncommitted work in the checkout. This stack does not have the commits that the checkout holds beyond that ref.",
 			strings.Join(leftBehind, ", ")))
 	}
 
@@ -193,11 +193,11 @@ func Create(in CreateInput) (*CreateResult, error) {
 	}
 	data, err := yaml.Marshal(manifest)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal stack manifest: %w", err)
+		return nil, fmt.Errorf("can not encode the stack manifest: %w", err)
 	}
 	manifestPath := config.WorkspaceManifestPath(stackRoot)
 	if err := os.WriteFile(manifestPath, data, 0644); err != nil {
-		return nil, fmt.Errorf("failed to write stack manifest: %w", err)
+		return nil, fmt.Errorf("can not write the stack manifest: %w", err)
 	}
 	res.ManifestPath = manifestPath
 
@@ -205,7 +205,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 	if len(keys) > 0 {
 		allocated, err := workspace.AllocatePorts(stackName, keys)
 		if err != nil {
-			return nil, fmt.Errorf("failed to allocate service ports: %w", err)
+			return nil, fmt.Errorf("can not allocate the service ports: %w", err)
 		}
 		res.Ports = allocated
 	}
@@ -228,11 +228,11 @@ func Create(in CreateInput) (*CreateResult, error) {
 		Ports:     res.Ports,
 		CreatedAt: time.Now(),
 	}); err != nil {
-		return nil, fmt.Errorf("failed to record stack: %w", err)
+		return nil, fmt.Errorf("can not record the stack: %w", err)
 	}
 
 	if !daemonReachable(workspace.HostTiltPort) {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("host daemon is not reachable on port %d. A stack reuses base's running services — start base first: (cd %s && devstack workspace up)",
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not reach the host daemon on port %d. A stack uses the services that base runs. Start base first: (cd %s && devstack workspace up)",
 			workspace.HostTiltPort, base.Path))
 	}
 
@@ -253,7 +253,7 @@ func CheckRemovable(base *workspace.Workspace, name string, force bool) error {
 		return nil
 	}
 	if base == nil {
-		return fmt.Errorf("no base workspace resolved")
+		return fmt.Errorf("devstack can not resolve the base workspace")
 	}
 	rec, err := FindStack(base.Name, name)
 	if err != nil {
@@ -274,14 +274,14 @@ func CheckRemovable(base *workspace.Workspace, name string, force bool) error {
 		if err != nil || !dirty {
 			continue
 		}
-		return fmt.Errorf("remove worktree %s: worktree %s has uncommitted changes; refusing to remove without force\n(use --force to discard uncommitted work)", p, p)
+		return fmt.Errorf("devstack can not remove the worktree %s. The worktree has uncommitted changes.\nTo discard the uncommitted work, use --force", p)
 	}
 	return nil
 }
 
 func Remove(base *workspace.Workspace, name string, force bool) (*RemoveResult, error) {
 	if base == nil {
-		return nil, fmt.Errorf("no base workspace resolved")
+		return nil, fmt.Errorf("devstack can not resolve the base workspace")
 	}
 	rec, err := FindStack(base.Name, name)
 	if err != nil {
@@ -299,31 +299,31 @@ func Remove(base *workspace.Workspace, name string, force bool) (*RemoveResult, 
 		for _, n := range svcNames {
 			p := rw.Services[n].RepoPath
 			if err := worktree.Remove(p, force); err != nil {
-				return res, fmt.Errorf("remove worktree %s: %w\n(use --force to discard uncommitted work)", p, err)
+				return res, fmt.Errorf("devstack can not remove the worktree %s: %w\nTo discard the uncommitted work, use --force", p, err)
 			}
 			res.RemovedWorktrees = append(res.RemovedWorktrees, p)
 		}
 	} else {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("could not resolve stack manifest to list worktrees: %v", err))
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not resolve the stack manifest, so it can not list the worktrees: %v", err))
 	}
 
 	if err := workspace.ReleasePorts(rec.RuntimeKey()); err != nil {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("failed to release ports: %v", err))
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not release the ports: %v", err))
 	} else {
 		res.PortsReleased = true
 	}
 
 	if ok, err := deleteStack(rec.Base, rec.Name); err != nil {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("failed to remove stack record: %v", err))
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not remove the stack record: %v", err))
 	} else if ok {
 		res.Deregistered = true
 	}
 
 	if err := os.RemoveAll(workspace.DataDir(rec.RuntimeKey())); err != nil {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("failed to remove data dir: %v", err))
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not remove the data directory: %v", err))
 	}
 	if err := os.RemoveAll(rec.Root); err != nil {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("failed to remove stack root: %v", err))
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not remove the stack root: %v", err))
 	} else {
 		res.RootRemoved = true
 	}
@@ -334,7 +334,7 @@ func Remove(base *workspace.Workspace, name string, force bool) (*RemoveResult, 
 func List(workspaceName string) ([]StackInfo, error) {
 	recs, err := LoadStore(workspaceName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load stacks store: %w", err)
+		return nil, fmt.Errorf("can not load the stacks store: %w", err)
 	}
 	basePort := workspace.HostTiltPort
 	var stacks []StackInfo
@@ -380,11 +380,11 @@ func splitPortKey(qualified string) (service, key string, ok bool) {
 func GenerateOptions(rec *Record, names []string) (tiltgen.Options, error) {
 	base, err := workspace.FindByName(rec.Base)
 	if err != nil {
-		return tiltgen.Options{}, fmt.Errorf("stack %q base workspace %q not found in registry: %w", rec.FullName(), rec.Base, err)
+		return tiltgen.Options{}, fmt.Errorf("stack %q: devstack can not find the base workspace %q in the registry: %w", rec.FullName(), rec.Base, err)
 	}
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return tiltgen.Options{}, fmt.Errorf("failed to resolve base workspace %q at %s: %w", base.Name, base.Path, err)
+		return tiltgen.Options{}, fmt.Errorf("can not resolve the base workspace %q at %s: %w", base.Name, base.Path, err)
 	}
 
 	allocated, err := workspace.LoadPorts(rec.RuntimeKey())
@@ -416,11 +416,11 @@ func GenerateOptions(rec *Record, names []string) (tiltgen.Options, error) {
 func ResolveWorktree(rec *Record) (*config.ResolvedWorkspace, error) {
 	base, err := workspace.FindByName(rec.Base)
 	if err != nil {
-		return nil, fmt.Errorf("stack %q base workspace %q not found in registry: %w", rec.FullName(), rec.Base, err)
+		return nil, fmt.Errorf("stack %q: devstack can not find the base workspace %q in the registry: %w", rec.FullName(), rec.Base, err)
 	}
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve base workspace %q at %s: %w", base.Name, base.Path, err)
+		return nil, fmt.Errorf("can not resolve the base workspace %q at %s: %w", base.Name, base.Path, err)
 	}
 	rw, err := config.ResolveWorkspace(rec.Root)
 	if err != nil {
@@ -502,7 +502,7 @@ func expandGroups(topo *config.TopologyGraph, wsName string, names []string) (se
 		}
 		members, ok := topo.Groups[name]
 		if !ok {
-			return nil, nil, fmt.Errorf("%q is neither a service nor a group in workspace %q\nservices: %s\ngroups:   %s",
+			return nil, nil, fmt.Errorf("%q is not a service and not a group in workspace %q\nservices: %s\ngroups:   %s",
 				name, wsName, strings.Join(topo.ServiceNames(), ", "), strings.Join(topo.GroupNames(), ", "))
 		}
 		if len(members) == 0 {

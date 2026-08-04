@@ -28,10 +28,10 @@ func warnUnknownPlugin(name string) {
 		return
 	}
 	fmt.Fprintf(WarnWriter,
-		"warning: observability backend %q is not known to this devstack build — falling back to %q.\n",
+		"warning: this devstack build does not know the observability backend %q. devstack uses %q instead.\n",
 		name, DefaultPlugin)
 	fmt.Fprintf(WarnWriter,
-		"         if you expected %q, your installed devstack is out of date: reinstall with 'go install ./...'\n",
+		"         if you expected %q, your installed devstack is not current. To install it again, run 'go install ./...'\n",
 		name)
 }
 
@@ -78,18 +78,18 @@ func For(ws *workspace.Workspace) Plugin {
 // This is the single entry point the CLI and MCP tools use to run a query.
 func BackendFor(ws *workspace.Workspace) (observability.Backend, error) {
 	if ws == nil {
-		return nil, fmt.Errorf("no workspace resolved — run from inside a workspace directory")
+		return nil, fmt.Errorf("devstack can not resolve the workspace. Run this command from inside a workspace directory")
 	}
 	p := For(ws)
 	if p == nil {
-		return nil, fmt.Errorf("no OTEL plugin registered")
+		return nil, fmt.Errorf("no OTEL plugin is registered")
 	}
 	backend, err := p.Backend(ws)
 	if err != nil {
 		return nil, err
 	}
 	if backend == nil {
-		return nil, fmt.Errorf("plugin %q exposes no queryable backend", p.Name())
+		return nil, fmt.Errorf("the plugin %q has no backend that devstack can query", p.Name())
 	}
 	// One backend holds every workspace on the machine, so the scope is applied
 	// here rather than trusted to each caller.

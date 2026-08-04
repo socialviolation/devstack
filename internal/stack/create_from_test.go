@@ -89,7 +89,7 @@ func TestCreateCutsFromDefaultBranchNotTheParkedCheckout(t *testing.T) {
 
 	var warning string
 	for _, w := range res.Warnings {
-		if strings.Contains(w, "cut from") {
+		if strings.Contains(w, "cut the worktrees from") {
 			warning = w
 		}
 	}
@@ -112,7 +112,7 @@ func TestCreateWarnsOnlyWhenTheCheckoutHoldsMore(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	for _, w := range res.Warnings {
-		if strings.Contains(w, "cut from") {
+		if strings.Contains(w, "cut the worktrees from") {
 			t.Errorf("warned about left-behind work on a checkout that holds none: %s", w)
 		}
 	}

@@ -20,11 +20,11 @@ import (
 // the workspace when there is no stack.
 func Context(ws *workspace.Workspace, stackName, event string, services []string) (Event, Source, error) {
 	if ws == nil {
-		return Event{}, Source{}, fmt.Errorf("no workspace resolved")
+		return Event{}, Source{}, fmt.Errorf("devstack can not resolve the workspace")
 	}
 	baseRW, err := config.ResolveWorkspace(ws.Path)
 	if err != nil {
-		return Event{}, Source{}, fmt.Errorf("failed to resolve workspace %q: %w", ws.Name, err)
+		return Event{}, Source{}, fmt.Errorf("can not resolve the workspace %q: %w", ws.Name, err)
 	}
 
 	ev := Event{
@@ -87,10 +87,10 @@ func Fire(ws *workspace.Workspace, stackName, event string, services []string, w
 	ev, src, err := Context(ws, stackName, event, services)
 	if err != nil {
 		if config.IsTeardownEvent(event) {
-			fmt.Fprintf(w, "warning: could not resolve hooks for %s: %v\n", event, err)
+			fmt.Fprintf(w, "warning: devstack can not resolve the hooks for %s: %v\n", event, err)
 			return nil
 		}
-		return fmt.Errorf("could not resolve hooks for %s: %w", event, err)
+		return fmt.Errorf("devstack can not resolve the hooks for %s: %w", event, err)
 	}
 	_, err = Run(ev, src, w)
 	return err

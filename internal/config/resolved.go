@@ -70,7 +70,7 @@ func ResolveContext(opts ResolveOptions) (*ResolvedContext, error) {
 	if startPath == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
-			return nil, fmt.Errorf("failed to get current directory: %w", err)
+			return nil, fmt.Errorf("can not read the current directory: %w", err)
 		}
 		startPath = cwd
 	}
@@ -117,14 +117,14 @@ func ResolveContext(opts ResolveOptions) (*ResolvedContext, error) {
 
 func ResolveServiceConfig(ctx *ResolvedContext, serviceName string) (*ResolvedServiceConfig, error) {
 	if ctx == nil || ctx.Workspace == nil {
-		return nil, fmt.Errorf("resolved context is required")
+		return nil, fmt.Errorf("a resolved context is required")
 	}
 	if serviceName == "" {
 		serviceName = ctx.CurrentService.Value
 	}
 	service, ok := ctx.Workspace.Services[serviceName]
 	if !ok {
-		return nil, fmt.Errorf("service %q not found in workspace %q", serviceName, ctx.WorkspaceName.Value)
+		return nil, fmt.Errorf("devstack can not find the service %q in workspace %q", serviceName, ctx.WorkspaceName.Value)
 	}
 
 	groups := groupsForService(ctx.Workspace.Manifest.Groups, serviceName)
@@ -238,7 +238,7 @@ func resolveCurrentService(workspace *ResolvedWorkspace, opts ResolveOptions, st
 func normalizeWorkspacePath(path string) (string, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve workspace path %s: %w", path, err)
+		return "", fmt.Errorf("can not resolve the workspace path %s: %w", path, err)
 	}
 	if _, err := os.Stat(absPath); err != nil {
 		return "", err

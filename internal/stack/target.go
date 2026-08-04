@@ -44,7 +44,7 @@ func noTargetError(ws *workspace.Workspace) error {
 		}
 	}
 	if len(names) == 0 {
-		return fmt.Errorf("no instance named: this changes what is running, and this directory is neither a stack nor the replica base runs from. name base — stack=\"base\" over MCP, --stack base in a shell. workspace %q has no stacks (create one with: devstack stack create <name> --repos <svc>)", name)
+		return fmt.Errorf("no copy named: this command changes what is running, and this directory is not a stack and not the replica that base runs from. Name base: stack=\"base\" over MCP, or --stack base in a shell. Workspace %q has no stacks. To create one, run: devstack stack create <name> --repos <svc>", name)
 	}
-	return fmt.Errorf("no instance named: this changes what is running, and this directory is neither a stack nor the replica base runs from. name the instance — stack=\"base\" or stack=\"<name>\" over MCP, --stack base or --stack <name> in a shell. stacks in workspace %q: %s", name, strings.Join(names, ", "))
+	return fmt.Errorf("no copy named: this command changes what is running, and this directory is not a stack and not the replica that base runs from. Name the copy: stack=\"base\" or stack=\"<name>\" over MCP, or --stack base or --stack <name> in a shell. Stacks in workspace %q: %s", name, strings.Join(names, ", "))
 }

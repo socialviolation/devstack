@@ -204,7 +204,7 @@ func TestRunContinuesPastTeardownFailure(t *testing.T) {
 	if len(results) != 2 || results[0].Err == nil || results[1].Err != nil {
 		t.Fatalf("results = %#v", results)
 	}
-	if !strings.Contains(out.String(), "continuing") {
+	if !strings.Contains(out.String(), "devstack continues") {
 		t.Errorf("failure not reported to the user:\n%s", out.String())
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, "after.txt")); statErr != nil {
@@ -282,7 +282,7 @@ func TestFailedDestroyHookPrintsUnretryableCleanupContext(t *testing.T) {
 
 	for _, want := range []string{
 		"probably still there",
-		"CANNOT be retried",
+		"can NOT retry this hook",
 		"http://localhost:20006",
 		"http://localhost:20005",
 	} {

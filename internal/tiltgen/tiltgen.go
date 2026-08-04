@@ -112,14 +112,14 @@ func GenerateHost(workspaces []WorkspaceGen) (string, []string, error) {
 
 	for _, w := range workspaces {
 		if w.Base == nil || w.Base.Manifest == nil {
-			return "", warnings, fmt.Errorf("workspace %q: nil resolved workspace", w.Name)
+			return "", warnings, fmt.Errorf("workspace %q: the resolved workspace is nil", w.Name)
 		}
 		if err := renderWorkspace(&b, w.Base, w.BaseOpts, w.Name, ""); err != nil {
 			return "", warnings, fmt.Errorf("workspace %q: %w", w.Name, err)
 		}
 		for _, s := range w.Stacks {
 			if s.Workspace == nil || s.Workspace.Manifest == nil {
-				return "", warnings, fmt.Errorf("workspace %q stack %q: nil resolved workspace", w.Name, s.Namespace)
+				return "", warnings, fmt.Errorf("workspace %q stack %q: the resolved workspace is nil", w.Name, s.Namespace)
 			}
 			if err := renderWorkspace(&b, s.Workspace, s.Options, w.Name, s.Namespace); err != nil {
 				return "", warnings, fmt.Errorf("workspace %q stack %q: %w", w.Name, s.Namespace, err)
@@ -160,7 +160,7 @@ func renderWorkspace(b *strings.Builder, rw *config.ResolvedWorkspace, opts Opti
 	for _, name := range names {
 		svc := rw.Services[name]
 		if svc.Manifest == nil {
-			return fmt.Errorf("service %q has no manifest (legacy .devstack.json cannot be generated from)", name)
+			return fmt.Errorf("service %q has no manifest. devstack can not generate from a legacy .devstack.json", name)
 		}
 		block, err := renderService(svc, rw.Manifest, groupsOf[name], opts, book, prefix, namespace)
 		if err != nil {
@@ -323,7 +323,7 @@ func checkRequiredEnv(layers []config.EnvLayer, required []string, service strin
 		return nil
 	}
 	sort.Strings(missing)
-	return fmt.Errorf("service %q missing required env: %s", service, strings.Join(missing, ", "))
+	return fmt.Errorf("service %q has no value for the required env: %s", service, strings.Join(missing, ", "))
 }
 
 type serviceLink struct {

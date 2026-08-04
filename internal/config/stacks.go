@@ -9,7 +9,7 @@ func OverlaySet(g *TopologyGraph, changed []string) ([]string, error) {
 	set := map[string]bool{}
 	for _, name := range changed {
 		if _, ok := g.Services[name]; !ok {
-			return nil, fmt.Errorf("changed service %q is unknown to the topology", name)
+			return nil, fmt.Errorf("the topology does not know the changed service %q", name)
 		}
 		set[name] = true
 		for _, caller := range g.TransitiveCallers(name) {
@@ -27,7 +27,7 @@ func OverlaySet(g *TopologyGraph, changed []string) ([]string, error) {
 
 func GenerateStackManifest(base *ResolvedWorkspace, stackName string, overlay []string, pathFor func(string) string) (*WorkspaceManifest, error) {
 	if base == nil || base.Manifest == nil {
-		return nil, fmt.Errorf("base workspace is not resolved")
+		return nil, fmt.Errorf("devstack can not resolve the base workspace")
 	}
 
 	inOverlay := map[string]bool{}
@@ -45,7 +45,7 @@ func GenerateStackManifest(base *ResolvedWorkspace, stackName string, overlay []
 	for _, name := range members {
 		path := pathFor(name)
 		if path == "" {
-			return nil, fmt.Errorf("no worktree path for overlay service %q", name)
+			return nil, fmt.Errorf("the overlay service %q has no worktree path", name)
 		}
 		repos = append(repos, path)
 	}

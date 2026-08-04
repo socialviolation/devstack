@@ -51,19 +51,19 @@ type AddResult struct {
 func Add(in AddInput) (*AddResult, error) {
 	base := in.Base
 	if base == nil {
-		return nil, fmt.Errorf("no base workspace resolved")
+		return nil, fmt.Errorf("devstack can not resolve the base workspace")
 	}
 	rec, err := FindStack(base.Name, in.Name)
 	if err != nil {
 		return nil, err
 	}
 	if len(in.Members) == 0 {
-		return nil, fmt.Errorf("no services given: name the service(s) or group(s) to add to stack %q", rec.Name)
+		return nil, fmt.Errorf("no services given: name the services or the groups to add to stack %q", rec.Name)
 	}
 
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve base workspace: %w", err)
+		return nil, fmt.Errorf("can not resolve the base workspace: %w", err)
 	}
 	topo, err := config.BuildTopology(base.Path)
 	if err != nil {
@@ -84,7 +84,7 @@ func Add(in AddInput) (*AddResult, error) {
 		changed = append(changed, s)
 	}
 	if len(changed) == 0 {
-		return nil, fmt.Errorf("stack %q already overlays %s: nothing to add\nsee what it runs: devstack stack list", rec.Name, strings.Join(already, ", "))
+		return nil, fmt.Errorf("stack %q already overlays %s, so there is nothing to add\nto see what it runs, run: devstack stack list", rec.Name, strings.Join(already, ", "))
 	}
 
 	pulled, err := config.OverlaySet(topo, changed)
@@ -124,7 +124,7 @@ func Add(in AddInput) (*AddResult, error) {
 		worktreePaths[s] = p
 	}
 	if err := os.MkdirAll(rec.Root, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create stack root %s: %w", rec.Root, err)
+		return nil, fmt.Errorf("can not create the stack root %s: %w", rec.Root, err)
 	}
 
 	var leftBehind []string
@@ -138,7 +138,7 @@ func Add(in AddInput) (*AddResult, error) {
 		if ref == "" {
 			_, resolved, err := gitinfo.DefaultRef(svc.RepoPath)
 			if err != nil {
-				return nil, fmt.Errorf("service %q: %w; name a ref to cut from with --from", s, err)
+				return nil, fmt.Errorf("service %q: %w. Name a ref to cut from with --from", s, err)
 			}
 			ref = resolved
 		}
@@ -154,7 +154,7 @@ func Add(in AddInput) (*AddResult, error) {
 		}
 		materialized, err := worktree.MaterializeIgnoredConfig(svc.RepoPath, path)
 		if err != nil {
-			return nil, fmt.Errorf("materialize local config for %q: %w", s, err)
+			return nil, fmt.Errorf("can not materialize the local configuration for %q: %w", s, err)
 		}
 		wr.Materialized = materialized
 		res.Worktrees = append(res.Worktrees, wr)
@@ -164,7 +164,7 @@ func Add(in AddInput) (*AddResult, error) {
 		}
 	}
 	if len(leftBehind) > 0 {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("worktrees were cut from %s, not from the base checkout — uncommitted work, and commits the checkout holds beyond that ref, are not in this stack",
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack cut the worktrees from %s, not from the base checkout. This stack does not have the uncommitted work in the checkout. This stack does not have the commits that the checkout holds beyond that ref.",
 			strings.Join(leftBehind, ", ")))
 	}
 
@@ -174,17 +174,17 @@ func Add(in AddInput) (*AddResult, error) {
 	}
 	data, err := yaml.Marshal(manifest)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal stack manifest: %w", err)
+		return nil, fmt.Errorf("can not encode the stack manifest: %w", err)
 	}
 	res.ManifestPath = config.WorkspaceManifestPath(rec.Root)
 	if err := os.WriteFile(res.ManifestPath, data, 0644); err != nil {
-		return nil, fmt.Errorf("failed to write stack manifest: %w", err)
+		return nil, fmt.Errorf("can not write the stack manifest: %w", err)
 	}
 
 	keys := portKeys(baseRW, adding)
 	ports, err := workspace.AllocateAdditionalPorts(rec.RuntimeKey(), keys)
 	if err != nil {
-		return nil, fmt.Errorf("failed to allocate service ports: %w", err)
+		return nil, fmt.Errorf("can not allocate the service ports: %w", err)
 	}
 	for _, k := range keys {
 		res.Ports[k] = ports[k]
@@ -196,7 +196,7 @@ func Add(in AddInput) (*AddResult, error) {
 	rec.Groups = mergeGroups(rec.Groups, groups)
 	res.Groups = rec.Groups
 	if err := upsertStack(*rec); err != nil {
-		return nil, fmt.Errorf("failed to record stack: %w", err)
+		return nil, fmt.Errorf("can not record the stack: %w", err)
 	}
 
 	return res, nil

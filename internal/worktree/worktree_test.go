@@ -214,7 +214,7 @@ func TestRemove_CleanDirtyAndForce(t *testing.T) {
 	if !strings.Contains(err.Error(), dirty) {
 		t.Errorf("error should name the path %q, got: %v", dirty, err)
 	}
-	if !strings.Contains(err.Error(), "refusing to remove without force") {
+	if !strings.Contains(err.Error(), "can not remove it without force") {
 		t.Errorf("error should explain the refusal, got: %v", err)
 	}
 	if _, statErr := os.Stat(dirty); os.IsNotExist(statErr) {

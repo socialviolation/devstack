@@ -39,7 +39,7 @@ func ActiveEnvLayers(ws *WorkspaceManifest, m *ServiceManifest, stackEnv string)
 		}
 		env, ok := ws.Environments[s.name]
 		if !ok {
-			return nil, fmt.Errorf("env %q applied at %s scope is not defined in workspace environments", s.name, s.scope)
+			return nil, fmt.Errorf("the %s scope applies environment %q, and the workspace manifest does not define it", s.scope, s.name)
 		}
 		layers = append(layers, EnvLayer{Rung: RungActiveEnv, Source: s.name, Values: env.Values})
 	}

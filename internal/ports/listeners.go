@@ -173,7 +173,7 @@ func listenInodesFor(path string, wanted map[int]bool) (map[string]int, error) {
 func inodeOwners(inodes map[string]string) ([]Listener, error) {
 	entries, err := os.ReadDir(procRoot)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read %s: %w", procRoot, err)
+		return nil, fmt.Errorf("can not read %s: %w", procRoot, err)
 	}
 
 	var out []Listener
@@ -250,7 +250,7 @@ func truncate(s string, n int) string {
 // leaves its own children orphaned, which is the mess this is meant to prevent.
 func Kill(l Listener, grace func()) error {
 	if l.PID <= 0 {
-		return fmt.Errorf("invalid pid %d", l.PID)
+		return fmt.Errorf("the pid %d is not valid", l.PID)
 	}
 	if err := syscall.Kill(l.PID, syscall.SIGTERM); err != nil {
 		if err == syscall.ESRCH {
@@ -284,7 +284,7 @@ func KillAll(listeners []Listener, grace func()) []error {
 	var pending []Listener
 	for _, l := range listeners {
 		if l.PID <= 0 {
-			errs = append(errs, fmt.Errorf("invalid pid %d", l.PID))
+			errs = append(errs, fmt.Errorf("the pid %d is not valid", l.PID))
 			continue
 		}
 		if err := syscall.Kill(l.PID, syscall.SIGTERM); err != nil {

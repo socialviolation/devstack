@@ -110,13 +110,13 @@ func warnStrandedLegacyOtelConfig(wsPath string, obs config.WorkspaceManifestObs
 		cmd += fmt.Sprintf(" --set %s=%s", k, settings[k])
 	}
 
-	fmt.Fprintf(warnWriter, "warning: %s holds otel config devstack no longer reads — it now lives in %s.\n",
+	fmt.Fprintf(warnWriter, "warning: %s holds otel configuration that devstack no longer reads. That configuration now lives in %s.\n",
 		filepath.Join(wsPath, ".devstack.json"), config.WorkspaceManifestFileName)
 	if cmd != baseConfigureCmd {
-		fmt.Fprintf(warnWriter, "         re-apply it with: %s\n", cmd)
+		fmt.Fprintf(warnWriter, "         to apply it again, run: %s\n", cmd)
 	}
 	for _, k := range secrets {
-		fmt.Fprintf(warnWriter, "         %q is a credential: supply it through the environment (.envrc), not a committed file.\n", k)
+		fmt.Fprintf(warnWriter, "         %q is a credential: supply it through the environment (.envrc), and not through a committed file.\n", k)
 	}
 }
 
@@ -205,12 +205,12 @@ func Load() ([]Workspace, error) {
 		if os.IsNotExist(err) {
 			return []Workspace{}, nil
 		}
-		return nil, fmt.Errorf("failed to read registry: %w", err)
+		return nil, fmt.Errorf("can not read the registry: %w", err)
 	}
 
 	var workspaces []Workspace
 	if err := json.Unmarshal(data, &workspaces); err != nil {
-		return nil, fmt.Errorf("failed to parse registry: %w", err)
+		return nil, fmt.Errorf("can not parse the registry: %w", err)
 	}
 	return workspaces, nil
 }
@@ -219,16 +219,16 @@ func Load() ([]Workspace, error) {
 func Save(workspaces []Workspace) error {
 	path := RegistryPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("failed to create registry directory: %w", err)
+		return fmt.Errorf("can not create the registry directory: %w", err)
 	}
 
 	data, err := json.MarshalIndent(workspaces, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal registry: %w", err)
+		return fmt.Errorf("can not encode the registry: %w", err)
 	}
 
 	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("failed to write registry: %w", err)
+		return fmt.Errorf("can not write the registry: %w", err)
 	}
 	return nil
 }
@@ -268,7 +268,7 @@ func Register(ws Workspace) error {
 		lowerName := strings.ToLower(ws.Name)
 		for _, existing := range workspaces {
 			if existing.Path != ws.Path && strings.ToLower(existing.Name) == lowerName {
-				return fmt.Errorf("workspace name %q already registered at %s", ws.Name, existing.Path)
+				return fmt.Errorf("the workspace name %q is already registered at %s", ws.Name, existing.Path)
 			}
 		}
 
@@ -291,15 +291,15 @@ func Register(ws Workspace) error {
 func withRegistryLock(fn func() error) error {
 	lockPath := RegistryPath() + ".lock"
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
-		return fmt.Errorf("failed to create registry directory: %w", err)
+		return fmt.Errorf("can not create the registry directory: %w", err)
 	}
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to open registry lock: %w", err)
+		return fmt.Errorf("can not open the registry lock: %w", err)
 	}
 	defer f.Close()
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		return fmt.Errorf("failed to lock registry: %w", err)
+		return fmt.Errorf("can not lock the registry: %w", err)
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	return fn()
@@ -323,7 +323,7 @@ func FindByName(name string) (*Workspace, error) {
 			return &w, nil
 		}
 	}
-	return nil, fmt.Errorf("workspace %q not found", name)
+	return nil, fmt.Errorf("devstack can not find the workspace %q", name)
 }
 
 // FindByPath returns the workspace matching the given path exactly (after cleaning).
@@ -339,7 +339,7 @@ func FindByPath(path string) (*Workspace, error) {
 			return &w, nil
 		}
 	}
-	return nil, fmt.Errorf("no workspace registered at path %q", path)
+	return nil, fmt.Errorf("no workspace is registered at the path %q", path)
 }
 
 // DetectFromCwd returns the registered workspace whose path is the longest prefix
@@ -349,7 +349,7 @@ func FindByPath(path string) (*Workspace, error) {
 func DetectFromCwd() (*Workspace, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get current directory: %w", err)
+		return nil, fmt.Errorf("can not read the current directory: %w", err)
 	}
 	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 		cwd = resolved
@@ -378,7 +378,7 @@ func DetectFromCwd() (*Workspace, error) {
 		w := workspaces[best]
 		return &w, nil
 	}
-	return nil, fmt.Errorf("not inside a registered devstack workspace. Run: devstack workspace add")
+	return nil, fmt.Errorf("this directory is not inside a registered devstack workspace. To register it, run: devstack workspace add")
 }
 
 // OTLP ingestion is machine-level: one collector serves every workspace, which
@@ -407,7 +407,7 @@ func UpdateOtelPlugin(name, pluginName string, config map[string]string) error {
 			return Save(workspaces)
 		}
 	}
-	return fmt.Errorf("workspace %q not found", name)
+	return fmt.Errorf("devstack can not find the workspace %q", name)
 }
 
 // TunnelForward describes a forward that ran, in enough detail to repeat it.
@@ -434,7 +434,7 @@ func UpdateTunnelForward(name string, fwd TunnelForward) error {
 			return Save(workspaces)
 		}
 	}
-	return fmt.Errorf("workspace %q not found", name)
+	return fmt.Errorf("devstack can not find the workspace %q", name)
 }
 
 // UpdateTunnelRemote persists the default tunnel host/user for a named workspace.
@@ -455,7 +455,7 @@ func UpdateTunnelRemote(name, host, user string) error {
 			return Save(workspaces)
 		}
 	}
-	return fmt.Errorf("workspace %q not found", name)
+	return fmt.Errorf("devstack can not find the workspace %q", name)
 }
 
 // UpdatePort updates the TiltPort for a named workspace in the registry.
@@ -470,7 +470,7 @@ func UpdatePort(name string, port int) error {
 			return Save(workspaces)
 		}
 	}
-	return fmt.Errorf("workspace %q not found", name)
+	return fmt.Errorf("devstack can not find the workspace %q", name)
 }
 
 // SetWorkspaceActive marks a workspace active or inactive and persists it. An
@@ -489,7 +489,7 @@ func SetWorkspaceActive(name string, active bool) error {
 				return Save(workspaces)
 			}
 		}
-		return fmt.Errorf("workspace %q not found", name)
+		return fmt.Errorf("devstack can not find the workspace %q", name)
 	})
 }
 
@@ -561,5 +561,5 @@ func nextPortFrom(workspaces []Workspace) (int, error) {
 		}
 		return candidate, nil
 	}
-	return 0, fmt.Errorf("no free port found in range %d-%d", start, start+portScanLimit-1)
+	return 0, fmt.Errorf("devstack can not find a free port in the range %d-%d", start, start+portScanLimit-1)
 }

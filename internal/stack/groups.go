@@ -29,7 +29,7 @@ func (c Coverage) Sentence() string {
 	if c.Complete() {
 		return fmt.Sprintf("covers group %s (%d/%d)", c.Group, len(c.In), len(c.In))
 	}
-	return fmt.Sprintf("covers group %s (%d/%d — %s serve%s from base)",
+	return fmt.Sprintf("covers group %s (%d/%d). %s serve%s from base",
 		c.Group, len(c.In), len(c.In)+len(c.Missing),
 		strings.Join(c.Missing, ", "), plural(len(c.Missing)))
 }

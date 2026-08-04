@@ -64,7 +64,7 @@ func Root(ws *workspace.Workspace) string {
 func DetectFromCwd() (*workspace.Workspace, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get current directory: %w", err)
+		return nil, fmt.Errorf("can not read the current directory: %w", err)
 	}
 	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 		cwd = resolved
@@ -84,24 +84,24 @@ func DetectFromCwd() (*workspace.Workspace, error) {
 			return &w, nil
 		}
 	}
-	return nil, fmt.Errorf("not inside a replica")
+	return nil, fmt.Errorf("this directory is not inside a replica")
 }
 
 func Ensure(ws *workspace.Workspace) (*EnsureResult, error) {
 	if ws == nil {
-		return nil, fmt.Errorf("no workspace resolved")
+		return nil, fmt.Errorf("devstack can not resolve the workspace")
 	}
 	template, err := config.ResolveWorkspace(ws.Path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve workspace %q at %s: %w", ws.Name, ws.Path, err)
+		return nil, fmt.Errorf("can not resolve the workspace %q at %s: %w", ws.Name, ws.Path, err)
 	}
 
 	root := Root(ws)
 	if root == ws.Path || strings.HasPrefix(root, ws.Path+string(os.PathSeparator)) {
-		return nil, fmt.Errorf("refusing: replica root %s would be nested under workspace %s (breaks workspace detection)", root, ws.Path)
+		return nil, fmt.Errorf("devstack can not use the replica root %s. The root is under workspace %s, and a nested root breaks workspace detection", root, ws.Path)
 	}
 	if err := os.MkdirAll(root, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create replica root %s: %w", root, err)
+		return nil, fmt.Errorf("can not create the replica root %s: %w", root, err)
 	}
 
 	res := &EnsureResult{Root: root}
@@ -132,7 +132,7 @@ func Ensure(ws *workspace.Workspace) (*EnsureResult, error) {
 		}
 		materialized, err := worktree.MaterializeIgnoredConfig(repoPath, path)
 		if err != nil {
-			return nil, fmt.Errorf("materialize local config for %q: %w", name, err)
+			return nil, fmt.Errorf("can not materialize the local configuration for %q: %w", name, err)
 		}
 		wt.Materialized = materialized
 		res.Created = append(res.Created, wt)
@@ -154,7 +154,7 @@ func Ensure(ws *workspace.Workspace) (*EnsureResult, error) {
 // the replica from running.
 func Sync(ws *workspace.Workspace) (*SyncResult, error) {
 	if ws == nil {
-		return nil, fmt.Errorf("no workspace resolved")
+		return nil, fmt.Errorf("devstack can not resolve the workspace")
 	}
 	root := Root(ws)
 	if !config.HasWorkspaceManifest(root) {
@@ -162,7 +162,7 @@ func Sync(ws *workspace.Workspace) (*SyncResult, error) {
 	}
 	template, err := config.ResolveWorkspace(ws.Path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve workspace %q at %s: %w", ws.Name, ws.Path, err)
+		return nil, fmt.Errorf("can not resolve the workspace %q at %s: %w", ws.Name, ws.Path, err)
 	}
 
 	res := &SyncResult{Root: root}
@@ -170,7 +170,7 @@ func Sync(ws *workspace.Workspace) (*SyncResult, error) {
 		repoPath := template.Services[name].RepoPath
 		path := filepath.Join(root, name)
 		if _, err := os.Stat(path); err != nil {
-			res.Warnings = append(res.Warnings, fmt.Sprintf("service %q has no worktree at %s; run devstack workspace up to build it", name, path))
+			res.Warnings = append(res.Warnings, fmt.Sprintf("service %q has no worktree at %s. To build it, run devstack workspace up", name, path))
 			continue
 		}
 		if err := requireGitRepo(name, repoPath); err != nil {
@@ -179,7 +179,7 @@ func Sync(ws *workspace.Workspace) (*SyncResult, error) {
 
 		if hasOrigin(path) {
 			if _, err := git(path, "fetch", "origin"); err != nil {
-				res.Warnings = append(res.Warnings, fmt.Sprintf("fetch for %q failed, syncing to the local ref instead: %v", name, err))
+				res.Warnings = append(res.Warnings, fmt.Sprintf("the fetch for %q failed, so devstack syncs to the local ref instead: %v", name, err))
 			}
 		}
 		_, ref, err := gitinfo.DefaultRef(repoPath)
@@ -193,14 +193,14 @@ func Sync(ws *workspace.Workspace) (*SyncResult, error) {
 		// --force because the replica's working tree is disposable: a plain
 		// checkout refuses when materialized config collides with the new tip.
 		if _, err := git(path, "checkout", "--force", "--detach", ref); err != nil {
-			return nil, fmt.Errorf("sync worktree for %q: %w", name, err)
+			return nil, fmt.Errorf("can not sync the worktree for %q: %w", name, err)
 		}
 		after, err := shortSHA(path)
 		if err != nil {
 			return nil, fmt.Errorf("service %q: %w", name, err)
 		}
 		if _, err := worktree.MaterializeIgnoredConfigForce(repoPath, path); err != nil {
-			return nil, fmt.Errorf("materialize local config for %q: %w", name, err)
+			return nil, fmt.Errorf("can not materialize the local configuration for %q: %w", name, err)
 		}
 
 		res.Services = append(res.Services, ServiceSync{
@@ -221,7 +221,7 @@ func Sync(ws *workspace.Workspace) (*SyncResult, error) {
 // one.
 func Resolve(ws *workspace.Workspace) (*config.ResolvedWorkspace, error) {
 	if ws == nil {
-		return nil, fmt.Errorf("no workspace resolved")
+		return nil, fmt.Errorf("devstack can not resolve the workspace")
 	}
 	root := Root(ws)
 	if !config.HasWorkspaceManifest(root) {
@@ -229,7 +229,7 @@ func Resolve(ws *workspace.Workspace) (*config.ResolvedWorkspace, error) {
 	}
 	template, err := config.ResolveWorkspace(ws.Path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve workspace %q at %s: %w", ws.Name, ws.Path, err)
+		return nil, fmt.Errorf("can not resolve the workspace %q at %s: %w", ws.Name, ws.Path, err)
 	}
 	rw, err := config.ResolveWorkspace(root)
 	if err != nil {
@@ -246,7 +246,7 @@ func Resolve(ws *workspace.Workspace) (*config.ResolvedWorkspace, error) {
 
 // Wrapped by every "no replica yet" error, so a caller that can carry on with
 // the template can tell it from a manifest that will not resolve.
-var ErrNotBuilt = errors.New("no replica built yet; run devstack workspace up to build it")
+var ErrNotBuilt = errors.New("devstack has not built the replica. To build it, run devstack workspace up")
 
 func notBuilt(ws *workspace.Workspace, root string) error {
 	return fmt.Errorf("workspace %q at %s: %w", ws.Name, root, ErrNotBuilt)
@@ -261,11 +261,11 @@ func writeManifest(template *config.ResolvedWorkspace, name, root string, names 
 	}
 	data, err := yaml.Marshal(manifest)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal replica manifest: %w", err)
+		return "", fmt.Errorf("can not encode the replica manifest: %w", err)
 	}
 	path := config.WorkspaceManifestPath(root)
 	if err := os.WriteFile(path, data, 0644); err != nil {
-		return "", fmt.Errorf("failed to write replica manifest %s: %w", path, err)
+		return "", fmt.Errorf("can not write the replica manifest %s: %w", path, err)
 	}
 	return path, nil
 }
@@ -277,7 +277,7 @@ func removeStale(root string, names []string) (removed []string, warnings []stri
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		return nil, []string{fmt.Sprintf("failed to read replica root %s: %v", root, err)}
+		return nil, []string{fmt.Sprintf("devstack can not read the replica root %s: %v", root, err)}
 	}
 	for _, e := range entries {
 		if !e.IsDir() || keep[e.Name()] {
@@ -287,7 +287,7 @@ func removeStale(root string, names []string) (removed []string, warnings []stri
 		// Forced: the replica holds no work anyone owns, so there is nothing to
 		// refuse over.
 		if err := worktree.Remove(path, true); err != nil {
-			warnings = append(warnings, fmt.Sprintf("failed to remove worktree %s for dropped service %q: %v", path, e.Name(), err))
+			warnings = append(warnings, fmt.Sprintf("devstack can not remove the worktree %s of the dropped service %q: %v", path, e.Name(), err))
 			continue
 		}
 		removed = append(removed, e.Name())
@@ -306,7 +306,7 @@ func hasOrigin(path string) bool {
 
 func requireGitRepo(name, repoPath string) error {
 	if _, err := git(repoPath, "rev-parse", "--git-dir"); err != nil {
-		return fmt.Errorf("service %q at %s is not a git repository; the replica runs git worktrees, so every service must be a checkout", name, repoPath)
+		return fmt.Errorf("service %q at %s is not a git repository. The replica runs git worktrees, so every service must be a checkout", name, repoPath)
 	}
 	return nil
 }

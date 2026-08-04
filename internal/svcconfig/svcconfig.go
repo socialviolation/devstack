@@ -114,14 +114,14 @@ func readSource(repoRoot, rel string) (map[string]string, error) {
 	case ".yml", ".yaml":
 		return readDeployment(rel, data)
 	default:
-		return nil, fmt.Errorf("config source %s: unrecognized type (want a .json appsettings file or a .yml/.yaml k8s Deployment)", rel)
+		return nil, fmt.Errorf("config source %s: devstack does not know this type. Give a .json appsettings file, or a .yml or .yaml k8s Deployment", rel)
 	}
 }
 
 func readAppsettings(rel string, data []byte) (map[string]string, error) {
 	var root any
 	if err := json.Unmarshal(data, &root); err != nil {
-		return nil, fmt.Errorf("config source %s: parse json: %w", rel, err)
+		return nil, fmt.Errorf("config source %s: can not parse the json: %w", rel, err)
 	}
 	out := map[string]string{}
 	flatten("", root, out)
@@ -185,14 +185,14 @@ func readDeployment(rel string, data []byte) (map[string]string, error) {
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("config source %s: parse yaml: %w", rel, err)
+			return nil, fmt.Errorf("config source %s: can not parse the yaml: %w", rel, err)
 		}
 		if doc.Kind != "Deployment" {
 			continue
 		}
 		containers := doc.Spec.Template.Spec.Containers
 		if len(containers) == 0 {
-			return nil, fmt.Errorf("config source %s: Deployment has no containers", rel)
+			return nil, fmt.Errorf("config source %s: the Deployment has no containers", rel)
 		}
 		out := map[string]string{}
 		for _, e := range containers[0].Env {
@@ -204,7 +204,7 @@ func readDeployment(rel string, data []byte) (map[string]string, error) {
 		}
 		return out, nil
 	}
-	return nil, fmt.Errorf("config source %s: no Deployment document found", rel)
+	return nil, fmt.Errorf("config source %s: devstack can not find a Deployment document", rel)
 }
 
 func sourceLabel(rel string) string {

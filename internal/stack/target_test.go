@@ -53,7 +53,7 @@ func TestResolveTarget(t *testing.T) {
 		{name: "base is base, not a stack called base", flag: "base", dir: checkout, want: ""},
 		{name: "a stack worktree is that stack", dir: worktree, want: "feat"},
 		{name: "the replica is base", dir: replicaDir, want: ""},
-		{name: "an unknown name is left for the instance lookup to reject", flag: "nope", dir: checkout, want: "nope"},
+		{name: "an unknown name is left for the copy lookup to reject", flag: "nope", dir: checkout, want: "nope"},
 		{name: "the template checkout is not an implicit base", dir: checkout, wantErr: true},
 	}
 
@@ -116,6 +116,6 @@ func TestResolveTargetIgnoresAnotherWorkspacesStack(t *testing.T) {
 	t.Chdir(worktree)
 
 	if _, err := ResolveTarget(&workspace.Workspace{Name: "other", Path: ws.Path}, ""); err == nil {
-		t.Error("a stack of workspace navexa must not resolve as an instance of workspace other")
+		t.Error("a stack of workspace navexa must not resolve as a copy of workspace other")
 	}
 }

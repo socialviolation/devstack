@@ -31,15 +31,15 @@ func portAllocLockPath() string {
 func withPortAllocLock(fn func() error) error {
 	lockPath := portAllocLockPath()
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
-		return fmt.Errorf("failed to create data root: %w", err)
+		return fmt.Errorf("can not create the data root: %w", err)
 	}
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to open port lock: %w", err)
+		return fmt.Errorf("can not open the port lock: %w", err)
 	}
 	defer f.Close()
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		return fmt.Errorf("failed to lock ports: %w", err)
+		return fmt.Errorf("can not lock the ports: %w", err)
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	return fn()
@@ -53,11 +53,11 @@ func LoadPorts(stackName string) (map[string]int, error) {
 		if os.IsNotExist(err) {
 			return map[string]int{}, nil
 		}
-		return nil, fmt.Errorf("failed to read port allocation: %w", err)
+		return nil, fmt.Errorf("can not read the port allocation: %w", err)
 	}
 	var ports map[string]int
 	if err := json.Unmarshal(data, &ports); err != nil {
-		return nil, fmt.Errorf("failed to parse port allocation: %w", err)
+		return nil, fmt.Errorf("can not parse the port allocation: %w", err)
 	}
 	if ports == nil {
 		ports = map[string]int{}
@@ -68,14 +68,14 @@ func LoadPorts(stackName string) (map[string]int, error) {
 // savePorts persists a stack's allocation map, creating its data dir if needed.
 func savePorts(stackName string, ports map[string]int) error {
 	if err := os.MkdirAll(DataDir(stackName), 0755); err != nil {
-		return fmt.Errorf("failed to create data dir: %w", err)
+		return fmt.Errorf("can not create the data directory: %w", err)
 	}
 	data, err := json.MarshalIndent(ports, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal port allocation: %w", err)
+		return fmt.Errorf("can not encode the port allocation: %w", err)
 	}
 	if err := os.WriteFile(portsFile(stackName), data, 0644); err != nil {
-		return fmt.Errorf("failed to write port allocation: %w", err)
+		return fmt.Errorf("can not write the port allocation: %w", err)
 	}
 	return nil
 }
@@ -83,7 +83,7 @@ func savePorts(stackName string, ports map[string]int) error {
 // ReleasePorts deletes a stack's allocation record, freeing its ports.
 func ReleasePorts(stackName string) error {
 	if err := os.Remove(portsFile(stackName)); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to release port allocation: %w", err)
+		return fmt.Errorf("can not release the port allocation: %w", err)
 	}
 	return nil
 }
@@ -98,7 +98,7 @@ func allocatedPorts() (map[int]bool, error) {
 		if os.IsNotExist(err) {
 			return used, nil
 		}
-		return nil, fmt.Errorf("failed to read data root: %w", err)
+		return nil, fmt.Errorf("can not read the data root: %w", err)
 	}
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -206,7 +206,7 @@ func allocateKeys(held map[string]int, keys []string) (map[string]int, error) {
 	for _, key := range keys {
 		for {
 			if candidate >= limit {
-				return nil, fmt.Errorf("no free service port found in range %d-%d", servicePortBase, limit-1)
+				return nil, fmt.Errorf("devstack can not find a free service port in the range %d-%d", servicePortBase, limit-1)
 			}
 			c := candidate
 			candidate++

@@ -71,7 +71,7 @@ func BuildTopology(workspacePath string) (*TopologyGraph, error) {
 				graph.Issues = append(graph.Issues, TopologyIssue{
 					Severity: TopologyIssueError,
 					Code:     "missing-group-member",
-					Message:  fmt.Sprintf("group %q references unknown service %q", group, member),
+					Message:  fmt.Sprintf("group %q references the unknown service %q", group, member),
 				})
 				continue
 			}
@@ -88,7 +88,7 @@ func BuildTopology(workspacePath string) (*TopologyGraph, error) {
 				graph.Issues = append(graph.Issues, TopologyIssue{
 					Severity: TopologyIssueError,
 					Code:     "missing-dependency",
-					Message:  fmt.Sprintf("service %q depends on unknown service %q", name, dep),
+					Message:  fmt.Sprintf("service %q depends on the unknown service %q", name, dep),
 				})
 				continue
 			}
@@ -207,7 +207,7 @@ func detectTopologyCycles(services map[string]*ServiceTopology) []TopologyIssue 
 				issues = append(issues, TopologyIssue{
 					Severity: TopologyIssueError,
 					Code:     "dependency-cycle",
-					Message:  fmt.Sprintf("dependency cycle detected: %s", strings.Join(cycle, " -> ")),
+					Message:  fmt.Sprintf("these services are in a dependency cycle: %s", strings.Join(cycle, " -> ")),
 				})
 			}
 			return

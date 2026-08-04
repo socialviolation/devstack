@@ -53,7 +53,7 @@ func Create(repoPath, worktreePath, branch, from string, changed bool) (Result, 
 	case !changed:
 		args = []string{"worktree", "add", "--detach", worktreePath}
 	case branch == "":
-		return res, fmt.Errorf("changed repo %s requires a branch name", repoPath)
+		return res, fmt.Errorf("the changed repo %s needs a branch name", repoPath)
 	default:
 		exists, err := branchExists(repoPath, branch)
 		if err != nil {
@@ -88,7 +88,7 @@ func Remove(worktreePath string, force bool) error {
 			return err
 		}
 		if dirty {
-			return fmt.Errorf("worktree %s has uncommitted changes; refusing to remove without force", worktreePath)
+			return fmt.Errorf("the worktree %s has uncommitted changes. devstack can not remove it without force", worktreePath)
 		}
 	}
 
@@ -187,7 +187,7 @@ func materializeIgnoredConfig(baseRepo, worktreePath string, overwrite bool) ([]
 			continue
 		}
 		if err := copyFile(src, dst, overwrite); err != nil {
-			return copied, fmt.Errorf("materialize %s into worktree: %w", rel, err)
+			return copied, fmt.Errorf("can not materialize %s into the worktree: %w", rel, err)
 		}
 		copied = append(copied, rel)
 	}
@@ -232,7 +232,7 @@ func headOffRef(repoPath, ref string) (bool, error) {
 	}
 	lines := strings.Fields(string(out))
 	if len(lines) != 2 {
-		return false, fmt.Errorf("git rev-parse %s in %s returned %d revisions, want 2", ref, repoPath, len(lines))
+		return false, fmt.Errorf("git rev-parse %s in %s returned %d revisions, and devstack needs 2", ref, repoPath, len(lines))
 	}
 	return lines[0] != lines[1], nil
 }

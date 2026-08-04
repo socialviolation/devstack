@@ -125,13 +125,13 @@ func (c *Client) rawView() (*TiltView, error) {
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	resp, err := httpClient.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("dev daemon is not running. Start it with: `devstack workspace up`")
+		return nil, fmt.Errorf("the dev daemon is not running. To start it, run: `devstack workspace up`")
 	}
 	defer resp.Body.Close()
 
 	var view TiltView
 	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
-		return nil, fmt.Errorf("failed to decode Tilt API response: %w", err)
+		return nil, fmt.Errorf("can not decode the Tilt API response: %w", err)
 	}
 	return &view, nil
 }
@@ -161,7 +161,7 @@ func (c *Client) WaitForTiltfileReload(since time.Time, timeout time.Duration) e
 			}
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("daemon has not reloaded the regenerated Tiltfile within %s", timeout)
+			return fmt.Errorf("the daemon did not reload the regenerated Tiltfile in %s", timeout)
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
@@ -208,5 +208,5 @@ func ResolveService(name string, view *TiltView) (string, error) {
 			names = append(names, r.Metadata.Name)
 		}
 	}
-	return "", fmt.Errorf("service %q not found. Available: %s", name, strings.Join(names, ", "))
+	return "", fmt.Errorf("devstack can not find the service %q. Available: %s", name, strings.Join(names, ", "))
 }

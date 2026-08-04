@@ -81,11 +81,11 @@ func LoadStore(workspaceName string) ([]Record, error) {
 		if os.IsNotExist(err) {
 			return []Record{}, nil
 		}
-		return nil, fmt.Errorf("failed to read stacks store: %w", err)
+		return nil, fmt.Errorf("can not read the stacks store: %w", err)
 	}
 	var recs []Record
 	if err := json.Unmarshal(data, &recs); err != nil {
-		return nil, fmt.Errorf("failed to parse stacks store: %w", err)
+		return nil, fmt.Errorf("can not parse the stacks store: %w", err)
 	}
 	return recs, nil
 }
@@ -93,14 +93,14 @@ func LoadStore(workspaceName string) ([]Record, error) {
 // saveStore writes a base workspace's stacks, creating its data dir if needed.
 func saveStore(workspaceName string, recs []Record) error {
 	if err := os.MkdirAll(workspace.DataDir(workspaceName), 0755); err != nil {
-		return fmt.Errorf("failed to create workspace data dir: %w", err)
+		return fmt.Errorf("can not create the workspace data directory: %w", err)
 	}
 	data, err := json.MarshalIndent(recs, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal stacks store: %w", err)
+		return fmt.Errorf("can not encode the stacks store: %w", err)
 	}
 	if err := os.WriteFile(storePath(workspaceName), data, 0644); err != nil {
-		return fmt.Errorf("failed to write stacks store: %w", err)
+		return fmt.Errorf("can not write the stacks store: %w", err)
 	}
 	return nil
 }
@@ -146,10 +146,10 @@ func SetNote(base, name, note string) error {
 func AppendNote(base, name, text string) (appended bool, entry NoteEntry, err error) {
 	text = strings.Join(strings.Fields(text), " ")
 	if text == "" {
-		return false, NoteEntry{}, fmt.Errorf("empty entry: say what changed, in one line")
+		return false, NoteEntry{}, fmt.Errorf("the entry is empty: say what changed, in one line")
 	}
 	if n := len([]rune(text)); n > NoteEntryMax {
-		return false, NoteEntry{}, fmt.Errorf("entry is %d characters, over the %d limit: one line on what changed, not the detail behind it", n, NoteEntryMax)
+		return false, NoteEntry{}, fmt.Errorf("the entry is %d characters, and the limit is %d: write one line on what changed, not the detail behind it", n, NoteEntryMax)
 	}
 
 	recs, err := LoadStore(base)
@@ -284,7 +284,7 @@ func deleteStack(workspaceName, name string) (bool, error) {
 func DetectFromCwd() (*workspace.Workspace, *Record, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get current directory: %w", err)
+		return nil, nil, fmt.Errorf("can not read the current directory: %w", err)
 	}
 	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 		cwd = resolved
@@ -307,7 +307,7 @@ func DetectFromCwd() (*workspace.Workspace, *Record, error) {
 			}
 		}
 	}
-	return nil, nil, fmt.Errorf("not inside a feature stack")
+	return nil, nil, fmt.Errorf("this directory is not inside a feature stack")
 }
 
 func stackOwnsPath(rec Record, cwd string) bool {

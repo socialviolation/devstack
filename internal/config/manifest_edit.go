@@ -16,7 +16,7 @@ import (
 // formatting survives the round-trip.
 func editWorkspaceManifest(workspacePath string, mutate func(root *yaml.Node) error) error {
 	if !HasWorkspaceManifest(workspacePath) {
-		return fmt.Errorf("no %s in %s — config lives in the workspace manifest", WorkspaceManifestFileName, workspacePath)
+		return fmt.Errorf("there is no %s in %s. The configuration lives in the workspace manifest", WorkspaceManifestFileName, workspacePath)
 	}
 	return editManifest(WorkspaceManifestPath(workspacePath), mutate)
 }
@@ -26,15 +26,15 @@ func editWorkspaceManifest(workspacePath string, mutate func(root *yaml.Node) er
 func editManifest(path string, mutate func(root *yaml.Node) error) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("failed to read manifest %s: %w", path, err)
+		return fmt.Errorf("can not read the manifest %s: %w", path, err)
 	}
 
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return fmt.Errorf("failed to parse manifest %s: %w", path, err)
+		return fmt.Errorf("can not parse the manifest %s: %w", path, err)
 	}
 	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
-		return fmt.Errorf("manifest %s is not a mapping", path)
+		return fmt.Errorf("the manifest %s is not a mapping", path)
 	}
 
 	if err := mutate(doc.Content[0]); err != nil {
@@ -45,12 +45,12 @@ func editManifest(path string, mutate func(root *yaml.Node) error) error {
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
 	if err := enc.Encode(&doc); err != nil {
-		return fmt.Errorf("failed to encode manifest %s: %w", path, err)
+		return fmt.Errorf("can not encode the manifest %s: %w", path, err)
 	}
 	enc.Close()
 
 	if err := os.WriteFile(path, buf.Bytes(), 0644); err != nil {
-		return fmt.Errorf("failed to write manifest %s: %w", path, err)
+		return fmt.Errorf("can not write the manifest %s: %w", path, err)
 	}
 	return nil
 }
@@ -62,7 +62,7 @@ func editManifest(path string, mutate func(root *yaml.Node) error) error {
 // env.values is committed to git: callers must not route secrets here.
 func SetServiceEnvValue(repoPath, key, value string) error {
 	if !HasServiceManifest(repoPath) {
-		return fmt.Errorf("no %s in %s", ServiceManifestFileName, repoPath)
+		return fmt.Errorf("there is no %s in %s", ServiceManifestFileName, repoPath)
 	}
 	return editManifest(ServiceManifestPath(repoPath), func(root *yaml.Node) error {
 		values := mappingChild(mappingChild(root, "env"), "values")
@@ -93,7 +93,7 @@ func RemoveEnvironment(workspacePath, envName string) error {
 	return editWorkspaceManifest(workspacePath, func(root *yaml.Node) error {
 		envs := mapValue(root, "environments")
 		if envs == nil || envs.Kind != yaml.MappingNode {
-			return fmt.Errorf("environment %q is not defined in %s", envName, WorkspaceManifestFileName)
+			return fmt.Errorf("%s does not define the environment %q", WorkspaceManifestFileName, envName)
 		}
 		deleteKey(envs, envName)
 		return nil
@@ -113,7 +113,7 @@ func SetWorkspaceEnv(workspacePath, envName string) error {
 // selecting the active env at the service scope.
 func SetServiceEnv(repoPath, envName string) error {
 	if !HasServiceManifest(repoPath) {
-		return fmt.Errorf("no %s in %s", ServiceManifestFileName, repoPath)
+		return fmt.Errorf("there is no %s in %s", ServiceManifestFileName, repoPath)
 	}
 	return editManifest(ServiceManifestPath(repoPath), func(root *yaml.Node) error {
 		setScalar(mappingChild(root, "service"), "env", envName, "!!str")
@@ -178,7 +178,7 @@ func SetObservabilitySettings(workspacePath string, settings map[string]string) 
 	keys := make([]string, 0, len(settings))
 	for key := range settings {
 		if IsCredentialKey(key) {
-			return fmt.Errorf("refusing to write %q to %s — it is committed to git; supply the value through the environment (.envrc) or the service's env.required instead", key, WorkspaceManifestFileName)
+			return fmt.Errorf("devstack can not write %q to %s, because git holds that file. Supply the value through the environment (.envrc), or through env.required of the service", key, WorkspaceManifestFileName)
 		}
 		keys = append(keys, key)
 	}

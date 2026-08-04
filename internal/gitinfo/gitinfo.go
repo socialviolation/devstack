@@ -126,7 +126,7 @@ func DefaultBranch(dir string) (string, error) {
 			return branch, nil
 		}
 	}
-	return "", fmt.Errorf("could not tell which branch is the default in %s: no origin/HEAD, and neither main nor master exists locally", dir)
+	return "", fmt.Errorf("devstack can not tell which branch is the default in %s. There is no origin/HEAD, and neither main nor master is local", dir)
 }
 
 // Origin's copy wins: a local default branch goes stale the moment it is not
@@ -144,7 +144,7 @@ func DefaultRef(dir string) (branch, ref string, err error) {
 	if _, ok := git(dir, "rev-parse", "--verify", "--quiet", local); ok {
 		return branch, local, nil
 	}
-	return "", "", fmt.Errorf("default branch %q exists in neither origin nor %s", branch, dir)
+	return "", "", fmt.Errorf("the default branch %q is not in origin and not in %s", branch, dir)
 }
 
 func ShortRef(ref string) string {

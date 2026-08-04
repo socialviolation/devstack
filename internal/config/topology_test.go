@@ -245,10 +245,10 @@ runtime:
 		messages = append(messages, issue.Message)
 	}
 	joined := strings.Join(messages, "\n")
-	if !strings.Contains(joined, `group "backend" references unknown service "missing"`) {
+	if !strings.Contains(joined, `group "backend" references the unknown service "missing"`) {
 		t.Fatalf("missing group-member issue in %q", joined)
 	}
-	if !strings.Contains(joined, "dependency cycle detected") {
+	if !strings.Contains(joined, "are in a dependency cycle") {
 		t.Fatalf("missing cycle issue in %q", joined)
 	}
 }

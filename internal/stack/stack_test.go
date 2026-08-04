@@ -149,7 +149,7 @@ func TestCreateOverlayWorktreesAndPorts(t *testing.T) {
 	// Base daemon is not running in the test, so a warning must be surfaced as data.
 	foundBaseWarning := false
 	for _, w := range res.Warnings {
-		if strings.Contains(w, "not reachable") {
+		if strings.Contains(w, "can not reach the host daemon") {
 			foundBaseWarning = true
 		}
 	}
