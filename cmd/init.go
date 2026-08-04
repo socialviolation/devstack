@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,27 +19,31 @@ import (
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Register a service and write AI agent instructions",
-	Long: `Register a service in the workspace, and write the instructions that AI agents read.
+	Short: "Register a service and connect it to the devstack MCP server",
+	Long: `Register a service in the workspace, and write the configuration that AI agents read.
+
+devstack writes no instructions into your repository. 'devstack prime' prints the
+same facts at each session start, and it can not go stale. Where devstack wrote
+instructions before, init removes them.
 
 FIRST SETUP OF A SERVICE (give --name, --path and --cmd)
   devstack registers a new service, so that it can run the service and observe it:
     1. It writes devstack.service.yaml in the repo of the service. That file says how devstack runs it
     2. It adds the repo to the repoDiscovery.repos list in the workspace manifest
     3. It writes .mcp.json, which connects an AI agent to the devstack MCP server
-    4. It writes AGENTS.md, which tells an AI agent how to run the service and how to observe it
-    5. It generates the daemon configuration again, so that 'devstack service start' can run the service
+    4. It generates the daemon configuration again, so that 'devstack service start' can run the service
 
   To overwrite a service manifest that exists, give --force. Use it to change the run command.
 
 REFRESH ONLY (no --name, no --path, no --cmd)
-  devstack writes the devstack section of AGENTS.md again, in the current
-  service directory, with the newest instructions. To refresh every service in
-  the workspace at the same time, give --all.
+  devstack writes .mcp.json again in the current service directory, and it
+  removes the instructions that an older devstack left in AGENTS.md, CLAUDE.md
+  and the files beside them. To do this for every service in the workspace, give
+  --all. To do it for every workspace on this machine, run 'devstack migrate'.
 
-  The refresh also deletes devstack content that is now obsolete: a duplicate
-  generated block, and a section from before the markers existed. It changes
-  nothing outside the markers, so your own text stays.
+  devstack removes only what devstack wrote. Where a file holds your own text,
+  the file stays and your text stays. Where a file holds devstack content only,
+  devstack deletes the file.
 
 SESSION BRIEFING (--claude-hook)
   devstack writes a Claude Code SessionStart hook into .claude/settings.json.
@@ -59,8 +65,8 @@ LANGUAGE DETECTION
 EXAMPLES
   devstack init --name=api --path=/dev/myorg/api --cmd="go run ."
   devstack init --name=api --path=/dev/myorg/api --cmd="go run ." --force
-  devstack init                      # refresh AGENTS.md in the current directory
-  devstack init --all                # refresh AGENTS.md in every service
+  devstack init                      # refresh .mcp.json in the current directory
+  devstack init --all                # refresh .mcp.json in every service
   devstack init --all --claude-hook  # also brief each Claude Code session`,
 	RunE: runInit,
 }
@@ -73,7 +79,7 @@ func init() {
 	initCmd.Flags().Int("port", 0, "HTTP port the service listens on. devstack then adds health checks and dashboard links")
 	initCmd.Flags().String("language", "", "Language of the service: dotnet, python, node or go. Default: devstack reads it from the files")
 	initCmd.Flags().String("group", "", "Group to suggest for the service. To add the service to that group, run 'devstack group add'")
-	initCmd.Flags().Bool("all", false, "Refresh AGENTS.md for every service registered in the workspace")
+	initCmd.Flags().Bool("all", false, "Refresh every service registered in the workspace")
 	initCmd.Flags().Bool("force", false, "Overwrite the service configuration that exists")
 	initCmd.Flags().Bool("claude-hook", false, "Also write the Claude Code SessionStart hook into .claude/settings.json, so every session is briefed by 'devstack prime'")
 }
@@ -83,17 +89,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 	name, _ := cmd.Flags().GetString("name")
 	claudeHook, _ := cmd.Flags().GetBool("claude-hook")
 
-	// --all: refresh AGENTS.md for every service
 	if all {
 		return runInitAll(claudeHook)
 	}
-
-	// No --name: refresh mode (AGENTS.md only)
 	if name == "" {
 		return runInitRefresh(cmd, claudeHook)
 	}
-
-	// Full onboard mode
 	return runInitOnboard(cmd, claudeHook)
 }
 
@@ -126,7 +127,8 @@ func claudeHookHint(enabled bool) {
 	fmt.Fprintf(os.Stderr, "  To brief each Claude Code session automatically, run: devstack init --all --claude-hook\n")
 }
 
-// runInitRefresh rewrites the devstack section of AGENTS.md in the current directory.
+// runInitRefresh refreshes .mcp.json in the current directory, and removes the
+// instructions an older devstack wrote there.
 func runInitRefresh(cmd *cobra.Command, claudeHook bool) error {
 	defaultService := viper.GetString("default_service")
 	workspacePath := viper.GetString("workspace")
@@ -139,7 +141,7 @@ func runInitRefresh(cmd *cobra.Command, claudeHook bool) error {
 
 	if defaultService == "" {
 		// The directory a service lives in is routinely not what the service is
-		// called, and every command example in the generated file names it.
+		// called, and .mcp.json names the service for every tool call.
 		if cwd, err := os.Getwd(); err == nil {
 			if identity, ierr := config.ResolveIdentity(cwd); ierr == nil && identity.ServiceName != "" {
 				defaultService = identity.ServiceName
@@ -154,29 +156,31 @@ func runInitRefresh(cmd *cobra.Command, claudeHook bool) error {
 		return fmt.Errorf("can not read the working directory: %w", err)
 	}
 
-	if err := writeAgentsMD(defaultService, cwd, workspacePath, ""); err != nil {
-		return err
-	}
-	fmt.Fprintf(os.Stderr, "✓ AGENTS.md updated for service %q\n", defaultService)
-
 	if err := refreshMCPJson(cwd, defaultService); err != nil {
 		fmt.Fprintf(os.Stderr, "✗ %v\n", err)
 	} else {
-		fmt.Fprintf(os.Stderr, "✓ .mcp.json updated\n")
+		fmt.Fprintf(os.Stderr, "✓ .mcp.json updated for service %q\n", defaultService)
 	}
 
-	files, err := writeAIInstructionPointers(defaultService, cwd, "")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "✗ %v\n", err)
-	} else if len(files) > 0 {
-		fmt.Fprintf(os.Stderr, "✓ %s updated\n", strings.Join(files, ", "))
-	}
+	reportChanges(os.Stderr, stripDir(cwd))
 	applyClaudeHook(cwd, claudeHook)
 	claudeHookHint(claudeHook)
 	return nil
 }
 
-// runInitAll refreshes AGENTS.md for every service registered in the workspace.
+// reportChanges prints one line for each file devstack changed, and for each
+// file that needs a human.
+func reportChanges(w io.Writer, changes []fileChange) {
+	for _, c := range changes {
+		mark := "✓"
+		if !c.Changed() {
+			mark = "!"
+		}
+		fmt.Fprintf(w, "%s %s\n", mark, strings.TrimSpace(describeChange(c)))
+	}
+}
+
+// runInitAll refreshes every service registered in the workspace.
 func runInitAll(claudeHook bool) error {
 	ws, err := resolveWorkspace("")
 	if err != nil {
@@ -199,40 +203,24 @@ func runInitAll(claudeHook bool) error {
 	}
 	sort.Strings(services)
 
-	fmt.Fprintf(os.Stderr, "devstack refreshes AGENTS.md and .mcp.json for %d services in workspace '%s'\n", len(services), ws.Name)
+	fmt.Fprintf(os.Stderr, "devstack refreshes .mcp.json for %d services in workspace '%s'\n", len(services), ws.Name)
 
 	var errs []string
 	for _, svcName := range services {
 		svcPath := cfg.ServicePaths[svcName]
-		if err := writeAgentsMD(svcName, svcPath, ws.Path, ""); err != nil {
-			errs = append(errs, fmt.Sprintf("  %s: %v", svcName, err))
-			fmt.Fprintf(os.Stderr, "✗ %s: %v\n", svcName, err)
-			continue
-		}
 		if err := refreshMCPJson(svcPath, svcName); err != nil {
 			errs = append(errs, fmt.Sprintf("  %s: %v", svcName, err))
 			fmt.Fprintf(os.Stderr, "✗ %s: %v\n", svcName, err)
 			continue
 		}
-		files, err := writeAIInstructionPointers(svcName, svcPath, "")
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("  %s: %v", svcName, err))
-			fmt.Fprintf(os.Stderr, "✗ %s: %v\n", svcName, err)
-			continue
-		}
+		fmt.Fprintf(os.Stderr, "✓ %s (.mcp.json)\n", svcName)
+		reportChanges(os.Stderr, stripDir(svcPath))
 		applyClaudeHook(svcPath, claudeHook)
-		fmt.Fprintf(os.Stderr, "✓ %s%s\n", svcName, agentFilesSuffix(append([]string{".mcp.json"}, files...)))
 	}
 
-	if files, err := writeAIInstructionPointers("", ws.Path, ""); err != nil {
-		errs = append(errs, fmt.Sprintf("  workspace root: %v", err))
-		fmt.Fprintf(os.Stderr, "✗ workspace root: %v\n", err)
-	} else if len(files) > 0 {
-		fmt.Fprintf(os.Stderr, "✓ workspace root%s\n", agentFilesSuffix(files))
-	}
-
+	reportChanges(os.Stderr, stripDir(ws.Path))
 	applyClaudeHook(ws.Path, claudeHook)
-	errs = append(errs, refreshStackAgentsMD(ws.Name, ws.Path, claudeHook)...)
+	errs = append(errs, refreshStackServices(ws.Name, claudeHook)...)
 	claudeHookHint(claudeHook)
 
 	if len(errs) > 0 {
@@ -241,11 +229,11 @@ func runInitAll(claudeHook bool) error {
 	return nil
 }
 
-// refreshStackAgentsMD rewrites AGENTS.md in every feature stack's worktree
-// services, which live outside the base workspace's service paths and would
-// otherwise go stale. It returns per-service failure lines rather than aborting,
-// so one broken stack does not stop the rest.
-func refreshStackAgentsMD(workspaceName, workspacePath string, claudeHook bool) []string {
+// refreshStackServices refreshes the worktree of every feature stack. Those
+// directories live outside the base workspace's service paths, so nothing else
+// reaches them. It returns per-service failure lines rather than aborting, so
+// one broken stack does not stop the rest.
+func refreshStackServices(workspaceName string, claudeHook bool) []string {
 	recs, err := stack.LoadStore(workspaceName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: can not load stacks for workspace %q: %v\n", workspaceName, err)
@@ -267,24 +255,14 @@ func refreshStackAgentsMD(workspaceName, workspacePath string, claudeHook bool) 
 		sort.Strings(names)
 		for _, name := range names {
 			svc := rw.Services[name]
-			if err := writeAgentsMD(name, svc.RepoPath, workspacePath, rec.Name); err != nil {
-				errs = append(errs, fmt.Sprintf("  %s (stack %s): %v", name, rec.Name, err))
-				fmt.Fprintf(os.Stderr, "✗ %s (stack %s): %v\n", name, rec.Name, err)
-				continue
-			}
 			if err := refreshMCPJson(svc.RepoPath, name); err != nil {
 				errs = append(errs, fmt.Sprintf("  %s (stack %s): %v", name, rec.Name, err))
 				fmt.Fprintf(os.Stderr, "✗ %s (stack %s): %v\n", name, rec.Name, err)
 				continue
 			}
-			files, err := writeAIInstructionPointers(name, svc.RepoPath, rec.Name)
-			if err != nil {
-				errs = append(errs, fmt.Sprintf("  %s (stack %s): %v", name, rec.Name, err))
-				fmt.Fprintf(os.Stderr, "✗ %s (stack %s): %v\n", name, rec.Name, err)
-				continue
-			}
+			fmt.Fprintf(os.Stderr, "✓ %s (stack %s) (.mcp.json)\n", name, rec.Name)
+			reportChanges(os.Stderr, stripDir(svc.RepoPath))
 			applyClaudeHook(svc.RepoPath, claudeHook)
-			fmt.Fprintf(os.Stderr, "✓ %s (stack %s)%s\n", name, rec.Name, agentFilesSuffix(append([]string{".mcp.json"}, files...)))
 		}
 	}
 	return errs
@@ -371,17 +349,8 @@ func runInitOnboard(cmd *cobra.Command, claudeHook bool) error {
 		fmt.Fprintf(os.Stderr, ".mcp.json exists already, so devstack keeps it. To overwrite it, give --force\n")
 	}
 
-	// 4. Write AGENTS.md instructions.
-	if err := writeAgentsMD(name, path, ws.Path, ""); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: can not write AGENTS.md: %v\n", err)
-	} else {
-		fmt.Fprintf(os.Stderr, "✓ Wrote AGENTS.md\n")
-	}
-	if files, err := writeAIInstructionPointers(name, path, ""); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-	} else if len(files) > 0 {
-		fmt.Fprintf(os.Stderr, "✓ Updated %s\n", strings.Join(files, ", "))
-	}
+	// 4. Remove the instructions an older devstack wrote here.
+	reportChanges(os.Stderr, stripDir(path))
 
 	applyClaudeHook(path, claudeHook)
 
@@ -394,7 +363,6 @@ func runInitOnboard(cmd *cobra.Command, claudeHook bool) error {
 	fmt.Printf("\n✓ %q registered in workspace %q\n\n", name, ws.Name)
 	fmt.Printf("  manifest:   %s\n", manifestPath)
 	fmt.Printf("  .mcp.json:  %s\n", mcpFile)
-	fmt.Printf("  AGENTS.md:  %s\n", filepath.Join(path, "AGENTS.md"))
 	fmt.Printf("\nNext:\n")
 	if group != "" {
 		fmt.Printf("  devstack group add %s %s\n", group, name)
@@ -480,7 +448,33 @@ func refreshMCPJson(servicePath, serviceName string) error {
 
 // writeMCPJson creates a .mcp.json file in the service directory.
 func writeMCPJson(mcpFile, serviceName string) error {
-	serviceDir := filepath.Dir(mcpFile)
+	data, err := mcpJSONContent(filepath.Dir(mcpFile), serviceName)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(mcpFile, data, 0644)
+}
+
+// ensureMCPJson writes .mcp.json only where it is absent or different, and
+// reports whether it wrote. A migration that rewrites an identical file reports
+// a change that is not one, and the next run reports it again.
+func ensureMCPJson(serviceDir, serviceName string) (bool, error) {
+	path := filepath.Join(serviceDir, ".mcp.json")
+	data, err := mcpJSONContent(serviceDir, serviceName)
+	if err != nil {
+		return false, err
+	}
+	if existing, rerr := os.ReadFile(path); rerr == nil && bytes.Equal(existing, data) {
+		return false, nil
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return false, fmt.Errorf("devstack can not write .mcp.json: %w", err)
+	}
+	return true, nil
+}
+
+// mcpJSONContent renders the .mcp.json of one service directory.
+func mcpJSONContent(serviceDir, serviceName string) ([]byte, error) {
 	if identity, err := config.ResolveIdentity(serviceDir); err == nil && identity.ServiceName != "" {
 		serviceName = identity.ServiceName
 	}
@@ -507,233 +501,9 @@ func writeMCPJson(mcpFile, serviceName string) error {
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return os.WriteFile(mcpFile, append(data, '\n'), 0644)
-}
-
-const (
-	agentsSentinelBegin = "<!-- devstack:begin — generated by `devstack init`; do not edit between these markers -->"
-	agentsSentinelEnd   = "<!-- devstack:end -->"
-	legacyAgentsHeader  = "## Dev Stack (devstack MCP)"
-	legacyPointerHeader = "## devstack (local dev services)"
-)
-
-// agentsProvenance stamps the generated block with the devstack that wrote it.
-//
-// This file is committed into every service repo, so without it there is no way
-// to tell instructions a current devstack generated from instructions left by
-// one several breaking changes ago — and the CLI they name has already been
-// renamed once. It is a line inside the block, never part of the sentinel: the
-// sentinel is matched by exact string, so versioning it would leave every file
-// an older devstack wrote unmatchable, and the block would be appended again
-// instead of replaced.
-func agentsProvenance() string {
-	return "<!-- devstack " + buildStamp() + " · regenerate with `devstack init --all` -->\n"
-}
-
-// writeAgentsMD writes the managed devstack block into AGENTS.md non-destructively.
-// If a sentinel-wrapped block exists it is replaced in place; otherwise any legacy
-// section is migrated away and a fresh block is appended, preserving all other content.
-func writeAgentsMD(serviceName, servicePath, workspacePath, stackName string) error {
-	agentsFile := filepath.Join(servicePath, "AGENTS.md")
-	existing, err := os.ReadFile(agentsFile)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("can not read AGENTS.md: %w", err)
-	}
-	block := agentsSentinelBegin + "\n" + agentsProvenance() + buildAgentInstructions(serviceName, servicePath, workspacePath, stackName) + agentsSentinelEnd
-	updated := replaceManagedBlock(string(existing), block)
-	return os.WriteFile(agentsFile, []byte(updated), 0644)
-}
-
-// replaceManagedBlock returns existing with the managed block set to block, and
-// removes every other trace of a previous generation.
-//
-// The first sentinel-wrapped block is replaced where it stands. Any further
-// sentinel-wrapped block is a duplicate an older devstack appended and is
-// dropped, and so is a legacy unsentinelled devstack section wherever it sits.
-// Everything outside those is a human's and is preserved. The result ends in one
-// newline and is idempotent: running twice yields byte-identical output.
-func replaceManagedBlock(existing, block string) string {
-	before, after, found := cutFirstManagedBlock(existing)
-	if !found {
-		return assembleAgents(stripLegacySections(existing, legacyAgentsHeader), block, "")
-	}
-	return assembleAgents(
-		stripLegacySections(before, legacyAgentsHeader),
-		block,
-		stripLegacySections(dropManagedBlocks(after), legacyAgentsHeader),
-	)
-}
-
-// cutFirstManagedBlock splits s around the first complete sentinel-wrapped block.
-func cutFirstManagedBlock(s string) (before, after string, found bool) {
-	begin := strings.Index(s, agentsSentinelBegin)
-	if begin == -1 {
-		return s, "", false
-	}
-	rel := strings.Index(s[begin:], agentsSentinelEnd)
-	if rel == -1 {
-		return s, "", false
-	}
-	end := begin + rel + len(agentsSentinelEnd)
-	return s[:begin], s[end:], true
-}
-
-// dropManagedBlocks removes every complete sentinel-wrapped block from s.
-func dropManagedBlocks(s string) string {
-	for {
-		before, after, found := cutFirstManagedBlock(s)
-		if !found {
-			return s
-		}
-		s = strings.TrimRight(before, "\n") + "\n" + strings.TrimLeft(after, "\n")
-	}
-}
-
-// stripLegacySections removes every unsentinelled devstack section named by
-// header, from that header up to (but not including) the next "## " header at
-// column 0, or EOF if none — so a following section such as "## BEADS" survives.
-func stripLegacySections(s, header string) string {
-	for {
-		stripped, removed := stripOneLegacySection(s, header)
-		if !removed {
-			return s
-		}
-		s = stripped
-	}
-}
-
-func stripOneLegacySection(s, header string) (string, bool) {
-	start := -1
-	if strings.HasPrefix(s, header) {
-		start = 0
-	} else if i := strings.Index(s, "\n"+header); i != -1 {
-		start = i + 1
-	}
-	if start == -1 {
-		return s, false
-	}
-	rest := s[start+len(header):]
-	if i := strings.Index(rest, "\n## "); i != -1 {
-		return s[:start] + rest[i+1:], true
-	}
-	return s[:start], true
-}
-
-func assembleAgents(before, block, after string) string {
-	before = strings.TrimRight(before, "\n")
-	after = strings.Trim(after, "\n")
-	var sb strings.Builder
-	if before != "" {
-		sb.WriteString(before)
-		sb.WriteString("\n\n")
-	}
-	sb.WriteString(block)
-	if after != "" {
-		sb.WriteString("\n\n")
-		sb.WriteString(after)
-	}
-	sb.WriteString("\n")
-	return sb.String()
-}
-
-// aiInstructionFiles are the instruction files coding agents read.
-// devstack updates the ones a repo already has and never creates any of them.
-var aiInstructionFiles = []string{
-	"CLAUDE.md",
-	"GEMINI.md",
-	".cursorrules",
-	filepath.Join(".github", "copilot-instructions.md"),
-}
-
-// writeAIInstructionPointers refreshes the managed devstack block in whichever
-// aiInstructionFiles already exist under dir, and returns the ones it updated.
-func writeAIInstructionPointers(serviceName, dir, stackName string) ([]string, error) {
-	block := agentsSentinelBegin + "\n" + buildAIInstructionPointer(serviceName, stackName) + agentsSentinelEnd
-	var updated []string
-	for _, rel := range aiInstructionFiles {
-		path := filepath.Join(dir, rel)
-		existing, err := os.ReadFile(path)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return updated, fmt.Errorf("can not read %s: %w", rel, err)
-		}
-		if err := os.WriteFile(path, []byte(replacePointerBlock(string(existing), block)), 0644); err != nil {
-			return updated, fmt.Errorf("can not write %s: %w", rel, err)
-		}
-		updated = append(updated, rel)
-	}
-	return updated, nil
-}
-
-// replacePointerBlock replaces an existing sentinel-wrapped block in place, or
-// appends one at EOF. It drops duplicate sentinel-wrapped blocks and an
-// unsentinelled devstack pointer section that an older devstack appended.
-// Everything else in these files is another tool's, or a human's, and survives.
-func replacePointerBlock(existing, block string) string {
-	before, after, found := cutFirstManagedBlock(existing)
-	if !found {
-		return assembleAgents(stripLegacySections(existing, legacyPointerHeader), block, "")
-	}
-	return assembleAgents(
-		stripLegacySections(before, legacyPointerHeader),
-		block,
-		stripLegacySections(dropManagedBlocks(after), legacyPointerHeader),
-	)
-}
-
-func agentFilesSuffix(files []string) string {
-	if len(files) == 0 {
-		return ""
-	}
-	return " (" + strings.Join(files, ", ") + ")"
-}
-
-// buildAIInstructionPointer is the short block written into CLAUDE.md and friends:
-// only the facts that stop an agent misreading a multi-instance stack — several
-// copies of a service, stopped instances it should start, stale code after an edit —
-// then a pointer to AGENTS.md for everything else.
-func buildAIInstructionPointer(serviceName, stackName string) string {
-	svc := "<service>"
-	if serviceName != "" {
-		svc = serviceName
-	}
-
-	// Every mutating example carries the instance it acts on, because devstack
-	// refuses one that does not name it. The instance this directory belongs to
-	// is the one to show: base for a checkout, the stack for its worktree.
-	inst := "--stack base"
-	stackLine := ""
-	if stackName != "" {
-		inst = "--stack " + stackName
-		stackLine = fmt.Sprintf("This directory is the git worktree of feature stack `%s`. A command that you run here acts on that stack. From any other directory, name the stack with `--stack %s`.\n\n", stackName, stackName)
-	} else {
-		stackLine = "This checkout is a **template**. Nothing runs in it. `base` is the workspace with no stack, and base runs from a **replica** that devstack keeps: one git worktree per service at the default branch tip, under a `.devstack-base` directory. To see where base runs, run `devstack base path`. " +
-			"Work that you park in this checkout does not run, and it blocks nothing. An edit here reaches base only after it is on the default branch and `devstack base sync` has run.\n\n"
-	}
-
-	return "## devstack (local dev services)\n\n" +
-		"The services of this repo run under **devstack**. One Tilt daemon serves the whole machine, on port `10300`.\n\n" +
-		stackLine +
-		"**A service can have more than one running copy.** base runs one copy. Each active *feature stack* runs another copy, on its own port. The daemon names them `<workspace>:<service>[:<stack>]`. " +
-		"Before you decide that a service is down, or broken, or on the wrong port, run `devstack status`. It lists every copy with its port and its environment. " +
-		"Each copy runs from its own directory: a stack runs from its worktree, and base runs from the replica.\n\n" +
-		"**A command that starts, stops or restarts a copy must name the copy**, with `--stack <name>` or `--stack base`. There is no default. With no flag, devstack acts on the copy whose directory you are in. In a plain checkout it refuses, and it does not guess. Read-only commands need no flag (`status`, `env which`, `stack list`).\n\n" +
-		"**By default, not every service runs.** A copy shown as `stopped` is registered but not started. To start it, run `devstack service start " + svc + " " + inst + "`. " +
-		"A state is not one of two values. It is one of these: `running`, `starting`, `building`, `stopped`, `erroring`, `disabled`, `unknown`. " +
-		"Do not report a service as down or broken before you read `devstack status` and start the service.\n\n" +
-		"**After you edit code**, a copy uses your change only if the service watches its own source (`dotnet watch`, `ng serve`, `vite`, `--reload`), or if `runtime.watch` is set in its `devstack.service.yaml`. The service watches only the directory that copy runs from. " +
-		"For every other service, run `devstack service restart " + svc + " " + inst + "`, or the copy keeps running the old code.\n\n" +
-		"```bash\n" +
-		fmt.Sprintf("%-52s# every copy, its port and its environment\n", "devstack status") +
-		fmt.Sprintf("%-52s# start a stopped copy\n", "devstack service start "+svc+" "+inst) +
-		fmt.Sprintf("%-52s# load your changes into a copy\n", "devstack service restart "+svc+" "+inst) +
-		fmt.Sprintf("%-52s# the feature stacks that exist now\n", "devstack stack list") +
-		"```\n\n" +
-		"Full reference: `AGENTS.md` in this repo.\n"
+	return append(data, '\n'), nil
 }
 
 // looksHotReloading reports whether a run command self-watches its source and
@@ -794,194 +564,4 @@ func resolveRunScript(cmd, servicePath string) string {
 		return s
 	}
 	return cmd
-}
-
-// buildAgentInstructions renders the committed block for AGENTS.md.
-//
-// It carries only what does not change between sessions. `devstack prime` prints
-// the live picture at session start — where you are, which copies run, on which
-// ports, and how this service reloads — so anything prime says at runtime is left
-// out here. A committed copy of a live fact goes stale, and a stale fact reads
-// exactly like a true one.
-func buildAgentInstructions(defaultService, servicePath, workspacePath, stackName string) string {
-	contextLine := ""
-	if workspacePath != "" {
-		contextLine += fmt.Sprintf("Workspace: `%s`", workspacePath)
-	}
-	if defaultService != "" {
-		if contextLine != "" {
-			contextLine += " · "
-		}
-		contextLine += fmt.Sprintf("Default service: `%s`", defaultService)
-	}
-	if contextLine != "" {
-		contextLine += "\n\n"
-	}
-
-	svc := "<service>"
-	if defaultService != "" {
-		svc = defaultService
-	}
-
-	inst := "--stack base"
-	stackLine := ""
-	if stackName != "" {
-		inst = "--stack " + stackName
-		stackLine = fmt.Sprintf("This directory is the worktree of feature stack `%s`. Your commits go on the branch of that stack, and not on base. "+
-			"A command that you run here acts on the copy of that stack. From any other directory, name the stack with `--stack %s`.\n\n", stackName, stackName)
-	}
-
-	return "## Dev Stack (devstack MCP)\n\n" +
-		"devstack runs the local development services of this machine. It is a CLI and an MCP server.\n\n" +
-		"CAUTION: use devstack only for local development. Do not point it at a staging or a production system.\n\n" +
-		contextLine +
-		stackLine +
-		"**Run `devstack prime` first.** It prints the live picture of this directory: the workspace, the service, every copy with its port and state, and how the service reloads. " +
-		"This file holds only what does not change between sessions.\n\n" +
-		"One service runs more than one copy. Each copy is a daemon resource on its own port, named `<workspace>:<service>` for base and `<workspace>:<service>:<stack>` for a stack.\n\n" +
-		"### base runs from a replica. Name the copy that you act on\n\n" +
-		"`base` is the workspace with no stack. devstack keeps a **replica**: one git worktree per service at its default branch tip, in a `.devstack-base` directory beside the workspace. " +
-		"`devstack workspace up` builds it. " +
-		"Your checkout is the **template**. It holds the git objects, the manifests and the machine-local gitignored configuration. Nothing runs in it. " +
-		"Work parked there does not run, and it blocks nothing. An edit there changes no running copy. It reaches base after it is on the default branch and `devstack base sync` has run. To see a change run now, put it in a stack.\n\n" +
-		"So `service start|stop|restart`, `group start|stop|restart` and `env use` must name the copy: `--stack <name>`, or `--stack base`. " +
-		"There is no default. With no flag, devstack uses the copy whose directory you are in. In a plain checkout it refuses and lists the choices. " +
-		"Read-only commands need no flag (`status`, `env which`, `stack list`, `stack config`, `workspace topology`, log and trace queries), and neither does `env set`.\n\n" +
-		"### Service states\n\n" +
-		"`devstack status` reports one state of eight, not a running/stopped pair. Read it before you conclude: " +
-		"`running` (the process is up), `starting`, `building` (the daemon builds or updates it), " +
-		"`stopped` (registered but not started, and not a fault), `erroring` (it or its build failed, so read the logs), " +
-		"`disabled` (switched off in the daemon), `down` (not registered, because its stack is down), " +
-		"`unknown` (the daemon reported no state).\n\n" +
-		"### After you edit code\n\n" +
-		"A running service keeps the old code until it reloads. A service reloads on its own only when it watches its own source " +
-		"(`dotnet watch run`, `air`, `vite`, `next dev`, `uvicorn --reload`), or when `runtime.watch` is set in its `devstack.service.yaml`. " +
-		"For every other service you must run `devstack service restart " + svc + " " + inst + "` after an edit, or your change has no effect. " +
-		"A service watches only the directory its copy runs from. For base that is the replica, never your checkout. `devstack prime` gives the verdict for your service.\n\n" +
-		"A change to the configuration or to an environment always needs a restart. It changes how the process starts, not the watched source.\n\n" +
-		"If a service can not start because its port is still held, set `runtime.prep.freePorts: true` in its `devstack.service.yaml`. devstack then frees the ports of that copy only. " +
-		"CAUTION: never write a `fuser -k <port>/tcp` prep, and never a literal port number. The worktree of a stack copies that literal, and the stack then kills base at every start. " +
-		"By hand, run `devstack ports check <port>` and `devstack ports free <port>`.\n\n" +
-		"### Safety rules\n\n" +
-		"1. Never commit `devstack.service.yaml`. It is machine-local, because it holds absolute tool paths. Add it to `.gitignore`.\n" +
-		"2. `devstack env set` writes values into `devstack.workspace.yaml` in plaintext. devstack masks a value on display only, never on disk. " +
-		"If that manifest is committed, keep real secrets out of it. Declare them in `env.required`, and supply them from `.envrc`. " +
-		"To learn which case you are in, run `git check-ignore -v devstack.workspace.yaml`.\n" +
-		"3. Stop only what you started.\n\n" +
-		"### Starting a feature stack\n\n" +
-		"`devstack stack create <name> --repos a,b` cuts each worktree from the **default branch** of that repo, as origin has it. " +
-		"It never cuts from what your checkout has checked out, so parked work is not dragged in. " +
-		"`--from <ref>` cuts from a different ref. devstack attaches an existing branch, with the history it already has.\n\n" +
-		"`devstack stack note <name> --add \"...\"` appends a dated line on where the work got to. " +
-		"Add one when the answer to \"what does the next person need to know?\" changed: a decision, a blocker, work parked part-way. Do not add one for each file you edit. " +
-		"devstack keeps only the last 5 entries, so one line per step deletes the lines worth reading.\n\n" +
-		"### Finishing a feature stack\n\n" +
-		"When a feature is done, close its stack. Stale worktrees, branches and records collect, and mislead the next session.\n\n" +
-		"1. Commit the work on the branch of the stack, inside its worktree.\n" +
-		"2. Ask the human whether to merge the branch or to discard it. Never merge without an answer.\n" +
-		"3. After a merge, run `git branch -d <branch>`. `devstack stack rm` does not delete the branch.\n" +
-		"4. Run `devstack stack rm <name>`. It stops the stack, removes its worktrees, releases its ports, and deletes its record. " +
-		"It refuses a worktree that holds uncommitted work, so commit or discard it first. CAUTION: `--force` destroys that work.\n\n" +
-		hooksInstructions() +
-		"### Environments\n\n" +
-		"An environment is a named set of configuration values under `environments:` in the workspace manifest. It repoints services without a code change. " +
-		"Three scopes apply, and the most specific wins: " +
-		"the stack scope, then the service scope, then the workspace default. " +
-		"So base can run against `local` while a stack runs against `prod`. " +
-		"`devstack status` shows the active environment of each copy. " +
-		"To set values, run `devstack env set`. To point a scope at one, run `devstack env use`.\n\n" +
-		"### Commands\n\n" +
-		"```bash\n" +
-		"devstack prime                               # the live briefing for here\n" +
-		"devstack status                              # every copy: port, environment, state\n" +
-		"devstack workspace topology                  # services, groups, dependencies, dependents\n" +
-		"devstack workspace doctor                    # read the manifests and topology\n" +
-		"devstack workspace up                        # start the daemon and this workspace\n" +
-		"devstack workspace down                      # stop this workspace\n" +
-		"devstack base path [" + svc + "]                       # where base runs from\n" +
-		"devstack base sync                           # move the replica to the default branch\n" +
-		"devstack service start " + svc + " " + inst + "   # start it and its dependencies\n" +
-		"devstack service restart " + svc + " " + inst + " # load your changes into a copy\n" +
-		"devstack service stop " + svc + " " + inst + "    # stop one copy\n" +
-		"devstack stack create <name> --repos " + svc + "    # a new stack, cut from the default branch\n" +
-		"devstack stack add <name> " + svc + "               # add a repo to a stack. It disturbs nothing\n" +
-		"devstack stack up|down|status|rm|list <name> # operate one stack\n" +
-		"devstack stack note <name> --add \"...\"       # record where the work got to\n" +
-		"devstack stack config " + svc + " --stack <name>    # the configuration a copy runs with\n" +
-		"devstack hooks list                          # what runs automatically, and when\n" +
-		"devstack otel status                         # which copies send telemetry\n" +
-		"devstack tunnel push [--stacks] [--otel]     # forward local ports over SSH\n" +
-		"devstack tunnel status [--planned]           # what is forwarded now\n" +
-		"devstack env set <name> KEY=VALUE            # set the values of an environment\n" +
-		"devstack env use <name> --stack base|<name>  # point base or a stack at it (--service for one)\n" +
-		"```\n\n" +
-		"A group is a named set of services that start and stop together. `devstack group list` shows them, " +
-		"and `devstack group start|stop <group> --stack base` operates one. " +
-		"Against a stack, a group action reaches only the members that stack overlays.\n\n" +
-		"### MCP tools\n\n" +
-		"The `.mcp.json` here connects you to the devstack MCP server: " +
-		"`environment`, `status`, `start`, `stop`, `restart`, `topology`, `process_logs`, `configure`, `service_env`, `base`, `observability`, `hooks`, `tunnel`, `investigate`, " +
-		"`stack_create`, `stack_add`, `stack_up`, `stack_down`, `stack_list`, `stack_rm`, `stack_note`, `env_use`, `env_which`, `env_set`. " +
-		"Two are conditional: `investigate` needs observability on. `tunnel` needs an ssh client. " +
-		"Call `environment` first. It reports what this workspace registered, and each tool description is more current than this file.\n\n" +
-		"`status`, `process_logs` and `configure` take an optional `stack`: omit it, or pass `\"base\"`, for base. " +
-		"On `start`, `restart`, `stop` and `env_use`, an absent `stack` does NOT mean base. There the server reads the copy from its working directory. The call fails where that directory is neither a stack nor the replica, so pass `\"base\"` when you mean base. " +
-		"`investigate` takes `stack` as a telemetry filter: absent means base only, a name means that stack, `\"all\"` means every copy. " +
-		"A bare `stop` acts on the default service. To stop every service you must pass `all=true`, so one forgotten parameter can not take the workspace down.\n\n" +
-		"`service_env` reports the resolved environment of a service, and the rung each value came from. " +
-		"A rung is one level of the ladder: `.envrc`, then the env files, then the manifest `env.values`, then the active environment, then the values devstack computed. Each one overrides the one before. " +
-		"`service_env` with `action=\"drift\"` compares that against what the service repo declares it needs. Run it before you trust a local run of code that reads configuration.\n\n" +
-		"These tools report evidence: live daemon state, real process output, what the telemetry backend received. Use that evidence rather than a guess. " +
-		"An empty result is not proof. The service can be uninstrumented, or the traffic can belong to a stack you did not name.\n\n" +
-		observabilityInstructions(workspacePath, svc)
-}
-
-// observabilityInstructions says how telemetry is told apart between copies.
-// `devstack prime` already says the workspace has telemetry and how to query it,
-// so what stays here is the part prime has no room for: the attributes, and the
-// fact that a service names itself.
-func observabilityInstructions(workspacePath, svc string) string {
-	if !config.ObservabilityEnabled(workspacePath) {
-		return "### Observability\n\n" +
-			"This workspace runs no collector, and devstack does not assume that the services send telemetry. " +
-			"To turn observability on, run `devstack otel config on`, then `devstack otel start`.\n\n"
-	}
-	return "### Observability\n\n" +
-		"Every copy of every service sends traces and logs to one collector for the whole machine, and one backend stores them all. " +
-		"Resource attributes tell the copies apart: `devstack.workspace` (devstack always confines a query to it), `devstack.service`, " +
-		"`devstack.stack` (`base`, or the name of a stack) and `devstack.env`.\n\n" +
-		"devstack resolves the backend, the endpoint and the credentials itself, so a query needs no configuration:\n\n" +
-		"```bash\n" +
-		"devstack otel services                  # which copies report, with their stack and environment\n" +
-		"devstack otel traces [--stack <name>]   # recent traces. With no --stack it searches every copy. --stack base gets base alone\n" +
-		"devstack otel logs --trace <trace-id>   # the logs of one trace\n" +
-		"devstack otel status                    # which copies send telemetry\n" +
-		"```\n\n" +
-		"A service usually reports itself under a name that it chose itself, so devstack `" + svc + "` can report as something else. " +
-		"A filter accepts either name, and `devstack otel services` prints both. Read that list before you call a service silent.\n\n"
-}
-
-// hooksInstructions renders the lifecycle-hook guidance. `devstack prime` reports
-// how many hooks this workspace declares, so what stays here is what a count
-// cannot say: that a failure means a different thing in each direction, and that
-// one of them cannot be retried at all.
-func hooksInstructions() string {
-	return "### Lifecycle hooks\n\n" +
-		"A hook is a shell command that devstack runs when a lifecycle event fires. A stack uses hooks to provision external state, and to remove it again. " +
-		"`stack_create`, `stack_up`, `stack_down`, `stack_rm`, `start` and `stop` each fire their event and report what ran. " +
-		"CAUTION: a hook can call an external API and change state outside this machine. " +
-		"Before you create or destroy a stack in a workspace you do not know, run `devstack hooks list` or the `hooks` tool with `action=\"list\"`.\n\n" +
-		"Events: `" + strings.Join(config.HookEvents(), "`, `") + "`.\n\n" +
-		"A failure means a different thing in each direction, so read the result:\n\n" +
-		"- If a **setup** hook fails (`stack.create`, `stack.up`, `service.start`, `workspace.up`), devstack stops the hooks behind it and reports an error. " +
-		"The action already happened, so the stack exists and is not fully provisioned. Do not report success. " +
-		"Fix the hook, then run `devstack hooks run <event>` or the `hooks` tool. Do not create the stack again.\n" +
-		"- If a **teardown** hook fails (`stack.destroy`, `stack.down`, `service.stop`, `workspace.down`), devstack reports the failure and completes the teardown. " +
-		"A broken hook must never leave a stack nobody can remove. " +
-		"The external state the hook was to clean up is probably still there. Say so, and do not report a clean teardown.\n" +
-		"- `stack.destroy` is the one failure you can not retry. devstack removes the stack, and that deletes the record its `${self...}` references resolve against. " +
-		"At the point of failure devstack prints the resolved URLs. They are the only record that survives, so pass them on.\n\n" +
-		"You declare hooks in `devstack.workspace.yaml`, and in the `devstack.service.yaml` of a service. A stack inherits its workspace hooks. " +
-		"A hook can not hardcode a port, because devstack allocates the ports when it creates the stack. It writes `${self.url}`, `${self.port.<key>}`, or `${<service>.url}` for another service in the event. " +
-		"It also receives the `DEVSTACK_*` variables and the whole event as JSON on stdin.\n\n"
 }

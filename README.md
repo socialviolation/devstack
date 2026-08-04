@@ -402,7 +402,7 @@ The `stack` parameter scopes the search. An absent `stack` searches base. A name
 | `check` | Audit for placeholders and missing keys |
 | `drift` | Compare what devstack resolves with what the repository says it needs |
 
-Some commands have no tool and need a shell. Among them: `workspace up`, `workspace down`, `workspace doctor`, `workspace generate`, `stack config`, `ports`, `init`, `prime` and `upgrade`. The otel queries need a shell too: `otel traces`, `otel logs`, `otel services` and `otel open`. The `observability` and `investigate` tools cover the rest.
+Some commands have no tool and need a shell. Among them: `workspace up`, `workspace down`, `workspace doctor`, `workspace generate`, `stack config`, `ports`, `init`, `migrate`, `prime` and `upgrade`. The otel queries need a shell too: `otel traces`, `otel logs`, `otel services` and `otel open`. The `observability` and `investigate` tools cover the rest.
 
 ## Briefing an agent
 
@@ -439,11 +439,23 @@ To brief a session without a request, wire `prime` into Claude Code:
 devstack init --all --claude-hook
 ```
 
-That command writes a `SessionStart` hook that runs `devstack prime --json`. The hook covers the `startup`, `resume`, `clear` and `compact` matchers. `compact` matters most, because compaction is when the landscape drops out of context. devstack merges the hook into an existing `.claude/settings.json` and does not replace the file. It keeps the hooks that you already have, and it adds nothing on a second run.
+That command writes a `SessionStart` hook that runs `devstack prime --json`. The hook covers the `startup`, `resume`, `clear`, `compact` and `fork` matchers. `compact` matters most, because compaction is when the landscape drops out of context. devstack merges the hook into an existing `.claude/settings.json` and does not replace the file. It keeps the hooks that you already have, and it adds nothing on a second run.
 
-You commit `.claude/settings.json`, so the hook runs for everyone who clones the repository. That is why the flag is opt-in. `devstack init --all` on its own refreshes `AGENTS.md` and `.mcp.json`, and writes no hook.
+You commit `.claude/settings.json`, so the hook runs for everyone who clones the repository. That is why the flag is opt-in. `devstack init --all` on its own refreshes `.mcp.json`, and writes no hook.
 
-`init --all` also cleans up after older versions. It removes a duplicate generated block, and it removes an old devstack section that carries no sentinels. devstack leaves everything outside the sentinels alone.
+## devstack writes no instructions into your repositories
+
+devstack once wrote a block of instructions into `AGENTS.md`, and a shorter block into `CLAUDE.md` and the files beside it. It writes neither now. `devstack prime` prints the same facts at each session start, so the agent reads them from the binary. A committed copy of a live fact goes stale, and a stale fact reads exactly like a true one.
+
+`devstack migrate` removes what an older devstack left behind. It sweeps every workspace on this machine: the workspace root, each service repository, and the worktree of each feature stack. In each directory it removes the devstack block, it deletes a file that held devstack content only, it writes `.mcp.json`, and it wires the SessionStart hook.
+
+```bash
+devstack migrate
+```
+
+devstack removes only what devstack wrote. Your own text stays, byte for byte. Where devstack can not find the end of its own block, it changes nothing and it names the file for you. Run the command again at any time: a second run changes nothing.
+
+devstack does not own these repositories, so read the diff in each one before you commit it.
 
 ## Per-repo setup
 
@@ -464,7 +476,7 @@ You commit `.claude/settings.json`, so the hook runs for everyone who clones the
 }
 ```
 
-If an older file still carries `DEVSTACK_WORKSPACE` or `TILT_PORT`, refresh it with `devstack init --all`.
+If an older file still carries `DEVSTACK_WORKSPACE` or `TILT_PORT`, refresh it with `devstack migrate`.
 
 ## Configuration
 
@@ -484,8 +496,8 @@ You cannot configure the port of the daemon. One daemon serves the machine on `:
 | `devstack.workspace.yaml` | workspace root | Yes | The source of truth: services, groups, dependencies and environments. It is portable and holds no machine paths. |
 | `devstack.service.yaml` | service repo | No | Machine-local: it holds absolute tool paths. Gitignore it. |
 | `.mcp.json` | service repo | Yes | Generated, and it does not depend on the machine. |
-| `AGENTS.md` | service repo | Yes | Agent instructions. devstack owns the block between its sentinels, and nothing else. The rest is yours. |
-| `CLAUDE.md` / `GEMINI.md` / `.cursorrules` / `.github/copilot-instructions.md` | service repo | Yes | Yours, with a devstack block appended between sentinels. devstack updates each file only if the file already exists. |
+| `AGENTS.md` | service repo | Yes | Yours. devstack writes nothing in it. `devstack migrate` removes the block an older devstack wrote. |
+| `CLAUDE.md` / `GEMINI.md` / `.cursorrules` / `.github/copilot-instructions.md` | service repo | Yes | Yours. devstack writes nothing in them, and it creates none of them. |
 | `.devstack.json` | workspace root | No | Retired. The otel plugin configuration now lives under `observability` in the workspace manifest. Delete this file after `devstack otel status` shows what you expect. |
 | `Tiltfile` | anywhere | No | A generated build artifact. Never edit it by hand. |
 | `~/.config/devstack/workspaces.json` | home | n/a | Machine-local registry of workspaces and their ports. |
@@ -516,12 +528,12 @@ To find out which case you are in, run `git check-ignore -v devstack.workspace.y
 ```bash
 cd <devstack repo> && git pull
 go install ./...              # replace the binary on your PATH
-devstack init --all           # per workspace: refresh AGENTS.md and .mcp.json
+devstack migrate              # remove the instructions an older devstack wrote
                               # then restart your MCP server / agent session
 devstack status               # make sure that the daemon and the services still answer
 ```
 
-`devstack upgrade` runs the first step for you. It installs the current devstack, then reports the generated files that an older devstack wrote. `devstack upgrade --migrate` also regenerates those files.
+`devstack upgrade` runs the first step for you. It installs the current devstack, then counts the files that still hold instructions an older devstack wrote. `devstack upgrade --migrate` runs `devstack migrate` too.
 
 Two of those steps carry a risk.
 
@@ -529,6 +541,6 @@ CAUTION: A stale binary does not fail on configuration that it does not understa
 
 CAUTION: The MCP server reads its tool descriptions one time, at startup. A session that already runs keeps the old tool list. New tools do not appear, and the server rejects new parameters. Restart the MCP server.
 
-`devstack init --all` writes files only, and restarts nothing. Run it from inside each workspace. Expect a git diff in every service repository.
+`devstack migrate` writes files only, and restarts nothing. Expect a git diff in every service repository.
 
 If a workspace is part-way through an upgrade, `devstack otel start` replaces the observability container when its pinned image moved.

@@ -24,25 +24,29 @@ func init() {
 	workspaceCmd.AddCommand(workspaceDoctorCmd)
 }
 
-// reportGeneratedStaleness names the AGENTS.md files an older devstack wrote,
-// and returns how many. It belongs here as well as in `upgrade` because the
-// files go stale on their own schedule: a repo cloned today carries whatever was
-// committed months ago, with no upgrade involved.
-func reportGeneratedStaleness(wsPath string) int {
-	files, err := scanGenerated(wsPath)
+// reportDevstackResidue names the files that still hold instructions devstack
+// wrote, and returns how many. It belongs here as well as in `upgrade` because a
+// repository carries whatever was committed months ago, with no upgrade
+// involved.
+func reportDevstackResidue(wsPath string) int {
+	ws, err := workspace.FindByPath(wsPath)
 	if err != nil {
 		return 0
 	}
-	stale := staleGenerated(files, buildStamp())
-	if len(stale) == 0 {
+	files := workspaceResidue(ws)
+	if len(files) == 0 {
 		return 0
 	}
-	fmt.Printf("generated files: %d of %d differ from what this devstack writes\n", len(stale), len(files))
-	for _, f := range stale {
-		fmt.Printf("- [warn] %s: AGENTS.md %s\n", f.Service, describeStamp(f.Version))
+	fmt.Printf("devstack instructions: %d file(s) still hold a block that devstack wrote\n", len(files))
+	for _, f := range files {
+		note := ""
+		if f.NeedsHuman {
+			note = " (a marker has no pair, so a human must remove that block)"
+		}
+		fmt.Printf("- [warn] %s%s\n", f.Path, note)
 	}
-	fmt.Println("  regenerate: devstack init --all")
-	return len(stale)
+	fmt.Println("  remove them: devstack migrate")
+	return len(files)
 }
 
 func runWorkspaceDoctor(cmd *cobra.Command, args []string) error {
@@ -74,7 +78,7 @@ func runWorkspaceDoctor(cmd *cobra.Command, args []string) error {
 	}
 
 	drifted := reportConfigDrift(ctx.WorkspaceRoot.Value)
-	outdated := reportGeneratedStaleness(ctx.WorkspaceRoot.Value)
+	outdated := reportDevstackResidue(ctx.WorkspaceRoot.Value)
 
 	if len(graph.Issues) == 0 {
 		if drifted == 0 && outdated == 0 {

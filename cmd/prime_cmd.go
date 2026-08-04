@@ -197,6 +197,8 @@ func buildPrime() (string, error) {
 	writePrimeLiveCount(&b, ws)
 	writePrimeApplies(&b, ws, rw)
 
+	writePrimeSafety(&b)
+
 	section(&b, "REFERENCE")
 	b.WriteString("devstack status · devstack <command> --help · devstack stack list · devstack hooks list\n")
 	return strings.TrimRight(b.String(), "\n"), nil
@@ -247,6 +249,20 @@ func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, re
 	}
 	fmt.Fprintf(b, "  You are not in that stack. The directory of that stack is %s.\n  Before you change any code, ask the user which stack this session is for.\n",
 		orDash(working.Rec.Worktrees[service]))
+}
+
+// writePrimeSafety carries the two rules about what a repository commits.
+//
+// devstack no longer writes them into AGENTS.md, and no live fact replaces them:
+// they are about a file an agent is free to commit at any moment, in a
+// repository devstack does not own. So the briefing is the only place left that
+// states them, and it states them in every session.
+func writePrimeSafety(b *strings.Builder) {
+	section(b, "BEFORE YOU COMMIT")
+	b.WriteString("  Never commit `devstack.service.yaml`. It holds absolute paths of this machine. Add it to `.gitignore`.\n")
+	b.WriteString("  If it is committed already, keep every real secret out of it, and out of `devstack.workspace.yaml`.\n")
+	b.WriteString("  For a value that must come from the environment, declare the key under `env.required`, and supply the\n")
+	b.WriteString("  value from `.envrc`. devstack then reads the value at run time, and no manifest holds it.\n")
 }
 
 func writePrimeApplies(b *strings.Builder, ws *workspace.Workspace, rw *config.ResolvedWorkspace) {

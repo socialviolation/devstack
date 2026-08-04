@@ -23,19 +23,16 @@ func stubDevstack(t *testing.T, log string, exitCode int) string {
 	return path
 }
 
-// Migration must run the newly installed binary, in each workspace's directory.
-// Running this process instead would regenerate the files with the very content
-// the upgrade was meant to replace.
-func TestMigrationRunsTheInstalledBinaryInEachWorkspace(t *testing.T) {
+// The migration must run the newly installed binary. Running this process
+// instead would leave behind exactly what the new one removes. One command
+// sweeps the whole machine, so one call is right and a call per workspace is
+// not.
+func TestMigrationRunsTheInstalledBinaryOnce(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "calls")
 	bin := stubDevstack(t, log, 0)
 
-	err := migrateWorkspaces(bin, []workspace.Workspace{
-		{Name: "alpha", Path: t.TempDir()},
-		{Name: "beta", Path: t.TempDir()},
-	})
-	if err != nil {
-		t.Fatalf("migrateWorkspaces() = %v", err)
+	if err := runMigration(bin); err != nil {
+		t.Fatalf("runMigration() = %v", err)
 	}
 
 	data, err := os.ReadFile(log)
@@ -43,13 +40,11 @@ func TestMigrationRunsTheInstalledBinaryInEachWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("want one invocation per workspace, got %d: %q", len(lines), lines)
+	if len(lines) != 1 {
+		t.Fatalf("want one invocation for the machine, got %d: %q", len(lines), lines)
 	}
-	for _, l := range lines {
-		if !strings.HasSuffix(l, "init --all --claude-hook") {
-			t.Errorf("migration must run the full refresh, got %q", l)
-		}
+	if !strings.HasSuffix(lines[0], "migrate") {
+		t.Errorf("the upgrade must run `devstack migrate`, got %q", lines[0])
 	}
 }
 
@@ -57,40 +52,33 @@ func TestMigrationRunsTheInstalledBinaryInEachWorkspace(t *testing.T) {
 // place it is asked for — `init` alone leaves it opt-in, because
 // .claude/settings.json is committed and adding one unasked is not a side
 // effect a refresh should have.
-func TestMigrationSetsUpTheSessionHook(t *testing.T) {
-	var joined string
-	for _, a := range migrateArgs {
-		joined += a + " "
+func TestMigrationWiresTheSessionHookWithEveryMatcher(t *testing.T) {
+	dir := t.TempDir()
+	lines, res := migrateOne(migrateTarget{Label: "api", Dir: dir, Service: "api"})
+
+	if res.Hooks != 1 {
+		t.Fatalf("migrateOne() wired %d hooks, want 1: %q", res.Hooks, lines)
 	}
-	if !strings.Contains(joined, "--claude-hook") {
-		t.Errorf("migrateArgs = %v, want the session hook wired up", migrateArgs)
+	got := primeMatchers(t, readSettings(t, filepath.Join(dir, claudeSettingsRel)))
+	if strings.Join(got, ",") != strings.Join(primeHookMatchers, ",") {
+		t.Fatalf("briefed matchers = %v, want %v", got, primeHookMatchers)
 	}
-	if !strings.Contains(joined, "--all") {
-		t.Errorf("migrateArgs = %v, want every service refreshed", migrateArgs)
+	if res.MCP != 1 {
+		t.Errorf("migrateOne() wrote no .mcp.json: %q", lines)
 	}
 }
 
-// One workspace failing must not strand the others, and the failure must be
-// reported rather than swallowed.
-func TestMigrationReportsFailureAndStillAttemptsEveryWorkspace(t *testing.T) {
+// A failed migration must be reported, and not swallowed.
+func TestMigrationReportsItsFailure(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "calls")
 	bin := stubDevstack(t, log, 1)
 
-	err := migrateWorkspaces(bin, []workspace.Workspace{
-		{Name: "alpha", Path: t.TempDir()},
-		{Name: "beta", Path: t.TempDir()},
-	})
+	err := runMigration(bin)
 	if err == nil {
 		t.Fatal("a failed migration must be reported")
 	}
-	for _, name := range []string{"alpha", "beta"} {
-		if !strings.Contains(err.Error(), name) {
-			t.Errorf("error names no failure for %s: %v", name, err)
-		}
-	}
-	data, _ := os.ReadFile(log)
-	if n := len(strings.Split(strings.TrimSpace(string(data)), "\n")); n != 2 {
-		t.Errorf("every workspace must still be attempted, got %d", n)
+	if !strings.Contains(err.Error(), "devstack migrate") {
+		t.Errorf("the error does not name the command to run: %v", err)
 	}
 }
 
@@ -134,8 +122,8 @@ func TestVersionOutputParsesBackToTheWholeStamp(t *testing.T) {
 	}
 }
 
-// The round trip is the actual contract: what --version prints must come back
-// as exactly what is stamped into generated files, or the two disagree forever.
+// The round trip is the contract with `upgrade`: what --version prints must come
+// back as exactly what the binary stamps itself with.
 func TestStampSurvivesItsOwnVersionOutput(t *testing.T) {
 	if got := parseVersionOutput("devstack " + buildStamp() + "\n"); got != buildStamp() {
 		t.Errorf("stamp did not survive the round trip: printed %q, read back %q", buildStamp(), got)
@@ -143,17 +131,38 @@ func TestStampSurvivesItsOwnVersionOutput(t *testing.T) {
 }
 
 // upgrade and workspace doctor answer the same question and must answer it the
-// same way. They compared different values, so one called a file stale while the
-// other called it current — with no way to tell which was lying.
-func TestUpgradeAndDoctorCompareTheSameValue(t *testing.T) {
-	files := []generatedFile{{Service: "api", Exists: true, Version: buildStamp()}}
+// same way. They read different values once, so one called a file stale while
+// the other called it current, with no way to tell which was lying. Both now
+// count the same scan.
+func TestUpgradeAndDoctorCountTheSameFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, agentsFileName),
+		"# api\n\nMine.\n\n"+agentsSentinelBegin+"\ngenerated\n"+agentsSentinelEnd+"\n")
 
-	if got := staleGenerated(files, buildStamp()); len(got) != 0 {
-		t.Errorf("doctor calls a file written by this build stale: %+v", got)
+	found := scanResidue(dir)
+	if len(found) != 1 {
+		t.Fatalf("scanResidue() = %+v, want the one file that holds a devstack block", found)
 	}
-	// What upgrade passes when the install produced this same binary.
-	upgradeTarget := parseVersionOutput("devstack " + buildStamp() + "\n")
-	if got := staleGenerated(files, upgradeTarget); len(got) != 0 {
-		t.Errorf("upgrade calls a file written by this build stale: %+v", got)
+	if n := len(stripDir(dir)); n != len(found) {
+		t.Errorf("the report counts %d files and the migration changes %d", len(found), n)
+	}
+}
+
+// The report is a report. Reading it must change no file, or a user who ran
+// `upgrade` to see the damage has already taken it.
+func TestTheResidueReportChangesNothing(t *testing.T) {
+	dir := t.TempDir()
+	seed := "# api\n\nMine.\n\n" + agentsSentinelBegin + "\ngenerated\n" + agentsSentinelEnd + "\n"
+	writeFile(t, filepath.Join(dir, agentsFileName), seed)
+
+	var b strings.Builder
+	writeResidueReport(&b, map[string][]residueFile{"navexa": scanResidue(dir)},
+		[]workspace.Workspace{{Name: "navexa"}}, false)
+
+	if got := readString(t, filepath.Join(dir, agentsFileName)); got != seed {
+		t.Fatalf("the report changed the file:\n%s", got)
+	}
+	if !strings.Contains(b.String(), "devstack upgrade --migrate") {
+		t.Errorf("the report never names the command that cleans this up:\n%s", b.String())
 	}
 }

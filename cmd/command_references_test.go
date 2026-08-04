@@ -137,11 +137,12 @@ func TestEveryReferencedCommandExists(t *testing.T) {
 		// modals, adverbs and connectives
 		"also": true, "can": true, "never": true, "then": true, "will": true,
 		// simple-past and past-participle forms
-		"cut": true, "did": true, "found": true, "regenerated": true, "resolved": true,
-		"saw": true, "skipped": true, "stored": true, "turned": true,
+		"cut": true, "deleted": true, "did": true, "found": true, "regenerated": true,
+		"removed": true, "resolved": true, "saw": true, "skipped": true, "stored": true,
+		"turned": true, "wired": true, "wrote": true,
 		// third-person present verbs
 		"allocates": true, "builds": true, "checks": true, "cuts": true,
-		"defines": true, "derives": true, "detects": true, "does": true,
+		"defines": true, "deletes": true, "derives": true, "detects": true, "does": true,
 		"fires": true, "has": true, "inspects": true, "installs": true,
 		"is": true, "keeps": true, "leaves": true, "looks": true,
 		"maintains": true, "manages": true, "merges": true, "opens": true,
@@ -150,7 +151,7 @@ func TestEveryReferencedCommandExists(t *testing.T) {
 		"runs": true, "sets": true, "starts": true, "stops": true,
 		"stores": true, "terminates": true, "upgrades": true, "writes": true,
 		// plural nouns that are not command names
-		"capabilities": true, "tunnels": true,
+		"capabilities": true, "instructions": true, "tunnels": true,
 	}
 
 	roots := []string{".", filepath.Join("..", "internal")}

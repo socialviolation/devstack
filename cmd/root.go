@@ -45,7 +45,8 @@ TYPICAL WORKFLOW
 
 AI AGENT WORKFLOW
   devstack serve                      expose MCP tools to the AI agent
-  devstack init --all                 write AGENTS.md instructions into every service`,
+  devstack init --all                 connect every service to the MCP server
+  devstack prime                      brief this session on what runs here`,
 }
 
 func Execute() {

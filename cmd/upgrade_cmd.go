@@ -19,8 +19,8 @@ import (
 var upgradeCmd = &cobra.Command{
 	Use:   "upgrade",
 	Short: "Install the current devstack, and report what it leaves out of date",
-	Long: `Install the current devstack from its source. Then report the generated files
-that an older devstack wrote.
+	Long: `Install the current devstack from its source. Then report the instructions that
+an older devstack wrote into your repositories.
 
 An upgrade is explicit on purpose. devstack manages a daemon that runs services
 right now. If you replace the binary under a live MCP server, the running process
@@ -33,14 +33,14 @@ already runs therefore keeps the old tool list. Restart that session after the
 upgrade.
 
 A migration is a second and separate decision. Every service repo commits its
-AGENTS.md, so a regeneration produces a real git diff in repos that devstack does
-not own. A replica is one git worktree for each repository, and each worktree
-needs its own dependency install. This command reports both, and then it stops.
-Pass --migrate to regenerate the files and to build the replicas. The migration
+AGENTS.md, so a removal produces a real git diff in repos that devstack does not
+own. A replica is one git worktree for each repository, and each worktree needs
+its own dependency install. This command reports both, and then it stops. Pass
+--migrate to remove the instructions and to build the replicas. The migration
 runs the devstack that was just installed, and never this one.
 
   devstack upgrade             install, then report what is now out of date
-  devstack upgrade --migrate   also regenerate the files, and build each replica
+  devstack upgrade --migrate   also run devstack migrate, and build each replica
   devstack upgrade --force     install even when this build is current or local`,
 	SilenceUsage: true,
 	RunE:         runUpgrade,
@@ -48,7 +48,7 @@ runs the devstack that was just installed, and never this one.
 
 func init() {
 	rootCmd.AddCommand(upgradeCmd)
-	upgradeCmd.Flags().Bool("migrate", false, "Also regenerate the files that an older devstack wrote, and build each workspace's replica")
+	upgradeCmd.Flags().Bool("migrate", false, "Also remove the instructions that an older devstack wrote, and build each workspace's replica")
 	upgradeCmd.Flags().Bool("force", false, "Install even when this build is already current, or is a local build")
 }
 
@@ -77,16 +77,7 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	if newStamp != "" && newStamp != buildStamp() {
 		fmt.Printf("now:       %s\n", newStamp)
 	}
-	// The stamp to compare against is the one the NEW binary writes, and it must
-	// be the whole stamp: this is compared against what is written into every
-	// generated file, so anything less matches nothing. Comparing against this
-	// process's stamp would call every file stale the moment the install landed,
-	// and fresh again once it was restarted.
-	target := newStamp
-	if target == "" {
-		target = buildStamp()
-	}
-	return reportAndMigrate(target, migrate)
+	return reportAndMigrate(migrate)
 }
 
 // checkUpgradeWorthDoing stops an install that would move the binary backwards.
@@ -178,9 +169,9 @@ func parseVersionOutput(out string) string {
 	return strings.TrimSpace(rest)
 }
 
-func reportAndMigrate(version string, migrate bool) error {
-	stale, order := staleByWorkspace(version)
-	writeStaleReport(os.Stdout, stale, order, migrate)
+func reportAndMigrate(migrate bool) error {
+	residue, order := residueByWorkspace()
+	writeResidueReport(os.Stdout, residue, order, migrate)
 
 	all := registeredWorkspaces()
 	writeReplicaReport(os.Stdout, planReplicas(all), migrate)
@@ -192,18 +183,16 @@ func reportAndMigrate(version string, migrate bool) error {
 
 	bin := installedBinary()
 	if bin == "" {
-		return fmt.Errorf("devstack can not find the installed binary to migrate with. Run 'devstack init --all' in each workspace instead")
+		return fmt.Errorf("devstack can not find the installed binary to migrate with. Run 'devstack migrate' instead")
 	}
 
-	// The generated files come first. They tell an agent that a bare restart acts
-	// on base, which this release makes false, and a build takes long enough for
-	// an agent to read the old text and act on it.
+	// The committed instructions come first. They tell an agent that a bare
+	// restart acts on base, which this release makes false, and a build takes
+	// long enough for an agent to read the old text and act on it.
 	var failures []error
-	if len(order) > 0 {
-		fmt.Println()
-		if err := migrateWorkspaces(bin, order); err != nil {
-			failures = append(failures, err)
-		}
+	fmt.Println()
+	if err := runMigration(bin); err != nil {
+		failures = append(failures, err)
 	}
 	if err := buildReplicas(bin, all); err != nil {
 		failures = append(failures, err)
@@ -221,67 +210,56 @@ func registeredWorkspaces() []workspace.Workspace {
 	return all
 }
 
-func writeStaleReport(w io.Writer, stale map[string][]generatedFile, order []workspace.Workspace, migrate bool) {
+// writeResidueReport counts the files that still hold instructions an older
+// devstack wrote, so a reader sees what `--migrate` will remove before it runs.
+// It reads only, and it changes nothing.
+func writeResidueReport(w io.Writer, residue map[string][]residueFile, order []workspace.Workspace, migrate bool) {
 	if len(order) == 0 {
-		fmt.Fprintln(w, "The generated files of every workspace match this build.")
+		fmt.Fprintln(w, "No workspace holds instructions that devstack wrote.")
 		return
 	}
 
-	fmt.Fprintf(w, "\n%d workspace(s) hold generated files that differ from what this devstack writes:\n", len(order))
+	fmt.Fprintf(w, "\n%d workspace(s) still hold instructions that devstack wrote:\n", len(order))
 	for _, ws := range order {
-		files := stale[ws.Name]
-		fmt.Fprintf(w, "  %-16s %d file(s)\n", ws.Name, len(files))
+		files := residue[ws.Name]
+		human := 0
 		for _, f := range files {
-			fmt.Fprintf(w, "      %-24s %s\n", f.Service, describeStamp(f.Version))
+			if f.NeedsHuman {
+				human++
+			}
+		}
+		fmt.Fprintf(w, "  %-16s %d file(s)\n", ws.Name, len(files))
+		if human > 0 {
+			fmt.Fprintf(w, "      %d of them hold a marker with no pair, so a human must remove that block\n", human)
 		}
 	}
 	if migrate {
 		return
 	}
-	fmt.Fprintln(w, "\ndevstack upgrade --migrate brings these up to date. In every service above,")
-	fmt.Fprintln(w, "and in each stack worktree, it writes:")
-	fmt.Fprintln(w, "  AGENTS.md              the devstack block, which replaces what an older one left")
-	fmt.Fprintln(w, "  .mcp.json              the MCP server entry")
-	fmt.Fprintln(w, "  CLAUDE.md and friends  a pointer block, in the files a repo already has")
-	fmt.Fprintln(w, "  .claude/settings.json  the SessionStart hook, so every session runs devstack prime")
+	fmt.Fprintln(w, "\ndevstack upgrade --migrate removes them. An agent gets the same facts from")
+	fmt.Fprintln(w, "`devstack prime`, at each session start. In every service above, and in each")
+	fmt.Fprintln(w, "stack worktree, the migration:")
+	fmt.Fprintln(w, "  removes the devstack block from AGENTS.md, CLAUDE.md and the files beside them")
+	fmt.Fprintln(w, "  deletes a file that held devstack content only")
+	fmt.Fprintln(w, "  writes .mcp.json, the MCP server entry")
+	fmt.Fprintln(w, "  writes .claude/settings.json, so every session runs devstack prime")
 	fmt.Fprintln(w, "\nEvery repo commits these files, so this is a real diff in each one. devstack")
-	fmt.Fprintln(w, "touches nothing else in them, and it creates no file that is not already there.")
+	fmt.Fprintln(w, "removes only what devstack wrote, and it creates no file that is not already there.")
 }
 
-// migrateArgs is the full refresh: every generated file this devstack owns,
-// brought to what this devstack writes.
-//
-// --claude-hook is included here and nowhere else by default. The flag is
-// opt-in on `init` because .claude/settings.json is committed, and adding a hook
-// to somebody's repo unasked is not a side effect a refresh should have. A
-// migration is the one place it is asked for: the report above names every file
-// before anything is written, and running it is a separate decision from
-// upgrading.
-var migrateArgs = []string{"init", "--all", "--claude-hook"}
+// migrateArgs runs the sweep of every workspace. `devstack migrate` is one
+// command for the whole machine, so the upgrade path stays one command too.
+var migrateArgs = []string{"migrate"}
 
-// migrateWorkspaces regenerates each workspace's files by running bin, which is
-// the devstack that was just installed and not this process. This one is the old
-// build: asking it to regenerate would write exactly the content being replaced.
-//
-// One workspace failing does not stop the rest — a half-migrated machine is
-// worse than a fully-attempted one, and the failures are named at the end.
-func migrateWorkspaces(bin string, order []workspace.Workspace) error {
-	var failed []string
-	for _, ws := range order {
-		c := exec.Command(bin, migrateArgs...)
-		c.Dir = ws.Path
-		c.Stdout = os.Stdout
-		c.Stderr = os.Stderr
-		if err := c.Run(); err != nil {
-			failed = append(failed, ws.Name)
-			fmt.Fprintf(os.Stderr, "✗ %s: %v\n", ws.Name, err)
-			continue
-		}
-		fmt.Printf("✓ %s regenerated\n", ws.Name)
+// runMigration sweeps every workspace by running bin, which is the devstack that
+// was just installed and not this process. This one is the old build: asking it
+// to migrate would leave behind exactly what the new one removes.
+func runMigration(bin string) error {
+	c := exec.Command(bin, migrateArgs...)
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("devstack migrate failed: %w. To read the error, run: devstack migrate", err)
 	}
-	if len(failed) > 0 {
-		return fmt.Errorf("the migration failed for: %s", strings.Join(failed, ", "))
-	}
-	fmt.Println("\nRead the diff in each repo before you commit.")
 	return nil
 }

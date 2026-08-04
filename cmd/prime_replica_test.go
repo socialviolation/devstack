@@ -123,40 +123,40 @@ func TestReloadVerdictNamesAnInstanceAndDoesNotPromiseTheCheckoutReloads(t *test
 	}
 }
 
-// The generated agent files are read without prime ever running, so the same
-// two facts have to survive into them — and no mutating command may be shown
-// with --stack as an optional extra.
-func TestGeneratedAgentInstructionsRequireAnInstance(t *testing.T) {
-	for name, block := range map[string]string{
-		"AGENTS.md": buildAgentInstructions("api", t.TempDir(), "/home/dev/navexa", ""),
-		"CLAUDE.md": buildAIInstructionPointer("api", ""),
-	} {
-		for _, want := range []string{"replica", "template", "--stack base"} {
-			if !strings.Contains(block, want) {
-				t.Errorf("%s never states %q:\n%s", name, want, block)
-			}
+// The two facts an agent gets wrong without them: base runs a replica and not
+// the checkout, and a mutating command names its copy. devstack no longer writes
+// them into any repository, so the briefing is the only place that states them.
+func TestBriefingStatesTheReplicaAndDemandsAnInstance(t *testing.T) {
+	var b strings.Builder
+	writePrimeTerms(&b)
+	terms := b.String()
+
+	for _, want := range []string{"replica", "template", "--stack base"} {
+		if !strings.Contains(terms, want) {
+			t.Errorf("the briefing never states %q:\n%s", want, terms)
 		}
-		for _, forbidden := range []string{
-			"devstack service start api (add `--stack <name>`",
-			"add `--stack <name>` for a stack's instance",
-			"devstack service restart api [--stack <name>]",
-			"devstack service stop api [--stack <name>]",
-		} {
-			if strings.Contains(block, forbidden) {
-				t.Errorf("%s shows --stack as optional on a mutating command (%q):\n%s", name, forbidden, block)
-			}
-		}
+	}
+	if !strings.Contains(terms, "no default") {
+		t.Errorf("the briefing must say that --stack has no default:\n%s", terms)
 	}
 }
 
 // A stack cut from the checkout's HEAD was the old behaviour, and an agent told
-// so will commit onto a base it never had. The generated file states the rule.
-func TestGeneratedAgentInstructionsStateWhereAStackIsCutFrom(t *testing.T) {
-	block := buildAgentInstructions("api", t.TempDir(), "/home/dev/navexa", "")
-	for _, want := range []string{"default branch", "--from"} {
-		if !strings.Contains(block, want) {
-			t.Errorf("AGENTS.md never says where a stack is cut from (%q):\n%s", want, block)
-		}
+// so will commit onto a base it never had. The help of the command states the
+// rule, which is where an agent reads it now that no repository carries it.
+func TestStackCreateHelpStatesWhereAStackIsCutFrom(t *testing.T) {
+	cmd, _, err := rootCmd.Find([]string{"stack", "create"})
+	if err != nil {
+		t.Fatalf("stack create is not a registered command: %v", err)
+	}
+	help := cmd.Long + "\n" + cmd.Short
+	if f := cmd.Flags().Lookup("from"); f != nil {
+		help += "\n" + f.Usage
+	} else {
+		t.Error("stack create takes no --from, so a caller can not cut from another ref")
+	}
+	if !strings.Contains(help, "default branch") {
+		t.Errorf("stack create never says it cuts from the default branch:\n%s", help)
 	}
 }
 

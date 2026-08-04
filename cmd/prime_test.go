@@ -194,3 +194,37 @@ func TestPrimeSectionsAreNamedAndContextual(t *testing.T) {
 		t.Fatalf("section() = %q", got)
 	}
 }
+
+// The two rules about what a repository commits. devstack no longer writes them
+// into AGENTS.md, and no live fact replaces them, so the briefing is the only
+// place left that states them.
+func TestPrimeCarriesTheTwoCommitRules(t *testing.T) {
+	var b strings.Builder
+	writePrimeSafety(&b)
+	got := b.String()
+
+	for _, want := range []string{
+		"Never commit `devstack.service.yaml`",
+		"`.gitignore`",
+		"keep every real secret out of it",
+		"`env.required`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the briefing never states %q:\n%s", want, got)
+		}
+	}
+}
+
+// Every line of the briefing is paid for on every session, and the whole of it
+// has to fit the SessionStart budget. The static half is what this package can
+// measure without a workspace.
+func TestTheStaticBriefingFitsTheBudget(t *testing.T) {
+	var b strings.Builder
+	writePrimeWhatThisIs(&b)
+	writePrimeTerms(&b)
+	writePrimeSafety(&b)
+
+	if n := b.Len(); n > primeCharBudget/2 {
+		t.Errorf("the static briefing is %d chars, over half the %d budget; the live half needs the rest", n, primeCharBudget)
+	}
+}
