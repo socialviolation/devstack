@@ -17,8 +17,9 @@ import (
 )
 
 var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Start the MCP server for AI agent tool access",
+	Use:    "serve",
+	Hidden: true,
+	Short:  "Start the MCP server for AI agent tool access",
 	Long: `Start the devstack MCP (Model Context Protocol) server. The server exposes
 devstack capabilities as tools that an AI agent can call directly.
 

@@ -20,7 +20,7 @@ func TestBriefingSaysBaseRunsFromTheReplica(t *testing.T) {
 	writePrimeTerms(&b)
 	terms := b.String()
 
-	for _, want := range []string{"replica", "template", "devstack base sync"} {
+	for _, want := range []string{"replica", "template", "devstack workspace up"} {
 		if !strings.Contains(terms, want) {
 			t.Errorf("the briefing's terms must state %q, so an edit is not made in a directory nothing runs:\n%s", want, terms)
 		}

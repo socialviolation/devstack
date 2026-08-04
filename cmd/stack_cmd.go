@@ -148,7 +148,7 @@ run with.
   no --stack      the stack that holds the current directory
 
 For base, the replica is the truth, and not your checkout: base runs the replica
-worktrees. If devstack has built no replica yet, run 'devstack base sync'.`,
+worktrees. If devstack has built no replica yet, run 'devstack workspace up'.`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackConfig,
@@ -665,7 +665,7 @@ func runBaseConfig(service string) error {
 	}
 	rw, err := replica.Resolve(ws)
 	if errors.Is(err, replica.ErrNotBuilt) {
-		return fmt.Errorf("devstack has not built the replica of workspace %q, and base runs from it. There is no configuration to read yet. To build the replica, run: devstack base sync", ws.Name)
+		return fmt.Errorf("devstack has not built the replica of workspace %q, and base runs from it. There is no configuration to read yet. To build the replica, run: devstack workspace up", ws.Name)
 	}
 	if err != nil {
 		return err
@@ -686,7 +686,7 @@ func runBaseConfig(service string) error {
 		fmt.Printf("Base is down. Nothing runs with this configuration now. To start base, run: devstack workspace up\n")
 	}
 	printConfigTable(service, "base", tense, entries)
-	fmt.Printf("\ndevstack reads this from the replica at %s. To change it, edit the checkout, then run: devstack base sync\n", svc.RepoPath)
+	fmt.Printf("\ndevstack reads this from the replica at %s. To change it, put the change on the default branch, then run: devstack workspace up\n", svc.RepoPath)
 	fmt.Printf("A secret value appears as %s.\n", svcconfig.MaskedValue)
 
 	layers, lerr := resolvedEnvLadder(ws, rw, svc, nil)

@@ -92,7 +92,7 @@ func TestEnsureReplicasWarnsAndKeepsGoing(t *testing.T) {
 			t.Errorf("the blocker does not state %q: %v", want, err)
 		}
 	}
-	if !strings.Contains(b.String(), "devstack base sync") {
+	if !strings.Contains(b.String(), "devstack workspace up") {
 		t.Errorf("the report never names the command that builds it later:\n%s", b.String())
 	}
 	if !config.HasWorkspaceManifest(replica.Root(shop)) {
@@ -108,7 +108,7 @@ func TestDeprecationsNameTheReplacementForEveryChangedHabit(t *testing.T) {
 	got := b.String()
 
 	for _, want := range []string{
-		"devstack base sync",
+		"devstack workspace up",
 		"--stack base",
 		"devstack service start|stop|restart",
 		"devstack env use",

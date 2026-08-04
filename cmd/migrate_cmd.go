@@ -18,8 +18,9 @@ import (
 )
 
 var migrateCmd = &cobra.Command{
-	Use:   "migrate",
-	Short: "Run every migration this devstack needs, and print what to do next",
+	Use:    "migrate",
+	Hidden: true,
+	Short:  "Run every migration this devstack needs, and print what to do next",
 	Long: `Run each migration that your configuration still needs.
 
 A migration moves the workspace configuration from one version to the next. The

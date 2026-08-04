@@ -23,7 +23,7 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 		mcp.WithDescription(
 			"Read and write the environment variables of a local service, in the config FILES of its checkout. This tool does not touch the running process. A write takes effect on the next generate and restart of the copy that runs those files.\n\n"+
 				"Its stack parameter picks which CHECKOUT to read or write. Every other tool uses stack to pick which running copy to act on.\n\n"+
-				"With no stack, it reads and writes the base workspace's checkout. That checkout is the TEMPLATE devstack builds base from. It is not the replica that base runs. So a write there reaches base's running copy only after 'devstack base sync' copies the machine-local config across. A write with a stack named lands in that stack's worktree, which its copy runs directly.\n\n"+
+				"With no stack, it reads and writes the base workspace's checkout. That checkout is the TEMPLATE devstack builds base from. It is not the replica that base runs. So a write there reaches base's running copy only after 'devstack workspace up' copies the machine-local config across. A write with a stack named lands in that stack's worktree, which its copy runs directly.\n\n"+
 				"Actions:\n"+
 				"  get    show the environment a service resolves to, with the rung that each value comes from.\n"+
 				"  diff   compare the resolved environment across several services, or across a group, side by side.\n"+
@@ -66,7 +66,7 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 			mcp.Description(
 				optionalStackNameDesc+" "+
 					"Source-tree semantics, unlike the running-process semantics that 'stack' has on every other tool: it names the checkout to read and to write. "+
-					"Absent (the default) reads and writes the BASE workspace's service repos. Those repos are the template. You edit this config there, and it reaches base's running copy only after 'devstack base sync'. It is never the replica, because nothing edits the replica. "+
+					"Absent (the default) reads and writes the BASE workspace's service repos. Those repos are the template. You edit this config there, and it reaches base's running copy only after 'devstack workspace up'. It is never the replica, because nothing edits the replica. "+
 					"When you set it, the tool reads and writes the named stack's worktree of the service instead. So an agent edits its own stack's config, and never base's.",
 			),
 		),
@@ -424,7 +424,7 @@ func handleServiceEnvSet(ws *workspace.Workspace, workspacePath, stackEnv, servi
 	return mcp.NewToolResultText(fmt.Sprintf(
 		"wrote %s to %s (%s) — no higher rung overrides it. It reaches the copy that runs this directory on its next restart. The restart tool "+
 			"(CLI: devstack service restart %s --stack <name>) regenerates the Tiltfile from the manifests before it triggers, so there is no separate generate step. "+
-			"A write with no stack targeted lands in the BASE workspace's checkout. That checkout is the template devstack builds base from, and it is not what base runs. Run 'devstack base sync' to copy the write into the replica, then restart with --stack base.",
+			"A write with no stack targeted lands in the BASE workspace's checkout. That checkout is the template devstack builds base from, and it is not what base runs. Run 'devstack workspace up' to copy the write into the replica, then restart with --stack base.",
 		key, written, rung, serviceName)), nil
 }
 

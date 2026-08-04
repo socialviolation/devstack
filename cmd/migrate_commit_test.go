@@ -89,7 +89,7 @@ func TestTheDoctorReportsAnUnconnectedRepositoryAndFixesNothing(t *testing.T) {
 			t.Errorf("the doctor wrote %s (stat err = %v)", rel, err)
 		}
 	}
-	if !strings.Contains(got, "no replica") || !strings.Contains(got, "devstack base sync") {
+	if !strings.Contains(got, "no replica") || !strings.Contains(got, "devstack workspace up") {
 		t.Errorf("the doctor never reports the missing replica and the command that builds it:\n%s", got)
 	}
 }

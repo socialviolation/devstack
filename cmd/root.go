@@ -13,43 +13,22 @@ var cfgFile string
 var rootCmd = &cobra.Command{
 	Use:   "devstack",
 	Short: "Run and observe local development services across one or more workspaces",
-	Long: `devstack is a service manager for local development. It is built for a team that
-works across many services and repositories. It is the backbone of an AI-assisted
-local development workflow.
+	Long: `devstack runs the services of this machine for local development.
 
-WHAT IT DOES
-  devstack manages the services that run on your machine: APIs, workers,
-  importers and more. It organizes them into workspaces, one workspace for each
-  product or organization. It starts the services in dependency order, shows
-  their live state, and restarts them.
+A workspace is one product: every service of that product, in one directory. A
+stack is a group of those services that you cut for one feature. A stack is
+local infrastructure that does not last. You stand it up, and you tear it down.
+An environment points a stack at a database and at a set of endpoints.
 
-  devstack runs one OpenTelemetry collector (OpenObserve) for the whole machine.
-  Every workspace shares it. Each service sends its traces and logs there, and an
-  AI agent can query them as they arrive. When a feature breaks, the agent calls
-  the MCP tools, reads the correlated traces and logs, and finds the cause
-  without leaving the editor.
+base is the copy that runs the default branch. 'devstack workspace up' keeps it
+current, so you do not maintain it.
 
-WORKSPACE AUTO-DETECTION
-  Run any command inside a workspace directory, or inside any service
-  subdirectory. devstack detects the workspace for you. No flag is necessary.
-
-TYPICAL WORKFLOW
-  devstack workspace add              register this directory as a workspace
-  devstack workspace up               start the daemon, and build the replica base runs from
-  devstack init --name=api ...        register a service and connect observability
-  devstack service start <service> --stack base
-                                      start a service and all its dependencies
-  devstack status                     live grouped view of every service
-  devstack otel traces                query traces from the configured backend
-  devstack otel open                  open the trace UI in the browser
-
-AI AGENT WORKFLOW
-  devstack serve                      expose MCP tools to the AI agent
-  devstack init --all                 connect every service to the MCP server
-  devstack prime                      brief this session on what runs here`,
+Run any command in a workspace directory, or in a service directory. devstack
+detects the workspace for you. No flag is necessary.`,
 }
 
 func Execute() {
+	installHelp()
 	// Cobra prints the error itself; printing it here as well put every message
 	// on stderr twice, once prefixed "Error:" and once bare.
 	rootCmd.SilenceErrors = true
@@ -61,9 +40,6 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(initConfig)
-
-	// Hide the built-in help subcommand (--help flag still works)
-	rootCmd.SetHelpCommand(&cobra.Command{Hidden: true})
 
 	rootCmd.Version = versionLine()
 	rootCmd.SetVersionTemplate("devstack {{.Version}}\n")

@@ -33,11 +33,11 @@ machine-wide collector.
 The daemon does not run your checkouts. It runs a replica that devstack builds
 beside the workspace: one git worktree for each service, at its default branch
 tip. Your checkout is the template. 'devstack workspace up' builds the replica,
-and 'devstack base' inspects it.
+and it moves each worktree to the current default branch tip.
 
 SUBCOMMANDS
   devstack workspace            show all registered workspaces and service counts
-  devstack workspace up         build the replica and start its services in the dev daemon
+  devstack workspace up         move base to the default branch tip, and run it
   devstack workspace down       stop them, and the daemon if no workspace needs it
   devstack workspace add        register a directory as a workspace
   devstack workspace remove     remove a workspace from the registry
@@ -267,7 +267,7 @@ func prepareWorkspace(ws *workspace.Workspace) {
 
 	if _, err := ensureReplica(ws); err != nil {
 		fmt.Fprintf(os.Stderr, "  warning: can not build the replica: %v\n", err)
-		fmt.Fprintln(os.Stderr, "  To build it after you add a service, run: devstack base sync")
+		fmt.Fprintln(os.Stderr, "  To build it after you add a service, run: devstack workspace up")
 		return
 	}
 	fmt.Printf("  ✓ Built the replica that base runs from: %s\n", replica.Root(ws))

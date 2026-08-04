@@ -17,16 +17,26 @@ import (
 
 var upCmd = &cobra.Command{
 	Use:   "up",
-	Short: "Build the replica that base runs from, and start its services in the dev daemon",
+	Short: "Move base to the current default branch, and run it in the dev daemon",
 	Long: `Fold this workspace's services into the dev daemon. If the daemon is not up
 already, devstack starts it as a detached background process.
 
-This command also builds the replica that base runs from: one git worktree for
-each service, detached at that service's default branch tip, under a
-.devstack-base sibling of the workspace. Your checkout is the template that
-devstack builds the replica from, and nothing runs there. 'devstack base path'
-prints the replica root. 'devstack base sync' moves the replica to the current
-default branch tip.
+This command also makes base current, in three steps.
+
+  1. It builds the replica that base runs from, if that replica is absent: one
+     git worktree for each repository, detached at that repository's default
+     branch tip, under a .devstack-base sibling of the workspace.
+  2. It moves each worktree to the current default branch tip.
+  3. It restarts each copy of this workspace that runs now, so that copy serves
+     the code which step 2 moved under it.
+
+CAUTION: Step 3 restarts services that serve right now. devstack restarts only
+the copies that were already running. It starts no copy that is stopped, and it
+touches no copy of a feature stack.
+
+Your checkout is the template that devstack builds the replica from, and nothing
+runs there. To read the directory that each copy runs from, run
+'devstack status --all' and read the DIR column.
 
 One daemon serves the whole machine. It runs the services of every workspace. It
 watches the files of the directory that each copy runs from: the replica for
@@ -73,6 +83,9 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 		return nil, fmt.Errorf("can not mark the workspace active: %w", err)
 	}
 	if _, err := ensureReplica(ws); err != nil {
+		return nil, err
+	}
+	if err := syncBase(ws); err != nil {
 		return nil, err
 	}
 	if _, err := regenerateHostTiltfile(); err != nil {
@@ -122,6 +135,13 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 				}
 			}
 		}
+	}
+
+	// Last, so that a restarted service finds its infrastructure and its
+	// collector up. A copy that does not restart is a warning: the workspace is
+	// up, and the report names the copy to restart by hand.
+	if err := transformRunningState(os.Stdout, ws.Name); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 
 	return ws, nil

@@ -128,10 +128,11 @@ func TestEveryReferencedCommandExists(t *testing.T) {
 	// direction this guard exists for. Add a word here only after checking that
 	// no command could ever carry that name.
 	//
-	// "help" is deliberately absent. root.go replaces cobra's help command with
-	// a hidden one, so `devstack help <command>` does not resolve — excluding it
-	// is what let the session briefing send every agent to a command that does
-	// not exist. The working form is `devstack <command> --help`.
+	// "help" is deliberately absent, and it now resolves: `devstack help` shows
+	// the first screen, `devstack help <command>` shows one command's help, and
+	// `devstack help more` shows the commands the first screen leaves out.
+	// Excluding it from this guard is what let the session briefing send every
+	// agent to a command that did not exist.
 	notCommands := map[string]bool{
 		"": true,
 		// modals, adverbs and connectives

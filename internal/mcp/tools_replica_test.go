@@ -56,7 +56,7 @@ func TestStackCreateSaysWhereWorktreesAreCutFrom(t *testing.T) {
 // — the description has to say what does.
 func TestServiceEnvSaysABaseWriteNeedsASync(t *testing.T) {
 	tool := listEnvStackTools(t)["service_env"]
-	if !strings.Contains(tool.Description, "devstack base sync") {
+	if !strings.Contains(tool.Description, "devstack workspace up") {
 		t.Errorf("service_env must say how a base write reaches the running copy: %s", tool.Description)
 	}
 	if desc := tool.InputSchema.Properties["stack"].Description; !strings.Contains(desc, "template") {

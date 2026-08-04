@@ -27,8 +27,9 @@ import (
 const primeCharBudget = 9000
 
 var primeCmd = &cobra.Command{
-	Use:   "prime",
-	Short: "Brief an agent on where it is, what runs, and which stack it is probably here for",
+	Use:    "prime",
+	Hidden: true,
+	Short:  "Brief an agent on where it is, what runs, and which stack it is probably here for",
 	Long: `Print the session-start briefing for this directory: the workspace and the
 service you are in, the feature stack the checkout belongs to, what runs now,
 and what this workspace uses.
@@ -372,7 +373,7 @@ func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, re
 		fmt.Fprintf(b, " · stack %s\n", here)
 	case inReplica:
 		b.WriteString(" · base replica (not a stack)\n")
-		b.WriteString("  devstack generates this directory. `devstack base sync` overwrites it, so do not edit here.\n")
+		b.WriteString("  devstack generates this directory. `devstack workspace up` overwrites it, so do not edit here.\n")
 	case config.HasWorkspaceManifest(replica.Root(ws)):
 		b.WriteString(" · template checkout (not a stack, and not what base runs)\n")
 		fmt.Fprintf(b, "  Nothing runs here. base runs a replica of this workspace at %s.\n", replica.Root(ws))
@@ -543,7 +544,7 @@ func writePrimeTerms(b *strings.Builder) {
 	b.WriteString("  service    one process that devstack runs\n")
 	b.WriteString("  template   your normal checkout. devstack builds from it and runs nothing in it. Park work here freely\n")
 	b.WriteString("  base       the workspace with no stack. It runs from a replica: one git worktree per service at the\n")
-	b.WriteString("             default branch tip, under a `.devstack-base` directory. `devstack base path` prints it\n")
+	b.WriteString("             default branch tip, under a `.devstack-base` directory. The DIR column of\n             `devstack status --all` prints it\n")
 	b.WriteString("  stack      a parallel copy of some services. Each stack has its own branch, its own directory, and its own ports\n")
 	b.WriteString("  worktree   the directory of a stack. Git checks out the branch of the stack in this directory\n")
 	b.WriteString("  copy       one running process of a service. base runs one copy, and each stack runs another copy\n")
@@ -552,7 +553,7 @@ func writePrimeTerms(b *strings.Builder) {
 	b.WriteString("It has no default: with no flag it acts on the stack or replica your directory is in, and refuses elsewhere.\n")
 	b.WriteString("To work on a stack, change to the directory of that stack. The branch is already checked out there.\n")
 	b.WriteString("An edit in your checkout does not reach base. It reaches base once it is on the default branch and\n")
-	b.WriteString("`devstack base sync` has run. To see a change run now, put it in a stack.\n")
+	b.WriteString("`devstack workspace up` has run. To see a change run now, put it in a stack.\n")
 	writePrimeStates(b)
 }
 
@@ -675,7 +676,7 @@ func writePrimeReload(b *strings.Builder, rw *config.ResolvedWorkspace, service,
 	}
 	if here == "base" && !inReplica && replicaBuilt {
 		b.WriteString("                Neither applies to an edit you make here: base runs the replica, so your change\n")
-		b.WriteString("                reaches it only via the default branch and `devstack base sync`.\n")
+		b.WriteString("                reaches it only via the default branch and `devstack workspace up`.\n")
 	}
 	b.WriteString("                If you change the configuration or an environment variable, you must restart the service.\n")
 }

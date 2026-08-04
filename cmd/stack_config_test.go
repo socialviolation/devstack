@@ -116,7 +116,7 @@ func TestStackConfigSaysWhenBaseHasNoReplica(t *testing.T) {
 	if err == nil {
 		t.Fatal("--stack base without a replica must fail")
 	}
-	for _, want := range []string{"has not built the replica", "devstack base sync"} {
+	for _, want := range []string{"has not built the replica", "devstack workspace up"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the error must state %q; got %v", want, err)
 		}

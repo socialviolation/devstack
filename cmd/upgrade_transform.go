@@ -21,7 +21,12 @@ import (
 //
 // It restarts the copies that run now, and it starts nothing. A user who stopped
 // a service meant to stop it.
-func transformRunningState(w io.Writer) error {
+//
+// wsName limits the restart to one workspace's copies. 'workspace up' moves one
+// workspace's replica, so it must not restart another workspace's services. An
+// upgrade replaces the binary for the machine, so it passes an empty name and
+// reaches every copy.
+func transformRunningState(w io.Writer, wsName string) error {
 	client := tilt.NewClient("localhost", workspace.HostTiltPort)
 	view, err := client.GetView()
 	if err != nil {
@@ -30,7 +35,7 @@ func transformRunningState(w io.Writer) error {
 		return nil
 	}
 
-	copies := runningBaseCopies(view)
+	copies := runningBaseCopies(view, wsName)
 	if len(copies) == 0 {
 		fmt.Fprintln(w, "The daemon runs, and no base copy runs in it. devstack restarts nothing.")
 		return nil
@@ -72,10 +77,13 @@ func transformRunningState(w io.Writer) error {
 //
 // A feature stack runs out of its own worktree, and an upgrade does not move
 // that worktree, so a stack copy is left alone.
-func runningBaseCopies(view *tilt.TiltView) []string {
+func runningBaseCopies(view *tilt.TiltView, wsName string) []string {
 	var out []string
 	for _, r := range view.UiResources {
 		if !isBaseCopy(r.Metadata.Name) || !isRunningCopy(r) {
+			continue
+		}
+		if wsName != "" && !strings.HasPrefix(r.Metadata.Name, wsName+":") {
 			continue
 		}
 		out = append(out, r.Metadata.Name)

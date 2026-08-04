@@ -15,9 +15,9 @@ import (
 //
 // A replica is machine state and not configuration: it is a git worktree for
 // each repository, and a clone on another machine needs its own whatever any
-// committed file says. So no migration owns it. 'workspace up', 'workspace add'
-// and 'base sync' each build it, and 'workspace doctor' reports it missing. An
-// upgrade builds it here, because an upgraded machine must have one.
+// committed file says. So no migration owns it. 'workspace up' and 'workspace
+// add' each build it, and 'workspace doctor' reports it missing. An upgrade
+// builds it here, because an upgraded machine must have one.
 //
 // A workspace whose replica devstack can not build is a warning and not a stop:
 // the workspaces after it still get theirs.
@@ -37,7 +37,7 @@ func ensureReplicas(w io.Writer) error {
 		}
 		if err != nil {
 			fmt.Fprintf(w, "  warning: devstack can not build this replica: %v\n", err)
-			fmt.Fprintln(w, "  To build it after you fix the cause, run: devstack base sync")
+			fmt.Fprintln(w, "  To build it after you fix the cause, run: devstack workspace up")
 			errs = append(errs, fmt.Errorf("%s: %w", ws.Name, err))
 			continue
 		}
@@ -56,14 +56,14 @@ func writeDeprecations(w io.Writer) {
 This release changes what these habits do:
 
   You edit your checkout to change what base runs.
-    → Put the change on the default branch. Then run: devstack base sync
+    → Put the change on the default branch. Then run: devstack workspace up
     → Or put the change in a stack, which runs your branch.
   You run: devstack service start|stop|restart <svc>
     → Add --stack base, or run the command in the copy's directory.
   You run: devstack env use <name>
     → Add --stack base, or run the command in the copy's directory.
   You run git pull in your checkout, then restart the service.
-    → Run: devstack base sync. Then restart the service.
+    → Run: devstack workspace up. It moves base, and it restarts what runs.
   You started your agent session before this upgrade.
     → Restart the session. It holds the tool list from before the upgrade.
 `)

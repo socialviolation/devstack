@@ -58,18 +58,22 @@ devstack detects the language from `go.mod`, `package.json`, `requirements.txt` 
 
 Your checkout is the template. It holds the git objects, the workspace manifest and the machine-local gitignored configuration. The template runs nothing.
 
+You maintain nothing here. `devstack workspace up` does three things, in this order:
+
+1. It builds the replica, if the replica is absent.
+2. It moves each worktree to the current default branch tip.
+3. It restarts each copy of that workspace that runs now, so that copy serves the code of step 2.
+
+CAUTION: Step 3 restarts services that serve right now. devstack restarts only the copies that were already running. It starts no copy that is stopped, and it touches no copy of a feature stack.
+
 ```bash
-devstack base path            # the replica root: where base runs
-devstack base path <service>  # the replica worktree of one service
-devstack base sync            # build the replica if it is absent, then move base
-                              # to the current default branch tip
+devstack workspace up         # move base to the default branch tip, and run it
+devstack status --all         # the DIR column: the directory each copy runs from
 ```
 
-The MCP `base` tool does both jobs. Pass `action="path"` to read a path, or `action="sync"` to build the replica and move base to the default branch tip.
+The MCP `base` tool gives an agent the same two answers. Pass `action="path"` to read a path, or `action="sync"` to build the replica and move base to the default branch tip.
 
-CAUTION: `devstack base sync` restarts nothing. A running copy keeps serving the old code. It serves the old code until somebody restarts it.
-
-An edit in your checkout does not reach base on its own. The edit reaches base after two things happen. First, the edit is on the default branch. Second, you run `devstack base sync`. To see a change run at once, put the change in a stack.
+An edit in your checkout does not reach base on its own. The edit reaches base after two things happen. First, the edit is on the default branch. Second, you run `devstack workspace up`. To see a change run at once, put the change in a stack.
 
 ### Naming the copy
 
@@ -87,7 +91,7 @@ If you pass no flag from a directory that is neither, the command refuses. devst
 devstack workspace            # list registered workspaces
 devstack workspace add [path]
 devstack workspace remove <name>
-devstack workspace up         # start the dev daemon in the background
+devstack workspace up         # move base to the default branch tip, and run it
 devstack workspace down       # stop the daemon and the collector
 devstack workspace doctor     # check manifests and topology integrity
 devstack workspace topology   # the service graph: groups, dependencies, dependents
@@ -522,7 +526,7 @@ devstack.service.yaml
 Tiltfile
 ```
 
-`devstack.service.yaml` is machine-local and gitignored, so the worktree of a stack does not inherit one. For that reason `devstack stack create` copies the ignored configuration into each worktree. git does not carry it there. `devstack workspace up` and `devstack base sync` copy the same files into each replica worktree.
+`devstack.service.yaml` is machine-local and gitignored, so the worktree of a stack does not inherit one. For that reason `devstack stack create` copies the ignored configuration into each worktree. git does not carry it there. `devstack workspace up` copies the same files into each replica worktree.
 
 ### Secrets and `devstack env set`
 

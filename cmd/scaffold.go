@@ -22,8 +22,8 @@ const workspaceManifestTemplate = `# devstack workspace manifest. This file is t
 # This directory is the TEMPLATE. Nothing runs here. 'devstack workspace up'
 # builds a REPLICA from it: one git worktree per service at its default branch
 # tip, in a .devstack-base directory beside this one. The base workspace runs
-# there. To see that directory, run 'devstack base path'. Work that you park in
-# a checkout does not run, and it blocks nothing.
+# there. To see that directory, run 'devstack status --all' and read the DIR
+# column. Work that you park in a checkout does not run, and it blocks nothing.
 #
 # version is the version of this configuration. 'devstack migrate' moves it to
 # the version that your devstack needs, and it writes the new number here.

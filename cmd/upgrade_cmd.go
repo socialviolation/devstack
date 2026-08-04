@@ -124,7 +124,7 @@ func transformStep(noMigrate, noRestart bool) error {
 		fmt.Println("that is built. Run the migrations first: devstack migrate")
 		return nil
 	}
-	return transformRunningState(os.Stdout)
+	return transformRunningState(os.Stdout, "")
 }
 
 // writeUpgradeNext is the work that is left for a human. devstack does not own

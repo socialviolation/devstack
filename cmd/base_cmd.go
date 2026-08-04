@@ -15,8 +15,9 @@ import (
 )
 
 var baseCmd = &cobra.Command{
-	Use:   "base",
-	Short: "Inspect the replica that the base workspace runs from",
+	Use:    "base",
+	Hidden: true,
+	Short:  "Inspect the replica that the base workspace runs from",
 	Long: `"base" is the workspace that runs with no stack, and it does not run out of your
 checkouts. devstack keeps a replica: one git worktree for each repository,
 detached at that repository's default branch tip, under a .devstack-base sibling
@@ -28,8 +29,13 @@ template holds the git objects, the workspace manifest and the machine-local
 gitignored configuration. Nothing runs in the template, so half-finished work
 there neither runs nor blocks.
 
-'devstack workspace up' builds the replica and keeps it in step with the
-manifest.
+'devstack workspace up' builds the replica, moves each worktree to the default
+branch tip, and restarts each copy that runs. So base runs the current default
+branch, and you maintain nothing here.
+
+These commands stay for a repair, and the first screen leaves them out. To read
+the directory that each copy runs from, run 'devstack status --all' and read the
+DIR column.
 
 SUBCOMMANDS
   devstack base         print the replica root (the same as 'base path')
@@ -37,7 +43,8 @@ SUBCOMMANDS
                         service's worktree to its default branch tip
   devstack base path    print the replica root, or one service's worktree
 
-These commands have one MCP tool: 'base', with action="path" or action="sync".`,
+These commands have one MCP tool: 'base', with action="path" or action="sync".
+An agent has no shell, so that tool keeps both actions.`,
 	SilenceUsage: true,
 	RunE:         runBasePath,
 }
@@ -55,7 +62,7 @@ configuration that it copies out of the template.
 
 This command starts nothing, and it restarts nothing. It does not start the
 daemon, and it does not start a service. A copy that runs keeps the old code
-until somebody restarts it. To build the replica and run its services, run
+until somebody restarts it. To move the replica and restart what runs, run
 'devstack workspace up'.
 
 Each worktree is a new checkout. Before a service starts, its worktree needs its
@@ -138,6 +145,13 @@ func runBaseSync(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+	return syncBase(ws)
+}
+
+// syncBase moves every replica worktree to its default branch tip and prints
+// what moved. 'workspace up' calls it after it builds the replica, so base
+// serves the current default branch whenever the workspace is up.
+func syncBase(ws *workspace.Workspace) error {
 	res, err := replica.Sync(ws)
 	if err != nil {
 		return err
