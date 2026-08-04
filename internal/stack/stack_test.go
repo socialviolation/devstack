@@ -60,7 +60,7 @@ func writeFile(t *testing.T, path, content string) {
 func makeRepo(t *testing.T, dir, manifest string) {
 	t.Helper()
 	writeFile(t, filepath.Join(dir, "devstack.service.yaml"), manifest)
-	git(t, dir, "init", "-q")
+	git(t, dir, "init", "-q", "-b", "main")
 	git(t, dir, "add", "-f", ".")
 	git(t, dir, "commit", "-q", "-m", "init")
 }
@@ -149,7 +149,7 @@ func TestCreateOverlayWorktreesAndPorts(t *testing.T) {
 	// Base daemon is not running in the test, so a warning must be surfaced as data.
 	foundBaseWarning := false
 	for _, w := range res.Warnings {
-		if strings.Contains(w, "not reachable") {
+		if strings.Contains(w, "can not reach the host daemon") {
 			foundBaseWarning = true
 		}
 	}
@@ -295,5 +295,53 @@ func TestCheckRemovableMatchesRemovesRefusal(t *testing.T) {
 	}
 	if err := CheckRemovable(base, "feat", true); err != nil {
 		t.Fatalf("CheckRemovable(force) = %v, want nil", err)
+	}
+}
+
+// A manifest devstack can not resolve is not a licence to delete. The stack
+// record names every worktree, so the check for uncommitted work still runs, and
+// where devstack can not tell, it refuses and asks for --force.
+func TestRemoveKeepsUncommittedWorkWhenTheManifestWillNotResolve(t *testing.T) {
+	base := newBase(t)
+
+	orig := daemonReachable
+	daemonReachable = func(int) bool { return false }
+	defer func() { daemonReachable = orig }()
+
+	res, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"backend"}})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	precious := filepath.Join(res.StackRoot, "backend", "PRECIOUS.txt")
+	writeFile(t, precious, "a week of work\n")
+	if err := os.RemoveAll(filepath.Join(res.StackRoot, "frontend")); err != nil {
+		t.Fatal(err)
+	}
+
+	err = CheckRemovable(base, "feat", false)
+	if err == nil {
+		t.Fatal("CheckRemovable() = nil, want the uncommitted worktree named")
+	}
+	if !strings.Contains(err.Error(), "uncommitted changes") {
+		t.Errorf("the refusal should name the reason: %v", err)
+	}
+
+	rm, err := Remove(base, "feat", false)
+	if err == nil {
+		t.Fatal("Remove() = nil, want a refusal")
+	}
+	if rm.RootRemoved {
+		t.Error("Remove deleted the stack root it could not read")
+	}
+	if _, err := os.Stat(precious); err != nil {
+		t.Fatalf("Remove destroyed uncommitted work: %v", err)
+	}
+
+	forced, err := Remove(base, "feat", true)
+	if err != nil {
+		t.Fatalf("Remove(force) = %v, want the escape hatch to work", err)
+	}
+	if !forced.RootRemoved {
+		t.Errorf("Remove(force) left the stack root: %+v", forced)
 	}
 }

@@ -1,54 +1,52 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
+	"github.com/socialviolation/devstack/internal/migrate"
 )
+
+// exitMigrateRefused is the status of a migration that stopped before it wrote.
+// 'devstack upgrade' runs the migration in another process, so the exit status
+// is the only thing it reads. A refusal leaves every replica and every running
+// copy as they were, and a write that failed does not, so the two need different
+// statuses.
+const exitMigrateRefused = 3
 
 var cfgFile string
 
 var rootCmd = &cobra.Command{
 	Use:   "devstack",
 	Short: "Run and observe local development services across one or more workspaces",
-	Long: `devstack is a local development service manager built for teams working across
-multiple services and repositories. It is the backbone of an AI-assisted local
-development workflow.
+	Long: `devstack runs the services of this machine for local development.
 
-WHAT IT DOES
-  devstack manages groups of locally running services (APIs, workers, importers,
-  etc.) organised into workspaces — one workspace per product or organisation.
-  It handles dependency-ordered startup, live status, and service restarts.
+A workspace is one product: every service of that product, in one directory. A
+stack is a group of those services that you cut for one feature. A stack is
+local infrastructure that does not last. You stand it up, and you tear it down.
+An environment points a stack at a database and at a set of endpoints.
 
-  It also runs one lightweight OpenTelemetry stack (OpenObserve) for the whole
-  machine, shared by every workspace, so every service ships traces and logs
-  that AI agents can query in real time. When something breaks during feature development, an AI agent
-  can call the MCP tools to pull correlated traces and logs and pinpoint the
-  root cause without leaving the editor.
+base runs every service that no stack replaces. 'devstack workspace up' keeps
+base on the default branch, so you do not maintain it.
 
-WORKSPACE AUTO-DETECTION
-  Run any command from inside a workspace directory or any service subdirectory.
-  devstack will detect which workspace you are in automatically — no flags needed.
-
-TYPICAL WORKFLOW
-  devstack workspace add              register this directory as a workspace
-  devstack workspace up               start the dev daemon
-  devstack init --name=api ...        register a service and wire up observability
-  devstack service start <service>            start a service and all its dependencies
-  devstack status                     live grouped view of every service
-  devstack otel traces                query traces from the configured backend
-  devstack otel open                  open the trace UI in the browser
-
-AI AGENT WORKFLOW
-  devstack serve                      expose MCP tools to the AI agent
-  devstack init --all                 write AGENTS.md instructions into every service`,
+Run any command in a workspace directory, or in a service directory. devstack
+detects the workspace for you. No flag is necessary.`,
 }
 
 func Execute() {
+	installHelp()
+	// Cobra prints the error itself; printing it here as well put every message
+	// on stderr twice, once prefixed "Error:" and once bare.
+	rootCmd.SilenceErrors = true
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		if errors.Is(err, migrate.ErrRefused) {
+			os.Exit(exitMigrateRefused)
+		}
 		os.Exit(1)
 	}
 }
@@ -56,13 +54,10 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(initConfig)
 
-	// Hide the built-in help subcommand (--help flag still works)
-	rootCmd.SetHelpCommand(&cobra.Command{Hidden: true})
-
 	rootCmd.Version = versionLine()
 	rootCmd.SetVersionTemplate("devstack {{.Version}}\n")
 
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./config.json)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "Configuration file (default: ./config.json)")
 	_ = rootCmd.PersistentFlags().MarkHidden("config")
 
 	// Dev daemon connection. There is no port knob: one daemon serves the whole
@@ -71,10 +66,10 @@ func init() {
 	_ = rootCmd.PersistentFlags().MarkHidden("daemon-host")
 
 	// Default service context
-	rootCmd.PersistentFlags().String("default-service", "", "Default service name when none is specified (env: DEVSTACK_DEFAULT_SERVICE)")
+	rootCmd.PersistentFlags().String("default-service", "", "Default service name, used when a command names none (env: DEVSTACK_DEFAULT_SERVICE)")
 
 	// Workspace root directory
-	rootCmd.PersistentFlags().String("workspace", "", "Workspace name or path (env: DEVSTACK_WORKSPACE)")
+	rootCmd.PersistentFlags().String("workspace", "", "Workspace name or path. Default: the workspace of the current directory (env: DEVSTACK_WORKSPACE)")
 
 	// Bind flags to viper (keep internal keys stable)
 	viper.BindPFlag("tilt.host", rootCmd.PersistentFlags().Lookup("daemon-host"))
@@ -100,6 +95,6 @@ func initConfig() {
 	viper.AutomaticEnv()
 
 	if err := viper.ReadInConfig(); err == nil {
-		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+		fmt.Fprintln(os.Stderr, "Using configuration file:", viper.ConfigFileUsed())
 	}
 }

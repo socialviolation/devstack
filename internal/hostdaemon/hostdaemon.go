@@ -1,6 +1,7 @@
 package hostdaemon
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/tiltgen"
@@ -53,7 +55,7 @@ func Sync() (SyncResult, error) {
 
 	dir := workspace.HostTiltDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return SyncResult{Warnings: warnings}, fmt.Errorf("failed to create host tilt dir: %w", err)
+		return SyncResult{Warnings: warnings}, fmt.Errorf("can not create the host tilt directory: %w", err)
 	}
 	path := filepath.Join(dir, "Tiltfile")
 
@@ -63,7 +65,7 @@ func Sync() (SyncResult, error) {
 	}
 
 	if err := os.WriteFile(path, []byte(out), 0644); err != nil {
-		return SyncResult{Warnings: warnings}, fmt.Errorf("failed to write host Tiltfile: %w", err)
+		return SyncResult{Warnings: warnings}, fmt.Errorf("can not write the host Tiltfile: %w", err)
 	}
 	return SyncResult{Path: path, Wrote: true, Changed: changedResources(string(existing), out), Warnings: warnings}, nil
 }
@@ -74,12 +76,28 @@ func render() (string, []string, error) {
 		return "", nil, err
 	}
 
+	var warnings []string
 	var gens []tiltgen.WorkspaceGen
 	for i := range active {
 		ws := active[i]
-		rw, err := config.ResolveWorkspace(ws.Path)
+		// One Tiltfile serves every workspace, so a workspace nobody has built a
+		// replica for yet runs from its checkout rather than taking the others down
+		// with it.
+		rw, err := replica.Resolve(&ws)
 		if err != nil {
-			return "", nil, fmt.Errorf("workspace %q: failed to resolve manifests: %w", ws.Name, err)
+			// Any replica that will not resolve, not only one that was never
+			// built. One Tiltfile serves every workspace on this machine, so a
+			// replica devstack can not read would otherwise stop generation for
+			// every other workspace as well.
+			if errors.Is(err, replica.ErrNotBuilt) {
+				warnings = append(warnings, fmt.Sprintf("workspace %q has no replica, so it runs from your checkout. To build the replica, run devstack workspace up", ws.Name))
+			} else {
+				warnings = append(warnings, fmt.Sprintf("workspace %q has a replica that devstack can not read, so it runs from your checkout. To rebuild the replica, run devstack workspace up. The error was: %v", ws.Name, err))
+			}
+			rw, err = config.ResolveWorkspace(ws.Path)
+		}
+		if err != nil {
+			return "", warnings, fmt.Errorf("workspace %q: can not resolve the manifests: %w", ws.Name, err)
 		}
 		names := make([]string, 0, len(rw.Services))
 		for name := range rw.Services {
@@ -87,7 +105,7 @@ func render() (string, []string, error) {
 		}
 		stackGens, err := ActiveStackGens(&ws)
 		if err != nil {
-			return "", nil, err
+			return "", warnings, err
 		}
 		gens = append(gens, tiltgen.WorkspaceGen{
 			Name:     ws.Name,
@@ -97,7 +115,8 @@ func render() (string, []string, error) {
 		})
 	}
 
-	return tiltgen.GenerateHost(gens)
+	out, genWarnings, err := tiltgen.GenerateHost(gens)
+	return out, append(warnings, genWarnings...), err
 }
 
 // TiltfileReloadTimeout bounds how long SyncAndReload waits for the running
@@ -115,13 +134,13 @@ func SyncAndReload(client *tilt.Client) []string {
 	since := time.Now()
 	res, err := Sync()
 	if err != nil {
-		return []string{fmt.Sprintf("⚠ could not regenerate the Tiltfile — the daemon is still running the previously generated one, so manifest edits are NOT applied: %v", err)}
+		return []string{fmt.Sprintf("⚠ devstack can not regenerate the Tiltfile. The daemon still runs the Tiltfile from the last generation, so it does NOT apply the manifest edits: %v", err)}
 	}
 	if !res.Wrote {
 		return nil
 	}
 
-	notes := []string{fmt.Sprintf("↻ Manifests changed — regenerated %s", res.Path)}
+	notes := []string{fmt.Sprintf("↻ The manifests changed, so devstack regenerated %s", res.Path)}
 	if len(res.Changed) > 0 {
 		notes = append(notes, "  affected: "+strings.Join(res.Changed, ", "))
 	}
@@ -134,7 +153,7 @@ func SyncAndReload(client *tilt.Client) []string {
 		return notes
 	}
 	if err := client.WaitForTiltfileReload(since, TiltfileReloadTimeout); err != nil {
-		notes = append(notes, fmt.Sprintf("  ⚠ %v — the service may still start with the previous config", err))
+		notes = append(notes, fmt.Sprintf("  ⚠ %v. The service can still start with the previous configuration", err))
 	}
 	return notes
 }
@@ -205,7 +224,7 @@ func ActiveStackGens(ws *workspace.Workspace) ([]tiltgen.StackGen, error) {
 		}
 		rw, err := stack.ResolveWorktree(&rec)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: stack %q skipped from host generation: %v\n", rec.Name, err)
+			fmt.Fprintf(os.Stderr, "warning: devstack skipped stack %q in the host generation: %v\n", rec.Name, err)
 			continue
 		}
 		names := make([]string, 0, len(rw.Services))
@@ -214,7 +233,7 @@ func ActiveStackGens(ws *workspace.Workspace) ([]tiltgen.StackGen, error) {
 		}
 		opts, err := stack.GenerateOptions(&rec, names)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: stack %q skipped from host generation: %v\n", rec.Name, err)
+			fmt.Fprintf(os.Stderr, "warning: devstack skipped stack %q in the host generation: %v\n", rec.Name, err)
 			continue
 		}
 		gens = append(gens, tiltgen.StackGen{Workspace: rw, Options: opts, Namespace: rec.Name})
@@ -231,26 +250,26 @@ func ActiveStackGens(ws *workspace.Workspace) ([]tiltgen.StackGen, error) {
 func EnsureDaemon() (string, error) {
 	apiURL := fmt.Sprintf("http://localhost:%d/api/view", workspace.HostTiltPort)
 	if TiltReachable(apiURL) {
-		return fmt.Sprintf("Host daemon already running on :%d — it will hot-reload the updated Tiltfile.", workspace.HostTiltPort), nil
+		return fmt.Sprintf("The host daemon already runs on :%d. It will hot-reload the updated Tiltfile.", workspace.HostTiltPort), nil
 	}
 
 	pidFile := workspace.HostPIDFile()
 	if pidData, err := os.ReadFile(pidFile); err == nil {
 		if pid, perr := strconv.Atoi(strings.TrimSpace(string(pidData))); perr == nil && ProcessAlive(pid) {
-			return fmt.Sprintf("Host daemon already running (pid %d, port %d).", pid, workspace.HostTiltPort), nil
+			return fmt.Sprintf("The host daemon already runs (pid %d, port %d).", pid, workspace.HostTiltPort), nil
 		}
 		os.Remove(pidFile)
 	}
 
 	dir := workspace.HostTiltDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create host data directory %s: %w", dir, err)
+		return "", fmt.Errorf("can not create the host data directory %s: %w", dir, err)
 	}
 
 	logFile := workspace.HostLogFile()
 	lf, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		return "", fmt.Errorf("failed to open host log file %s: %w", logFile, err)
+		return "", fmt.Errorf("can not open the host log file %s: %w", logFile, err)
 	}
 	defer lf.Close()
 
@@ -260,13 +279,13 @@ func EnsureDaemon() (string, error) {
 	tiltCmd.Stderr = lf
 	tiltCmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := tiltCmd.Start(); err != nil {
-		return "", fmt.Errorf("failed to start host daemon: %w", err)
+		return "", fmt.Errorf("can not start the host daemon: %w", err)
 	}
 
 	pid := tiltCmd.Process.Pid
 	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
 		tiltCmd.Process.Kill()
-		return "", fmt.Errorf("failed to write host PID file: %w", err)
+		return "", fmt.Errorf("can not write the host PID file: %w", err)
 	}
 	_, _ = workspace.OpenSession(workspace.HostWorkspace(), pid, []int{workspace.HostTiltPort})
 
@@ -281,9 +300,9 @@ func EnsureDaemon() (string, error) {
 	}
 
 	if reached {
-		return fmt.Sprintf("Host daemon started (pid %d, port %d, logs: %s)", pid, workspace.HostTiltPort, logFile), nil
+		return fmt.Sprintf("The host daemon started (pid %d, port %d, logs: %s)", pid, workspace.HostTiltPort, logFile), nil
 	}
-	return fmt.Sprintf("Host daemon started but not yet reachable — logs: %s", logFile), nil
+	return fmt.Sprintf("The host daemon started, but devstack can not reach it yet. Logs: %s", logFile), nil
 }
 
 // TiltReachable reports whether the Tilt API is responding at the given URL.

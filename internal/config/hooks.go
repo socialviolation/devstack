@@ -155,19 +155,19 @@ func validateHooks(hooks []Hook, scope string, allowServices bool) error {
 			return fmt.Errorf("%s: hook %q needs a 'run' command", scope, name)
 		}
 		if !allowServices && len(h.Services) > 0 {
-			return fmt.Errorf("%s: hook %q sets 'services', which only applies to workspace hooks — a service manifest's hooks are already scoped to that service", scope, name)
+			return fmt.Errorf("%s: hook %q sets 'services', but 'services' applies only to workspace hooks. The hooks of a service manifest are already scoped to that service", scope, name)
 		}
 		if t := strings.TrimSpace(h.Timeout); t != "" {
 			d, err := time.ParseDuration(t)
 			if err != nil {
-				return fmt.Errorf("%s: hook %q has an unparseable timeout %q: %w", scope, name, h.Timeout, err)
+				return fmt.Errorf("%s: hook %q has the timeout %q, and devstack can not parse it: %w", scope, name, h.Timeout, err)
 			}
 			if d <= 0 {
-				return fmt.Errorf("%s: hook %q has a non-positive timeout %q", scope, name, h.Timeout)
+				return fmt.Errorf("%s: hook %q has the timeout %q, and a timeout must be more than zero", scope, name, h.Timeout)
 			}
 		}
 		if p := strings.TrimSpace(h.OnError); p != "" && p != OnErrorAbort && p != OnErrorContinue {
-			return fmt.Errorf("%s: hook %q has onError %q, want %q or %q", scope, name, h.OnError, OnErrorAbort, OnErrorContinue)
+			return fmt.Errorf("%s: hook %q has onError %q, and onError must be %q or %q", scope, name, h.OnError, OnErrorAbort, OnErrorContinue)
 		}
 	}
 	return nil

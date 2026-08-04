@@ -3,7 +3,6 @@ package cmd
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -24,21 +23,6 @@ func TestResolveRunScriptExpandsNpmScript(t *testing.T) {
 	}
 	if got := resolveRunScript("npm run start", t.TempDir()); got != "npm run start" {
 		t.Errorf("resolveRunScript with no package.json = %q, want unchanged", got)
-	}
-}
-
-func TestBuildAgentInstructionsAnnouncesStackWorktree(t *testing.T) {
-	stacked := buildAgentInstructions("api", t.TempDir(), "/home/dev/navexa", "import-review")
-	if !strings.Contains(stacked, "worktree of feature stack `import-review`") {
-		t.Fatalf("missing stack worktree announcement:\n%s", stacked)
-	}
-	if !strings.Contains(stacked, "--stack import-review") {
-		t.Fatalf("missing stack targeting hint:\n%s", stacked)
-	}
-
-	base := buildAgentInstructions("api", t.TempDir(), "/home/dev/navexa", "")
-	if strings.Contains(base, "worktree of feature stack") {
-		t.Fatalf("base block should not announce a stack worktree:\n%s", base)
 	}
 }
 

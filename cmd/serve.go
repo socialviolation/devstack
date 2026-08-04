@@ -17,32 +17,53 @@ import (
 )
 
 var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Start the MCP server for AI agent tool access",
-	Long: `Start the devstack MCP (Model Context Protocol) server, which exposes
-devstack capabilities as tools that AI agents can call directly.
+	Use:    "serve",
+	Hidden: true,
+	Short:  "Start the MCP server for AI agent tool access",
+	Long: `Start the devstack MCP (Model Context Protocol) server. The server exposes
+devstack capabilities as tools that an AI agent can call directly.
 
-This is configured automatically in each service's .mcp.json by 'devstack init'.
-You do not normally need to run this manually.
+'devstack init' writes this configuration into each service's .mcp.json. You do
+not normally run this command by hand.
 
 TOOLS EXPOSED TO AI AGENTS
-  environment     active environment + capability orientation (start here)
-  status          live state of all services (running, error, ports)
-  restart         trigger a rebuild and restart of a service  [local only]
-  stop            disable one or all services                 [local only]
-  process_logs    fetch stdout/stderr from a service          [local only]
+  environment     which workspace, which copies, which tools (start here)
+  status          live state of every copy: state, port, path, branch, env
+  topology        the declared service graph: groups, deps, callers
+  start           start a service or a group, dependencies first
+  restart         rebuild and restart a service or a group
+  stop            stop one service, a group, or every service of one copy (all=true)
+  process_logs    fetch stdout/stderr from a running copy
+  service_env     read and write a service's env files, and audit them
+  base            print the replica that base runs from, or sync it to the default branch tip
+  configure       read or set a dev daemon runtime argument
+  hooks           list the declared lifecycle hooks, or run the hooks of one event
+  migrate         list the migrations of this machine, or run the pending ones
+  observability   show, enable or disable OTEL, and read the telemetry evidence
+  stack_create    cut a feature stack from the default branch
+  stack_add       put another service into a stack that already exists
+  stack_list      the stacks in flight, with their overlays, links and notes
+  stack_note      read, set or append to what a stack is for
+  stack_up        start a stack in the host daemon
+  stack_down      stop a stack's copies, and keep its worktrees
+  stack_rm        tear a stack down: worktrees, ports and record
+  env_use         point a scope at a named env
+  env_which       the env a service resolves to, rung by rung
+  env_set         set a variable on a named env
   investigate     correlated traces + logs in one call        [when observability enabled]
-  observability   inspect/enable/disable OTEL + telemetry evidence [local only]
-  configure       set a Tilt runtime argument                 [local only]
-  tunnel          forward local service ports to/from a remote over SSH [local, when an ssh client is available]
+  tunnel          forward local service ports to/from a remote over SSH [when an ssh client is available]
 
-The exact tool set adapts to the active workspace: trace/telemetry tools appear only
-when observability is enabled in the manifest, and tunnel tools only when an ssh client is available.
-Call the 'environment' tool first to see what's available.
+The tool set adapts to the active workspace. The telemetry tools appear only when
+the manifest enables observability. The tunnel tools appear only when an ssh
+client is available. Call the 'environment' tool first to see what is available.
+
+The tools do not cover every command. Among the commands with no tool: upgrade,
+init, ports, dependencies, stack config, group add and remove, env list, show and
+remove, and every workspace command but topology. Run those in the shell.
 
 TRANSPORT
-  stdio (default)   used by Claude Code and most AI tooling
-  http              for custom integrations`,
+  stdio (default)   Claude Code and most AI tooling use this
+  http              for a custom integration`,
 	RunE: runServe,
 }
 
@@ -57,7 +78,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	transport = strings.ToLower(transport)
 
 	if transport != "http" && transport != "stdio" {
-		return fmt.Errorf("invalid transport mode: %s (must be 'http' or 'stdio')", transport)
+		return fmt.Errorf("invalid transport mode: %s. It must be 'http' or 'stdio'", transport)
 	}
 
 	// For stdio transport, redirect logs to stderr to avoid polluting the transport
@@ -90,7 +111,7 @@ func serveStdio() error {
 	// somewhere unqueryable (pure forwarding) serves its tools without one.
 	backend, err := otel.BackendFor(ws)
 	if err != nil {
-		log.Printf("observability queries unavailable: %v", err)
+		log.Printf("observability queries are unavailable: %v", err)
 	}
 
 	tiltClient := tilt.NewDynamicClient(host, func() int {
@@ -105,6 +126,7 @@ func serveStdio() error {
 		ws.Name,
 		ws.Path,
 		ws,
+		patches(),
 	)
 
 	log.Printf("Starting devstack MCP server (workspace: %s, tilt-port: %d)", ws.Name, workspace.HostTiltPort)
@@ -113,8 +135,8 @@ func serveStdio() error {
 }
 
 func serveHTTP() error {
-	log.Printf("HTTP transport not yet implemented")
-	return fmt.Errorf("HTTP transport not yet implemented")
+	log.Printf("the HTTP transport is not implemented yet")
+	return fmt.Errorf("the HTTP transport is not implemented yet")
 }
 
 // resolveServeWorkspace returns the Workspace for a given name/path string.
@@ -128,11 +150,11 @@ func resolveServeWorkspace(nameOrPath string) *workspace.Workspace {
 		if ws, err := workspace.FindByPath(nameOrPath); err == nil {
 			return ws
 		}
-		log.Printf("Warning: workspace %q not found in registry, falling back to cwd detection", nameOrPath)
+		log.Printf("Warning: workspace %q is not in the registry. devstack detects the workspace from the current directory instead", nameOrPath)
 	}
 	ws, err := resolveWorkspace("")
 	if err != nil {
-		log.Fatalf("Cannot resolve workspace: DEVSTACK_WORKSPACE=%q and cwd detection failed: %v\nRun 'devstack workspace add' to register this workspace.", nameOrPath, err)
+		log.Fatalf("Can not resolve the workspace. DEVSTACK_WORKSPACE=%q, and detection from the current directory failed: %v\nRun 'devstack workspace add' to register this workspace.", nameOrPath, err)
 	}
 	return ws
 }

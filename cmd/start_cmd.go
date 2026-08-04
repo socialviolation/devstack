@@ -10,24 +10,44 @@ import (
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/infra"
+	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 var upCmd = &cobra.Command{
 	Use:   "up",
-	Short: "Start this workspace's services in the dev daemon",
-	Long: `Fold this workspace's services into the dev daemon, starting the daemon as a
-detached background process if it is not already up.
+	Short: "Move base to the current default branch, and run it in the dev daemon",
+	Long: `Fold this workspace's services into the dev daemon. If the daemon is not up
+already, devstack starts it as a detached background process.
 
-One daemon serves the whole machine. It runs every workspace's services, watches
-their source files, and hot-reloads them when code changes. 'devstack service start' also
-brings it up on demand, so you rarely need this command first.
+This command also makes base current, in three steps.
 
-The shared observability stack is also started automatically so services can
-begin shipping traces and logs immediately.
+  1. It builds the replica that base runs from, if that replica is absent: one
+     git worktree for each repository, detached at that repository's default
+     branch tip, under a .devstack-base sibling of the workspace.
+  2. It moves each worktree to the current default branch tip.
+  3. It restarts each copy of this workspace that runs now, so that copy serves
+     the code that step 2 moved under it.
 
-Logs are written to ~/.local/share/devstack/<workspace-name>/tilt.log.`,
+CAUTION: Step 3 restarts services that serve right now. devstack restarts only
+the copies that were already running. It starts no copy that is stopped, and it
+touches no copy of a feature stack.
+
+Your checkout is the template that devstack builds the replica from, and nothing
+runs there. To read the directory that each copy runs from, run
+'devstack status --all' and read the DIR column.
+
+One daemon serves the whole machine. It runs the services of every workspace. It
+watches the files of the directory that each copy runs from: the replica for
+base, and its own worktree for a stack. When that code changes, the daemon
+reloads the copy. 'devstack service start' starts the daemon on demand, so you
+rarely need this command first.
+
+devstack also starts the shared collector, so the services can send traces and
+logs immediately.
+
+devstack writes the logs to ~/.local/share/devstack/<workspace-name>/tilt.log.`,
 	RunE: runStart,
 }
 
@@ -56,14 +76,20 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 		return nil, err
 	}
 	if !config.HasWorkspaceManifest(ws.Path) {
-		return nil, fmt.Errorf("no %s in %s — this workspace is not manifest-based yet", config.WorkspaceManifestFileName, ws.Path)
+		return nil, fmt.Errorf("there is no %s in %s. This workspace does not use a manifest yet", config.WorkspaceManifestFileName, ws.Path)
 	}
 
 	if err := workspace.SetWorkspaceActive(ws.Name, true); err != nil {
-		return nil, fmt.Errorf("failed to mark workspace active: %w", err)
+		return nil, fmt.Errorf("can not mark the workspace active: %w", err)
+	}
+	if _, err := ensureReplica(ws); err != nil {
+		return nil, err
+	}
+	if err := syncBase(ws); err != nil {
+		return nil, err
 	}
 	if _, err := regenerateHostTiltfile(); err != nil {
-		return nil, fmt.Errorf("failed to generate host Tiltfile: %w", err)
+		return nil, fmt.Errorf("can not generate the host Tiltfile: %w", err)
 	}
 	if err := ensureHostDaemon(); err != nil {
 		return nil, err
@@ -71,7 +97,7 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 	fmt.Printf("Service(s) for '%s' run in the host daemon on :%d as %s:<svc>.\n", ws.Name, workspace.HostTiltPort, ws.Name)
 
 	if composeSpec, err := infra.ResolveComposeSpec(ws.Path); err != nil {
-		fmt.Fprintf(os.Stderr, "compose infra config error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "compose infra configuration error: %v\n", err)
 	} else if composeSpec != nil {
 		fmt.Printf("Starting compose infra...\n")
 		if err := infra.Up(composeSpec); err != nil {
@@ -88,18 +114,18 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 	// (generation points its OTEL endpoint there), and two collectors cannot bind
 	// the same host ports anyway.
 	if !config.ObservabilityEnabled(ws.Path) {
-		fmt.Printf("Observability disabled for this workspace — skipping collector.\n")
+		fmt.Printf("Observability is off for this workspace, so devstack starts no collector.\n")
 		fmt.Printf("  Turn it on: devstack otel config on (writes %s), then: devstack otel start\n", config.WorkspaceManifestFileName)
 	} else if isOtelRunning(ws) {
-		fmt.Printf("OTEL stack already running\n")
+		fmt.Printf("OTEL collector already running\n")
 	} else {
 		plugin := activePlugin(ws)
 		if plugin == nil {
 			fmt.Fprintf(os.Stderr, "No OTEL plugin configured\n")
 		} else {
-			fmt.Printf("Starting OTEL stack (plugin: %s)...\n", plugin.Name())
+			fmt.Printf("Starting the OTEL collector (plugin: %s)...\n", plugin.Name())
 			if err := startOtelStack(ws, plugin); err != nil {
-				fmt.Fprintf(os.Stderr, "OTEL stack failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "OTEL collector failed: %v\n", err)
 			} else {
 				queryEndpoint := plugin.QueryEndpoint(ws)
 				if queryEndpoint != "" {
@@ -109,6 +135,13 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 				}
 			}
 		}
+	}
+
+	// Last, so that a restarted service finds its infrastructure and its
+	// collector up. A copy that does not restart is a warning: the workspace is
+	// up, and the report names the copy to restart by hand.
+	if err := transformRunningState(os.Stdout, ws.Name, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 
 	return ws, nil
@@ -129,23 +162,25 @@ func ensureHostDaemon() error {
 
 // resolveWorkspace resolves a workspace by name/path flag or auto-detects from cwd.
 //
-// A stack's worktrees live outside its base workspace directory, and a stack is
-// never itself registered, so the registry alone cannot place someone standing
-// in one — yet a worktree is exactly where an agent is sent to work. Falling
-// back to the owning base is what makes a worktree a place commands run rather
-// than a place they refuse. Resolving the base does not change what a command
-// acts on: without --stack it still targets base, and the commands that can say
-// which stack the directory belongs to do.
+// Neither a stack worktree nor the replica is a registered workspace, so the
+// registry alone cannot place someone standing in one — and both are places
+// commands legitimately run. Which workspace this is says nothing about which of
+// its instances a command acts on: stack.ResolveTarget decides that.
 func resolveWorkspace(flag string) (*workspace.Workspace, error) {
 	if flag == "" {
-		ws, err := workspace.DetectFromCwd()
-		if err == nil {
-			return ws, nil
-		}
+		// A stack root and a replica root are siblings of the workspace they
+		// belong to, so a workspace registered at an ancestor path also matches
+		// them by prefix — and wins, being the only one the registry knows. They
+		// are asked first because owning the directory outright beats containing
+		// it: otherwise standing in one workspace's worktree resolves to another
+		// workspace, and --stack base there acts on the wrong base.
 		if base, _, derr := stack.DetectFromCwd(); derr == nil && base != nil {
 			return base, nil
 		}
-		return nil, err
+		if base, derr := replica.DetectFromCwd(); derr == nil && base != nil {
+			return base, nil
+		}
+		return workspace.DetectFromCwd()
 	}
 
 	// Try by name first, then by path

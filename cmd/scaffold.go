@@ -9,79 +9,96 @@ import (
 )
 
 // workspaceManifestTemplate is an educational devstack.workspace.yaml scaffold.
-// %s = workspace name. It teaches an agent (or human) the whole model in comments.
-const workspaceManifestTemplate = `# devstack workspace manifest — the SINGLE SOURCE OF TRUTH for this workspace.
+// %d = configuration version, %s = workspace name. It teaches an agent (or
+// human) the whole model in comments.
+const workspaceManifestTemplate = `# devstack workspace manifest. This file is the SINGLE SOURCE OF TRUTH for this
+# workspace.
 #
-# The dev daemon's Tiltfile is GENERATED from this file + each service's
-# devstack.service.yaml. Never edit the Tiltfile by hand — edit these manifests
-# and run 'devstack workspace up' (or 'devstack workspace generate') to regenerate it.
-version: 1
+# devstack GENERATES the Tiltfile of the dev daemon from this file, and from the
+# devstack.service.yaml of each service. Never edit the Tiltfile by hand. Edit
+# these manifests, then run 'devstack workspace up' or 'devstack workspace
+# generate' to write the Tiltfile again.
+#
+# This directory is the TEMPLATE. Nothing runs here. 'devstack workspace up'
+# builds a REPLICA from it: one git worktree per repository at its default branch
+# tip, in a .devstack-base directory beside this one. The base workspace runs
+# there. To see that directory, run 'devstack status --all' and read the DIR
+# column. Work that you park in a checkout does not run, and it blocks nothing.
+#
+# version is the version of this configuration. 'devstack migrate' moves it to
+# the version that your devstack needs, and it writes the new number here.
+version: %d
 
 workspace:
   name: %s
   repoDiscovery:
-    # How devstack finds services:
-    #   explicit — list each service repo directory (recommended, deterministic)
-    #   scan     — give root dirs; devstack walks them for devstack.service.yaml
+    # How devstack finds the services:
+    #   explicit  list each service repo directory. This mode is deterministic
+    #   scan      give root directories. devstack walks them for devstack.service.yaml
     mode: explicit
     repos: []
       # - ./my-api
       # - ./my-worker
 
-# Shared environment that TRICKLES DOWN to every service (lowest precedence — a
-# service's own env.values override these). devstack also auto-injects the local
-# OTEL endpoint, so you never repeat it. Change OTEL/DB config once, here.
+# Shared values that reach every service. They have the LOWEST precedence: the
+# env.values of a service overrides them. devstack also injects the local OTEL
+# endpoint itself, so you never write it twice. Change the OTEL values and the
+# database values once, here.
 env:
   values: {}
     # DATABASE_HOST: localhost
     # DATABASE_PORT: "5432"
 
-# groups BIND services into a unit you operate on together:
-#   devstack group start <group>   devstack group stop <group>   devstack status
-# Groups also drive the daemon UI labels. A service may belong to many groups.
+# groups BIND services into one unit that you operate together. start and stop
+# must name the copy that they act on: --stack base, or --stack <name> for a
+# feature stack.
+#   devstack group start <group> --stack base   devstack status
+# The daemon also labels its UI from the groups. A service can belong to many
+# groups.
 groups: {}
   # backend: [my-api]
   # workers: [my-worker]
 
-# dependencies define START ORDER (not grouping): "A: [B]" means B must be up
-# before A, and starting A pulls in B first. Emitted as the daemon resource_deps.
+# dependencies define the START ORDER, and not the grouping. "A: [B]" means that
+# B must be up before A. If you start A, devstack starts B first. devstack writes
+# these as the resource_deps of the daemon.
 dependencies: {}
   # my-worker: [my-api]
 `
 
 // serviceManifestTemplate is an educational devstack.service.yaml scaffold.
 // Args in order: name, name (OTEL), name (link label).
-const serviceManifestTemplate = `# devstack service manifest — how devstack runs THIS service.
-# Grouping and start-order live in the workspace manifest, not here.
+const serviceManifestTemplate = `# devstack service manifest. This file says how devstack runs THIS service.
+# The grouping and the start order are in the workspace manifest, not here.
 version: 1
 
 service:
   name: %s
-  # aliases: [api]              # alternate names devstack/agents may use
+  # aliases: [api]              # other names that devstack and agents can use
 
 runtime:
-  workDir: .                    # run dir, relative to this repo (default ".")
+  workDir: .                    # the run directory, relative to this repo (default ".")
   run:
-    command: ""                 # REQUIRED: the long-running command to serve this service
+    command: ""                 # REQUIRED: the long command that serves this service
   # prep:
-  #   command: ""               # optional one-shot before serve (free a port, build, etc.)
-  # triggerMode: manual         # manual = start via devstack (default) | auto = start with daemon
-  # autoStart: false            # start automatically when the daemon comes up
-  # watch: []                   # file/dir paths that re-trigger the service on change
+  #   command: ""               # one command that runs before the service: free a port, or build
+  # triggerMode: manual         # manual = you start it with devstack (default). auto = it starts with the daemon
+  # autoStart: false            # start it when the daemon comes up
+  # watch: []                   # files and directories that start the service again on a change
   healthcheck:
-    type: http                  # http | exec
-    port: 8080                  # http: port to probe
-    path: /health               # http: path to probe (default "/")
-    # command: ""               # exec: shell command; success (exit 0) = healthy
+    type: http                  # http or exec
+    port: 8080                  # http: the port to probe
+    path: /health               # http: the path to probe (default "/")
+    # command: ""               # exec: a shell command. Exit code 0 means healthy
     periodSecs: 5
     failureThreshold: 10
 
 ports:
-  http: 8080                    # named ports this service exposes
+  http: 8080                    # the named ports that this service serves
 
 env:
-  # Inline env for THIS service (overrides workspace env.values).
-  # NOTE: a .envrc in the run dir is sourced automatically — no need to list it.
+  # Values for THIS service. They override the workspace env.values.
+  # NOTE: devstack reads a .envrc in the run directory itself. Do not list it here.
   values: {}
     # OTEL_SERVICE_NAME: %s
 
@@ -97,7 +114,7 @@ func scaffoldWorkspaceManifest(path, name string) (bool, error) {
 	if _, err := os.Stat(target); err == nil {
 		return false, nil // already exists — never clobber
 	}
-	content := fmt.Sprintf(workspaceManifestTemplate, name)
+	content := fmt.Sprintf(workspaceManifestTemplate, config.WorkspaceManifestVersion, name)
 	if err := os.WriteFile(target, []byte(content), 0644); err != nil {
 		return false, err
 	}
@@ -109,7 +126,7 @@ func scaffoldWorkspaceManifest(path, name string) (bool, error) {
 func scaffoldServiceManifest(dir, name string, force bool) (string, error) {
 	target := config.ServiceManifestPath(dir)
 	if _, err := os.Stat(target); err == nil && !force {
-		return "", fmt.Errorf("%s already exists (use --force to overwrite)", target)
+		return "", fmt.Errorf("%s exists already. To overwrite it, give --force", target)
 	}
 	content := fmt.Sprintf(serviceManifestTemplate, name, name, name)
 	if err := os.WriteFile(target, []byte(content), 0644); err != nil {

@@ -44,13 +44,13 @@ type Result struct {
 func (r Result) Describe(installPath string) string {
 	switch r.Status {
 	case StatusBehind:
-		return fmt.Sprintf("%s behind %s — update: go install %s@latest", plural(r.BehindBy, "commit"), branch, installPath)
+		return fmt.Sprintf("%s behind %s. To update, run: go install %s@latest", plural(r.BehindBy, "commit"), branch, installPath)
 	case StatusAhead:
-		return fmt.Sprintf("%s ahead of %s — this build is not published", plural(r.AheadBy, "commit"), branch)
+		return fmt.Sprintf("%s ahead of %s. This build is not published", plural(r.AheadBy, "commit"), branch)
 	case StatusDiverged:
 		return fmt.Sprintf("diverged from %s: %d ahead, %d behind", branch, r.AheadBy, r.BehindBy)
 	case StatusLocal:
-		return "local build — this commit is not on " + host
+		return "local build. This commit is not on " + host
 	default:
 		return ""
 	}

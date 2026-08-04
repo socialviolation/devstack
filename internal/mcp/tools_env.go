@@ -27,13 +27,17 @@ func registerEnvTools(mcpServer *server.MCPServer, ws *workspace.Workspace, work
 
 func registerEnvUseTool(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	tool := mcp.NewTool("env_use",
-		mcp.WithDescription("Point a scope at one of the config-patch environments defined in the BASE workspace manifest, so its services run with that environment's config vars. Mirrors 'devstack env use'. Environments are defined ONCE in the base workspace. A feature stack does NOT define its own — they inherit the base's environments, and 'stack' points a stack at one of them. Scope precedence is stack > service > workspace: with neither service nor stack devstack sets the workspace default. With 'service' it points the one service. With 'stack' it points that feature stack. The env name must be one defined in the base workspace manifest. Use env_which or status to see where each instance points."),
+		mcp.WithDescription("Point a scope at one of the config-patch environments that the BASE workspace manifest defines, so that its services run with that environment's config vars. This tool mirrors 'devstack env use'.\n"+
+			"devstack defines the environments ONCE, in the base workspace. A feature stack does NOT define its own. A stack inherits the base environments, and 'stack' points a stack at one of them.\n"+
+			"Scope precedence is stack first, then service, then workspace.\n"+
+			"This tool changes what services run with, so it names its scope explicitly: 'service' points one service, stack='<name>' points that feature stack, and stack='base' sets the workspace default. If you omit both, that is not the workspace default. devstack then reads the scope from the server's working directory, and the call fails where that directory is neither a stack nor base's replica.\n"+
+			"The env name must be one that the base workspace manifest defines. To see where each copy points, use env_which or status."),
 		mcp.WithString("name", mcp.Required(),
-			mcp.Description("Named environment to select (must be defined in the workspace manifest, for example 'staging').")),
+			mcp.Description("Named environment to select. The workspace manifest must define it, for example 'staging'.")),
 		mcp.WithString("service",
-			mcp.Description("Exact service name to point at the env (service scope). Cannot be combined with stack.")),
+			mcp.Description("Exact service name to point at the env. This selects the service scope. You can not combine it with stack.")),
 		mcp.WithString("stack",
-			mcp.Description(stackShortNameDesc+" Points that stack at the env (stack scope). Cannot be combined with service.")),
+			mcp.Description(mutatingStackParamDesc+" A stack name points that stack at the env, which is the stack scope. \"base\" sets the workspace default. You can not combine this with service. service selects the service scope, and it names no copy.")),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -42,7 +46,7 @@ func registerEnvUseTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if ws == nil {
-			return mcp.NewToolResultError("no workspace resolved"), nil
+			return mcp.NewToolResultError("devstack resolved no workspace"), nil
 		}
 		name := strings.TrimSpace(request.GetString("name", ""))
 		if name == "" {
@@ -53,13 +57,20 @@ func registerEnvUseTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 		if svcName != "" && stackName != "" {
 			return mcp.NewToolResultError("specify either service or stack, not both"), nil
 		}
+		if svcName == "" {
+			resolved, err := stack.ResolveTarget(ws, stackName)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			stackName = resolved
+		}
 
 		m, err := config.LoadWorkspaceManifest(ws.Path)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		if _, ok := m.Environments[name]; !ok {
-			return mcp.NewToolResultError(fmt.Sprintf("env %q is not defined in workspace %q; available: %s", name, ws.Name, envNames(m))), nil
+			return mcp.NewToolResultError(fmt.Sprintf("env %q is not defined in workspace %q. Available: %s", name, ws.Name, envNames(m))), nil
 		}
 
 		switch {
@@ -79,7 +90,7 @@ func registerEnvUseTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 			}
 			svc, ok := rw.Services[svcName]
 			if !ok {
-				return mcp.NewToolResultError(fmt.Sprintf("service %q not found in workspace %q; services: %s", svcName, ws.Name, strings.Join(sortedServiceNames(rw), ", "))), nil
+				return mcp.NewToolResultError(fmt.Sprintf("service %q is not in workspace %q. Services: %s", svcName, ws.Name, strings.Join(sortedServiceNames(rw), ", "))), nil
 			}
 			if err := config.SetServiceEnv(svc.RepoPath, name); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -96,11 +107,14 @@ func registerEnvUseTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 
 func registerEnvWhichTool(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	tool := mcp.NewTool("env_which",
-		mcp.WithDescription("Show which base-defined config-patch environment applies to a service at each scope (workspace/service/stack) and the merged effective config vars it runs with. Mirrors 'devstack env which'. Environments are defined once in the base workspace manifest and inherited by feature stacks; the stack scope reflects the base environment a stack was pointed at. Credentials are redacted in place: identifying parts of a value (server, database, account, endpoint, user) stay visible and only the credential is hidden; values with no structure to preserve are masked whole. If service is omitted it is resolved from the server's working directory."),
+		mcp.WithDescription("Show which base-defined config-patch environment applies to a service at each scope: workspace, service and stack. It also shows the merged config vars that the service runs with. This tool mirrors 'devstack env which'.\n"+
+			"devstack defines the environments once, in the base workspace manifest, and every feature stack inherits them. The stack scope shows the base environment that a stack was pointed at.\n"+
+			"devstack redacts credentials in place. The identifying parts of a value stay visible: server, database, account, endpoint and user. Only the credential is hidden. Where a value has no structure to keep, devstack masks the whole value.\n"+
+			"If you omit service, devstack resolves it from the server's working directory."),
 		mcp.WithString("service",
-			mcp.Description("Exact service name to resolve. If omitted, resolved from the current working directory.")),
+			mcp.Description("Exact service name to resolve. If you omit it, devstack resolves it from the current working directory.")),
 		mcp.WithString("stack",
-			mcp.Description(stackShortNameDesc+" Its stack-scope env is included in the merge.")),
+			mcp.Description(optionalStackNameDesc+" The merge includes that stack's stack-scope env.")),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -109,7 +123,7 @@ func registerEnvWhichTool(mcpServer *server.MCPServer, ws *workspace.Workspace, 
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if ws == nil {
-			return mcp.NewToolResultError("no workspace resolved"), nil
+			return mcp.NewToolResultError("devstack resolved no workspace"), nil
 		}
 		rw, err := config.ResolveWorkspace(ws.Path)
 		if err != nil {
@@ -124,16 +138,16 @@ func registerEnvWhichTool(mcpServer *server.MCPServer, ws *workspace.Workspace, 
 			}
 			identity, err := config.ResolveIdentity(cwd)
 			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("can not detect a service from the working directory; pass service: %v", err)), nil
+				return mcp.NewToolResultError(fmt.Sprintf("devstack can not detect a service from the working directory. Pass service: %v", err)), nil
 			}
 			svcName = identity.ServiceName
 		}
 		if svcName == "" {
-			return mcp.NewToolResultError("no service resolved; pass service"), nil
+			return mcp.NewToolResultError("devstack resolved no service. Pass service"), nil
 		}
 		svc, ok := rw.Services[svcName]
 		if !ok {
-			return mcp.NewToolResultError(fmt.Sprintf("service %q not found in workspace %q; services: %s", svcName, ws.Name, strings.Join(sortedServiceNames(rw), ", "))), nil
+			return mcp.NewToolResultError(fmt.Sprintf("service %q is not in workspace %q. Services: %s", svcName, ws.Name, strings.Join(sortedServiceNames(rw), ", "))), nil
 		}
 
 		stackEnv := ""
@@ -165,13 +179,18 @@ func registerEnvWhichTool(mcpServer *server.MCPServer, ws *workspace.Workspace, 
 
 func registerEnvSetTool(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	tool := mcp.NewTool("env_set",
-		mcp.WithDescription("Set a config-var (key=value) on one of the config-patch environments defined in the BASE workspace manifest. Mirrors 'devstack env set'. Environments are defined once in the base workspace and inherited by feature stacks. NEVER set a secret here: this writes devstack.workspace.yaml, which is committed to git, and the value applies to every service and stack pointed at that environment (it lands on the 'active env' rung, above a service's own env.values). For one service's value use service_env action=set — target=envrc for anything credential-bearing, target=manifest for plain config. WARNING: .envrc is the LOWEST rung of the ladder. Every other rung outranks it, the 'active env' rung this tool writes included. If the active environment already sets that key, the value you put in .envrc never reaches the service: the write succeeds, the service keeps the old value, and nothing about the write says so. service_env checks after every write and names the rung that wins — read that line before you report success, and use env_which to see the whole ladder. The confirmation output redacts credentials in place, keeping identifying parts of the value visible. Use env_use to point a scope at the environment."),
+		mcp.WithDescription("Set a config var (key and value) on one of the config-patch environments that the BASE workspace manifest defines. This tool mirrors 'devstack env set'. devstack defines the environments once, in the base workspace, and every feature stack inherits them.\n"+
+			"NEVER set a secret here. This tool writes devstack.workspace.yaml, which is committed to git. The value applies to every service and every stack pointed at that environment, because it lands on the 'active env' rung, above a service's own env.values.\n"+
+			"For one service's value, use service_env action=set. Use target=envrc for anything that carries a credential, and target=manifest for plain config.\n"+
+			"WARNING: .envrc is the LOWEST rung of the ladder. Every other rung outranks it, and that includes the 'active env' rung this tool writes. If the active environment already sets that key, the value you put in .envrc never reaches the service. The write succeeds, the service keeps the old value, and nothing about the write says so.\n"+
+			"service_env re-reads the ladder after every write and names the rung that wins. Read that line before you report success. To see the whole ladder, use env_which.\n"+
+			"The output that reports the write redacts credentials in place, and it keeps the identifying parts of the value visible. To point a scope at the environment, use env_use."),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description("Named environment to modify (for example 'staging').")),
 		mcp.WithString("key", mcp.Required(),
-			mcp.Description("Config-var key to set.")),
+			mcp.Description("The config var key to set.")),
 		mcp.WithString("value", mcp.Required(),
-			mcp.Description("Value to set. Not for secrets — it is written to a committed file.")),
+			mcp.Description("The value to set. Do not put a secret here. devstack writes it to a file that is committed to git.")),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -180,7 +199,7 @@ func registerEnvSetTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if ws == nil {
-			return mcp.NewToolResultError("no workspace resolved"), nil
+			return mcp.NewToolResultError("devstack resolved no workspace"), nil
 		}
 		name := strings.TrimSpace(request.GetString("name", ""))
 		key := strings.TrimSpace(request.GetString("key", ""))

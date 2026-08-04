@@ -16,18 +16,27 @@ import (
 
 var envCmd = &cobra.Command{
 	Use:   "env",
-	Short: "Manage devstack environments",
-	Long: `Named environments for your workspace, defined in the workspace manifest.
+	Short: "Manage the named environments of a workspace",
+	Long: `An environment is a named set of configuration values in the workspace manifest.
+The values can be database URLs, feature flags or endpoints. devstack defines
+every environment once, in the base workspace manifest.
 
-An environment is a named config-var patch (DB URLs, feature flags, endpoints).
-Define them with set (which creates the env on demand) and drop them with remove;
-apply them with use (at workspace, service, or stack scope, most-specific winning);
-inspect with show/which. status shows where each instance points.`,
+The set subcommand writes values, and it creates the environment when it does not
+exist yet. The remove subcommand deletes one. The use subcommand points a scope at
+one. The show and which subcommands read them. devstack status shows the
+environment that each copy points at.
+
+The use subcommand writes, so it must name its scope. There are three scopes, and
+the most specific one wins. A stack beats a service, and a service beats the
+workspace default. Pass --service <svc>, or --stack <name>, or --stack base for
+the workspace default. There is no default scope.
+
+The set, show, which and remove subcommands need no scope.`,
 }
 
 var envListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List environments for the current workspace",
+	Short: "List the environments of the current workspace",
 	RunE:  runEnvList,
 }
 
@@ -102,8 +111,8 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Printf("\nValues: devstack env show <name>\n")
-	fmt.Printf("To switch: devstack env use <name> [--service <svc>|--stack <name>]\n")
+	fmt.Printf("\nTo see the values, run: devstack env show <name>\n")
+	fmt.Printf("To point a scope at one, run: devstack env use <name> --stack base (or --stack <name>, or --service <svc>)\n")
 	return nil
 }
 
@@ -163,7 +172,7 @@ func runEnvRemove(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := config.RemoveEnvironment(ws.Path, envName); err != nil {
-		return fmt.Errorf("failed to remove environment: %w", err)
+		return fmt.Errorf("devstack can not remove environment %q: %w", envName, err)
 	}
 
 	fmt.Printf("Removed environment %q from workspace %q\n", envName, ws.Name)
@@ -176,13 +185,13 @@ func resolveEnvWorkspace(wsName string) (*workspace.Workspace, error) {
 	if wsName != "" {
 		ws, err := workspace.FindByName(wsName)
 		if err != nil {
-			return nil, fmt.Errorf("workspace %q not found: %w", wsName, err)
+			return nil, fmt.Errorf("devstack did not find workspace %q: %w", wsName, err)
 		}
 		return ws, nil
 	}
 	ws, err := resolveWorkspace("")
 	if err != nil {
-		return nil, fmt.Errorf("can not detect workspace from current directory. Use --workspace or DEVSTACK_WORKSPACE: %w", err)
+		return nil, fmt.Errorf("devstack can not detect the workspace from the current directory. Pass --workspace, or set DEVSTACK_WORKSPACE: %w", err)
 	}
 	return ws, nil
 }

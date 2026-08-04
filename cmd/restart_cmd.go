@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 )
 
@@ -17,7 +18,11 @@ func runRestart(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	stackName, _ := cmd.Flags().GetString("stack")
+	flagStack, _ := cmd.Flags().GetString("stack")
+	stackName, err := stack.ResolveTarget(ws, flagStack)
+	if err != nil {
+		return err
+	}
 	tiltPort, namespace, wsPath, label, err := resolveStackTarget(ws, stackName)
 	if err != nil {
 		return err
@@ -33,7 +38,7 @@ func runRestart(cmd *cobra.Command, args []string) error {
 		targetName = args[0]
 	}
 
-	services, err := resolveTargetKind(wsPath, targetName, cfg, targetKindOf(cmd))
+	services, err := resolveInstanceTarget(cmd, ws, wsPath, targetName, cfg, stackName)
 	if err != nil {
 		return err
 	}
@@ -49,7 +54,7 @@ func runRestart(cmd *cobra.Command, args []string) error {
 
 	view, err := tiltClient.GetView()
 	if err != nil {
-		return fmt.Errorf("dev daemon is not running — start it first with: devstack workspace up\n(%w)", err)
+		return fmt.Errorf("the dev daemon is not running. Start it first with: devstack workspace up\n(%w)", err)
 	}
 
 	disabled := map[string]bool{}
@@ -68,11 +73,11 @@ func runRestart(cmd *cobra.Command, args []string) error {
 		// Re-enable a disabled service before triggering it.
 		if disabled[resolved] {
 			if out, err := tiltClient.RunCLI("enable", resolved); err != nil {
-				return fmt.Errorf("enable %s failed: %v\n%s", resolved, err, out)
+				return fmt.Errorf("can not enable %s: %v\n%s", resolved, err, out)
 			}
 		}
 		if out, err := tiltClient.RunCLI("trigger", resolved); err != nil {
-			return fmt.Errorf("failed to restart %q: %v\n%s", resolved, err, out)
+			return fmt.Errorf("can not restart %q: %v\n%s", resolved, err, out)
 		}
 		restarted = append(restarted, resolved)
 	}

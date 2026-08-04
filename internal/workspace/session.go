@@ -86,11 +86,11 @@ func CloseSession(name string, residue []string) error {
 func DetectResidue(pid int, ports []int) []string {
 	var residue []string
 	if pid > 0 && processAlive(pid) {
-		residue = append(residue, fmt.Sprintf("process %d still running", pid))
+		residue = append(residue, fmt.Sprintf("process %d still runs", pid))
 	}
 	for _, port := range ports {
 		if portListening(port) {
-			residue = append(residue, fmt.Sprintf("port %d still listening", port))
+			residue = append(residue, fmt.Sprintf("port %d still listens", port))
 		}
 	}
 	return residue

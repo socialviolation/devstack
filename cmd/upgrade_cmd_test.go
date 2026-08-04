@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/socialviolation/devstack/internal/migrate"
+	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/selfcheck"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -23,19 +25,16 @@ func stubDevstack(t *testing.T, log string, exitCode int) string {
 	return path
 }
 
-// Migration must run the newly installed binary, in each workspace's directory.
-// Running this process instead would regenerate the files with the very content
-// the upgrade was meant to replace.
-func TestMigrationRunsTheInstalledBinaryInEachWorkspace(t *testing.T) {
+// The migration must run the newly installed binary. Running this process
+// instead would leave behind exactly what the new one removes. One command
+// sweeps the whole machine, so one call is right and a call per workspace is
+// not.
+func TestMigrationRunsTheInstalledBinaryOnce(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "calls")
 	bin := stubDevstack(t, log, 0)
 
-	err := migrateWorkspaces(bin, []workspace.Workspace{
-		{Name: "alpha", Path: t.TempDir()},
-		{Name: "beta", Path: t.TempDir()},
-	})
-	if err != nil {
-		t.Fatalf("migrateWorkspaces() = %v", err)
+	if err := runMigration(bin); err != nil {
+		t.Fatalf("runMigration() = %v", err)
 	}
 
 	data, err := os.ReadFile(log)
@@ -43,13 +42,11 @@ func TestMigrationRunsTheInstalledBinaryInEachWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("want one invocation per workspace, got %d: %q", len(lines), lines)
+	if len(lines) != 1 {
+		t.Fatalf("want one invocation for the machine, got %d: %q", len(lines), lines)
 	}
-	for _, l := range lines {
-		if !strings.HasSuffix(l, "init --all --claude-hook") {
-			t.Errorf("migration must run the full refresh, got %q", l)
-		}
+	if !strings.HasSuffix(lines[0], "migrate") {
+		t.Errorf("the upgrade must run `devstack migrate`, got %q", lines[0])
 	}
 }
 
@@ -57,40 +54,33 @@ func TestMigrationRunsTheInstalledBinaryInEachWorkspace(t *testing.T) {
 // place it is asked for — `init` alone leaves it opt-in, because
 // .claude/settings.json is committed and adding one unasked is not a side
 // effect a refresh should have.
-func TestMigrationSetsUpTheSessionHook(t *testing.T) {
-	var joined string
-	for _, a := range migrateArgs {
-		joined += a + " "
+func TestMigrationWiresTheSessionHookWithEveryMatcher(t *testing.T) {
+	dir := t.TempDir()
+	lines, res := migrateOne(migrateTarget{Label: "api", Dir: dir, Service: "api"})
+
+	if res.Hooks != 1 {
+		t.Fatalf("migrateOne() wired %d hooks, want 1: %q", res.Hooks, lines)
 	}
-	if !strings.Contains(joined, "--claude-hook") {
-		t.Errorf("migrateArgs = %v, want the session hook wired up", migrateArgs)
+	got := primeMatchers(t, readSettings(t, filepath.Join(dir, claudeSettingsRel)))
+	if strings.Join(got, ",") != strings.Join(primeHookMatchers, ",") {
+		t.Fatalf("briefed matchers = %v, want %v", got, primeHookMatchers)
 	}
-	if !strings.Contains(joined, "--all") {
-		t.Errorf("migrateArgs = %v, want every service refreshed", migrateArgs)
+	if res.MCP != 1 {
+		t.Errorf("migrateOne() wrote no .mcp.json: %q", lines)
 	}
 }
 
-// One workspace failing must not strand the others, and the failure must be
-// reported rather than swallowed.
-func TestMigrationReportsFailureAndStillAttemptsEveryWorkspace(t *testing.T) {
+// A failed migration must be reported, and not swallowed.
+func TestMigrationReportsItsFailure(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "calls")
 	bin := stubDevstack(t, log, 1)
 
-	err := migrateWorkspaces(bin, []workspace.Workspace{
-		{Name: "alpha", Path: t.TempDir()},
-		{Name: "beta", Path: t.TempDir()},
-	})
+	err := runMigration(bin)
 	if err == nil {
 		t.Fatal("a failed migration must be reported")
 	}
-	for _, name := range []string{"alpha", "beta"} {
-		if !strings.Contains(err.Error(), name) {
-			t.Errorf("error names no failure for %s: %v", name, err)
-		}
-	}
-	data, _ := os.ReadFile(log)
-	if n := len(strings.Split(strings.TrimSpace(string(data)), "\n")); n != 2 {
-		t.Errorf("every workspace must still be attempted, got %d", n)
+	if !strings.Contains(err.Error(), "devstack migrate") {
+		t.Errorf("the error does not name the command to run: %v", err)
 	}
 }
 
@@ -98,20 +88,54 @@ func TestMigrationReportsFailureAndStillAttemptsEveryWorkspace(t *testing.T) {
 // itself, and it is newer than anything published. Installing @latest there
 // replaces that work with the branch, from a command whose name promises the
 // opposite — so it must refuse without --force.
-func TestUpgradeRefusesToMoveALocalBuildBackwards(t *testing.T) {
-	for _, status := range []selfcheck.Status{selfcheck.StatusLocal, selfcheck.StatusAhead} {
-		if err := checkUpgradeWorthDoing(selfcheck.Result{Status: status, AheadBy: 2}, false); err == nil {
-			t.Errorf("%s: upgrade must refuse rather than install an older published commit", status)
-		}
-		if err := checkUpgradeWorthDoing(selfcheck.Result{Status: status, AheadBy: 2}, true); err != nil {
-			t.Errorf("%s with --force = %v, want it to proceed", status, err)
-		}
-	}
-}
-
-func TestUpgradeProceedsWhenBehind(t *testing.T) {
-	if err := checkUpgradeWorthDoing(selfcheck.Result{Status: selfcheck.StatusBehind, BehindBy: 3}, false); err != nil {
-		t.Errorf("a build that is behind is the case upgrade exists for: %v", err)
+//
+// A binary made with `go build` outside a git checkout carries no commit, and
+// calls itself "dev". The check then has nothing to compare and answers
+// "unknown", which used to install: the guard read the status and never the
+// identity, so the one build most likely to hold unpushed work was the one build
+// it did not protect.
+//
+// A binary from `go install ...@latest` carries no commit either, and it is the
+// case upgrade exists for. Its version tag is what tells the two apart.
+func TestUpgradeRefusesEveryInstallThatCanMoveTheBuildBackwards(t *testing.T) {
+	const rev = "a615867a615867a615867a615867a615867a6158"
+	for _, tc := range []struct {
+		name       string
+		res        selfcheck.Result
+		version    string
+		wantRefuse bool
+		wantIn     string
+	}{
+		{"built from source, no commit and no answer", selfcheck.Result{Status: selfcheck.StatusUnknown}, "dev", true, "carries no commit to compare"},
+		{"built from source, no answer from the branch", selfcheck.Result{Status: selfcheck.StatusUnknown, Revision: rev}, "dev", true, "can not read what the published branch holds"},
+		{"built from source, commit not published", selfcheck.Result{Status: selfcheck.StatusLocal, Revision: rev}, "dev", true, "local build"},
+		{"built from source, ahead of the branch", selfcheck.Result{Status: selfcheck.StatusAhead, AheadBy: 2, Revision: rev}, "dev", true, "ahead"},
+		{"built from source, behind the branch", selfcheck.Result{Status: selfcheck.StatusBehind, BehindBy: 3, Revision: rev}, "dev", false, ""},
+		{"released build, no commit and no answer", selfcheck.Result{Status: selfcheck.StatusUnknown}, "v0.1.2", false, ""},
+		{"released build, behind the branch", selfcheck.Result{Status: selfcheck.StatusBehind, BehindBy: 3, Revision: rev}, "v0.1.2", false, ""},
+		{"released build, ahead of the branch", selfcheck.Result{Status: selfcheck.StatusAhead, AheadBy: 2, Revision: rev}, "v0.1.2", true, "ahead"},
+		{"already current", selfcheck.Result{Status: selfcheck.StatusCurrent, Revision: rev}, "v0.1.2", false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkUpgradeWorthDoing(tc.res, tc.version, false)
+			switch {
+			case tc.wantRefuse && err == nil:
+				t.Fatal("upgrade installed rather than refused: it can not tell that the published branch is newer")
+			case !tc.wantRefuse && err != nil:
+				t.Fatalf("checkUpgradeWorthDoing() = %v, want it to proceed", err)
+			}
+			if err != nil {
+				if !strings.Contains(err.Error(), tc.wantIn) {
+					t.Errorf("the refusal never states the reason %q: %v", tc.wantIn, err)
+				}
+				if !strings.Contains(err.Error(), "--force") {
+					t.Errorf("the refusal never names the flag that overrides it: %v", err)
+				}
+			}
+			if err := checkUpgradeWorthDoing(tc.res, tc.version, true); err != nil {
+				t.Errorf("--force = %v, want it to proceed", err)
+			}
+		})
 	}
 }
 
@@ -134,8 +158,8 @@ func TestVersionOutputParsesBackToTheWholeStamp(t *testing.T) {
 	}
 }
 
-// The round trip is the actual contract: what --version prints must come back
-// as exactly what is stamped into generated files, or the two disagree forever.
+// The round trip is the contract with `upgrade`: what --version prints must come
+// back as exactly what the binary stamps itself with.
 func TestStampSurvivesItsOwnVersionOutput(t *testing.T) {
 	if got := parseVersionOutput("devstack " + buildStamp() + "\n"); got != buildStamp() {
 		t.Errorf("stamp did not survive the round trip: printed %q, read back %q", buildStamp(), got)
@@ -143,17 +167,64 @@ func TestStampSurvivesItsOwnVersionOutput(t *testing.T) {
 }
 
 // upgrade and workspace doctor answer the same question and must answer it the
-// same way. They compared different values, so one called a file stale while the
-// other called it current — with no way to tell which was lying.
-func TestUpgradeAndDoctorCompareTheSameValue(t *testing.T) {
-	files := []generatedFile{{Service: "api", Exists: true, Version: buildStamp()}}
+// same way. They read different values once, so one called a file stale while
+// the other called it current, with no way to tell which was lying. Both now
+// count the same scan.
+func TestUpgradeAndDoctorCountTheSameFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, agentsFileName),
+		"# api\n\nMine.\n\n"+agentsSentinelBegin+"\ngenerated\n"+agentsSentinelEnd+"\n")
 
-	if got := staleGenerated(files, buildStamp()); len(got) != 0 {
-		t.Errorf("doctor calls a file written by this build stale: %+v", got)
+	found := scanResidue(dir)
+	if len(found) != 1 {
+		t.Fatalf("scanResidue() = %+v, want the one file that holds a devstack block", found)
 	}
-	// What upgrade passes when the install produced this same binary.
-	upgradeTarget := parseVersionOutput("devstack " + buildStamp() + "\n")
-	if got := staleGenerated(files, upgradeTarget); len(got) != 0 {
-		t.Errorf("upgrade calls a file written by this build stale: %+v", got)
+	if n := len(stripDir(dir)); n != len(found) {
+		t.Errorf("the report counts %d files and the migration changes %d", len(found), n)
+	}
+}
+
+// The report is a report. Reading it must change no file, or a user who ran
+// `upgrade` to see the damage has already taken it. It names each pending patch,
+// and the command that runs them.
+func TestThePendingReportChangesNothing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	root := filepath.Join(home, "dev", "shop")
+	gitRepoWith(t, filepath.Join(root, "api"), map[string]string{".": "api"})
+	ws := workspaceAt(t, root, "shop", "api")
+
+	seed := "# api\n\nMine.\n\n" + agentsSentinelBegin + "\ngenerated\n" + agentsSentinelEnd + "\n"
+	writeFile(t, filepath.Join(root, "api", agentsFileName), seed)
+
+	var b strings.Builder
+	writePendingReport(&b, migrate.List(patches(), []workspace.Workspace{*ws}), false)
+	got := b.String()
+
+	if readString(t, filepath.Join(root, "api", agentsFileName)) != seed {
+		t.Fatal("the report changed the file it reported on")
+	}
+	if _, err := os.Stat(replica.Root(ws)); !os.IsNotExist(err) {
+		t.Fatalf("the report built a replica at %s", replica.Root(ws))
+	}
+	for _, want := range []string{"version 1 to 2", "shop", "this workspace is at version 1", "devstack migrate"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the report never states %q:\n%s", want, got)
+		}
+	}
+}
+
+// A machine with nothing to do must say so, and must not ask for a migration.
+func TestThePendingReportIsSilentWhenEveryPatchIsApplied(t *testing.T) {
+	var b strings.Builder
+	writePendingReport(&b, []migrate.Status{{From: 1, To: 2, Title: "t"}}, false)
+	got := b.String()
+
+	if !strings.Contains(got, "Every migration is applied") {
+		t.Errorf("the report never says the machine is up to date:\n%s", got)
+	}
+	if strings.Contains(got, "devstack migrate") {
+		t.Errorf("nothing is pending, so the report must not ask for a migration:\n%s", got)
 	}
 }

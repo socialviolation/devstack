@@ -98,13 +98,13 @@ func (p *Plugin) StartCompanion(ws *workspace.Workspace) error {
 	}
 
 	if stale {
-		fmt.Fprintf(os.Stderr, "Upgrading OpenObserve from %s to %s (data is kept)...\n", containerImage(), image)
+		fmt.Fprintf(os.Stderr, "devstack upgrades OpenObserve from %s to %s. The data is kept.\n", containerImage(), image)
 		if out, err := exec.Command("docker", "rm", "-f", ContainerName).CombinedOutput(); err != nil {
-			return fmt.Errorf("failed to replace %s: %s", ContainerName, strings.TrimSpace(string(out)))
+			return fmt.Errorf("can not replace %s: %s", ContainerName, strings.TrimSpace(string(out)))
 		}
 	} else if containerExists() {
 		if out, err := exec.Command("docker", "start", ContainerName).CombinedOutput(); err != nil {
-			return fmt.Errorf("failed to start %s: %s", ContainerName, strings.TrimSpace(string(out)))
+			return fmt.Errorf("can not start %s: %s", ContainerName, strings.TrimSpace(string(out)))
 		}
 		return awaitReady()
 	}
@@ -123,7 +123,7 @@ func (p *Plugin) StartCompanion(ws *workspace.Workspace) error {
 		image,
 	}
 	if out, err := exec.Command("docker", args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to start OpenObserve: %s", strings.TrimSpace(string(out)))
+		return fmt.Errorf("can not start OpenObserve: %s", strings.TrimSpace(string(out)))
 	}
 	return awaitReady()
 }
@@ -134,7 +134,7 @@ func (p *Plugin) StopCompanion(ws *workspace.Workspace) error {
 		return nil
 	}
 	if out, err := exec.Command("docker", "stop", ContainerName).CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to stop OpenObserve: %s", strings.TrimSpace(string(out)))
+		return fmt.Errorf("can not stop OpenObserve: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -169,7 +169,7 @@ func (p *Plugin) Backend(ws *workspace.Workspace) (observability.Backend, error)
 
 func (p *Plugin) Validate(ws *workspace.Workspace) error {
 	if _, err := exec.LookPath("docker"); err != nil {
-		return fmt.Errorf("docker not found on PATH — required for the openobserve plugin")
+		return fmt.Errorf("devstack can not find docker on PATH. The openobserve plugin needs docker")
 	}
 	return nil
 }
@@ -193,7 +193,7 @@ func (c Creds) Token() string {
 func credentialsPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("could not determine home directory: %w", err)
+		return "", fmt.Errorf("devstack can not determine the home directory: %w", err)
 	}
 	return filepath.Join(home, ".config", "devstack", "openobserve", "credentials.json"), nil
 }
@@ -224,10 +224,10 @@ func Credentials() (Creds, error) {
 		return Creds{}, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return Creds{}, fmt.Errorf("failed to create credentials dir: %w", err)
+		return Creds{}, fmt.Errorf("can not create the credentials directory: %w", err)
 	}
 	if err := os.WriteFile(path, data, 0600); err != nil {
-		return Creds{}, fmt.Errorf("failed to write credentials: %w", err)
+		return Creds{}, fmt.Errorf("can not write the credentials: %w", err)
 	}
 	return c, nil
 }
@@ -263,7 +263,7 @@ func generatePassword() (string, error) {
 func randomByte(set string) (byte, error) {
 	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(set))))
 	if err != nil {
-		return 0, fmt.Errorf("failed to generate credentials: %w", err)
+		return 0, fmt.Errorf("can not generate the credentials: %w", err)
 	}
 	return set[n.Int64()], nil
 }
@@ -272,7 +272,7 @@ func shuffle(b []byte) (string, error) {
 	for i := len(b) - 1; i > 0; i-- {
 		n, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
 		if err != nil {
-			return "", fmt.Errorf("failed to generate credentials: %w", err)
+			return "", fmt.Errorf("can not generate the credentials: %w", err)
 		}
 		j := n.Int64()
 		b[i], b[j] = b[j], b[i]
@@ -297,7 +297,7 @@ func awaitReady() error {
 		}
 		time.Sleep(time.Second)
 	}
-	return fmt.Errorf("OpenObserve did not become ready on :%d — %w (check: docker logs %s)", UIPort, lastErr, ContainerName)
+	return fmt.Errorf("OpenObserve is not ready on :%d: %w. To see why, run: docker logs %s", UIPort, lastErr, ContainerName)
 }
 
 func containerExists() bool {

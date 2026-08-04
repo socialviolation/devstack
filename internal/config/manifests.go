@@ -18,6 +18,12 @@ const (
 	ServiceManifestFileName   = "devstack.service.yaml"
 )
 
+// WorkspaceManifestVersion is the version of the workspace manifest that this
+// devstack needs. The version lives in the manifest, which is committed, so a
+// clone of a repository carries the answer with it. 'devstack migrate' moves an
+// older manifest to this version.
+const WorkspaceManifestVersion = 2
+
 type RepoDiscoveryMode string
 
 const (
@@ -281,7 +287,7 @@ func (f FreePortsSpec) Resolve(service string, instancePorts map[string]int) ([]
 	for _, k := range keys {
 		port, ok := instancePorts[k]
 		if !ok {
-			return nil, fmt.Errorf("service %q: runtime.prep.freePorts names port key %q, which it has no port for", service, k)
+			return nil, fmt.Errorf("service %q: runtime.prep.freePorts names the port key %q, and the service has no port for that key", service, k)
 		}
 		out = append(out, port)
 	}
@@ -391,25 +397,28 @@ func LoadWorkspaceManifest(workspacePath string) (*WorkspaceManifest, error) {
 	path := WorkspaceManifestPath(workspacePath)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read workspace manifest %s: %w", path, err)
+		return nil, fmt.Errorf("can not read the workspace manifest %s: %w", path, err)
 	}
 
 	var manifest WorkspaceManifest
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		return nil, fmt.Errorf("failed to parse workspace manifest %s: %w", path, err)
+		return nil, fmt.Errorf("can not parse the workspace manifest %s: %w", path, err)
 	}
 	if err := manifest.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid workspace manifest %s: %w", path, err)
+		return nil, fmt.Errorf("the workspace manifest %s is not valid: %w", path, err)
 	}
 	return &manifest, nil
 }
 
 func (m *WorkspaceManifest) Validate() error {
 	if m == nil {
-		return errors.New("workspace manifest is nil")
+		return errors.New("the workspace manifest is nil")
 	}
-	if m.Version != 1 {
-		return fmt.Errorf("unsupported workspace manifest version %d", m.Version)
+	if m.Version > WorkspaceManifestVersion {
+		return fmt.Errorf("this workspace is at version %d, and this devstack knows version %d. A newer devstack wrote this manifest. To read it, install the current devstack: devstack upgrade", m.Version, WorkspaceManifestVersion)
+	}
+	if m.Version < 1 {
+		return fmt.Errorf("devstack does not support version %d of the workspace manifest", m.Version)
 	}
 	if strings.TrimSpace(m.Workspace.Name) == "" {
 		return errors.New("workspace.name is required")
@@ -434,25 +443,25 @@ func LoadServiceManifest(repoPath string) (*ServiceManifest, error) {
 	path := ServiceManifestPath(repoPath)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read service manifest %s: %w", path, err)
+		return nil, fmt.Errorf("can not read the service manifest %s: %w", path, err)
 	}
 
 	var manifest ServiceManifest
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		return nil, fmt.Errorf("failed to parse service manifest %s: %w", path, err)
+		return nil, fmt.Errorf("can not parse the service manifest %s: %w", path, err)
 	}
 	if err := manifest.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid service manifest %s: %w", path, err)
+		return nil, fmt.Errorf("the service manifest %s is not valid: %w", path, err)
 	}
 	return &manifest, nil
 }
 
 func (m *ServiceManifest) Validate() error {
 	if m == nil {
-		return errors.New("service manifest is nil")
+		return errors.New("the service manifest is nil")
 	}
 	if m.Version != 1 {
-		return fmt.Errorf("unsupported service manifest version %d", m.Version)
+		return fmt.Errorf("devstack does not support version %d of the service manifest", m.Version)
 	}
 	if strings.TrimSpace(m.Service.Name) == "" {
 		return errors.New("service.name is required")
@@ -521,7 +530,7 @@ func resolveManifestServices(workspacePath string, manifest *WorkspaceManifest) 
 		}
 		name := serviceManifest.Service.Name
 		if existing, ok := services[name]; ok {
-			return fmt.Errorf("duplicate service name %q in %s and %s", name, existing.RepoPath, repoPath)
+			return fmt.Errorf("the service name %q is in %s and in %s. A service name must be unique", name, existing.RepoPath, repoPath)
 		}
 		services[name] = ResolvedService{
 			Name:     name,
@@ -593,7 +602,7 @@ func (rw *ResolvedWorkspace) ToLegacyConfig() *WorkspaceConfig {
 func LegacyWorkspaceManifest(workspacePath string, cfg *WorkspaceConfig) (*WorkspaceManifest, error) {
 	workspacePath = filepath.Clean(workspacePath)
 	manifest := &WorkspaceManifest{
-		Version: 1,
+		Version: WorkspaceManifestVersion,
 		Workspace: WorkspaceManifestWorkspace{
 			Name: filepath.Base(workspacePath),
 			RepoDiscovery: WorkspaceManifestRepoDiscovery{
@@ -608,7 +617,7 @@ func LegacyWorkspaceManifest(workspacePath string, cfg *WorkspaceConfig) (*Works
 	for _, servicePath := range cfg.ServicePaths {
 		rel, err := filepath.Rel(workspacePath, servicePath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to relativize service path %s: %w", servicePath, err)
+			return nil, fmt.Errorf("can not make the service path %s relative: %w", servicePath, err)
 		}
 		paths = append(paths, rel)
 	}
@@ -629,7 +638,7 @@ func ResolveIdentity(path string) (*ResolvedIdentity, error) {
 
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve path %s: %w", path, err)
+		return nil, fmt.Errorf("can not resolve the path %s: %w", path, err)
 	}
 	absPath = filepath.Clean(absPath)
 
@@ -650,7 +659,7 @@ func ResolveIdentity(path string) (*ResolvedIdentity, error) {
 func FindWorkspaceRoot(path string) (string, string, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to resolve path %s: %w", path, err)
+		return "", "", fmt.Errorf("can not resolve the path %s: %w", path, err)
 	}
 
 	info, err := os.Stat(absPath)
@@ -673,7 +682,7 @@ func FindWorkspaceRoot(path string) (string, string, error) {
 			break
 		}
 	}
-	return "", "", fmt.Errorf("no workspace manifest or %s found above %s", configFileName, path)
+	return "", "", fmt.Errorf("devstack can not find a workspace manifest or a %s above %s", configFileName, path)
 }
 
 func loadLegacyConfig(workspacePath string) (*WorkspaceConfig, error) {
@@ -687,12 +696,12 @@ func loadLegacyConfig(workspacePath string) (*WorkspaceConfig, error) {
 				ServicePaths: map[string]string{},
 			}, nil
 		}
-		return nil, fmt.Errorf("failed to read devstack config: %w", err)
+		return nil, fmt.Errorf("can not read the devstack config: %w", err)
 	}
 
 	var cfg WorkspaceConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse devstack config: %w", err)
+		return nil, fmt.Errorf("can not parse the devstack config: %w", err)
 	}
 	if cfg.Deps == nil {
 		cfg.Deps = map[string][]string{}

@@ -36,21 +36,21 @@ func NewClient(baseURL, apiKey string) *Client {
 func (c *Client) get(url string, dest interface{}) error {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return fmt.Errorf("failed to build request: %w", err)
+		return fmt.Errorf("can not build the request: %w", err)
 	}
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("observability backend is not reachable at %s", c.baseURL)
+		return fmt.Errorf("devstack can not reach the observability backend at %s", c.baseURL)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("observability backend returned HTTP %d from %s", resp.StatusCode, url)
+		return fmt.Errorf("the observability backend returned HTTP %d from %s", resp.StatusCode, url)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
-		return fmt.Errorf("failed to decode observability response: %w", err)
+		return fmt.Errorf("can not decode the observability response: %w", err)
 	}
 	return nil
 }
@@ -58,11 +58,11 @@ func (c *Client) get(url string, dest interface{}) error {
 func (c *Client) post(url string, body interface{}, dest interface{}) error {
 	data, err := json.Marshal(body)
 	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
+		return fmt.Errorf("can not encode the request: %w", err)
 	}
 	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("failed to build request: %w", err)
+		return fmt.Errorf("can not build the request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.apiKey != "" {
@@ -70,14 +70,14 @@ func (c *Client) post(url string, body interface{}, dest interface{}) error {
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("observability backend is not reachable at %s", c.baseURL)
+		return fmt.Errorf("devstack can not reach the observability backend at %s", c.baseURL)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("observability backend returned HTTP %d from %s", resp.StatusCode, url)
+		return fmt.Errorf("the observability backend returned HTTP %d from %s", resp.StatusCode, url)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
-		return fmt.Errorf("failed to decode observability response: %w", err)
+		return fmt.Errorf("can not decode the observability response: %w", err)
 	}
 	return nil
 }

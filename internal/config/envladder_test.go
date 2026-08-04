@@ -153,17 +153,17 @@ func TestResolveEnvPatch(t *testing.T) {
 		{
 			name:    "unknown workspace env errors",
 			wsEnv:   "nope",
-			wantErr: `env "nope" applied at workspace scope is not defined in workspace environments`,
+			wantErr: `the workspace scope applies environment "nope", and the workspace manifest does not define it`,
 		},
 		{
 			name:    "unknown service env errors",
 			svcEnv:  "nope",
-			wantErr: `env "nope" applied at service scope is not defined in workspace environments`,
+			wantErr: `the service scope applies environment "nope", and the workspace manifest does not define it`,
 		},
 		{
 			name:     "unknown stack env errors",
 			stackEnv: "nope",
-			wantErr:  `env "nope" applied at stack scope is not defined in workspace environments`,
+			wantErr:  `the stack scope applies environment "nope", and the workspace manifest does not define it`,
 		},
 	}
 

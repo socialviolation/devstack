@@ -61,7 +61,7 @@ func Run(ev Event, src Source, w io.Writer) ([]Result, error) {
 			break
 		}
 		if err != nil {
-			fmt.Fprintf(w, "warning: hook %q (%s) failed on %s, continuing: %v\n", inv.Label(), inv.Origin, ev.Name, err)
+			fmt.Fprintf(w, "warning: hook %q (%s) failed on %s. devstack continues: %v\n", inv.Label(), inv.Origin, ev.Name, err)
 			writeUnwindHint(w, ev, inv)
 		}
 		results = append(results, res)
@@ -78,14 +78,14 @@ func writeUnwindHint(w io.Writer, ev Event, inv Invocation) {
 	if !config.IsTeardownEvent(ev.Name) {
 		return
 	}
-	fmt.Fprintf(w, "  whatever %q was cleaning up outside this machine is probably still there.\n", inv.Label())
+	fmt.Fprintf(w, "  %q cleans up state outside this machine. That state is probably still there.\n", inv.Label())
 
 	if ev.Name != config.EventStackDestroy {
-		fmt.Fprintf(w, "  retry it once fixed: devstack hooks run %s%s\n", ev.Name, stackFlag(ev))
+		fmt.Fprintf(w, "  when the hook is fixed, retry it: devstack hooks run %s%s\n", ev.Name, stackFlag(ev))
 		return
 	}
-	fmt.Fprintf(w, "  this CANNOT be retried: removing the stack deletes the record that ${self...} resolves against.\n")
-	fmt.Fprintf(w, "  clean it up by hand. Stack %q was serving:\n", ev.StackLabel())
+	fmt.Fprintf(w, "  devstack can NOT retry this hook. When devstack removes the stack, it deletes the record that ${self...} resolves against.\n")
+	fmt.Fprintf(w, "  remove the state by hand. Stack %q served:\n", ev.StackLabel())
 	for _, name := range sortedCopy(ev.Services) {
 		if port, ok := ev.Book[name]["http"]; ok {
 			fmt.Fprintf(w, "    %-24s http://%s:%d\n", name, ev.Book.Host(name), port)
@@ -229,7 +229,7 @@ func (inv Invocation) payload(ev Event, src Source) ([]byte, error) {
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
-		return nil, fmt.Errorf("failed to encode hook payload: %w", err)
+		return nil, fmt.Errorf("can not encode the hook payload: %w", err)
 	}
 	return append(data, '\n'), nil
 }

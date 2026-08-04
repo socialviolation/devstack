@@ -20,13 +20,14 @@ import (
 var downCmd = &cobra.Command{
 	Use:   "down",
 	Short: "Stop this workspace's services, and the daemon if nothing else needs it",
-	Long: `Bring down this workspace's active stacks and remove it from the dev daemon.
+	Long: `Stop this workspace's active stacks, and remove the workspace from the dev
+daemon.
 
-The daemon serves the whole machine, so it is left running while another
-workspace is still active and stopped only once none is. The shared observability
-stack is dropped the same way.
+The daemon serves the whole machine. If another workspace is still active,
+devstack leaves the daemon running. devstack stops the daemon only when no
+workspace is active. devstack treats the shared collector the same way.
 
-Run 'devstack workspace up' to start again.`,
+To start again, run 'devstack workspace up'.`,
 	RunE: runDown,
 }
 
@@ -51,17 +52,17 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 	deactivated, err := stack.DeactivateAll(ws.Name)
 	if err != nil {
-		return fmt.Errorf("failed to deactivate stacks for %s: %w", ws.Name, err)
+		return fmt.Errorf("can not deactivate the stacks of %s: %w", ws.Name, err)
 	}
 	if len(deactivated) > 0 {
-		fmt.Printf("Brought down %d active stack(s) of '%s': %s\n", len(deactivated), ws.Name, strings.Join(deactivated, ", "))
+		fmt.Printf("Stopped %d active stack(s) of '%s': %s\n", len(deactivated), ws.Name, strings.Join(deactivated, ", "))
 	}
 
 	if err := workspace.SetWorkspaceActive(ws.Name, false); err != nil {
-		return fmt.Errorf("failed to mark workspace inactive: %w", err)
+		return fmt.Errorf("can not mark the workspace inactive: %w", err)
 	}
 	if _, err := regenerateHostTiltfile(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to regenerate host Tiltfile: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: devstack can not generate the host Tiltfile again: %v\n", err)
 	}
 
 	anyActive, err := workspace.AnyWorkspaceActive()
@@ -71,26 +72,26 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 	var hostErr error
 	if anyActive {
-		fmt.Printf("Removed '%s' from the host daemon — other workspaces still active, leaving it running.\n", ws.Name)
+		fmt.Printf("Removed '%s' from the host daemon. Other workspaces are still active, so the daemon keeps running.\n", ws.Name)
+		fmt.Printf("  The collector serves every workspace, so it keeps running too.\n")
 	} else {
-		fmt.Printf("No workspaces active — stopping host daemon.\n")
+		fmt.Printf("No workspace is active, so devstack stops the host daemon.\n")
 		hostErr = stopHostDaemon()
-	}
 
-	// Stop observability stack
-	if isOtelRunning(ws) {
-		plugin := activePlugin(ws)
-		if err := stopOtelStack(ws, plugin); err != nil {
-			fmt.Fprintf(os.Stderr, "  warning: OTEL stop failed: %v\n", err)
+		if isOtelRunning(ws) {
+			plugin := activePlugin(ws)
+			if err := stopOtelStack(ws, plugin); err != nil {
+				fmt.Fprintf(os.Stderr, "  warning: OTEL stop failed: %v\n", err)
+			} else {
+				fmt.Printf("  ✓ OTEL stopped\n")
+			}
 		} else {
-			fmt.Printf("  ✓ OTEL stopped\n")
+			fmt.Printf("  OTEL not running\n")
 		}
-	} else {
-		fmt.Printf("  OTEL not running\n")
 	}
 
 	if composeSpec, err := infra.ResolveComposeSpec(ws.Path); err != nil {
-		fmt.Fprintf(os.Stderr, "  warning: compose infra config error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "  warning: compose infra configuration error: %v\n", err)
 	} else if composeSpec != nil {
 		if err := infra.Down(composeSpec); err != nil {
 			fmt.Fprintf(os.Stderr, "  warning: compose infra stop failed: %v\n", err)
@@ -114,13 +115,13 @@ func stopHostDaemon() error {
 			fmt.Printf("  Host daemon is not running\n")
 			return nil
 		}
-		fmt.Fprintf(os.Stderr, "Warning: no host PID file but daemon is reachable — it may have been started outside devstack\n")
+		fmt.Fprintf(os.Stderr, "Warning: there is no host PID file, but the daemon answers. A process outside devstack can have started it\n")
 		return nil
 	}
 
 	pid, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
 	if err != nil {
-		return fmt.Errorf("invalid PID in host PID file %s: %w", pidFile, err)
+		return fmt.Errorf("the host PID file %s holds an invalid PID: %w", pidFile, err)
 	}
 
 	fmt.Printf("Stopping host daemon (pid %d)...\n", pid)
@@ -140,11 +141,11 @@ func stopHostDaemon() error {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: can not find process %d: %v\n", pid, err)
 	} else if killErr := proc.Kill(); killErr != nil && isProcessAlive(pid) {
-		fmt.Fprintf(os.Stderr, "Warning: failed to kill process %d: %v\n", pid, killErr)
+		fmt.Fprintf(os.Stderr, "Warning: can not kill process %d: %v\n", pid, killErr)
 	}
 
 	if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Warning: failed to remove host PID file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: can not remove the host PID file: %v\n", err)
 	}
 
 	time.Sleep(500 * time.Millisecond)
@@ -155,12 +156,12 @@ func stopHostDaemon() error {
 	}
 	residue := workspace.DetectResidue(pid, ports)
 	if err := workspace.CloseSession(hostName, residue); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to update host session state: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: can not update the host session state: %v\n", err)
 	}
 
 	fmt.Printf("  ✓ Host daemon stopped\n")
 	if len(residue) > 0 {
-		return fmt.Errorf("host daemon down left residue: %s", strings.Join(residue, ", "))
+		return fmt.Errorf("the host daemon stopped, but it left residue: %s", strings.Join(residue, ", "))
 	}
 	return nil
 }
@@ -175,7 +176,7 @@ func runDownAll() error {
 		if deactivated, err := stack.DeactivateAll(workspaces[i].Name); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to deactivate stacks for %s: %v\n", workspaces[i].Name, err)
 		} else if len(deactivated) > 0 {
-			fmt.Printf("Brought down %d active stack(s) of '%s': %s\n", len(deactivated), workspaces[i].Name, strings.Join(deactivated, ", "))
+			fmt.Printf("Stopped %d active stack(s) of '%s': %s\n", len(deactivated), workspaces[i].Name, strings.Join(deactivated, ", "))
 		}
 		if err := workspace.SetWorkspaceActive(workspaces[i].Name, false); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to mark %s inactive: %v\n", workspaces[i].Name, err)

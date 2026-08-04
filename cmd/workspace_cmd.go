@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -16,26 +17,34 @@ var workspaceCmd = &cobra.Command{
 	Use:     "workspace",
 	Aliases: []string{"ws"},
 	Short:   "List and manage workspaces",
-	Long: `A workspace is a root directory that groups all the services for a single
-product or organisation. For example, ~/dev/navexa is a workspace containing
-every microservice and worker that makes up that product.
+	Long: `A workspace is a root directory that holds all the services of one product or
+organization. For example, ~/dev/navexa is a workspace. It contains every
+microservice and worker of that product.
 
-devstack maintains a global registry of workspaces (~/.config/devstack/workspaces.json)
-so it knows where each one lives.
+devstack maintains a global registry of workspaces
+(~/.config/devstack/workspaces.json), so it knows where each one is.
 
-One dev daemon serves the whole machine, not one per workspace: every workspace's
-services run inside it, namespaced as <workspace>:<service>. Each workspace has its
-own service list (declared in <workspace>/devstack.workspace.yaml) and its own share
-of the machine-wide observability stack.
+One dev daemon serves the whole machine. There is not one daemon for each
+workspace. The services of every workspace run in that daemon, with the name
+<workspace>:<service>. Each workspace has its own service list in
+<workspace>/devstack.workspace.yaml. Each workspace also has its own share of the
+machine-wide collector.
+
+The daemon does not run your checkouts. It runs a replica that devstack builds
+beside the workspace: one git worktree for each service, at its default branch
+tip. Your checkout is the template. 'devstack workspace up' builds the replica,
+and it moves each worktree to the current default branch tip.
 
 SUBCOMMANDS
   devstack workspace            show all registered workspaces and service counts
-  devstack workspace up         start this workspace's services in the dev daemon
+  devstack workspace up         move base to the default branch tip, and run it
   devstack workspace down       stop them, and the daemon if no workspace needs it
   devstack workspace add        register a directory as a workspace
-  devstack workspace remove     unregister a workspace
+  devstack workspace remove     remove a workspace from the registry
   devstack workspace topology   the service graph: groups, dependencies, dependents
-  devstack workspace doctor     check the manifests and topology for problems`,
+  devstack workspace doctor     examine the manifests and the topology for problems
+  devstack workspace generate   rebuild the host daemon's Tiltfile from the manifests
+  devstack workspace open       open the dev daemon dashboard in the browser`,
 	// Default action: list
 	RunE: runWorkspaceList,
 }
@@ -43,11 +52,21 @@ SUBCOMMANDS
 var workspaceAddCmd = &cobra.Command{
 	Use:   "add [path]",
 	Short: "Register a directory as a workspace (defaults to current directory)",
-	Long: `Register a directory in the global workspace registry. Once registered,
-any devstack command run inside the directory (or its subdirectories) will
-automatically target this workspace without needing any flags.
+	Long: `Register a directory in the global workspace registry. After you register it,
+every devstack command that you run in that directory, or in a subdirectory of
+it, targets this workspace. You do not need a flag.
 
-If no path is given, the current working directory is used.`,
+devstack then makes the workspace ready to use:
+  1. It writes the Claude Code SessionStart hook, so that each session in this
+     directory runs 'devstack prime'.
+  2. It builds the replica that base runs from: one git worktree for each
+     repository of the workspace. A workspace with no service yet gets an empty
+     replica, and each later 'devstack init' adds to it.
+
+This command starts nothing. It does not start the daemon, and it does not start
+a service.
+
+If you give no path, devstack uses the current working directory.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runWorkspaceAdd,
 }
@@ -55,20 +74,22 @@ If no path is given, the current working directory is used.`,
 var workspaceRemoveCmd = &cobra.Command{
 	Use:   "remove <name>",
 	Short: "Remove a workspace from the registry",
-	Long:  `Removes the workspace entry from the global registry. Does not delete any files.`,
+	Long:  `devstack removes the workspace entry from the global registry. devstack deletes no files.`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runWorkspaceRemove,
 }
 
 var workspaceScaffoldServiceCmd = &cobra.Command{
 	Use:   "scaffold-service [name]",
-	Short: "Write an educational devstack.service.yaml in the current (or given) repo",
-	Long: `Scaffold a fully-commented devstack.service.yaml that teaches how a service
-is declared (run command, ports, healthcheck, env, links). Writes into the
-current directory by default; name defaults to the directory basename.
+	Short: "Write a devstack.service.yaml that teaches, in the current repo or a given one",
+	Long: `Write a devstack.service.yaml with full comments. The comments teach how you
+declare a service: the run command, the ports, the healthcheck, the env and the
+links. devstack writes into the current directory by default. The name defaults
+to the directory basename.
 
-Superseded by 'devstack init', which writes a filled manifest, registers the
-repo, and wires up MCP/AGENTS in one step.`,
+'devstack init' supersedes this command. It writes a filled manifest, registers
+the repo, and writes the .mcp.json that connects an agent to devstack, in one
+step.`,
 	Hidden:       true,
 	Deprecated:   "use `devstack init --name=<n> --path=<p> --cmd=<c>` instead.",
 	Args:         cobra.MaximumNArgs(1),
@@ -84,7 +105,7 @@ func init() {
 
 	workspaceAddCmd.Flags().String("name", "", "Workspace name (default: directory basename)")
 	workspaceAddCmd.Flags().Int("port", 0, "Dashboard port (default: auto-assign)")
-	workspaceAddCmd.Flags().Bool("no-scaffold", false, "Don't create a devstack.workspace.yaml")
+	workspaceAddCmd.Flags().Bool("no-scaffold", false, "Do not create a devstack.workspace.yaml")
 
 	workspaceScaffoldServiceCmd.Flags().String("name", "", "Service name (default: directory basename)")
 	workspaceScaffoldServiceCmd.Flags().String("dir", "", "Directory to write into (default: current directory)")
@@ -119,19 +140,19 @@ func runWorkspaceScaffoldService(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	fmt.Printf("✓ Wrote %s\n", path)
-	fmt.Println("  Fill in runtime.run.command, then add this repo to devstack.workspace.yaml's repos list.")
+	fmt.Println("  Fill in runtime.run.command. Then add this repo to the repos list in devstack.workspace.yaml.")
 	return nil
 }
 
 func runWorkspaceList(cmd *cobra.Command, args []string) error {
 	workspaces, err := workspace.All()
 	if err != nil {
-		return fmt.Errorf("failed to load workspace registry: %w", err)
+		return fmt.Errorf("can not load the workspace registry: %w", err)
 	}
 
 	if len(workspaces) == 0 {
 		fmt.Println("No workspaces registered.")
-		fmt.Println("Run 'devstack workspace add' from a workspace directory to register one.")
+		fmt.Println("Run 'devstack workspace add' in a workspace directory to register one.")
 		return nil
 	}
 
@@ -175,13 +196,13 @@ func runWorkspaceAdd(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		abs, err := filepath.Abs(args[0])
 		if err != nil {
-			return fmt.Errorf("failed to resolve path: %w", err)
+			return fmt.Errorf("can not resolve the path: %w", err)
 		}
 		path = abs
 	} else {
 		cwd, err := os.Getwd()
 		if err != nil {
-			return fmt.Errorf("failed to get current directory: %w", err)
+			return fmt.Errorf("can not read the current directory: %w", err)
 		}
 		path = cwd
 	}
@@ -199,12 +220,12 @@ func runWorkspaceAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := workspace.Register(ws); err != nil {
-		return fmt.Errorf("failed to register workspace: %w", err)
+		return fmt.Errorf("can not register the workspace: %w", err)
 	}
 
 	registered, err := workspace.FindByPath(path)
 	if err != nil {
-		return fmt.Errorf("failed to read back registered workspace: %w", err)
+		return fmt.Errorf("can not read the registered workspace back: %w", err)
 	}
 
 	fmt.Printf("✓ Registered workspace '%s' at %s (dashboard port: %d)\n",
@@ -215,53 +236,49 @@ func runWorkspaceAdd(cmd *cobra.Command, args []string) error {
 	noScaffold, _ := cmd.Flags().GetBool("no-scaffold")
 	if !noScaffold {
 		if hasLegacyConfig(path) {
-			fmt.Println("  Found legacy .devstack.json — run 'devstack workspace generate' after migrating it to manifests.")
+			fmt.Println("  Found the legacy .devstack.json. Migrate it to manifests, then run 'devstack workspace generate'.")
 		} else {
 			wrote, err := scaffoldWorkspaceManifest(path, registered.Name)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "  warning: can not scaffold manifest: %v\n", err)
+				fmt.Fprintf(os.Stderr, "  warning: can not write the manifest: %v\n", err)
 			} else if wrote {
 				fmt.Printf("  ✓ Created %s — add services with 'devstack init --name=<n> --path=<p> --cmd=<c>'.\n", config.WorkspaceManifestFileName)
 			}
 		}
 	}
+
+	prepareWorkspace(registered)
 	return nil
 }
 
+// prepareWorkspace connects the new workspace to devstack and builds its
+// replica, the way 'devstack stack create' prepares each worktree it cuts.
+// Whatever creates a thing configures the thing it creates, so a workspace that
+// devstack has just registered is ready and never pending.
+//
+// Neither step is fatal. The directory can hold no manifest yet, and the user
+// still has a registered workspace to put one in.
+func prepareWorkspace(ws *workspace.Workspace) {
+	switch changed, err := ensureClaudeSessionHook(ws.Path); {
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "  warning: can not write the SessionStart hook: %v\n", err)
+	case changed:
+		fmt.Printf("  ✓ %s briefs each session with 'devstack prime'\n", filepath.Join(ws.Path, claudeSettingsRel))
+	}
+
+	if _, err := ensureReplica(ws); err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: can not build the replica: %v\n", err)
+		fmt.Fprintln(os.Stderr, "  To build it after you add a service, run: devstack workspace up")
+		return
+	}
+	fmt.Printf("  ✓ Built the replica that base runs from: %s\n", replica.Root(ws))
+}
+
 func runWorkspaceRemove(cmd *cobra.Command, args []string) error {
-	removed, err := deregisterWorkspace(args[0])
+	removed, err := workspace.Deregister(args[0])
 	if err != nil {
 		return err
 	}
 	fmt.Printf("✓ Removed workspace '%s' (%s)\n", removed.Name, removed.Path)
 	return nil
-}
-
-// deregisterWorkspace drops the registry row for the named workspace (no file
-// cleanup) and returns the removed entry. Shared by `workspace remove` and
-// `stack rm`.
-func deregisterWorkspace(name string) (workspace.Workspace, error) {
-	workspaces, err := workspace.Load()
-	if err != nil {
-		return workspace.Workspace{}, fmt.Errorf("failed to load workspace registry: %w", err)
-	}
-
-	idx := -1
-	for i, ws := range workspaces {
-		if strings.EqualFold(ws.Name, name) {
-			idx = i
-			break
-		}
-	}
-	if idx == -1 {
-		return workspace.Workspace{}, fmt.Errorf("workspace %q not found", name)
-	}
-
-	removed := workspaces[idx]
-	workspaces = append(workspaces[:idx], workspaces[idx+1:]...)
-
-	if err := workspace.Save(workspaces); err != nil {
-		return workspace.Workspace{}, fmt.Errorf("failed to save workspace registry: %w", err)
-	}
-	return removed, nil
 }

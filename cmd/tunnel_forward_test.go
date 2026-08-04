@@ -33,15 +33,20 @@ func stubSSH(t *testing.T) string {
 	return record
 }
 
-// serveDaemon answers the daemon view on the fixed host port the tunnel
-// commands always talk to. A real daemon on this machine holds that port, so
-// the test skips unless it runs somewhere the port is free.
+// serveDaemon answers the daemon view on a port of its own, and points
+// workspace.HostTiltPort at it for the length of the test. The real daemon of
+// the machine holds the default port, so a test that bound it would skip here
+// and never run.
 func serveDaemon(t *testing.T, view string) {
 	t.Helper()
-	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", workspace.HostTiltPort))
+	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("host daemon port %d is in use: %v", workspace.HostTiltPort, err)
+		t.Fatalf("listen: %v", err)
 	}
+	previous := workspace.HostTiltPort
+	workspace.HostTiltPort = l.Addr().(*net.TCPAddr).Port
+	t.Cleanup(func() { workspace.HostTiltPort = previous })
+
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(view))
 	}))
@@ -142,7 +147,7 @@ func TestForwardRecordsAndRestartRepeatsIt(t *testing.T) {
 	if err := runTunnelRestart(restartCommand(t), nil); err != nil {
 		t.Fatalf("restart: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "repeating last run: pull --services api") {
+	if got := out.String(); !strings.Contains(got, "This repeats the last run: pull --service api") {
 		t.Errorf("restart did not say what it was repeating: %q", got)
 	}
 	if ports := tunnel.TrackedPorts("navexa"); len(ports) != 1 || ports[0] != api {

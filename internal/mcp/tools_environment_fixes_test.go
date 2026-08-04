@@ -81,7 +81,7 @@ func TestEnvironmentStatesQueryScoping(t *testing.T) {
 	s := newEnvironmentToolWorkspace(t)
 	out := callTool(t, s, "environment", nil)
 
-	for _, want := range []string{"query scope:", "stay inside this workspace", "defaults to the base instance", "attribute search has no default service"} {
+	for _, want := range []string{"query scope:", "stay inside this workspace", "defaults to base", "attribute search has no default service"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("environment output must contain %q; got:\n%s", want, out)
 		}
@@ -153,7 +153,7 @@ observability:
 	ws := &workspace.Workspace{Name: "navexa", Path: root}
 
 	s := server.NewMCPServer("test", "0.0.0")
-	RegisterTools(s, nil, "", nil, ws.Name, ws.Path, ws)
+	RegisterTools(s, nil, "", nil, ws.Name, ws.Path, ws, nil)
 	resp := s.HandleMessage(context.Background(), json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
 	data, err := json.Marshal(resp)
 	if err != nil {

@@ -124,7 +124,7 @@ func (c *Client) searchFrom(ctx context.Context, streamType, sql string, since t
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("openobserve unreachable at %s: %w", c.baseURL, err)
+		return nil, fmt.Errorf("devstack can not reach openobserve at %s: %w", c.baseURL, err)
 	}
 	defer resp.Body.Close()
 
@@ -138,12 +138,12 @@ func (c *Client) searchFrom(ctx context.Context, streamType, sql string, since t
 		if isMissingStream(body) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("openobserve search failed (%d): %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("the openobserve search failed (%d): %s", resp.StatusCode, body)
 	}
 
 	var out searchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("failed to decode openobserve response: %w", err)
+		return nil, fmt.Errorf("can not decode the openobserve response: %w", err)
 	}
 	return out.Hits, nil
 }
@@ -368,11 +368,11 @@ func (c *Client) traceFields(ctx context.Context) (map[string]bool, error) {
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("openobserve unreachable at %s: %w", c.baseURL, err)
+		return nil, fmt.Errorf("devstack can not reach openobserve at %s: %w", c.baseURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("openobserve stream schema failed (%d)", resp.StatusCode)
+		return nil, fmt.Errorf("the openobserve stream schema request failed (%d)", resp.StatusCode)
 	}
 
 	var out struct {
@@ -384,7 +384,7 @@ func (c *Client) traceFields(ctx context.Context) (map[string]bool, error) {
 		} `json:"list"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("failed to decode openobserve schema: %w", err)
+		return nil, fmt.Errorf("can not decode the openobserve schema: %w", err)
 	}
 
 	fields := map[string]bool{}
@@ -444,13 +444,13 @@ func attrColumn(key, streamType string) string {
 // crafted key must not be able to carry SQL of its own.
 func checkIdentifier(col string) error {
 	if col == "" {
-		return fmt.Errorf("empty attribute name")
+		return fmt.Errorf("the attribute name is empty")
 	}
 	for _, r := range col {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_':
 		default:
-			return fmt.Errorf("attribute %q is not a valid attribute name", col)
+			return fmt.Errorf("%q is not a valid attribute name", col)
 		}
 	}
 	return nil

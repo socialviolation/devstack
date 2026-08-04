@@ -176,29 +176,29 @@ func sortedServiceNames(services map[string]config.ResolvedService) []string {
 func classify(expectedTraces, expectedLogs bool, mode string, backendReached bool, traceCount int, logEvidence bool, variants []VariantEvidence) (string, string) {
 	if !expectedTraces && !expectedLogs {
 		if traceCount > 0 {
-			return "high", "Telemetry is arriving, though the service declares no expectations."
+			return "high", "Telemetry arrives, but the service declares no expectations."
 		}
-		return "low", "No telemetry expectations configured."
+		return "low", "The service configures no telemetry expectations."
 	}
 	if mode == "collector-down" {
-		return "inconclusive", "Telemetry is inconclusive because export is intentionally degraded."
+		return "inconclusive", "The telemetry is inconclusive, because the export is degraded deliberately."
 	}
 	if mode == "no-traces" || mode == "logs-only" {
 		if logEvidence {
-			return "partial", fmt.Sprintf("Scenario mode %s intentionally suppresses traces.", mode)
+			return "partial", fmt.Sprintf("Scenario mode %s suppresses the traces deliberately.", mode)
 		}
-		return "low", fmt.Sprintf("Scenario mode %s intentionally suppresses traces.", mode)
+		return "low", fmt.Sprintf("Scenario mode %s suppresses the traces deliberately.", mode)
 	}
 	if !backendReached {
-		return "inconclusive", "No queryable backend — telemetry could not be checked."
+		return "inconclusive", "There is no backend that devstack can query, so devstack can not check the telemetry."
 	}
 	if traceCount > 0 {
-		return "high", fmt.Sprintf("Observed telemetry from %d variant(s).", len(variants))
+		return "high", fmt.Sprintf("devstack saw telemetry from %d variants.", len(variants))
 	}
 	if logEvidence {
-		return "partial", "Observed logs but no traces in the window."
+		return "partial", "devstack saw logs, but it saw no traces in the window."
 	}
-	return "low", "Expected telemetry was not observed in the window."
+	return "low", "devstack did not see the expected telemetry in the window."
 }
 
 // readMode reports a service's scenario mode, a playground-style switch used to

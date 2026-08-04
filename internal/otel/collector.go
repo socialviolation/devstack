@@ -27,7 +27,7 @@ func collectorPIDFile() string {
 func CollectorConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("could not determine home directory: %w", err)
+		return "", fmt.Errorf("devstack can not determine the home directory: %w", err)
 	}
 	return filepath.Join(home, ".config", "devstack", "collector", "config.yaml"), nil
 }
@@ -40,7 +40,7 @@ func otelcolBin() (string, error) {
 	}
 	path, err := exec.LookPath("otelcol-contrib")
 	if err != nil {
-		return "", fmt.Errorf(`otelcol-contrib not found. Install it:
+		return "", fmt.Errorf(`devstack can not find otelcol-contrib. Install it:
   macOS:  brew install opentelemetry-collector-contrib
   Linux:  https://github.com/open-telemetry/opentelemetry-collector-releases/releases
 Or set OTELCOL_BIN=/path/to/binary`)
@@ -67,15 +67,15 @@ func StartCollector(contribs []WorkspaceContribution) error {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0755); err != nil {
-		return fmt.Errorf("failed to create collector config dir: %w", err)
+		return fmt.Errorf("can not create the collector config directory: %w", err)
 	}
 	if err := os.WriteFile(cfgPath, cfg, 0600); err != nil {
-		return fmt.Errorf("failed to write collector config: %w", err)
+		return fmt.Errorf("can not write the collector configuration: %w", err)
 	}
 	// WriteFile leaves an existing file's mode alone, and the generated config
 	// embeds backend credentials.
 	if err := os.Chmod(cfgPath, 0600); err != nil {
-		return fmt.Errorf("failed to secure collector config: %w", err)
+		return fmt.Errorf("can not secure the collector configuration: %w", err)
 	}
 
 	stopLegacyCollectors()
@@ -91,14 +91,14 @@ func StartCollector(contribs []WorkspaceContribution) error {
 
 	pidPath := collectorPIDFile()
 	if err := os.MkdirAll(filepath.Dir(pidPath), 0755); err != nil {
-		return fmt.Errorf("failed to create data dir: %w", err)
+		return fmt.Errorf("can not create the data directory: %w", err)
 	}
 
 	// Detached background process, logging to a file — never inherit the caller's
 	// stdout/stderr, which would keep its pipe open and block the caller.
 	logFile, err := os.OpenFile(filepath.Join(filepath.Dir(pidPath), "collector.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to open collector log: %w", err)
+		return fmt.Errorf("can not open the collector log: %w", err)
 	}
 	defer logFile.Close()
 
@@ -107,13 +107,13 @@ func StartCollector(contribs []WorkspaceContribution) error {
 	cmd.Stderr = logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start otelcol-contrib: %w", err)
+		return fmt.Errorf("can not start otelcol-contrib: %w", err)
 	}
 
 	pid := cmd.Process.Pid
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0644); err != nil {
 		// Don't fail — process is running, just can't track it
-		fmt.Fprintf(os.Stderr, "warning: failed to write collector PID file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: devstack can not write the collector PID file: %v\n", err)
 	}
 
 	return nil
@@ -166,7 +166,7 @@ func awaitPortFree(port int) error {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("collector still holding port %d after 5s", port)
+	return fmt.Errorf("the collector still holds port %d after 5s", port)
 }
 
 func portListening(port int) bool {
@@ -186,12 +186,12 @@ func StopCollector() error {
 		if os.IsNotExist(err) {
 			return nil // already stopped
 		}
-		return fmt.Errorf("failed to read collector PID file: %w", err)
+		return fmt.Errorf("can not read the collector PID file: %w", err)
 	}
 
 	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 	if err != nil {
-		return fmt.Errorf("invalid PID in collector PID file: %w", err)
+		return fmt.Errorf("the collector PID file holds a PID that is not valid: %w", err)
 	}
 
 	proc, err := os.FindProcess(pid)

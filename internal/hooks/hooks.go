@@ -169,7 +169,7 @@ func (i Invocation) expand(s string, book config.PortBook) (string, error) {
 		return s, nil
 	}
 	if i.Service == "" && strings.Contains(s, "${self.") {
-		return "", fmt.Errorf("hook %q uses ${self...} but is not scoped to a service — add 'services:' so devstack knows which service ${self} means", i.Hook.Name)
+		return "", fmt.Errorf("hook %q uses ${self...}, but it is not scoped to a service. Add 'services:' so that devstack knows which service ${self} means", i.Hook.Name)
 	}
 	return config.ResolveRefs(s, i.Service, book)
 }

@@ -47,12 +47,12 @@ type FreePortConflict struct {
 // Warning is what devstack says when it drops a reclaim.
 func (c FreePortConflict) Warning() string {
 	if len(c.Victims) == 0 {
-		return fmt.Sprintf("%s frees port %d, and devstack never reclaims a port below %d. devstack dropped that reclaim.\n"+
+		return fmt.Sprintf("%s frees port %d, and devstack never reclaims a port less than %d. devstack dropped that reclaim.\n"+
 			"  %s still starts, but it does not free port %d. Remove that port from freePorts.",
 			c.Resource, c.Port, PrivilegedPort, c.Resource, c.Port)
 	}
 	return fmt.Sprintf("%s frees port %d, which %s binds. devstack dropped that reclaim.\n"+
-		"  Both run under the same daemon, so the victim restarts, frees the port back, and the two flap forever.\n"+
+		"  Both run under the same daemon, so the victim restarts, frees the port again, and the two restart each other without end.\n"+
 		"  %s still starts, but it does not free port %d. Fix the duplicate port, or remove freePorts from one of them.",
 		c.Resource, c.Port, strings.Join(c.Victims, " and "), c.Resource, c.Port)
 }

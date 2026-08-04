@@ -12,17 +12,23 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/gitinfo"
 	"github.com/socialviolation/devstack/internal/tiltgen"
 	"github.com/socialviolation/devstack/internal/workspace"
 	"github.com/socialviolation/devstack/internal/worktree"
 )
+
+const stacksDirName = ".devstack-stacks"
 
 type CreateInput struct {
 	Base   *workspace.Workspace
 	Name   string
 	Repos  []string
 	Branch string
-	Note   string
+	// From is the ref every worktree is cut from. Empty resolves each service
+	// repo's default branch instead, origin's copy of it when there is one.
+	From string
+	Note string
 }
 
 type OverlayMember struct {
@@ -30,10 +36,17 @@ type OverlayMember struct {
 	Reason  string
 }
 
+// WorktreeResult is where one service of a stack lives. The worktree is cut per
+// repository, so Repo and RepoPath name the worktree, and Path names the
+// directory of this service in it. A service at the root of its own repository
+// has Path equal to RepoPath.
 type WorktreeResult struct {
 	Service      string
 	Path         string
+	Repo         string
+	RepoPath     string
 	Branch       string
+	Ref          string
 	Detached     bool
 	Dirty        bool
 	Materialized []string
@@ -44,6 +57,7 @@ type CreateResult struct {
 	StackRoot    string
 	BaseName     string
 	BasePath     string
+	Groups       []string
 	Overlay      []OverlayMember
 	Worktrees    []WorktreeResult
 	ManifestPath string
@@ -72,35 +86,35 @@ type StackInfo struct {
 	Branch   string
 	Env      string
 	Note     string
+	Log      []NoteEntry
+	Groups   []string
 	Created  time.Time
 }
 
 func Create(in CreateInput) (*CreateResult, error) {
 	base := in.Base
 	if base == nil {
-		return nil, fmt.Errorf("no base workspace resolved")
+		return nil, fmt.Errorf("devstack can not resolve the base workspace")
 	}
 	if _, err := FindStack(base.Name, in.Name); err == nil {
 		return nil, fmt.Errorf("stack %q already exists in workspace %q", in.Name, base.Name)
 	}
 	changed := in.Repos
 	if len(changed) == 0 {
-		return nil, fmt.Errorf("no repos given: name the service(s) this stack changes")
+		return nil, fmt.Errorf("no services given: name the services that this stack changes")
 	}
 
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve base workspace: %w", err)
+		return nil, fmt.Errorf("can not resolve the base workspace: %w", err)
 	}
 	topo, err := config.BuildTopology(base.Path)
 	if err != nil {
 		return nil, err
 	}
-	for _, s := range changed {
-		if _, ok := topo.Services[s]; !ok {
-			return nil, fmt.Errorf("unknown service %q in workspace %q; known services: %s",
-				s, base.Name, strings.Join(topo.ServiceNames(), ", "))
-		}
+	changed, groups, err := expandGroups(topo, base.Name, changed)
+	if err != nil {
+		return nil, err
 	}
 
 	overlay, err := config.OverlaySet(topo, changed)
@@ -112,6 +126,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 	res := &CreateResult{
 		BaseName: base.Name,
 		BasePath: base.Path,
+		Groups:   groups,
 		Ports:    map[string]int{},
 	}
 	for _, s := range overlay {
@@ -122,90 +137,139 @@ func Create(in CreateInput) (*CreateResult, error) {
 		res.Overlay = append(res.Overlay, OverlayMember{Service: s, Reason: reason})
 	}
 
+	// The workspace name is in the path because two workspaces can share a
+	// parent directory. Without it, a stack name taken in one workspace blocks
+	// the same name in the other.
 	parent := filepath.Dir(base.Path)
-	stackRoot := filepath.Join(parent, ".devstack-stacks", in.Name)
+	stackRoot := filepath.Join(parent, stacksDirName, base.Name, in.Name)
 	if stackRoot == base.Path || strings.HasPrefix(stackRoot, base.Path+string(os.PathSeparator)) {
-		return nil, fmt.Errorf("refusing: stack root %s would be nested under base %s (breaks workspace detection)", stackRoot, base.Path)
+		return nil, fmt.Errorf("devstack can not use the stack root %s. The root is under base %s, and a nested root breaks workspace detection", stackRoot, base.Path)
 	}
 	res.StackRoot = stackRoot
 
-	worktreePaths := map[string]string{}
-	for _, s := range overlay {
-		worktreePaths[s] = filepath.Join(stackRoot, s)
+	repos, err := worktree.Plan(overlay, func(s string) string { return baseRW.Services[s].RepoPath }, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireEmptyRoot(stackRoot); err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(stackRoot, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create stack root %s: %w", stackRoot, err)
+		return nil, fmt.Errorf("can not create the stack root %s: %w", stackRoot, err)
+	}
+
+	stackName := base.Name + "--" + in.Name
+	res.StackName = stackName
+
+	// A failed create must leave nothing behind. The worktrees hold no work yet,
+	// so devstack removes them, and the retry starts from a clean root instead
+	// of dying on "already exists".
+	var built []string
+	allocated := false
+	unwind := func() {
+		for i := len(built) - 1; i >= 0; i-- {
+			_ = worktree.Remove(built[i], true)
+		}
+		if allocated {
+			_ = workspace.ReleasePorts(stackName)
+		}
+		_ = os.Remove(config.WorkspaceManifestPath(stackRoot))
+		_ = os.Remove(stackRoot)
 	}
 
 	branch := in.Branch
 	if branch == "" {
 		branch = in.Name
 	}
-	var dirty []string
-	for _, s := range overlay {
-		repoPath := baseRW.Services[s].RepoPath
-		wt, err := worktree.Create(repoPath, worktreePaths[s], branch, changedSet[s])
+	worktreePaths := map[string]string{}
+	var leftBehind []string
+	for _, r := range repos {
+		repoWorktree := r.Path(stackRoot)
+		changedRepo := r.Changed(changedSet)
+		ref := in.From
+		if ref == "" {
+			_, resolved, err := gitinfo.DefaultRef(r.Toplevel)
+			if err != nil {
+				unwind()
+				return nil, fmt.Errorf("repository %s: %w. Name a ref to cut from with --from", r.Dir, err)
+			}
+			ref = resolved
+		}
+		wt, err := worktree.Create(r.Toplevel, repoWorktree, branch, ref, changedRepo)
 		if err != nil {
-			return nil, fmt.Errorf("worktree for %q: %w", s, err)
+			unwind()
+			return nil, fmt.Errorf("worktree for the repository %q: %w", r.Dir, err)
 		}
-		wr := WorktreeResult{Service: s, Path: worktreePaths[s], Dirty: wt.SourceDirty}
-		if changedSet[s] {
-			wr.Branch = branch
-		} else {
-			wr.Detached = true
-		}
-		materialized, err := worktree.MaterializeIgnoredConfig(repoPath, worktreePaths[s])
+		built = append(built, repoWorktree)
+		materialized, err := worktree.MaterializeIgnoredConfig(r.Toplevel, repoWorktree)
 		if err != nil {
-			return nil, fmt.Errorf("materialize local config for %q: %w", s, err)
+			unwind()
+			return nil, fmt.Errorf("can not materialize the local configuration for the repository %q: %w", r.Dir, err)
 		}
-		wr.Materialized = materialized
-		res.Worktrees = append(res.Worktrees, wr)
-		if wt.SourceDirty {
-			dirty = append(dirty, s)
-		}
-	}
-	if len(dirty) > 0 {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("uncommitted changes left in the base checkout — worktrees hold committed HEAD only: %s", strings.Join(dirty, ", ")))
-	}
 
-	stackName := base.Name + "--" + in.Name
-	res.StackName = stackName
+		for i, s := range r.Services {
+			path := r.ServicePath(stackRoot, s)
+			worktreePaths[s] = path
+			wr := WorktreeResult{
+				Service:  s,
+				Path:     path,
+				Repo:     r.Dir,
+				RepoPath: repoWorktree,
+				Ref:      gitinfo.ShortRef(ref),
+				Dirty:    wt.SourceDirty,
+			}
+			if changedRepo {
+				wr.Branch = branch
+			} else {
+				wr.Detached = true
+			}
+			// The copied files belong to the worktree, so they are reported once
+			// and not once for each service in it.
+			if i == 0 {
+				wr.Materialized = materialized
+			}
+			res.Worktrees = append(res.Worktrees, wr)
+		}
+		if wt.SourceDirty || wt.SourceOffRef {
+			leftBehind = append(leftBehind, fmt.Sprintf("%s (%s)", gitinfo.ShortRef(ref), r.Dir))
+		}
+	}
+	sort.Slice(res.Worktrees, func(i, j int) bool { return res.Worktrees[i].Service < res.Worktrees[j].Service })
+	if len(leftBehind) > 0 {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack cut the worktrees from %s, not from the base checkout. This stack does not have the uncommitted work in the checkout. This stack does not have the commits that the checkout holds beyond that ref.",
+			strings.Join(leftBehind, ", ")))
+	}
+	res.Warnings = append(res.Warnings, sharedRepoWarnings(baseRW, repos, overlay, in.Name)...)
 
 	manifest, err := config.GenerateStackManifest(baseRW, stackName, overlay, func(s string) string { return worktreePaths[s] })
 	if err != nil {
+		unwind()
 		return nil, err
 	}
 	data, err := yaml.Marshal(manifest)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal stack manifest: %w", err)
+		unwind()
+		return nil, fmt.Errorf("can not encode the stack manifest: %w", err)
 	}
 	manifestPath := config.WorkspaceManifestPath(stackRoot)
 	if err := os.WriteFile(manifestPath, data, 0644); err != nil {
-		return nil, fmt.Errorf("failed to write stack manifest: %w", err)
+		unwind()
+		return nil, fmt.Errorf("can not write the stack manifest: %w", err)
 	}
 	res.ManifestPath = manifestPath
-
-	var keys []string
-	for _, s := range overlay {
-		svc := baseRW.Services[s]
-		if svc.Manifest == nil {
-			continue
-		}
-		portKeys := make([]string, 0, len(svc.Manifest.Ports))
-		for k := range svc.Manifest.Ports {
-			portKeys = append(portKeys, k)
-		}
-		sort.Strings(portKeys)
-		for _, k := range portKeys {
-			keys = append(keys, QualifyPortKey(s, k))
-		}
+	if copyWS, err := config.ResolveWorkspace(stackRoot); err == nil {
+		res.Warnings = append(res.Warnings, config.RebaseWorkDirs(baseRW, copyWS, stackRoot)...)
 	}
+
+	keys := portKeys(baseRW, overlay)
 	if len(keys) > 0 {
-		allocated, err := workspace.AllocatePorts(stackName, keys)
+		ports, err := workspace.AllocatePorts(stackName, keys)
 		if err != nil {
-			return nil, fmt.Errorf("failed to allocate service ports: %w", err)
+			unwind()
+			return nil, fmt.Errorf("can not allocate the service ports: %w", err)
 		}
-		res.Ports = allocated
+		allocated = true
+		res.Ports = ports
 	}
 
 	worktrees := map[string]string{}
@@ -220,20 +284,119 @@ func Create(in CreateInput) (*CreateResult, error) {
 		Root:      stackRoot,
 		Branch:    branch,
 		Note:      in.Note,
+		Groups:    groups,
 		Overlay:   overlayNames,
 		Worktrees: worktrees,
 		Ports:     res.Ports,
 		CreatedAt: time.Now(),
 	}); err != nil {
-		return nil, fmt.Errorf("failed to record stack: %w", err)
+		unwind()
+		return nil, fmt.Errorf("can not record the stack: %w", err)
 	}
 
 	if !daemonReachable(workspace.HostTiltPort) {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("host daemon is not reachable on port %d. A stack reuses base's running services — start base first: (cd %s && devstack workspace up)",
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not reach the host daemon on port %d. A stack uses the services that base runs. Start base first: (cd %s && devstack workspace up)",
 			workspace.HostTiltPort, base.Path))
 	}
 
 	return res, nil
+}
+
+// requireEmptyRoot refuses a stack root that already holds files. devstack
+// unwinds a failed create, so files here come from a create that this version
+// did not clean up. git worktree add would die on "already exists" and say
+// nothing about how to get past it.
+func requireEmptyRoot(stackRoot string) error {
+	entries, err := os.ReadDir(stackRoot)
+	if err != nil || len(entries) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	return fmt.Errorf("the stack root %s already holds %s. An earlier create did not finish.\nRemove the directory, then create the stack again:\n  rm -rf %s\nIf git still records a worktree there, run 'git worktree prune' in the source repository",
+		stackRoot, strings.Join(names, ", "), stackRoot)
+}
+
+// sharedRepoWarnings names the services that share a repository with the
+// overlay but stay on base.
+//
+// A repository holds one checkout and one branch, so a stack that overlays one
+// service of a repository gets the code of every other service in it. devstack
+// does NOT put those services in the overlay: the overlay is what the stack
+// runs, and it takes a port, a resource and a hook for each member. A service
+// nobody named must not start running a second copy. Base keeps serving it, and
+// this warning says so, because the code in the worktree makes the opposite
+// look true.
+func sharedRepoWarnings(baseRW *config.ResolvedWorkspace, repos []worktree.Repo, overlay []string, stackName string) []string {
+	inOverlay := stringSet(overlay)
+	byToplevel := make(map[string]string, len(repos))
+	for _, r := range repos {
+		byToplevel[r.Toplevel] = r.Dir
+	}
+
+	others := map[string][]string{}
+	names := make([]string, 0, len(baseRW.Services))
+	for n := range baseRW.Services {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		if inOverlay[n] {
+			continue
+		}
+		top, err := worktree.Toplevel(baseRW.Services[n].RepoPath)
+		if err != nil {
+			continue
+		}
+		if dir, ok := byToplevel[top]; ok {
+			others[dir] = append(others[dir], n)
+		}
+	}
+	if len(others) == 0 {
+		return nil
+	}
+
+	dirs := make([]string, 0, len(others))
+	for d := range others {
+		dirs = append(dirs, d)
+	}
+	sort.Strings(dirs)
+	out := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		out = append(out, fmt.Sprintf("The repository %s holds more services than this stack overlays: %s. The worktree holds their code. Base runs them, and this stack does not run them. To run them in this stack, run: devstack stack add %s %s",
+			d, strings.Join(others[d], ", "), stackName, strings.Join(others[d], " ")))
+	}
+	return out
+}
+
+// stackWorktreeRoots lists the worktree of every service in a stack, once for
+// each repository. Two services in one repository share one worktree, so
+// removing it twice fails on the second attempt.
+func stackWorktreeRoots(rw *config.ResolvedWorkspace) []string {
+	names := make([]string, 0, len(rw.Services))
+	for n := range rw.Services {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	seen := map[string]bool{}
+	var roots []string
+	for _, n := range names {
+		path := rw.Services[n].RepoPath
+		top, err := worktree.Toplevel(path)
+		if err != nil {
+			top = path
+		}
+		if seen[top] {
+			continue
+		}
+		seen[top] = true
+		roots = append(roots, top)
+	}
+	return roots
 }
 
 // CheckRemovable reports the refusal Remove will raise, before anything runs.
@@ -250,35 +413,52 @@ func CheckRemovable(base *workspace.Workspace, name string, force bool) error {
 		return nil
 	}
 	if base == nil {
-		return fmt.Errorf("no base workspace resolved")
+		return fmt.Errorf("devstack can not resolve the base workspace")
 	}
 	rec, err := FindStack(base.Name, name)
 	if err != nil {
 		return err
 	}
-	rw, err := config.ResolveWorkspace(rec.Root)
-	if err != nil {
-		return nil
-	}
-	names := make([]string, 0, len(rw.Services))
-	for n := range rw.Services {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		p := rw.Services[n].RepoPath
+	paths, resolveErr := worktreePaths(rec)
+	for _, p := range paths {
 		dirty, err := worktree.HasUncommittedChanges(p)
 		if err != nil || !dirty {
 			continue
 		}
-		return fmt.Errorf("remove worktree %s: worktree %s has uncommitted changes; refusing to remove without force\n(use --force to discard uncommitted work)", p, p)
+		return fmt.Errorf("devstack can not remove the worktree %s. The worktree has uncommitted changes.\nTo discard the uncommitted work, use --force", p)
+	}
+	if resolveErr != nil {
+		return fmt.Errorf("devstack can not resolve the stack manifest at %s, so it can not tell whether a worktree holds uncommitted work: %v\nTo remove the stack and everything in it, use --force", rec.Root, resolveErr)
 	}
 	return nil
 }
 
+// worktreePaths lists the worktrees of a stack, and reports why the manifest
+// gave no answer. The manifest is the accurate source: it holds where each
+// service is now. The record is the fallback, because a stack whose manifest
+// devstack can not read still holds worktrees, and those worktrees can still
+// hold work that nobody committed.
+func worktreePaths(rec *Record) ([]string, error) {
+	rw, err := config.ResolveWorkspace(rec.Root)
+	if err == nil {
+		return stackWorktreeRoots(rw), nil
+	}
+	seen := map[string]bool{}
+	var paths []string
+	for _, p := range rec.Worktrees {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	return paths, err
+}
+
 func Remove(base *workspace.Workspace, name string, force bool) (*RemoveResult, error) {
 	if base == nil {
-		return nil, fmt.Errorf("no base workspace resolved")
+		return nil, fmt.Errorf("devstack can not resolve the base workspace")
 	}
 	rec, err := FindStack(base.Name, name)
 	if err != nil {
@@ -287,40 +467,41 @@ func Remove(base *workspace.Workspace, name string, force bool) (*RemoveResult, 
 
 	res := &RemoveResult{Name: rec.FullName(), BaseName: rec.Base, StackRoot: rec.Root}
 
-	if rw, err := config.ResolveWorkspace(rec.Root); err == nil {
-		svcNames := make([]string, 0, len(rw.Services))
-		for n := range rw.Services {
-			svcNames = append(svcNames, n)
+	paths, resolveErr := worktreePaths(rec)
+	if resolveErr != nil {
+		if !force {
+			return res, fmt.Errorf("devstack can not resolve the stack manifest at %s, so it can not tell whether a worktree holds uncommitted work: %v\nTo remove the stack and everything in it, use --force", rec.Root, resolveErr)
 		}
-		sort.Strings(svcNames)
-		for _, n := range svcNames {
-			p := rw.Services[n].RepoPath
-			if err := worktree.Remove(p, force); err != nil {
-				return res, fmt.Errorf("remove worktree %s: %w\n(use --force to discard uncommitted work)", p, err)
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not resolve the stack manifest, so it removes the worktrees the stack record names: %v", resolveErr))
+	}
+	for _, p := range paths {
+		if err := worktree.Remove(p, force); err != nil {
+			if resolveErr == nil {
+				return res, fmt.Errorf("devstack can not remove the worktree %s: %w\nTo discard the uncommitted work, use --force", p, err)
 			}
-			res.RemovedWorktrees = append(res.RemovedWorktrees, p)
+			res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not remove the worktree %s: %v", p, err))
+			continue
 		}
-	} else {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("could not resolve stack manifest to list worktrees: %v", err))
+		res.RemovedWorktrees = append(res.RemovedWorktrees, p)
 	}
 
 	if err := workspace.ReleasePorts(rec.RuntimeKey()); err != nil {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("failed to release ports: %v", err))
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not release the ports: %v", err))
 	} else {
 		res.PortsReleased = true
 	}
 
 	if ok, err := deleteStack(rec.Base, rec.Name); err != nil {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("failed to remove stack record: %v", err))
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not remove the stack record: %v", err))
 	} else if ok {
 		res.Deregistered = true
 	}
 
 	if err := os.RemoveAll(workspace.DataDir(rec.RuntimeKey())); err != nil {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("failed to remove data dir: %v", err))
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not remove the data directory: %v", err))
 	}
 	if err := os.RemoveAll(rec.Root); err != nil {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("failed to remove stack root: %v", err))
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not remove the stack root: %v", err))
 	} else {
 		res.RootRemoved = true
 	}
@@ -331,7 +512,7 @@ func Remove(base *workspace.Workspace, name string, force bool) (*RemoveResult, 
 func List(workspaceName string) ([]StackInfo, error) {
 	recs, err := LoadStore(workspaceName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load stacks store: %w", err)
+		return nil, fmt.Errorf("can not load the stacks store: %w", err)
 	}
 	basePort := workspace.HostTiltPort
 	var stacks []StackInfo
@@ -350,6 +531,8 @@ func List(workspaceName string) ([]StackInfo, error) {
 			Branch:   rec.Branch,
 			Env:      rec.Env,
 			Note:     rec.Note,
+			Log:      rec.Log,
+			Groups:   rec.Groups,
 			Created:  rec.CreatedAt,
 		})
 	}
@@ -375,11 +558,11 @@ func splitPortKey(qualified string) (service, key string, ok bool) {
 func GenerateOptions(rec *Record, names []string) (tiltgen.Options, error) {
 	base, err := workspace.FindByName(rec.Base)
 	if err != nil {
-		return tiltgen.Options{}, fmt.Errorf("stack %q base workspace %q not found in registry: %w", rec.FullName(), rec.Base, err)
+		return tiltgen.Options{}, fmt.Errorf("stack %q: devstack can not find the base workspace %q in the registry: %w", rec.FullName(), rec.Base, err)
 	}
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return tiltgen.Options{}, fmt.Errorf("failed to resolve base workspace %q at %s: %w", base.Name, base.Path, err)
+		return tiltgen.Options{}, fmt.Errorf("can not resolve the base workspace %q at %s: %w", base.Name, base.Path, err)
 	}
 
 	allocated, err := workspace.LoadPorts(rec.RuntimeKey())
@@ -408,20 +591,25 @@ func GenerateOptions(rec *Record, names []string) (tiltgen.Options, error) {
 // ResolveWorktree resolves a stack's worktree workspace and folds in the base
 // workspace's environment definitions and workspace-scope env selection, since a
 // stack inherits — never redefines — base's environments.
+//
+// It also points an absolute runtime.workDir at the stack's own worktree. The
+// generator runs a service in that directory, so a stack that keeps the path
+// the manifest carries serves base's checkout and not the work in the stack.
 func ResolveWorktree(rec *Record) (*config.ResolvedWorkspace, error) {
 	base, err := workspace.FindByName(rec.Base)
 	if err != nil {
-		return nil, fmt.Errorf("stack %q base workspace %q not found in registry: %w", rec.FullName(), rec.Base, err)
+		return nil, fmt.Errorf("stack %q: devstack can not find the base workspace %q in the registry: %w", rec.FullName(), rec.Base, err)
 	}
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve base workspace %q at %s: %w", base.Name, base.Path, err)
+		return nil, fmt.Errorf("can not resolve the base workspace %q at %s: %w", base.Name, base.Path, err)
 	}
 	rw, err := config.ResolveWorkspace(rec.Root)
 	if err != nil {
 		return nil, err
 	}
 	inheritBaseEnv(rw.Manifest, baseRW.Manifest)
+	config.RebaseWorkDirs(baseRW, rw, rec.Root)
 	return rw, nil
 }
 
@@ -476,6 +664,42 @@ var daemonReachable = func(port int) bool {
 	}
 	resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
+}
+
+// expandGroups turns a --repos list into the service names it means, replacing
+// any group with its members, and reports which groups were named so the stack
+// can record what it was cut to cover.
+//
+// A name that is both a service and a group is read as the service: --repos
+// takes the services a stack changes, and a group that happens to share a
+// service's name is the coincidence, not the intent.
+func expandGroups(topo *config.TopologyGraph, wsName string, names []string) (services, groups []string, err error) {
+	seen := map[string]bool{}
+	for _, name := range names {
+		if _, ok := topo.Services[name]; ok {
+			if !seen[name] {
+				seen[name] = true
+				services = append(services, name)
+			}
+			continue
+		}
+		members, ok := topo.Groups[name]
+		if !ok {
+			return nil, nil, fmt.Errorf("%q is not a service and not a group in workspace %q\nservices: %s\ngroups:   %s",
+				name, wsName, strings.Join(topo.ServiceNames(), ", "), strings.Join(topo.GroupNames(), ", "))
+		}
+		if len(members) == 0 {
+			return nil, nil, fmt.Errorf("group %q in workspace %q has no services", name, wsName)
+		}
+		groups = append(groups, name)
+		for _, m := range members {
+			if !seen[m] {
+				seen[m] = true
+				services = append(services, m)
+			}
+		}
+	}
+	return services, groups, nil
 }
 
 func stringSet(items []string) map[string]bool {

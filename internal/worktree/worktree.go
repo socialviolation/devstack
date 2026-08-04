@@ -1,5 +1,6 @@
 // Package worktree manages the git worktree lifecycle for feature stacks: one
-// worktree per overlay service, always created as a sibling of the base checkout.
+// worktree per repository that holds an overlay service, always created as a
+// sibling of the base checkout.
 package worktree
 
 import (
@@ -17,31 +18,43 @@ import (
 // must not print itself.
 type Result struct {
 	// SourceDirty is true when the source repo had uncommitted changes at create
-	// time. The worktree still gets committed (HEAD) state; the caller decides
-	// whether to warn that the working-tree changes were left behind.
+	// time. The worktree still gets committed state; the caller decides whether
+	// to warn that the working-tree changes were left behind.
 	SourceDirty bool
+
+	// SourceOffRef is true when the source repo's HEAD is not the commit the
+	// worktree was cut from — the checkout is parked on other work, and the
+	// commits it holds beyond that ref are not in the worktree.
+	SourceOffRef bool
 }
 
-// Create adds a worktree at worktreePath for the repo at repoPath.
+// from is a ref or commit-ish, or "" for the repo's current HEAD.
 //
-// A changed repo gets a feature branch: a new branch named branch off the repo's
-// current HEAD, or, when branch already exists, an attach (checkout) of it. A
-// dependent repo (changed == false) is unmodified code isolated only for config,
-// so it gets a detached HEAD at current HEAD — this avoids git's refusal to check
-// out the base's branch a second time while it is live in the main working tree.
-func Create(repoPath, worktreePath, branch string, changed bool) (Result, error) {
+// An existing branch is attached, keeping the history it already has, so from
+// does not apply to it. A dependent repo (changed == false) detaches instead:
+// git refuses to check out a branch a second time while it is live in another
+// working tree.
+func Create(repoPath, worktreePath, branch, from string, changed bool) (Result, error) {
 	dirty, err := HasUncommittedChanges(repoPath)
 	if err != nil {
 		return Result{}, err
 	}
 	res := Result{SourceDirty: dirty}
+	if from != "" {
+		offRef, err := headOffRef(repoPath, from)
+		if err != nil {
+			return res, err
+		}
+		res.SourceOffRef = offRef
+	}
 
+	cutFrom := from
 	var args []string
 	switch {
 	case !changed:
 		args = []string{"worktree", "add", "--detach", worktreePath}
 	case branch == "":
-		return res, fmt.Errorf("changed repo %s requires a branch name", repoPath)
+		return res, fmt.Errorf("the changed repo %s needs a branch name", repoPath)
 	default:
 		exists, err := branchExists(repoPath, branch)
 		if err != nil {
@@ -49,9 +62,13 @@ func Create(repoPath, worktreePath, branch string, changed bool) (Result, error)
 		}
 		if exists {
 			args = []string{"worktree", "add", worktreePath, branch}
+			cutFrom = ""
 		} else {
 			args = []string{"worktree", "add", "-b", branch, worktreePath}
 		}
+	}
+	if cutFrom != "" {
+		args = append(args, cutFrom)
 	}
 
 	cmd := exec.Command("git", args...)
@@ -72,7 +89,7 @@ func Remove(worktreePath string, force bool) error {
 			return err
 		}
 		if dirty {
-			return fmt.Errorf("worktree %s has uncommitted changes; refusing to remove without force", worktreePath)
+			return fmt.Errorf("the worktree %s has uncommitted changes. devstack can not remove it without force", worktreePath)
 		}
 	}
 
@@ -139,6 +156,16 @@ func isConfigFile(rel string) bool {
 // already holds, and never reads or logs file contents (they carry secrets); it
 // copies bytes and returns the relative paths materialized.
 func MaterializeIgnoredConfig(baseRepo, worktreePath string) ([]string, error) {
+	return materializeIgnoredConfig(baseRepo, worktreePath, false)
+}
+
+// For a worktree that replicates the base repo rather than one where work
+// happens: the base's config wins every refresh, replacing what is there.
+func MaterializeIgnoredConfigForce(baseRepo, worktreePath string) ([]string, error) {
+	return materializeIgnoredConfig(baseRepo, worktreePath, true)
+}
+
+func materializeIgnoredConfig(baseRepo, worktreePath string, overwrite bool) ([]string, error) {
 	cmd := exec.Command("git", "ls-files", "--others", "--ignored", "--exclude-standard")
 	cmd.Dir = baseRepo
 	out, err := cmd.CombinedOutput()
@@ -154,14 +181,14 @@ func MaterializeIgnoredConfig(baseRepo, worktreePath string) ([]string, error) {
 		}
 		src := filepath.Join(baseRepo, rel)
 		dst := filepath.Join(worktreePath, rel)
-		if _, err := os.Stat(dst); err == nil {
+		if _, err := os.Stat(dst); err == nil && !overwrite {
 			continue
 		}
 		if fi, err := os.Stat(src); err != nil || !fi.Mode().IsRegular() {
 			continue
 		}
-		if err := copyFile(src, dst); err != nil {
-			return copied, fmt.Errorf("materialize %s into worktree: %w", rel, err)
+		if err := copyFile(src, dst, overwrite); err != nil {
+			return copied, fmt.Errorf("can not materialize %s into the worktree: %w", rel, err)
 		}
 		copied = append(copied, rel)
 	}
@@ -169,7 +196,7 @@ func MaterializeIgnoredConfig(baseRepo, worktreePath string) ([]string, error) {
 	return copied, nil
 }
 
-func copyFile(src, dst string) error {
+func copyFile(src, dst string, overwrite bool) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
@@ -182,7 +209,11 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fi.Mode().Perm())
+	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	if overwrite {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	}
+	out, err := os.OpenFile(dst, flags, fi.Mode().Perm())
 	if err != nil {
 		return err
 	}
@@ -191,6 +222,20 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return out.Close()
+}
+
+func headOffRef(repoPath, ref string) (bool, error) {
+	cmd := exec.Command("git", "rev-parse", "HEAD", ref)
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("git rev-parse %s in %s failed: %w\n%s", ref, repoPath, err, strings.TrimSpace(string(out)))
+	}
+	lines := strings.Fields(string(out))
+	if len(lines) != 2 {
+		return false, fmt.Errorf("git rev-parse %s in %s returned %d revisions, and devstack needs 2", ref, repoPath, len(lines))
+	}
+	return lines[0] != lines[1], nil
 }
 
 func branchExists(repoPath, branch string) (bool, error) {

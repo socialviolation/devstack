@@ -3,9 +3,12 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -16,43 +19,105 @@ import (
 // formatting survives the round-trip.
 func editWorkspaceManifest(workspacePath string, mutate func(root *yaml.Node) error) error {
 	if !HasWorkspaceManifest(workspacePath) {
-		return fmt.Errorf("no %s in %s — config lives in the workspace manifest", WorkspaceManifestFileName, workspacePath)
+		return fmt.Errorf("there is no %s in %s. The configuration lives in the workspace manifest", WorkspaceManifestFileName, workspacePath)
 	}
 	return editManifest(WorkspaceManifestPath(workspacePath), mutate)
 }
 
 // editManifest applies mutate to the manifest's root mapping node at path and
 // writes the result back.
+//
+// A file can hold more than one YAML document. devstack reads only the first
+// one, but it writes back every one of them: the others are the user's, and a
+// migration that sweeps every workspace must not delete what it does not read.
 func editManifest(path string, mutate func(root *yaml.Node) error) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("failed to read manifest %s: %w", path, err)
+		return fmt.Errorf("can not read the manifest %s: %w", path, err)
 	}
 
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return fmt.Errorf("failed to parse manifest %s: %w", path, err)
+	docs, err := decodeDocuments(data)
+	if err != nil {
+		return fmt.Errorf("can not parse the manifest %s: %w", path, err)
 	}
-	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
-		return fmt.Errorf("manifest %s is not a mapping", path)
+	if len(docs) == 0 || len(docs[0].Content) == 0 || docs[0].Content[0].Kind != yaml.MappingNode {
+		return fmt.Errorf("the manifest %s is not a mapping", path)
 	}
 
-	if err := mutate(doc.Content[0]); err != nil {
+	if err := mutate(docs[0].Content[0]); err != nil {
 		return err
 	}
 
 	var buf bytes.Buffer
+	if startsWithDocumentMarker(data) {
+		buf.WriteString("---\n")
+	}
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
-	if err := enc.Encode(&doc); err != nil {
-		return fmt.Errorf("failed to encode manifest %s: %w", path, err)
+	for _, doc := range docs {
+		if err := enc.Encode(doc); err != nil {
+			return fmt.Errorf("can not encode the manifest %s: %w", path, err)
+		}
 	}
 	enc.Close()
 
 	if err := os.WriteFile(path, buf.Bytes(), 0644); err != nil {
-		return fmt.Errorf("failed to write manifest %s: %w", path, err)
+		return fmt.Errorf("can not write the manifest %s: %w", path, err)
 	}
 	return nil
+}
+
+// decodeDocuments parses every YAML document in data, in file order.
+func decodeDocuments(data []byte) ([]*yaml.Node, error) {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	var docs []*yaml.Node
+	for {
+		var doc yaml.Node
+		err := dec.Decode(&doc)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		docs = append(docs, &doc)
+	}
+	return docs, nil
+}
+
+// startsWithDocumentMarker reports whether the file opens with an explicit "---"
+// line. The encoder writes a marker between documents, but not before the first
+// one, so a file that had one keeps it here.
+func startsWithDocumentMarker(data []byte) bool {
+	rest := strings.TrimLeft(string(data), " \t\r\n")
+	return rest == "---" || strings.HasPrefix(rest, "---\n") || strings.HasPrefix(rest, "--- ") || strings.HasPrefix(rest, "---\r\n")
+}
+
+// WorkspaceVersion reports the version of the workspace manifest at
+// workspacePath. A directory that holds no workspace manifest has no version,
+// and it reports 0.
+func WorkspaceVersion(workspacePath string) (int, error) {
+	if !HasWorkspaceManifest(workspacePath) {
+		return 0, nil
+	}
+	m, err := LoadWorkspaceManifest(workspacePath)
+	if err != nil {
+		return 0, err
+	}
+	return m.Version, nil
+}
+
+// SetWorkspaceVersion writes version into the workspace manifest, and a note
+// beside it that says which devstack wrote it and when.
+//
+// The note is for a person who reads the file. devstack never reads it back: the
+// version alone decides what a migration runs.
+func SetWorkspaceVersion(workspacePath string, version int, by string) error {
+	return editWorkspaceManifest(workspacePath, func(root *yaml.Node) error {
+		setScalar(root, "version", strconv.Itoa(version), "!!int")
+		mapValue(root, "version").LineComment = fmt.Sprintf("devstack migrate wrote this: %s, %s", by, time.Now().Format("2006-01-02"))
+		return nil
+	})
 }
 
 // SetServiceEnvValue writes key=value into the service manifest's env.values at
@@ -62,7 +127,7 @@ func editManifest(path string, mutate func(root *yaml.Node) error) error {
 // env.values is committed to git: callers must not route secrets here.
 func SetServiceEnvValue(repoPath, key, value string) error {
 	if !HasServiceManifest(repoPath) {
-		return fmt.Errorf("no %s in %s", ServiceManifestFileName, repoPath)
+		return fmt.Errorf("there is no %s in %s", ServiceManifestFileName, repoPath)
 	}
 	return editManifest(ServiceManifestPath(repoPath), func(root *yaml.Node) error {
 		values := mappingChild(mappingChild(root, "env"), "values")
@@ -93,7 +158,7 @@ func RemoveEnvironment(workspacePath, envName string) error {
 	return editWorkspaceManifest(workspacePath, func(root *yaml.Node) error {
 		envs := mapValue(root, "environments")
 		if envs == nil || envs.Kind != yaml.MappingNode {
-			return fmt.Errorf("environment %q is not defined in %s", envName, WorkspaceManifestFileName)
+			return fmt.Errorf("%s does not define the environment %q", WorkspaceManifestFileName, envName)
 		}
 		deleteKey(envs, envName)
 		return nil
@@ -113,7 +178,7 @@ func SetWorkspaceEnv(workspacePath, envName string) error {
 // selecting the active env at the service scope.
 func SetServiceEnv(repoPath, envName string) error {
 	if !HasServiceManifest(repoPath) {
-		return fmt.Errorf("no %s in %s", ServiceManifestFileName, repoPath)
+		return fmt.Errorf("there is no %s in %s", ServiceManifestFileName, repoPath)
 	}
 	return editManifest(ServiceManifestPath(repoPath), func(root *yaml.Node) error {
 		setScalar(mappingChild(root, "service"), "env", envName, "!!str")
@@ -178,7 +243,7 @@ func SetObservabilitySettings(workspacePath string, settings map[string]string) 
 	keys := make([]string, 0, len(settings))
 	for key := range settings {
 		if IsCredentialKey(key) {
-			return fmt.Errorf("refusing to write %q to %s — it is committed to git; supply the value through the environment (.envrc) or the service's env.required instead", key, WorkspaceManifestFileName)
+			return fmt.Errorf("devstack never writes a credential to %s, so it refuses the key %q. Supply the value through the environment (.envrc), or through env.required of the service", WorkspaceManifestFileName, key)
 		}
 		keys = append(keys, key)
 	}
@@ -313,11 +378,16 @@ func mapValue(m *yaml.Node, key string) *yaml.Node {
 
 // setScalar sets key to a scalar value+tag in a mapping node, updating in place
 // if the key already exists, otherwise appending it.
+//
+// It clears the style the old value had. A hand-quoted "false" that keeps its
+// quotes becomes the string "true", and the manifest then fails to load with a
+// type error that no devstack command can repair.
 func setScalar(m *yaml.Node, key, value, tag string) {
 	if v := mapValue(m, key); v != nil {
 		v.Kind = yaml.ScalarNode
 		v.Tag = tag
 		v.Value = value
+		v.Style = 0
 		return
 	}
 	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}

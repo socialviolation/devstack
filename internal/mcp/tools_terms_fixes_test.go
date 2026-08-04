@@ -24,7 +24,17 @@ type listedTool struct {
 		Properties map[string]struct {
 			Description string `json:"description"`
 		} `json:"properties"`
+		Required []string `json:"required"`
 	} `json:"inputSchema"`
+}
+
+func (l listedTool) requires(param string) bool {
+	for _, r := range l.InputSchema.Required {
+		if r == param {
+			return true
+		}
+	}
+	return false
 }
 
 func listEnvStackTools(t *testing.T) map[string]listedTool {
@@ -135,6 +145,56 @@ func TestEnvSetWarnsItWritesACommittedFile(t *testing.T) {
 	for _, want := range []string{"committed to git", "service_env"} {
 		if !strings.Contains(tool.Description, want) {
 			t.Errorf("env_set description missing %q: %s", want, tool.Description)
+		}
+	}
+}
+
+// One sentence served a required stack name and an optional stack parameter,
+// and the two say opposite things about an omitted value: it told an agent it
+// could omit a parameter that mcp.Required() rejects.
+func TestStackNameDescriptionsSplitRequiredFromOptional(t *testing.T) {
+	tools := listEnvStackTools(t)
+
+	var required, optional int
+	for name, tool := range tools {
+		for param, prop := range tool.InputSchema.Properties {
+			if !strings.Contains(prop.Description, stackShortNameDesc) {
+				continue
+			}
+			if tool.requires(param) {
+				required++
+				if !strings.Contains(prop.Description, "REQUIRED") || strings.Contains(prop.Description, "OPTIONAL") {
+					t.Errorf("%s.%s is required, and its description must say so and never offer to omit it: %s", name, param, prop.Description)
+				}
+				continue
+			}
+			optional++
+			if !strings.Contains(prop.Description, "OPTIONAL") || strings.Contains(prop.Description, "REQUIRED") {
+				t.Errorf("%s.%s may be omitted, and its description must say so: %s", name, param, prop.Description)
+			}
+		}
+	}
+	if required < 5 {
+		t.Errorf("expected the five stack tools to take a required stack name, counted %d", required)
+	}
+	if optional < 2 {
+		t.Errorf("expected env_which and service_env to take an optional stack, counted %d", optional)
+	}
+}
+
+// stack_list prints the short name, so no parameter may send a reader there for
+// the full identity.
+func TestNoParameterClaimsStackListPrintsTheIdentity(t *testing.T) {
+	tools := listEnvStackTools(t)
+
+	if !strings.Contains(tools["stack_list"].Description, "This tool prints the short") {
+		t.Errorf("stack_list must say which half of the identity it prints: %s", tools["stack_list"].Description)
+	}
+	for name, tool := range tools {
+		for param, prop := range tool.InputSchema.Properties {
+			if strings.Contains(prop.Description, "identity that stack_list") {
+				t.Errorf("%s.%s says stack_list prints the full identity, and it prints the short name: %s", name, param, prop.Description)
+			}
 		}
 	}
 }

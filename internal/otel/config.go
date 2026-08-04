@@ -28,7 +28,7 @@ type WorkspaceContribution struct {
 // devstack.workspace resource attribute every service is stamped with.
 func BuildConfig(grpcPort, httpPort int, contribs []WorkspaceContribution) ([]byte, error) {
 	if len(contribs) == 0 {
-		return nil, fmt.Errorf("no workspaces contribute to the collector config")
+		return nil, fmt.Errorf("no workspace contributes to the collector configuration")
 	}
 
 	sorted := make([]WorkspaceContribution, len(contribs))
@@ -113,7 +113,7 @@ func renderSingle(cfg map[string]any, g shapeGroup) error {
 		pipelines[name] = pipelineMap(p)
 	}
 	if len(pipelines) == 0 {
-		return fmt.Errorf("plugin contributed no pipelines")
+		return fmt.Errorf("the plugin contributed no pipelines")
 	}
 
 	cfg["service"] = serviceMap(pipelines, extensionNames(g.Extensions), g.Telemetry)

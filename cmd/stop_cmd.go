@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 )
 
@@ -17,7 +18,11 @@ func runStop(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	stackName, _ := cmd.Flags().GetString("stack")
+	flagStack, _ := cmd.Flags().GetString("stack")
+	stackName, err := stack.ResolveTarget(ws, flagStack)
+	if err != nil {
+		return err
+	}
 	tiltPort, namespace, wsPath, label, err := resolveStackTarget(ws, stackName)
 	if err != nil {
 		return err
@@ -34,7 +39,7 @@ func runStop(cmd *cobra.Command, args []string) error {
 		targetName = args[0]
 	}
 
-	services, err := resolveTargetKind(wsPath, targetName, cfg, targetKindOf(cmd))
+	services, err := resolveInstanceTarget(cmd, ws, wsPath, targetName, cfg, stackName)
 	if err != nil {
 		return err
 	}
@@ -49,7 +54,7 @@ func runStop(cmd *cobra.Command, args []string) error {
 	tiltClient := tilt.NewClient("localhost", tiltPort)
 	view, err := tiltClient.GetView()
 	if err != nil {
-		return fmt.Errorf("dev daemon is not running — start it first with: devstack workspace up\n(%w)", err)
+		return fmt.Errorf("the dev daemon is not running. Start it first with: devstack workspace up\n(%w)", err)
 	}
 
 	var stopped []string
@@ -61,7 +66,7 @@ func runStop(cmd *cobra.Command, args []string) error {
 
 		out, err := tiltClient.RunCLI("disable", resolved)
 		if err != nil {
-			return fmt.Errorf("failed to stop %q: %v\n%s", resolved, err, out)
+			return fmt.Errorf("can not stop %q: %v\n%s", resolved, err, out)
 		}
 		if out != "" {
 			fmt.Print(out)

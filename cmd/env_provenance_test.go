@@ -192,7 +192,7 @@ func TestUnknownEnvErrorExplainsBase(t *testing.T) {
 func TestUnknownEnvErrorKeepsNormalNotFound(t *testing.T) {
 	m := &config.WorkspaceManifest{Environments: map[string]config.WorkspaceEnvironment{"perf": {}}}
 	msg := unknownEnvError("staging", "navexa", m).Error()
-	if !strings.Contains(msg, `env "staging" is not defined in workspace "navexa"`) || !strings.Contains(msg, "available: perf") {
+	if !strings.Contains(msg, `environment "staging" is not defined in workspace "navexa"`) || !strings.Contains(msg, "Available: perf") {
 		t.Errorf("unknownEnvError(staging) = %q, want the plain not-found error", msg)
 	}
 	if strings.Contains(msg, "no stack") {

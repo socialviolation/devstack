@@ -23,7 +23,7 @@ func StartServices(client *tilt.Client, baseName string, rec *Record) ([]string,
 
 	view, err := waitForResources(client, wanted)
 	if err != nil {
-		return nil, fmt.Errorf("host daemon not reachable: %w", err)
+		return nil, fmt.Errorf("devstack can not reach the host daemon: %w", err)
 	}
 	present, disabled := map[string]bool{}, map[string]bool{}
 	for _, r := range view.UiResources {
@@ -41,11 +41,11 @@ func StartServices(client *tilt.Client, baseName string, rec *Record) ([]string,
 		}
 		if disabled[rn] {
 			if out, err := client.RunCLI("enable", rn); err != nil {
-				return nil, fmt.Errorf("enable %s failed: %w\n%s", rn, err, out)
+				return nil, fmt.Errorf("devstack can not enable %s: %w\n%s", rn, err, out)
 			}
 		}
 		if out, err := client.RunCLI("trigger", rn); err != nil {
-			return nil, fmt.Errorf("trigger %s failed: %w\n%s", rn, err, out)
+			return nil, fmt.Errorf("devstack can not trigger %s: %w\n%s", rn, err, out)
 		}
 		started = append(started, svc)
 	}

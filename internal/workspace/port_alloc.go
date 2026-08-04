@@ -31,15 +31,15 @@ func portAllocLockPath() string {
 func withPortAllocLock(fn func() error) error {
 	lockPath := portAllocLockPath()
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
-		return fmt.Errorf("failed to create data root: %w", err)
+		return fmt.Errorf("can not create the data root: %w", err)
 	}
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to open port lock: %w", err)
+		return fmt.Errorf("can not open the port lock: %w", err)
 	}
 	defer f.Close()
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		return fmt.Errorf("failed to lock ports: %w", err)
+		return fmt.Errorf("can not lock the ports: %w", err)
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	return fn()
@@ -53,11 +53,11 @@ func LoadPorts(stackName string) (map[string]int, error) {
 		if os.IsNotExist(err) {
 			return map[string]int{}, nil
 		}
-		return nil, fmt.Errorf("failed to read port allocation: %w", err)
+		return nil, fmt.Errorf("can not read the port allocation: %w", err)
 	}
 	var ports map[string]int
 	if err := json.Unmarshal(data, &ports); err != nil {
-		return nil, fmt.Errorf("failed to parse port allocation: %w", err)
+		return nil, fmt.Errorf("can not parse the port allocation: %w", err)
 	}
 	if ports == nil {
 		ports = map[string]int{}
@@ -68,14 +68,14 @@ func LoadPorts(stackName string) (map[string]int, error) {
 // savePorts persists a stack's allocation map, creating its data dir if needed.
 func savePorts(stackName string, ports map[string]int) error {
 	if err := os.MkdirAll(DataDir(stackName), 0755); err != nil {
-		return fmt.Errorf("failed to create data dir: %w", err)
+		return fmt.Errorf("can not create the data directory: %w", err)
 	}
 	data, err := json.MarshalIndent(ports, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal port allocation: %w", err)
+		return fmt.Errorf("can not encode the port allocation: %w", err)
 	}
 	if err := os.WriteFile(portsFile(stackName), data, 0644); err != nil {
-		return fmt.Errorf("failed to write port allocation: %w", err)
+		return fmt.Errorf("can not write the port allocation: %w", err)
 	}
 	return nil
 }
@@ -83,7 +83,7 @@ func savePorts(stackName string, ports map[string]int) error {
 // ReleasePorts deletes a stack's allocation record, freeing its ports.
 func ReleasePorts(stackName string) error {
 	if err := os.Remove(portsFile(stackName)); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to release port allocation: %w", err)
+		return fmt.Errorf("can not release the port allocation: %w", err)
 	}
 	return nil
 }
@@ -98,7 +98,7 @@ func allocatedPorts() (map[int]bool, error) {
 		if os.IsNotExist(err) {
 			return used, nil
 		}
-		return nil, fmt.Errorf("failed to read data root: %w", err)
+		return nil, fmt.Errorf("can not read the data root: %w", err)
 	}
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -123,41 +123,9 @@ func allocatedPorts() (map[int]bool, error) {
 func AllocatePorts(stackName string, keys []string) (map[string]int, error) {
 	var result map[string]int
 	err := withPortAllocLock(func() error {
-		workspaces, err := Load()
+		out, err := allocateKeys(nil, keys)
 		if err != nil {
 			return err
-		}
-		reserved := map[int]bool{}
-		for _, ws := range workspaces {
-			if ws.TiltPort != 0 {
-				reserved[ws.TiltPort] = true
-			}
-		}
-		allocated, err := allocatedPorts()
-		if err != nil {
-			return err
-		}
-		for p := range allocated {
-			reserved[p] = true
-		}
-
-		out := make(map[string]int, len(keys))
-		candidate := servicePortBase
-		limit := servicePortBase + servicePortScanLimit
-		for _, key := range keys {
-			for {
-				if candidate >= limit {
-					return fmt.Errorf("no free service port found in range %d-%d", servicePortBase, limit-1)
-				}
-				c := candidate
-				candidate++
-				if reserved[c] || portInUse(c) {
-					continue
-				}
-				reserved[c] = true
-				out[key] = c
-				break
-			}
 		}
 		if err := savePorts(stackName, out); err != nil {
 			return err
@@ -169,4 +137,86 @@ func AllocatePorts(stackName string, keys []string) (map[string]int, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+// AllocateAdditionalPorts extends a stack's allocation with the keys it does not
+// already hold and returns the union, leaving every port it already holds on the
+// same number.
+//
+// Adding a service to a live stack cannot go through AllocatePorts: that saves
+// exactly the keys it was handed, and every port on the machine is reserved
+// against it, so re-allocating a stack's whole key set moves every one of its
+// running services to a different port.
+func AllocateAdditionalPorts(stackName string, keys []string) (map[string]int, error) {
+	var result map[string]int
+	err := withPortAllocLock(func() error {
+		held, err := LoadPorts(stackName)
+		if err != nil {
+			return err
+		}
+		var missing []string
+		for _, key := range keys {
+			if _, ok := held[key]; !ok {
+				missing = append(missing, key)
+			}
+		}
+		out, err := allocateKeys(held, missing)
+		if err != nil {
+			return err
+		}
+		if err := savePorts(stackName, out); err != nil {
+			return err
+		}
+		result = out
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// allocateKeys returns held plus one free localhost port per key. Callers hold
+// the allocation lock.
+func allocateKeys(held map[string]int, keys []string) (map[string]int, error) {
+	workspaces, err := Load()
+	if err != nil {
+		return nil, err
+	}
+	reserved := map[int]bool{}
+	for _, ws := range workspaces {
+		if ws.TiltPort != 0 {
+			reserved[ws.TiltPort] = true
+		}
+	}
+	allocated, err := allocatedPorts()
+	if err != nil {
+		return nil, err
+	}
+	for p := range allocated {
+		reserved[p] = true
+	}
+
+	out := make(map[string]int, len(held)+len(keys))
+	for k, v := range held {
+		out[k] = v
+	}
+	candidate := servicePortBase
+	limit := servicePortBase + servicePortScanLimit
+	for _, key := range keys {
+		for {
+			if candidate >= limit {
+				return nil, fmt.Errorf("devstack can not find a free service port in the range %d-%d", servicePortBase, limit-1)
+			}
+			c := candidate
+			candidate++
+			if reserved[c] || portInUse(c) {
+				continue
+			}
+			reserved[c] = true
+			out[key] = c
+			break
+		}
+	}
+	return out, nil
 }

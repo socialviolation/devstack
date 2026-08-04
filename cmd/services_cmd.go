@@ -14,6 +14,7 @@ import (
 	"github.com/socialviolation/devstack/internal/gitinfo"
 	"github.com/socialviolation/devstack/internal/infra"
 	"github.com/socialviolation/devstack/internal/otel"
+	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -22,36 +23,41 @@ import (
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show live service status (or all workspaces if run outside a workspace)",
-	Long: `Show a live table of every service in the current workspace — the group or
-feature stack it belongs to, its running state, exposed ports, and declared
+	Long: `Show a live table of every service in the current workspace: the group or the
+feature stack that it belongs to, its state, its ports, and its declared
 dependencies.
 
-If run from outside any registered workspace, shows a summary table of all
-workspaces and their daemon status instead.
+If you run this command outside every registered workspace, devstack shows a
+summary table of all the workspaces and their daemon status instead.
 
-Groups and feature stacks with nothing running collapse to a single line, unless
-one of their services is erroring, starting or building. Pass --all to table
-every group and stack, and to show each service's source path.
+A group or a feature stack with nothing running collapses to one line. It stays
+open when one of its services is erroring, starting or building. Pass --all to
+list every group and stack, and to show the directory that each copy runs from.
 
-A stack is up or down: up means its services are registered in the daemon, not
-that they run. Each copy has its own state below.
+That directory, and the BRANCH beside it, are the code that the process runs:
+the replica worktree for base, and the stack's own worktree for a stack. It is
+never your checkout. If you do not expect that branch there, the copy does not
+contain the work that you look for.
+
+A stack is up or down. Up means that its services are registered in the daemon.
+It does not mean that they run. Each copy has its own state below.
 
 Copy states:
-  running   — process is up and healthy
-  starting  — process starts
-  building  — the daemon is building/updating the service
-  stopped   — service is registered but not currently running
-  erroring  — the service or its build failed (check logs)
-  disabled  — service has been explicitly stopped
+  running   — the process is up and healthy
+  starting  — the process starts
+  building  — the daemon builds or updates the service
+  stopped   — the service is registered, but it does not run now
+  erroring  — the service or its build failed (read the logs)
+  disabled  — somebody stopped the service
   down      — the copy is not registered at all, because its stack is down
               (run: devstack stack up <name>)
-  unknown   — daemon is not reachable (run: devstack workspace up)`,
+  unknown   — the daemon does not answer (run: devstack workspace up)`,
 	RunE: runStatus,
 }
 
 func init() {
 	rootCmd.AddCommand(statusCmd)
-	statusCmd.Flags().String("stack", "", "Show a feature stack's service instances (<ws>:<svc>:<stack>) instead of base")
+	statusCmd.Flags().String("stack", "", "Show a feature stack's copies (<ws>:<svc>:<stack>) instead of base's")
 	statusCmd.Flags().Bool("all", false, "Show the full table for every group and stack, including ones with nothing running")
 }
 
@@ -89,7 +95,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 func runStackStatus(base *workspace.Workspace, rec *stack.Record) error {
 	port := workspace.HostTiltPort
 	if !isTiltReachable(fmt.Sprintf("http://localhost:%d/api/view", port)) || !rec.Active {
-		fmt.Printf("stack %q is not up — run: devstack stack up %s\n", rec.Name, rec.Name)
+		fmt.Printf("stack %q is not up. Run: devstack stack up %s\n", rec.Name, rec.Name)
 		return nil
 	}
 
@@ -153,14 +159,31 @@ func runStackStatus(base *workspace.Workspace, rec *stack.Record) error {
 	return nil
 }
 
+// baseServiceDirs is where base's copies actually run: the replica worktrees,
+// not the checkouts they were built from. The DIR and BRANCH columns are read to
+// answer "is my work what is running", and pointing them at the template answers
+// it wrongly — the checkout can sit on any branch, dirty, while base runs a
+// detached worktree at the default branch tip. Falls back to the checkouts,
+// which is then the truth, when no replica is built.
+func baseServiceDirs(ws *workspace.Workspace, cfg *config.WorkspaceConfig) map[string]string {
+	if rw, err := replica.Resolve(ws); err == nil {
+		dirs := make(map[string]string, len(rw.Services))
+		for name, svc := range rw.Services {
+			dirs[name] = svc.RepoPath
+		}
+		return dirs
+	}
+	if cfg != nil {
+		return cfg.ServicePaths
+	}
+	return map[string]string{}
+}
+
 func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 	ws.TiltPort = workspace.HostTiltPort
 
 	cfg, _ := config.Load(ws.Path)
-	serviceDirs := map[string]string{}
-	if cfg != nil {
-		serviceDirs = cfg.ServicePaths
-	}
+	serviceDirs := baseServiceDirs(ws, cfg)
 
 	tiltClient := tilt.NewClient("localhost", ws.TiltPort)
 	view, tiltErr := tiltClient.GetView()
@@ -232,11 +255,11 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 		infraParts = append(infraParts, color.New(color.FgYellow).Sprint(otelText))
 	default:
 		if started, err := ensureCollector(ws); started {
-			infraParts = append(infraParts, color.New(color.FgGreen).Sprint("otel: collector was down — started it"))
+			infraParts = append(infraParts, color.New(color.FgGreen).Sprint("otel: the collector was down, and devstack started it"))
 		} else if err != nil {
-			infraParts = append(infraParts, color.New(color.FgRed).Sprintf("otel DOWN (auto-start failed: %v) — run: devstack otel start", err))
+			infraParts = append(infraParts, color.New(color.FgRed).Sprintf("otel DOWN (devstack can not start it: %v). Run: devstack otel start", err))
 		} else {
-			infraParts = append(infraParts, color.New(color.FgRed).Sprint("otel configured but collector DOWN — run: devstack otel start"))
+			infraParts = append(infraParts, color.New(color.FgRed).Sprint("otel is configured, but the collector is DOWN. Run: devstack otel start"))
 		}
 	}
 	if composeSpec, err := infra.ResolveComposeSpec(ws.Path); err == nil && composeSpec != nil {
@@ -249,7 +272,7 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 	if tiltErr != nil {
 		apiURL := fmt.Sprintf("http://localhost:%d/api/view", ws.TiltPort)
 		if isTiltReachable(apiURL) {
-			fmt.Println("  Dev daemon is starting — run 'devstack status' again in a moment.")
+			fmt.Println("  The dev daemon starts. Run 'devstack status' again in a moment.")
 		} else {
 			fmt.Println("  Run: devstack workspace up")
 		}
@@ -338,12 +361,45 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 	}
 	fmt.Println()
 
+	printFailures(tiltClient, view, ws.Name)
+
 	color.New(color.Faint).Printf("  within a group, top-to-bottom = startup order   ·   blank ENV = no env\n")
-	color.New(color.Faint).Printf("  devstack service start <service>   ·   devstack group start <group>\n")
+	color.New(color.Faint).Printf("  devstack service start <service> --stack base   ·   devstack group start <group> --stack base\n")
 	color.New(color.Faint).Printf("  devstack stack up <name>   ·   devstack stack config <svc> --stack <name>\n")
-	color.New(color.Faint).Printf("  groups with nothing running, starting, building or erroring are condensed   ·   devstack status --all shows every one\n")
+	color.New(color.Faint).Printf("  devstack condenses a group with nothing running, starting, building or erroring   ·   devstack status --all shows every one\n")
 
 	return nil
+}
+
+// printFailures says why each erroring copy of this workspace failed. The state
+// word alone sent the reader to the logs, and a copy that fails in its run
+// command leaves no build record, so the table gave no reason to read at all.
+func printFailures(client *tilt.Client, view *tilt.TiltView, wsName string) {
+	if view == nil {
+		return
+	}
+	prefix := wsName + ":"
+	printed := false
+	for _, r := range view.UiResources {
+		if !strings.HasPrefix(r.Metadata.Name, prefix) || serviceStatus(r) != "erroring" {
+			continue
+		}
+		reason := client.FailureReason(r)
+		if len(reason) == 0 {
+			continue
+		}
+		if !printed {
+			color.New(color.FgRed, color.Bold).Printf("  why the erroring copies stopped\n")
+			printed = true
+		}
+		fmt.Printf("  %s\n", r.Metadata.Name)
+		for _, line := range reason {
+			color.New(color.Faint).Printf("    %s\n", line)
+		}
+	}
+	if printed {
+		fmt.Println()
+	}
 }
 
 // stackSections turns the workspace's in-flight feature stacks into table
@@ -559,7 +615,12 @@ func printServiceOrientation(ws *workspace.Workspace, rw *config.ResolvedWorkspa
 	sort.Slice(rows, func(i, j int) bool { return rows[i].stack < rows[j].stack })
 
 	faint := color.New(color.Faint)
-	where := "base"
+	// Not "base": base runs from its replica, and naming this directory base was
+	// read as "the code here is the code base runs".
+	where := "template checkout"
+	if _, rerr := replica.DetectFromCwd(); rerr == nil {
+		where = "base replica"
+	}
 	if hereStack != "" {
 		where = "stack " + hereStack
 	}
@@ -586,7 +647,7 @@ func printServiceOrientation(ws *workspace.Workspace, rw *config.ResolvedWorkspa
 		faint.Sprint(branchHere))
 
 	if len(rows) == 0 {
-		faint.Printf("%sno feature stack runs %s — start one: devstack stack create <name> --repos %s\n\n", orientIndent, service, service)
+		faint.Printf("%sno feature stack runs %s. Start one: devstack stack create <name> --repos %s\n\n", orientIndent, service, service)
 		return
 	}
 
@@ -609,7 +670,7 @@ func printServiceOrientation(ws *workspace.Workspace, rw *config.ResolvedWorkspa
 		}
 		fmt.Println()
 	}
-	faint.Printf("%s▸ = the checkout you are in · a stack is worked in its own worktree: devstack stack list\n", orientIndent)
+	faint.Printf("%s▸ = the checkout you are in · each stack has its own worktree: devstack stack list\n", orientIndent)
 	fmt.Println()
 }
 

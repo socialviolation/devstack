@@ -168,7 +168,7 @@ func (p *SignozPlugin) Backend(ws *workspace.Workspace) (observability.Backend, 
 // Validate checks that docker is available.
 func (p *SignozPlugin) Validate(ws *workspace.Workspace) error {
 	if _, err := exec.LookPath("docker"); err != nil {
-		return fmt.Errorf("docker not found on PATH — required for SigNoz plugin")
+		return fmt.Errorf("devstack can not find docker on PATH. The SigNoz plugin needs docker")
 	}
 	return nil
 }
@@ -183,7 +183,7 @@ func (p *SignozPlugin) ConfigSchema() []otel.ConfigField {
 func signozDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("could not determine home directory: %w", err)
+		return "", fmt.Errorf("devstack can not determine the home directory: %w", err)
 	}
 	return filepath.Join(home, ".config", "devstack", "signoz"), nil
 }
@@ -231,7 +231,7 @@ func ensureSignozFiles() (string, error) {
 		return os.WriteFile(dest, data, 0644)
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to extract SigNoz config files: %w", err)
+		return "", fmt.Errorf("can not extract the SigNoz configuration files: %w", err)
 	}
 
 	return filepath.Join(dir, "docker-compose.yml"), nil
@@ -306,7 +306,7 @@ func startSignoz() error {
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("docker compose up failed (see output above)")
+		return fmt.Errorf("docker compose up failed. Read the output above")
 	}
 	return nil
 }
@@ -317,7 +317,7 @@ func stopSignoz() error {
 		return err
 	}
 	if _, err := os.Stat(composePath); os.IsNotExist(err) {
-		return fmt.Errorf("signoz compose file not found at %s", composePath)
+		return fmt.Errorf("devstack can not find the signoz compose file at %s", composePath)
 	}
 
 	cmd := exec.Command("docker", "compose",
@@ -328,7 +328,7 @@ func stopSignoz() error {
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("docker compose down failed (see output above)")
+		return fmt.Errorf("docker compose down failed. Read the output above")
 	}
 	return nil
 }

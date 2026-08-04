@@ -271,24 +271,24 @@ func Launch(wsName string, mode Mode, user, host string, local, remote int) (int
 	cmd := exec.Command(sshBin, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
-		return 0, fmt.Errorf("failed to start ssh: %w", err)
+		return 0, fmt.Errorf("can not start ssh: %w", err)
 	}
 	pid := cmd.Process.Pid
 	// Detach: the CLI exits immediately; setsid keeps ssh alive as an orphan.
 	_ = cmd.Process.Release()
 
 	if err := os.MkdirAll(Dir(wsName), 0755); err != nil {
-		return 0, fmt.Errorf("failed to create tunnel dir: %w", err)
+		return 0, fmt.Errorf("can not create the tunnel directory: %w", err)
 	}
 	if err := os.WriteFile(pidFile(wsName, port), []byte(strconv.Itoa(pid)), 0644); err != nil {
 		_ = syscall.Kill(pid, syscall.SIGTERM)
-		return 0, fmt.Errorf("failed to write PID file: %w", err)
+		return 0, fmt.Errorf("can not write the PID file: %w", err)
 	}
 
 	time.Sleep(time.Second)
 	if !Alive(pid) {
 		_ = os.Remove(pidFile(wsName, port))
-		return 0, fmt.Errorf("ssh forward for port %d exited immediately", port)
+		return 0, fmt.Errorf("the ssh forward for port %d stopped immediately", port)
 	}
 	return pid, nil
 }
@@ -431,7 +431,7 @@ func InspectRemote(user, host string, ports []int) ([]RemoteHolder, error) {
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil && len(out) == 0 {
-		return nil, fmt.Errorf("could not inspect %s: %w", host, err)
+		return nil, fmt.Errorf("devstack can not inspect %s: %w", host, err)
 	}
 
 	byPort := map[int]string{}

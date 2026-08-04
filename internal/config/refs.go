@@ -85,7 +85,7 @@ func ResolveRefs(s, self string, book PortBook) (string, error) {
 		return "", resolveErr
 	}
 	if strings.Contains(out, "${") {
-		return "", fmt.Errorf("malformed reference in %q", s)
+		return "", fmt.Errorf("%q holds a reference that devstack can not read", s)
 	}
 	return out, nil
 }
@@ -93,7 +93,7 @@ func ResolveRefs(s, self string, book PortBook) (string, error) {
 func resolveRef(inner, self string, book PortBook) (string, error) {
 	parts := strings.Split(inner, ".")
 	if len(parts) < 2 {
-		return "", fmt.Errorf("malformed reference ${%s}", inner)
+		return "", fmt.Errorf("devstack can not read the reference ${%s}", inner)
 	}
 	service := parts[0]
 	if service == "self" {
@@ -119,18 +119,18 @@ func resolveRef(inner, self string, book PortBook) (string, error) {
 		return strconv.Itoa(port), nil
 
 	default:
-		return "", fmt.Errorf("malformed reference ${%s}", inner)
+		return "", fmt.Errorf("devstack can not read the reference ${%s}", inner)
 	}
 }
 
 func lookupPort(inner, service, key string, book PortBook) (int, error) {
 	ports, ok := book[service]
 	if !ok {
-		return 0, fmt.Errorf("reference ${%s}: unknown service %q", inner, service)
+		return 0, fmt.Errorf("reference ${%s}: the service %q is unknown", inner, service)
 	}
 	port, ok := ports[key]
 	if !ok {
-		return 0, fmt.Errorf("reference ${%s}: service %q has no port %q", inner, service, key)
+		return 0, fmt.Errorf("reference ${%s}: the service %q has no port %q", inner, service, key)
 	}
 	return port, nil
 }

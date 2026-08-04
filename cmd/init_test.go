@@ -12,205 +12,6 @@ import (
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
-func TestWriteAgentsMDIsIdempotent(t *testing.T) {
-	dir := t.TempDir()
-	if err := writeAgentsMD("api", dir, "/home/dev/navexa", ""); err != nil {
-		t.Fatalf("writeAgentsMD first: %v", err)
-	}
-	first, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
-	if err := writeAgentsMD("api", dir, "/home/dev/navexa", ""); err != nil {
-		t.Fatalf("writeAgentsMD second: %v", err)
-	}
-	second, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
-	if string(first) != string(second) {
-		t.Fatalf("not byte-identical on second run:\n--- first ---\n%q\n--- second ---\n%q", first, second)
-	}
-	if n := strings.Count(string(second), agentsSentinelBegin); n != 1 {
-		t.Fatalf("expected exactly one begin sentinel, got %d", n)
-	}
-	if !strings.HasSuffix(string(second), "\n") || strings.HasSuffix(string(second), "\n\n") {
-		t.Fatalf("expected exactly one trailing newline, got %q", string(second)[len(second)-3:])
-	}
-}
-
-func TestWriteAgentsMDPreservesBeadsAndMigratesLegacy(t *testing.T) {
-	dir := t.TempDir()
-	agentsFile := filepath.Join(dir, "AGENTS.md")
-	seed := "# api\n\nSome preamble.\n\n" +
-		"## Dev Stack (devstack MCP)\n\n" +
-		"stale legacy content referencing devstack workspace doctor\n\n" +
-		"## BEADS\n\n" +
-		"- keep me: bead workflow notes\n"
-	if err := os.WriteFile(agentsFile, []byte(seed), 0644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	if err := writeAgentsMD("api", dir, "/home/dev/navexa", ""); err != nil {
-		t.Fatalf("writeAgentsMD: %v", err)
-	}
-	got, _ := os.ReadFile(agentsFile)
-	s := string(got)
-
-	if !strings.Contains(s, "## BEADS") || !strings.Contains(s, "keep me: bead workflow notes") {
-		t.Fatalf("BEADS block was clobbered:\n%s", s)
-	}
-	if strings.Count(s, agentsSentinelBegin) != 1 || strings.Count(s, agentsSentinelEnd) != 1 {
-		t.Fatalf("expected exactly one sentinel pair:\n%s", s)
-	}
-	if strings.Count(s, "## Dev Stack (devstack MCP)") != 1 {
-		t.Fatalf("expected exactly one devstack section (legacy not stripped):\n%s", s)
-	}
-	if !strings.Contains(s, "Some preamble.") {
-		t.Fatalf("preamble was lost:\n%s", s)
-	}
-
-	if err := writeAgentsMD("api", dir, "/home/dev/navexa", ""); err != nil {
-		t.Fatalf("writeAgentsMD second: %v", err)
-	}
-	got2, _ := os.ReadFile(agentsFile)
-	if string(got) != string(got2) {
-		t.Fatalf("migration not idempotent")
-	}
-}
-
-func TestBuildAgentInstructionsContentSanity(t *testing.T) {
-	block := buildAgentInstructions("api", "/home/dev/navexa/api", "/home/dev/navexa", "")
-	if !strings.Contains(block, "<workspace>:<service>") {
-		t.Fatalf("missing instance-naming guidance:\n%s", block)
-	}
-	if !strings.Contains(block, "After you edit code") || !strings.Contains(block, "devstack service restart") {
-		t.Fatalf("missing hot-reload/restart guidance:\n%s", block)
-	}
-	if strings.Contains(block, "devstack up") {
-		t.Fatalf("generated block references the non-existent `devstack up` (use `devstack workspace up`):\n%s", block)
-	}
-	for _, want := range []string{"devstack workspace doctor", "devstack otel status", "--stacks"} {
-		if !strings.Contains(block, want) {
-			t.Fatalf("generated block missing expected real command %q:\n%s", want, block)
-		}
-	}
-}
-
-func TestWriteAIInstructionPointersAppendsAndIsIdempotent(t *testing.T) {
-	dir := t.TempDir()
-	seed := "# House rules\n\nAlways run the linter.\n"
-	writeFile(t, filepath.Join(dir, "CLAUDE.md"), seed)
-
-	files, err := writeAIInstructionPointers("api", dir, "")
-	if err != nil {
-		t.Fatalf("writeAIInstructionPointers: %v", err)
-	}
-	if len(files) != 1 || files[0] != "CLAUDE.md" {
-		t.Fatalf("updated files = %v, want [CLAUDE.md]", files)
-	}
-
-	first, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
-	s := string(first)
-	if !strings.Contains(s, "Always run the linter.") {
-		t.Fatalf("existing content lost:\n%s", s)
-	}
-	if !strings.HasPrefix(s, seed) {
-		t.Fatalf("block was not appended after existing content:\n%s", s)
-	}
-	if strings.Count(s, agentsSentinelBegin) != 1 || strings.Count(s, agentsSentinelEnd) != 1 {
-		t.Fatalf("expected exactly one sentinel pair:\n%s", s)
-	}
-	for _, want := range []string{
-		"## devstack (local dev services)",
-		"A service can have more than one running copy.",
-		"Services are not all running by default.",
-		"devstack status",
-		"devstack service start api",
-		"devstack service restart api",
-		"devstack stack list",
-		"AGENTS.md",
-	} {
-		if !strings.Contains(s, want) {
-			t.Fatalf("block missing %q:\n%s", want, s)
-		}
-	}
-
-	if _, err := writeAIInstructionPointers("api", dir, ""); err != nil {
-		t.Fatalf("second run: %v", err)
-	}
-	second, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
-	if string(first) != string(second) {
-		t.Fatalf("not byte-identical on second run:\n--- first ---\n%q\n--- second ---\n%q", first, second)
-	}
-}
-
-func TestWriteAIInstructionPointersReplacesBetweenSentinels(t *testing.T) {
-	dir := t.TempDir()
-	seed := "# Before\n\nkeep me above.\n\n" +
-		agentsSentinelBegin + "\nstale devstack guidance\n" + agentsSentinelEnd + "\n\n" +
-		"## After\n\nkeep me below.\n"
-	writeFile(t, filepath.Join(dir, "GEMINI.md"), seed)
-
-	if _, err := writeAIInstructionPointers("api", dir, ""); err != nil {
-		t.Fatalf("writeAIInstructionPointers: %v", err)
-	}
-	s := readString(t, filepath.Join(dir, "GEMINI.md"))
-
-	if strings.Contains(s, "stale devstack guidance") {
-		t.Fatalf("stale block not replaced:\n%s", s)
-	}
-	if !strings.Contains(s, "keep me above.") || !strings.Contains(s, "keep me below.") {
-		t.Fatalf("surrounding user content lost:\n%s", s)
-	}
-	if strings.Count(s, agentsSentinelBegin) != 1 || strings.Count(s, agentsSentinelEnd) != 1 {
-		t.Fatalf("expected exactly one sentinel pair:\n%s", s)
-	}
-	if !strings.Contains(s, "## devstack (local dev services)") {
-		t.Fatalf("fresh block missing:\n%s", s)
-	}
-	if strings.Index(s, "keep me above.") > strings.Index(s, agentsSentinelBegin) ||
-		strings.Index(s, "keep me below.") < strings.Index(s, agentsSentinelEnd) {
-		t.Fatalf("content moved across the managed block:\n%s", s)
-	}
-}
-
-func TestWriteAIInstructionPointersNeverCreatesFiles(t *testing.T) {
-	dir := t.TempDir()
-
-	files, err := writeAIInstructionPointers("api", dir, "")
-	if err != nil {
-		t.Fatalf("writeAIInstructionPointers: %v", err)
-	}
-	if len(files) != 0 {
-		t.Fatalf("expected no files updated, got %v", files)
-	}
-	for _, rel := range aiInstructionFiles {
-		if _, err := os.Stat(filepath.Join(dir, rel)); !os.IsNotExist(err) {
-			t.Fatalf("%s was created (stat err = %v), devstack must never create it", rel, err)
-		}
-	}
-}
-
-func TestWriteAIInstructionPointersMentionsStack(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".github"), 0755); err != nil {
-		t.Fatalf("mkdir .github: %v", err)
-	}
-	writeFile(t, filepath.Join(dir, ".github", "copilot-instructions.md"), "# copilot\n")
-
-	files, err := writeAIInstructionPointers("api", dir, "import-review")
-	if err != nil {
-		t.Fatalf("writeAIInstructionPointers: %v", err)
-	}
-	if len(files) != 1 {
-		t.Fatalf("updated files = %v, want the copilot file only", files)
-	}
-	s := readString(t, filepath.Join(dir, ".github", "copilot-instructions.md"))
-	if !strings.Contains(s, "import-review") || !strings.Contains(s, "--stack import-review") {
-		t.Fatalf("stack block missing stack name or --stack flag:\n%s", s)
-	}
-
-	base := buildAIInstructionPointer("api", "")
-	if strings.Contains(base, "worktree — target its instance") {
-		t.Fatalf("base block wrongly claims to be a stack worktree:\n%s", base)
-	}
-}
-
 func readString(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -415,15 +216,51 @@ func assertMCPJsonDebaked(t *testing.T, mcpFile string) {
 	}
 }
 
-func TestAgentInstructionsWarnAgainstCommittingMachineLocalFilesAndSecrets(t *testing.T) {
-	out := buildAgentInstructions("api", t.TempDir(), "/home/dev/navexa", "")
-	for _, want := range []string{
-		"Never commit `devstack.service.yaml`",
-		"If that manifest is committed, keep real secrets out of it",
-		"`env.required`",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("AGENTS.md block missing do-not-commit guidance %q", want)
+// init writes no instructions. It removes the block an older devstack wrote,
+// it keeps the text a human wrote beside it, and it deletes a file that held
+// devstack content only. .mcp.json is configuration, so it stays.
+func TestRunInitAllWritesNoInstructionsAndRemovesTheOldOnes(t *testing.T) {
+	baseRoot, _, baseServiceDir := setupBaseAndSiblingStack(t)
+	agents := filepath.Join(baseServiceDir, "AGENTS.md")
+	claude := filepath.Join(baseServiceDir, "CLAUDE.md")
+	writeFile(t, agents, "# api\n\nMine, and it stays.\n\n"+
+		agentsSentinelBegin+"\ngenerated instructions\n"+agentsSentinelEnd+"\n")
+	writeFile(t, claude, agentsSentinelBegin+"\na pointer block\n"+agentsSentinelEnd+"\n")
+
+	t.Chdir(baseRoot)
+	if err := runInitAll(false); err != nil {
+		t.Fatalf("runInitAll: %v", err)
+	}
+
+	got := readString(t, agents)
+	if strings.Contains(got, agentsSentinelBegin) || strings.Contains(got, "generated instructions") {
+		t.Errorf("init left generated instructions in AGENTS.md:\n%s", got)
+	}
+	if !strings.Contains(got, "Mine, and it stays.") {
+		t.Errorf("init lost the text a human wrote:\n%s", got)
+	}
+	if _, err := os.Stat(claude); !os.IsNotExist(err) {
+		t.Errorf("CLAUDE.md held devstack content only, so it must be gone (stat err = %v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(baseServiceDir, ".mcp.json")); err != nil {
+		t.Errorf(".mcp.json is configuration and must stay: %v", err)
+	}
+}
+
+// devstack never created these files, so a refresh must not create one either.
+func TestRunInitAllCreatesNoInstructionFile(t *testing.T) {
+	baseRoot, _, baseServiceDir := setupBaseAndSiblingStack(t)
+
+	t.Chdir(baseRoot)
+	if err := runInitAll(false); err != nil {
+		t.Fatalf("runInitAll: %v", err)
+	}
+
+	for _, dir := range []string{baseRoot, baseServiceDir} {
+		for _, f := range contentFiles(dir) {
+			if _, err := os.Stat(f.Path); !os.IsNotExist(err) {
+				t.Errorf("init created %s (stat err = %v)", f.Path, err)
+			}
 		}
 	}
 }

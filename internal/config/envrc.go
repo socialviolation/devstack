@@ -43,7 +43,7 @@ func ResolveEnvFile(dir, name string) (map[string]string, error) {
 		if os.IsNotExist(err) {
 			return map[string]string{}, nil
 		}
-		return nil, fmt.Errorf("stat %s: %w", path, err)
+		return nil, fmt.Errorf("can not read the file information of %s: %w", path, err)
 	}
 
 	baseline := os.Environ()
@@ -71,9 +71,9 @@ func ResolveEnvFile(dir, name string) (map[string]string, error) {
 		// values included, so xtrace lines are dropped before the error is built.
 		msg := stripXtrace(stderr.String())
 		if msg == "" {
-			return nil, fmt.Errorf("evaluate %s: %w", path, err)
+			return nil, fmt.Errorf("can not evaluate %s: %w", path, err)
 		}
-		return nil, fmt.Errorf("evaluate %s: %w: %s", path, err, msg)
+		return nil, fmt.Errorf("can not evaluate %s: %w: %s", path, err, msg)
 	}
 
 	// env -0 prints the whole environment, so diff against the baseline the

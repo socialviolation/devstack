@@ -42,7 +42,7 @@ func StackOnBasePorts(view *tilt.TiltView, filter map[string]bool, wsName, stack
 	}
 
 	if len(out) == 0 {
-		return nil, unmapped, fmt.Errorf("stack %q has no running services to forward — bring it up with: devstack stack up %s", rec.Name, rec.Name)
+		return nil, unmapped, fmt.Errorf("stack %q runs no service that devstack can forward. To bring it up, run: devstack stack up %s", rec.Name, rec.Name)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].RemotePort < out[j].RemotePort })
 	return out, unmapped, nil

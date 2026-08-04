@@ -110,13 +110,13 @@ func warnStrandedLegacyOtelConfig(wsPath string, obs config.WorkspaceManifestObs
 		cmd += fmt.Sprintf(" --set %s=%s", k, settings[k])
 	}
 
-	fmt.Fprintf(warnWriter, "warning: %s holds otel config devstack no longer reads — it now lives in %s.\n",
+	fmt.Fprintf(warnWriter, "warning: %s holds otel configuration that devstack no longer reads. That configuration now lives in %s.\n",
 		filepath.Join(wsPath, ".devstack.json"), config.WorkspaceManifestFileName)
 	if cmd != baseConfigureCmd {
-		fmt.Fprintf(warnWriter, "         re-apply it with: %s\n", cmd)
+		fmt.Fprintf(warnWriter, "         to apply it again, run: %s\n", cmd)
 	}
 	for _, k := range secrets {
-		fmt.Fprintf(warnWriter, "         %q is a credential: supply it through the environment (.envrc), not a committed file.\n", k)
+		fmt.Fprintf(warnWriter, "         %q is a credential: supply it through the environment (.envrc), and not through a committed file.\n", k)
 	}
 }
 
@@ -177,8 +177,10 @@ func LogFile(name string) string {
 const hostKey = "_devstack-host"
 
 // HostTiltPort is the fixed API port the one host Tilt daemon listens on. It is
-// distinct from the per-workspace TiltPort range (10350+).
-const HostTiltPort = 10300
+// distinct from the per-workspace TiltPort range (10350+). It is a variable so a
+// test can point the code at a daemon of its own, on a port the machine has
+// free; nothing outside a test writes it.
+var HostTiltPort = 10300
 
 // HostPIDFile returns the PID file path for the host Tilt daemon.
 func HostPIDFile() string { return PIDFile(hostKey) }
@@ -205,30 +207,59 @@ func Load() ([]Workspace, error) {
 		if os.IsNotExist(err) {
 			return []Workspace{}, nil
 		}
-		return nil, fmt.Errorf("failed to read registry: %w", err)
+		return nil, fmt.Errorf("can not read the registry: %w", err)
 	}
 
 	var workspaces []Workspace
 	if err := json.Unmarshal(data, &workspaces); err != nil {
-		return nil, fmt.Errorf("failed to parse registry: %w", err)
+		return nil, fmt.Errorf("can not parse the registry: %w", err)
 	}
 	return workspaces, nil
 }
 
 // Save writes the registry JSON with indentation, creating parent dirs if needed.
+//
+// It writes a temporary file in the same directory and renames it over the
+// registry, so the registry goes from one whole content to the next whole
+// content. A reader always gets a file it can parse, and a write that stops in
+// the middle leaves the entries that were there before.
+//
+// Save does not lock. A caller that reads the registry, changes it, and writes
+// it back must hold the registry lock across all three steps: see
+// withRegistryLock.
 func Save(workspaces []Workspace) error {
 	path := RegistryPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("failed to create registry directory: %w", err)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("can not create the registry directory: %w", err)
 	}
 
 	data, err := json.MarshalIndent(workspaces, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal registry: %w", err)
+		return fmt.Errorf("can not encode the registry: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("failed to write registry: %w", err)
+	tmp, err := os.CreateTemp(dir, "workspaces-*.json")
+	if err != nil {
+		return fmt.Errorf("can not write the workspace registry: %w", err)
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("can not write the workspace registry: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("can not write the workspace registry: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("can not write the workspace registry: %w", err)
+	}
+	if err := os.Chmod(tmp.Name(), 0644); err != nil {
+		return fmt.Errorf("can not write the workspace registry: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("can not write the workspace registry: %w", err)
 	}
 	return nil
 }
@@ -268,7 +299,7 @@ func Register(ws Workspace) error {
 		lowerName := strings.ToLower(ws.Name)
 		for _, existing := range workspaces {
 			if existing.Path != ws.Path && strings.ToLower(existing.Name) == lowerName {
-				return fmt.Errorf("workspace name %q already registered at %s", ws.Name, existing.Path)
+				return fmt.Errorf("the workspace name %q is already registered at %s", ws.Name, existing.Path)
 			}
 		}
 
@@ -284,22 +315,29 @@ func Register(ws Workspace) error {
 	})
 }
 
-// withRegistryLock runs fn while holding an exclusive advisory lock on a
-// dedicated lockfile beside the registry, serialising concurrent read-compute-write
-// sequences (allocate a port, then Save) across processes and goroutines. The
-// registry file itself is not locked because Save rewrites it.
+// withRegistryLock runs fn while it holds an exclusive advisory lock on a
+// dedicated lockfile beside the registry.
+//
+// Every change to the registry is read-mutate-write, and the whole of it runs in
+// here. A lock around the write only is not enough: two callers that read the
+// same entries both write a full file, and the second one erases the change of
+// the first — a removal that ran beside an unrelated update came back. The MCP
+// server and the shell are two processes on one registry, so this lock is
+// between processes and not only between goroutines.
+//
+// The registry file itself is not locked because Save replaces it.
 func withRegistryLock(fn func() error) error {
 	lockPath := RegistryPath() + ".lock"
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
-		return fmt.Errorf("failed to create registry directory: %w", err)
+		return fmt.Errorf("can not create the registry directory: %w", err)
 	}
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to open registry lock: %w", err)
+		return fmt.Errorf("can not open the registry lock: %w", err)
 	}
 	defer f.Close()
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		return fmt.Errorf("failed to lock registry: %w", err)
+		return fmt.Errorf("can not lock the registry: %w", err)
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 	return fn()
@@ -323,7 +361,7 @@ func FindByName(name string) (*Workspace, error) {
 			return &w, nil
 		}
 	}
-	return nil, fmt.Errorf("workspace %q not found", name)
+	return nil, fmt.Errorf("devstack can not find the workspace %q", name)
 }
 
 // FindByPath returns the workspace matching the given path exactly (after cleaning).
@@ -339,7 +377,7 @@ func FindByPath(path string) (*Workspace, error) {
 			return &w, nil
 		}
 	}
-	return nil, fmt.Errorf("no workspace registered at path %q", path)
+	return nil, fmt.Errorf("no workspace is registered at the path %q", path)
 }
 
 // DetectFromCwd returns the registered workspace whose path is the longest prefix
@@ -349,7 +387,7 @@ func FindByPath(path string) (*Workspace, error) {
 func DetectFromCwd() (*Workspace, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get current directory: %w", err)
+		return nil, fmt.Errorf("can not read the current directory: %w", err)
 	}
 	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 		cwd = resolved
@@ -378,7 +416,7 @@ func DetectFromCwd() (*Workspace, error) {
 		w := workspaces[best]
 		return &w, nil
 	}
-	return nil, fmt.Errorf("not inside a registered devstack workspace. Run: devstack workspace add")
+	return nil, fmt.Errorf("this directory is not inside a registered devstack workspace. To register it, run: devstack workspace add")
 }
 
 // OTLP ingestion is machine-level: one collector serves every workspace, which
@@ -393,21 +431,23 @@ func OtelOTLPEndpoint(ws *Workspace) string {
 
 // UpdateOtelPlugin sets the OTEL plugin name and config for a workspace.
 func UpdateOtelPlugin(name, pluginName string, config map[string]string) error {
-	workspaces, err := Load()
-	if err != nil {
-		return err
-	}
-	lower := strings.ToLower(name)
-	for i, ws := range workspaces {
-		if strings.ToLower(ws.Name) == lower {
-			workspaces[i].OtelPlugin = pluginName
-			if config != nil {
-				workspaces[i].OtelPluginConfig = config
-			}
-			return Save(workspaces)
+	return withRegistryLock(func() error {
+		workspaces, err := Load()
+		if err != nil {
+			return err
 		}
-	}
-	return fmt.Errorf("workspace %q not found", name)
+		lower := strings.ToLower(name)
+		for i, ws := range workspaces {
+			if strings.ToLower(ws.Name) == lower {
+				workspaces[i].OtelPlugin = pluginName
+				if config != nil {
+					workspaces[i].OtelPluginConfig = config
+				}
+				return Save(workspaces)
+			}
+		}
+		return fmt.Errorf("devstack can not find the workspace %q", name)
+	})
 }
 
 // TunnelForward describes a forward that ran, in enough detail to repeat it.
@@ -424,53 +464,59 @@ type TunnelForward struct {
 
 // UpdateTunnelForward records what a workspace's last push or pull forwarded.
 func UpdateTunnelForward(name string, fwd TunnelForward) error {
-	workspaces, err := Load()
-	if err != nil {
-		return err
-	}
-	for i, ws := range workspaces {
-		if strings.EqualFold(ws.Name, name) {
-			workspaces[i].TunnelLast = &fwd
-			return Save(workspaces)
+	return withRegistryLock(func() error {
+		workspaces, err := Load()
+		if err != nil {
+			return err
 		}
-	}
-	return fmt.Errorf("workspace %q not found", name)
+		for i, ws := range workspaces {
+			if strings.EqualFold(ws.Name, name) {
+				workspaces[i].TunnelLast = &fwd
+				return Save(workspaces)
+			}
+		}
+		return fmt.Errorf("devstack can not find the workspace %q", name)
+	})
 }
 
 // UpdateTunnelRemote persists the default tunnel host/user for a named workspace.
 // Empty values are left unchanged so a --user override doesn't wipe a saved host.
 func UpdateTunnelRemote(name, host, user string) error {
-	workspaces, err := Load()
-	if err != nil {
-		return err
-	}
-	for i, ws := range workspaces {
-		if strings.ToLower(ws.Name) == strings.ToLower(name) {
-			if host != "" {
-				workspaces[i].TunnelHost = host
-			}
-			if user != "" {
-				workspaces[i].TunnelUser = user
-			}
-			return Save(workspaces)
+	return withRegistryLock(func() error {
+		workspaces, err := Load()
+		if err != nil {
+			return err
 		}
-	}
-	return fmt.Errorf("workspace %q not found", name)
+		for i, ws := range workspaces {
+			if strings.ToLower(ws.Name) == strings.ToLower(name) {
+				if host != "" {
+					workspaces[i].TunnelHost = host
+				}
+				if user != "" {
+					workspaces[i].TunnelUser = user
+				}
+				return Save(workspaces)
+			}
+		}
+		return fmt.Errorf("devstack can not find the workspace %q", name)
+	})
 }
 
 // UpdatePort updates the TiltPort for a named workspace in the registry.
 func UpdatePort(name string, port int) error {
-	workspaces, err := Load()
-	if err != nil {
-		return err
-	}
-	for i, ws := range workspaces {
-		if strings.ToLower(ws.Name) == strings.ToLower(name) {
-			workspaces[i].TiltPort = port
-			return Save(workspaces)
+	return withRegistryLock(func() error {
+		workspaces, err := Load()
+		if err != nil {
+			return err
 		}
-	}
-	return fmt.Errorf("workspace %q not found", name)
+		for i, ws := range workspaces {
+			if strings.ToLower(ws.Name) == strings.ToLower(name) {
+				workspaces[i].TiltPort = port
+				return Save(workspaces)
+			}
+		}
+		return fmt.Errorf("devstack can not find the workspace %q", name)
+	})
 }
 
 // SetWorkspaceActive marks a workspace active or inactive and persists it. An
@@ -489,8 +535,35 @@ func SetWorkspaceActive(name string, active bool) error {
 				return Save(workspaces)
 			}
 		}
-		return fmt.Errorf("workspace %q not found", name)
+		return fmt.Errorf("devstack can not find the workspace %q", name)
 	})
+}
+
+// Deregister drops the registry entry for the named workspace (no file cleanup)
+// and returns the entry it removed. Errors if the workspace is unknown.
+func Deregister(name string) (Workspace, error) {
+	var removed Workspace
+	err := withRegistryLock(func() error {
+		workspaces, err := Load()
+		if err != nil {
+			return fmt.Errorf("can not read the workspace registry: %w", err)
+		}
+		for i, ws := range workspaces {
+			if strings.EqualFold(ws.Name, name) {
+				removed = ws
+				workspaces = append(workspaces[:i], workspaces[i+1:]...)
+				if err := Save(workspaces); err != nil {
+					return fmt.Errorf("can not write the workspace registry: %w", err)
+				}
+				return nil
+			}
+		}
+		return fmt.Errorf("devstack can not find the workspace %q", name)
+	})
+	if err != nil {
+		return Workspace{}, err
+	}
+	return removed, nil
 }
 
 // ActiveWorkspaces returns the registered workspaces marked active, in registry order.
@@ -561,5 +634,5 @@ func nextPortFrom(workspaces []Workspace) (int, error) {
 		}
 		return candidate, nil
 	}
-	return 0, fmt.Errorf("no free port found in range %d-%d", start, start+portScanLimit-1)
+	return 0, fmt.Errorf("devstack can not find a free port in the range %d-%d", start, start+portScanLimit-1)
 }

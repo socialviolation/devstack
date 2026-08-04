@@ -20,16 +20,20 @@ var portsCmd = &cobra.Command{
 var portsFreeCmd = &cobra.Command{
 	Use:   "free <port> [port...]",
 	Short: "Kill whatever still listens on the given ports",
-	Long: `Terminate the processes holding the named TCP ports, so a service can bind on
-start. Each one gets SIGTERM, then SIGKILL only if it is still alive after a
-grace period — a dev server killed outright leaves its own children behind,
-which is the mess this is meant to prevent.
+	Long: `CAUTION: this command kills the process that holds each named TCP port. It
+refuses any port number less than 1024.
 
-Generated Tiltfiles call this for a service that sets runtime.prep.freePorts,
-passing that instance's OWN resolved ports: a stack frees the ports it was
-allocated, base frees the ports it pins, and neither can reach the other's.
+devstack terminates those processes so that a service can bind when it starts.
+Each process gets SIGTERM. It gets SIGKILL only if it is still alive after a
+grace period. A dev server that is killed outright leaves its own children
+behind, and that is the mess this command prevents.
 
-Run by hand it does what you ask, so check what holds a port first:
+A generated Tiltfile calls this command for a service that sets
+runtime.prep.freePorts. It passes that copy's OWN resolved ports. A stack frees
+the ports it was allocated. Base frees the ports it pins. Neither can reach the
+other's ports.
+
+Run by hand, this command does what you ask. So find what holds a port first:
 
   devstack ports check 4200
   devstack ports free 4200`,
@@ -40,7 +44,7 @@ Run by hand it does what you ask, so check what holds a port first:
 
 var portsCheckCmd = &cobra.Command{
 	Use:          "check <port> [port...]",
-	Short:        "Show what is listening on the given ports, without killing anything",
+	Short:        "Show what listens on the given ports, and kill nothing",
 	Args:         cobra.MinimumNArgs(1),
 	SilenceUsage: true,
 	RunE:         runPortsCheck,
@@ -50,8 +54,8 @@ func init() {
 	rootCmd.AddCommand(portsCmd)
 	portsCmd.AddCommand(portsFreeCmd)
 	portsCmd.AddCommand(portsCheckCmd)
-	portsFreeCmd.Flags().Duration("grace", 2*time.Second, "How long to wait after SIGTERM before SIGKILL")
-	portsFreeCmd.Flags().Bool("quiet", false, "Only report ports that had a listener")
+	portsFreeCmd.Flags().Duration("grace", 2*time.Second, "How long to wait after SIGTERM, before SIGKILL")
+	portsFreeCmd.Flags().Bool("quiet", false, "Only report the ports that had a listener")
 }
 
 // privilegedPort is the boundary below which a listener is far more likely to be
@@ -66,7 +70,7 @@ func parsePorts(args []string) ([]int, error) {
 			return nil, fmt.Errorf("%q is not a TCP port", a)
 		}
 		if p < privilegedPort {
-			return nil, fmt.Errorf("refusing to touch privileged port %d — devstack services do not run below %d", p, privilegedPort)
+			return nil, fmt.Errorf("devstack does not touch the privileged port %d. devstack services never run on a port number less than %d", p, privilegedPort)
 		}
 		out = append(out, p)
 	}
@@ -93,7 +97,7 @@ func runPortsCheck(cmd *cobra.Command, args []string) error {
 		}
 		for _, l := range byPort[p] {
 			if l.Unidentified {
-				fmt.Printf("%-6d held, owner unknown %-5s see it with: sudo ss -ltnp | grep :%d\n", p, l.Stack, p)
+				fmt.Printf("%-6d held, owner unknown %-5s to see it, run: sudo ss -ltnp | grep :%d\n", p, l.Stack, p)
 				continue
 			}
 			fmt.Printf("%-6d pid %-8d %-5s %s\n", p, l.PID, l.Stack, l.Command)
@@ -126,13 +130,13 @@ func runPortsFree(cmd *cobra.Command, args []string) error {
 		}
 		// Say what is being killed before killing it. A silent reclaim of
 		// someone else's process is indistinguishable from a crash.
-		fmt.Printf("port %d held by pid %d (%s) — terminating\n", l.Port, l.PID, l.Command)
+		fmt.Printf("port %d held by pid %d (%s) — devstack terminates it\n", l.Port, l.PID, l.Command)
 		kill = append(kill, l)
 	}
 	if !quiet {
 		for _, p := range wanted {
 			if !held[p] {
-				fmt.Printf("port %d already free\n", p)
+				fmt.Printf("port %d is already free\n", p)
 			}
 		}
 	}
@@ -146,7 +150,7 @@ func runPortsFree(cmd *cobra.Command, args []string) error {
 	// hands a caller a port that is still busy, and the bind fails later with
 	// nothing to connect it to.
 	if len(blocked) > 0 {
-		return fmt.Errorf("can not free port(s) %s — another user owns the process that holds them.\nFind the owner with: sudo ss -ltnp | grep -E ':(%s) '", joinPorts(blocked, ", "), joinPorts(blocked, "|"))
+		return fmt.Errorf("devstack can not free port(s) %s. Another user owns the process that holds them.\nTo find the owner, run: sudo ss -ltnp | grep -E ':(%s) '", joinPorts(blocked, ", "), joinPorts(blocked, "|"))
 	}
 	return nil
 }

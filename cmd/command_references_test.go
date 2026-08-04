@@ -115,18 +115,44 @@ func TestNoReferencedCommandContradictsItsTargetKind(t *testing.T) {
 func TestEveryReferencedCommandExists(t *testing.T) {
 	paths := registeredPaths(rootCmd)
 
-	// A line of prose can begin with "devstack", so the English verbs that
-	// follow it there are excluded by name. The guard is for command
-	// references; it does not try to parse sentences.
-	// "help" is deliberately absent. root.go replaces cobra's help command with
-	// a hidden one, so `devstack help <command>` does not resolve — excluding it
-	// is what let the session briefing send every agent to a command that does
-	// not exist. The working form is `devstack <command> --help`.
+	// A line of prose can begin with "devstack", so the English words that follow
+	// it there are excluded by name. The guard is for command references; it does
+	// not try to parse sentences.
+	//
+	// The list is long because CLAUDE.md Rule 5 requires the active voice with the
+	// actor named — "devstack builds the replica", not "the replica is built" — so
+	// most user-facing prose about devstack now puts a verb straight after the
+	// name. Every entry here is a word that is not, and could not be, a command:
+	// no devstack command is a third-person verb, a modal or an adverb. An
+	// invented noun such as `devstack services` is still caught, which is the
+	// direction this guard exists for. Add a word here only after checking that
+	// no command could ever carry that name.
+	//
+	// "help" is deliberately absent, and it now resolves: `devstack help` shows
+	// the first screen, `devstack help <command>` shows one command's help, and
+	// `devstack help more` shows the commands the first screen leaves out.
+	// Excluding it from this guard is what let the session briefing send every
+	// agent to a command that did not exist.
 	notCommands := map[string]bool{
-		"":   true,
-		"is": true, "runs": true, "manages": true, "inspects": true,
-		"will": true, "capabilities": true, "tunnels": true, "sets": true,
-		"resolves": true, "reads": true, "writes": true, "detects": true, "maintains": true,
+		"": true,
+		// modals, adverbs and connectives
+		"also": true, "can": true, "never": true, "then": true, "will": true,
+		// simple-past and past-participle forms
+		"cut": true, "deleted": true, "did": true, "found": true, "regenerated": true,
+		"removed": true, "resolved": true, "restarted": true, "saw": true, "skipped": true,
+		"stored": true, "turned": true, "wired": true, "wrote": true,
+		// third-person present verbs
+		"allocates": true, "builds": true, "checks": true, "cuts": true,
+		"defines": true, "deletes": true, "derives": true, "detects": true, "does": true,
+		"fires": true, "has": true, "inspects": true, "installs": true,
+		"is": true, "keeps": true, "leaves": true, "looks": true,
+		"maintains": true, "manages": true, "merges": true, "opens": true,
+		"prints": true, "reads": true, "redacts": true, "refreshes": true,
+		"records": true, "registers": true, "remembers": true, "removes": true,
+		"resolves": true, "restarts": true, "runs": true, "sets": true, "starts": true, "stops": true,
+		"stores": true, "terminates": true, "upgrades": true, "writes": true,
+		// plural nouns that are not command names
+		"capabilities": true, "instructions": true, "tunnels": true,
 	}
 
 	roots := []string{".", filepath.Join("..", "internal")}

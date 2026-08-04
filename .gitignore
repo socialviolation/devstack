@@ -1,2 +1,5 @@
 .claude/worktrees/
 .beads/
+
+# the built binary
+/devstack

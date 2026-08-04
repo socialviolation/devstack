@@ -5,6 +5,7 @@ package gitinfo
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"sort"
 	"strings"
@@ -110,6 +111,44 @@ func DirtyKeys(infos map[string]Info) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// It never guesses: a repo naming neither main nor master is an error, because
+// checking out the wrong branch is worse than refusing.
+func DefaultBranch(dir string) (string, error) {
+	if ref, ok := git(dir, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"); ok {
+		if branch := strings.TrimPrefix(ref, "refs/remotes/origin/"); branch != "" && branch != ref {
+			return branch, nil
+		}
+	}
+	for _, branch := range []string{"main", "master"} {
+		if _, ok := git(dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); ok {
+			return branch, nil
+		}
+	}
+	return "", fmt.Errorf("devstack can not tell which branch is the default in %s. There is no origin/HEAD, and neither main nor master is local", dir)
+}
+
+// Origin's copy wins: a local default branch goes stale the moment it is not
+// pulled.
+func DefaultRef(dir string) (branch, ref string, err error) {
+	branch, err = DefaultBranch(dir)
+	if err != nil {
+		return "", "", err
+	}
+	remote := "refs/remotes/origin/" + branch
+	if _, ok := git(dir, "rev-parse", "--verify", "--quiet", remote); ok {
+		return branch, remote, nil
+	}
+	local := "refs/heads/" + branch
+	if _, ok := git(dir, "rev-parse", "--verify", "--quiet", local); ok {
+		return branch, local, nil
+	}
+	return "", "", fmt.Errorf("the default branch %q is not in origin and not in %s", branch, dir)
+}
+
+func ShortRef(ref string) string {
+	return strings.TrimPrefix(strings.TrimPrefix(ref, "refs/remotes/"), "refs/heads/")
 }
 
 func git(dir string, args ...string) (string, bool) {
