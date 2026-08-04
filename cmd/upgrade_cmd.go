@@ -73,6 +73,7 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	if mod == "" {
 		return fmt.Errorf("this binary carries no module path, so devstack has nothing to install from")
 	}
+	writeUpgradeIntent(os.Stdout, noMigrate, noRestart)
 	fmt.Println("STEP 1 of 3: install the binary")
 	fmt.Printf("installed: %s\n", buildStamp())
 
@@ -298,4 +299,25 @@ func runMigration(bin string) error {
 		return fmt.Errorf("devstack migrate failed: %w. To read the error, run: devstack migrate", err)
 	}
 	return nil
+}
+
+// writeUpgradeIntent states what the command changes, before it changes it. An
+// upgrade of devstack is also an upgrade of the configuration in repositories
+// devstack does not own, and of the code the running copies serve. A reader who
+// learns that from the report has already had it done to them.
+func writeUpgradeIntent(w io.Writer, noMigrate, noRestart bool) {
+	fmt.Fprintln(w, "devstack upgrade migrates your configuration to the version that this devstack needs.")
+	switch {
+	case noMigrate:
+		fmt.Fprintln(w, "You passed --no-migrate, so devstack installs the binary and changes nothing else.")
+		fmt.Fprintln(w, "Your configuration stays on its current version. To read what is pending, run: devstack migrate --list")
+	case noRestart:
+		fmt.Fprintln(w, "It writes files in your repositories, and it builds the replica that base runs from.")
+		fmt.Fprintln(w, "You passed --no-restart, so each copy that runs keeps serving the old code.")
+	default:
+		fmt.Fprintln(w, "It writes files in your repositories. It builds the replica that base runs from.")
+		fmt.Fprintln(w, "It then restarts each copy that runs, so that copy serves the code in the replica.")
+		fmt.Fprintln(w, "To install the binary and change nothing else, run: devstack upgrade --no-migrate")
+	}
+	fmt.Fprintln(w)
 }
