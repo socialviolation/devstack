@@ -22,7 +22,7 @@ func TestDoctorPointsAtThePreviewBeforeTheMigration(t *testing.T) {
 	if preview < 0 {
 		t.Fatalf("the doctor never names the read-only preview:\n%s", got)
 	}
-	run := strings.Index(got, "then remove it: devstack migrate")
+	run := strings.Index(got, "Then remove it: devstack migrate")
 	if run < 0 {
 		t.Fatalf("the doctor never names the command that removes the residue:\n%s", got)
 	}

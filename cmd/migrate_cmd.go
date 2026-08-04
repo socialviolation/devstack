@@ -25,39 +25,40 @@ var migrateCmd = &cobra.Command{
 	Short: "Run every migration this devstack needs, and print what to do next",
 	Long: `Run each migration that this machine still needs.
 
-A migration is a patch: one versioned unit of work, with an id, a detector and
-its own next action. devstack runs every pending patch, over every workspace, in
-declared order. A patch that applies to nothing reports that and stops. A patch
-that fails does not stop the patches after it.
+A migration is one versioned unit of work. It has an id, a detector, and its own
+next action. devstack runs every pending migration, over every workspace, in
+declared order. A migration that applies to nothing reports that and stops. A
+migration that fails does not stop the migrations after it.
 
-THE PATCHES
-  0.2.0-agent-files  Remove the instructions that an older devstack wrote into
-                     AGENTS.md, CLAUDE.md, GEMINI.md, .cursorrules and
-                     .github/copilot-instructions.md. Delete a file that held
-                     nothing but that block. Write .mcp.json, which connects
-                     an agent to the devstack MCP server. Write the Claude Code
-                     SessionStart hook, so each session runs 'devstack prime'.
-                     It sweeps the workspace root, each service repository, and
-                     the worktree of each feature stack.
-  0.2.0-replica      Build the replica that base runs from: one git worktree for
-                     each repository of the workspace.
+THE MIGRATIONS
+  0.2.0-agent-files  It removes the instructions that an older devstack wrote
+                     into AGENTS.md, CLAUDE.md, GEMINI.md, .cursorrules and
+                     .github/copilot-instructions.md. It deletes a file that
+                     holds that block and nothing else. It writes .mcp.json,
+                     which connects an agent to the devstack MCP server. It
+                     writes the Claude Code SessionStart hook, so that each
+                     session runs 'devstack prime'. It acts in the workspace
+                     root, in each service repository, and in the worktree of
+                     each feature stack.
+  0.2.0-replica      It builds the replica that base runs from: one git worktree
+                     for each repository of the workspace.
 
 WHAT DEVSTACK RECORDS
-  This binary records each patch it applied, and the workspace it applied it in,
-  under ~/.local/share/devstack/migrations.json. A patch whose work is cheap to
-  repeat reads the filesystem instead, and runs again whenever the filesystem
-  needs it. The record never hides a repository that still holds a devstack
-  block.
+  This binary records each migration it applied, and the workspace it applied it
+  in, under ~/.local/share/devstack/migrations.json. Some migrations are cheap to
+  repeat. Each of those reads the filesystem instead of the record, and it runs
+  again whenever the filesystem needs it. The record never hides a repository
+  that still holds a devstack block.
 
-devstack removes only what devstack wrote. Where a file holds text of your own,
-that text stays, byte for byte. Where devstack can not find the end of its own
-block, it changes nothing and it names the file for you.
+devstack removes only what devstack wrote. If a file holds text of your own, that
+text stays, byte for byte. If devstack can not find the end of its own block, it
+changes nothing, and it names the file for you.
 
 CAUTION: devstack does not own these repositories. Read the diff in each one
 before you commit it.
 
-  devstack migrate          run every pending patch
-  devstack migrate --list   print every patch, applied or pending
+  devstack migrate          run every pending migration
+  devstack migrate --list   print every migration, applied or pending
 
 Run this command again at any time. A second run changes nothing.`,
 	SilenceUsage: true,
@@ -66,7 +67,7 @@ Run this command again at any time. A second run changes nothing.`,
 
 func init() {
 	rootCmd.AddCommand(migrateCmd)
-	migrateCmd.Flags().Bool("list", false, "Print every patch, applied or pending, and change nothing")
+	migrateCmd.Flags().Bool("list", false, "Print every migration, applied or pending, and change nothing")
 }
 
 // patches is every migration devstack knows, in the order it runs them. To add
@@ -95,7 +96,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 func agentFilesPatch() migrate.Patch {
 	return migrate.Patch{
 		ID:     "0.2.0-agent-files",
-		Title:  "Remove the devstack instructions from every repository, and wire each one for the live briefing",
+		Title:  "Remove the devstack instructions from every repository, and connect each one to devstack",
 		Rescan: true,
 		Detect: detectAgentFiles,
 		Run:    runAgentFiles,
@@ -116,7 +117,7 @@ func detectAgentFiles(ws *workspace.Workspace) (bool, string, error) {
 		}
 	}
 	if files == 0 && repos == 0 && dirty == 0 {
-		return false, "no file holds a devstack block, every repository is wired, and every devstack file is committed", nil
+		return false, "no file holds a devstack block, every repository is connected to devstack, and every devstack file is committed", nil
 	}
 	return true, agentFilesPhrase(files, repos, dirty), nil
 }
@@ -129,16 +130,16 @@ func agentFilesPhrase(files, repos, dirty int) string {
 		parts = append(parts, fmt.Sprintf("%d files hold a devstack block", files))
 	}
 	if repos == 1 {
-		parts = append(parts, "1 repository is not wired to devstack")
+		parts = append(parts, "1 repository is not connected to devstack")
 	} else if repos > 1 {
-		parts = append(parts, fmt.Sprintf("%d repositories are not wired to devstack", repos))
+		parts = append(parts, fmt.Sprintf("%d repositories are not connected to devstack", repos))
 	}
 	if dirty == 1 {
 		parts = append(parts, "1 repository holds an uncommitted devstack file")
 	} else if dirty > 1 {
 		parts = append(parts, fmt.Sprintf("%d repositories hold an uncommitted devstack file", dirty))
 	}
-	return strings.Join(parts, ", and ")
+	return strings.Join(parts, ". ")
 }
 
 // devstackOwnedFiles are the files this patch writes, strips or deletes. The
@@ -273,15 +274,15 @@ func agentFilesCounts(res migrateResult) []string {
 		out = append(out, fmt.Sprintf("    %s: devstack removed its block. Your own text stays", pluralFiles(res.Removed)))
 	}
 	if res.Deleted == 1 {
-		out = append(out, "    1 file: devstack deleted it. It held nothing but the devstack block")
+		out = append(out, "    1 file: devstack deleted it. It held the devstack block and nothing else")
 	} else if res.Deleted > 1 {
-		out = append(out, fmt.Sprintf("    %s: devstack deleted them. They held nothing but the devstack block", pluralFiles(res.Deleted)))
+		out = append(out, fmt.Sprintf("    %s: devstack deleted them. Each one held the devstack block and nothing else", pluralFiles(res.Deleted)))
 	}
 	if res.MCP > 0 {
 		out = append(out, fmt.Sprintf("    %s: devstack wrote .mcp.json, which connects an agent to the MCP server", pluralRepos(res.MCP)))
 	}
 	if res.Hooks > 0 {
-		out = append(out, fmt.Sprintf("    %s: devstack wired the SessionStart hook, so each session runs `devstack prime`", pluralRepos(res.Hooks)))
+		out = append(out, fmt.Sprintf("    %s: devstack wrote the SessionStart hook, so that each session runs `devstack prime`", pluralRepos(res.Hooks)))
 	}
 	return out
 }
@@ -320,10 +321,10 @@ func nextAgentFiles(results []migrate.Result) []string {
 			"devstack does not push. Push it yourself, or leave it.",
 			"This session does not have the tools that .mcp.json connects. An MCP client reads its",
 			"server list at session start only. To get those tools, restart the session.",
-			"WHY: until you commit the diff, the next clone of that repository does not get it. It",
-			"still carries any old instructions devstack wrote there, and an agent that reads them",
-			"acts on text that is not true. It also connects no agent to the MCP server, and no",
-			"session to `devstack prime`.")
+			"WHY: if you do not commit the diff, the next clone of that repository does not get it.",
+			"That clone still carries any old instructions that devstack wrote there. An agent that",
+			"reads them acts on text that is not true. That clone also connects no agent to the MCP",
+			"server, and no session to `devstack prime`.")
 	}
 	if len(loose) > 0 {
 		out = append(out, "COMMIT THESE ELSEWHERE. None of these directories is the root of a git repository.")
@@ -373,7 +374,7 @@ func looseLines(top string, items []migrate.Item) []string {
 	}
 	return []string{
 		fmt.Sprintf("    %-24s in the repository %s", strings.Join(labels, ", "), top),
-		fmt.Sprintf("      It holds: %s. `git add -A` here stages that whole repository.", listOrNone(paths)),
+		fmt.Sprintf("      It holds: %s. If you run `git add -A` here, git stages that whole repository.", listOrNone(paths)),
 		"      To commit these files only, run:",
 		fmt.Sprintf("        git -C %s add %s && git -C %s commit -m \"chore: devstack migrate\"", top, strings.Join(paths, " "), top),
 	}
@@ -385,7 +386,7 @@ func looseLines(top string, items []migrate.Item) []string {
 func orphanLines(it migrate.Item) []string {
 	return []string{
 		fmt.Sprintf("    %-24s %s", it.Label, it.Path),
-		fmt.Sprintf("      No git repository holds this directory. It holds: %s.", listOrNone(agentFilesPresent(it.Path))),
+		fmt.Sprintf("      No git repository holds this directory. This directory holds: %s.", listOrNone(agentFilesPresent(it.Path))),
 		"      No commit reaches these files. They stay on this machine, and no clone gets them.",
 	}
 }

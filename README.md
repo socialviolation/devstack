@@ -452,13 +452,13 @@ You commit `.claude/settings.json`, so the hook runs for everyone who clones the
 
 devstack once wrote a block of instructions into `AGENTS.md`, and a shorter block into `CLAUDE.md` and the files beside it. It writes neither now. `devstack prime` prints the same facts at each session start, so the agent reads them from the binary. A committed copy of a live fact goes stale, and a stale fact reads exactly like a true one.
 
-`devstack migrate` removes what an older devstack left behind. It sweeps every workspace on this machine: the workspace root, each service repository, and the worktree of each feature stack. In each directory it removes the devstack block, it deletes a file that held devstack content only, it writes `.mcp.json`, and it wires the SessionStart hook.
+`devstack migrate` removes what an older devstack left behind. It acts on every workspace on this machine: the workspace root, each service repository, and the worktree of each feature stack. In each directory it removes the devstack block, it deletes a file that holds devstack content and nothing else, it writes `.mcp.json`, and it writes the SessionStart hook.
 
 ```bash
 devstack migrate
 ```
 
-The file sweep is one of the migrations that `devstack migrate` runs. The command runs every pending migration, and the other one builds the replica that base runs from. To read what is pending without changing anything, run `devstack migrate --list`. An agent does the same with the `migrate` tool: `action="list"` to read, `action="run"` to apply.
+That file work is one of the migrations that `devstack migrate` runs. The command runs every pending migration. The other migration builds the replica that base runs from. To read what is pending without changing anything, run `devstack migrate --list`. An agent does the same with the `migrate` tool: `action="list"` to read, `action="run"` to apply.
 
 devstack removes only what devstack wrote. Your own text stays, byte for byte. Where devstack can not find the end of its own block, it changes nothing and it names the file for you. Run the command again at any time: a second run changes nothing.
 

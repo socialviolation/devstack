@@ -22,20 +22,21 @@ this machine still needs.
 
 An upgrade is explicit on purpose. devstack manages a daemon that runs services
 right now. If you replace the binary under a live MCP server, the running process
-stays on the old code while every new run is on the new code. That is worse than
-the stale build it corrects. So nothing upgrades on its own. The session briefing
-tells you when an upgrade is worth doing.
+stays on the old code. Every new run then uses the new code. That state is worse
+than the stale build it corrects. So nothing upgrades on its own. The session
+briefing tells you when an upgrade is worth doing.
 
 An MCP server reads its tool descriptions once, when it starts. A session that
 already runs therefore keeps the old tool list. Restart that session after the
 upgrade.
 
-A migration is a second and separate decision. The file sweep writes files that a
-repository commits, so it produces a real git diff in repos that devstack does not
-own. A replica is one git worktree for each repository, and each worktree needs
-its own dependency install. This command names each pending patch, and then it
-stops. Pass --migrate to run them. The migration runs 'devstack migrate' through
-the devstack that was just installed, and never through this one.
+A migration is a second and separate decision. One migration writes files in each
+repository, and it makes a real git diff there. devstack does not own those
+repositories. Another migration builds a replica: one git worktree for each
+repository. Each worktree needs its own dependency install. This command names
+each pending migration, and then it stops. Pass --migrate to run them. The
+migration runs 'devstack migrate' through the devstack that was just installed,
+and never through this one.
 
   devstack upgrade             install, then report each pending migration
   devstack upgrade --migrate   also run devstack migrate
@@ -227,8 +228,9 @@ func writePendingReport(w io.Writer, statuses []migrate.Status, doMigrate bool) 
 		fmt.Fprintf(w, "\n%d migrations are pending. devstack upgrade --migrate runs them, through the binary\n", pending)
 	}
 	fmt.Fprintln(w, "it just installed. This command changes nothing.")
-	fmt.Fprintln(w, "The file sweep writes files that a repository commits, so where it has work it makes")
-	fmt.Fprintln(w, "a real git diff. Read the diff before you commit it. Do this when you are not mid-task.")
+	fmt.Fprintln(w, "A migration writes files in your repositories. Where it does, it makes a real git diff.")
+	fmt.Fprintln(w, "Read that diff before you commit it. Run the migration when you are not in the middle")
+	fmt.Fprintln(w, "of a task.")
 }
 
 // migrateArgs runs the sweep of every workspace. `devstack migrate` is one

@@ -39,7 +39,7 @@ func reportDevstackResidue(w io.Writer, wsPath string) int {
 	if len(files) == 0 {
 		return 0
 	}
-	fmt.Fprintf(w, "devstack instructions: %d file(s) still hold a block that devstack wrote\n", len(files))
+	fmt.Fprintf(w, "devstack instructions: a block that devstack wrote is still in %s\n", pluralFiles(len(files)))
 	for _, f := range files {
 		note := ""
 		if f.NeedsHuman {
@@ -47,8 +47,8 @@ func reportDevstackResidue(w io.Writer, wsPath string) int {
 		}
 		fmt.Fprintf(w, "- [warn] %s%s\n", f.Path, note)
 	}
-	fmt.Fprintln(w, "  read what devstack would remove, and change nothing: devstack migrate --list")
-	fmt.Fprintln(w, "  then remove it: devstack migrate")
+	fmt.Fprintln(w, "  To read what devstack removes here, and change nothing, run: devstack migrate --list")
+	fmt.Fprintln(w, "  Then remove it: devstack migrate")
 	return len(files)
 }
 

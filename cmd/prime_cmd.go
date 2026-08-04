@@ -241,7 +241,7 @@ func writePrimeScope(b *strings.Builder, rec *stack.Record, here string, sibling
 		b.WriteString("  one here goes on the branch of this stack, and no process runs it.\n")
 	}
 	b.WriteString("  Every service outside these worktrees is base's copy. base is shared with the user and\n")
-	b.WriteString("  with every other stack, so do not change one to finish this feature.\n")
+	b.WriteString("  with every other stack, so do not change one of them to finish this feature.\n")
 	fmt.Fprintf(b, "  To make this stack run another service, add it: devstack stack add %s <service>\n", here)
 }
 
@@ -331,7 +331,7 @@ func writePrimeStackDirectory(b *strings.Builder, rec *stack.Record, here, cwd s
 		fmt.Fprintf(b, "This directory is in the worktree of stack %s. devstack can not name a service in it.\n", here)
 		fmt.Fprintf(b, "The stack runs its own copy of these services only: %s.\n", strings.Join(rec.Overlay, ", "))
 		b.WriteString("A change you make here goes on the branch of this stack. Before you change code here,\n")
-		b.WriteString("run `devstack status` and find out which copy runs it.\n")
+		b.WriteString("run `devstack status`. It names the copy that runs this code.\n")
 		return
 	}
 	fmt.Fprintf(b, "This directory holds the code of %s, on the branch of stack %s.\n", svc, here)

@@ -47,11 +47,11 @@ func Sweep(w io.Writer, patches []Patch, all []workspace.Workspace, run bool) er
 		WriteList(w, statuses)
 		return nil
 	}
-	fmt.Fprintf(w, "devstack runs %d migrations over %s.\n", len(patches), pluralWorkspaces(len(all)))
+	fmt.Fprintf(w, "devstack runs %s over %s.\n", pluralMigrations(len(patches)), pluralWorkspaces(len(all)))
 	return Apply(w, patches, all)
 }
 
-// WriteList prints every patch, applied or pending. It changes nothing.
+// WriteList prints every migration, applied or pending. It changes nothing.
 func WriteList(w io.Writer, statuses []Status) {
 	for _, st := range statuses {
 		fmt.Fprintf(w, "\n%s  %s\n", st.ID, st.Title)
@@ -70,7 +70,7 @@ func WriteList(w io.Writer, statuses []Status) {
 			}
 		}
 	}
-	fmt.Fprintln(w, "\ndevstack migrate runs each pending patch. This command changes nothing.")
+	fmt.Fprintln(w, "\ndevstack migrate runs each pending migration. This command changes nothing.")
 }
 
 func pluralWorkspaces(n int) string {

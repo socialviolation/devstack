@@ -92,7 +92,7 @@ func TestMigrateRunAppliesThePatchAndReturnsTheNextBlock(t *testing.T) {
 	if _, err := os.Stat(touched); err != nil {
 		t.Fatalf("action=run did not apply the patch: %v", err)
 	}
-	for _, want := range []string{"devstack runs 1 migrations over 1 workspace", "NEXT", "NOW COMMIT"} {
+	for _, want := range []string{"devstack runs 1 migration over 1 workspace", "NEXT", "NOW COMMIT"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("action=run never states %q:\n%s", want, out)
 		}
