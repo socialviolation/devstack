@@ -416,18 +416,41 @@ func CheckRemovable(base *workspace.Workspace, name string, force bool) error {
 	if err != nil {
 		return err
 	}
-	rw, err := config.ResolveWorkspace(rec.Root)
-	if err != nil {
-		return nil
-	}
-	for _, p := range stackWorktreeRoots(rw) {
+	paths, resolveErr := worktreePaths(rec)
+	for _, p := range paths {
 		dirty, err := worktree.HasUncommittedChanges(p)
 		if err != nil || !dirty {
 			continue
 		}
 		return fmt.Errorf("devstack can not remove the worktree %s. The worktree has uncommitted changes.\nTo discard the uncommitted work, use --force", p)
 	}
+	if resolveErr != nil {
+		return fmt.Errorf("devstack can not resolve the stack manifest at %s, so it can not tell if a worktree holds uncommitted work: %v\nTo remove the stack and everything in it, use --force", rec.Root, resolveErr)
+	}
 	return nil
+}
+
+// worktreePaths lists the worktrees of a stack, and reports why the manifest
+// gave no answer. The manifest is the accurate source: it holds where each
+// service is now. The record is the fallback, because a stack whose manifest
+// devstack can not read still holds worktrees, and those worktrees can still
+// hold work that nobody committed.
+func worktreePaths(rec *Record) ([]string, error) {
+	rw, err := config.ResolveWorkspace(rec.Root)
+	if err == nil {
+		return stackWorktreeRoots(rw), nil
+	}
+	seen := map[string]bool{}
+	var paths []string
+	for _, p := range rec.Worktrees {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	return paths, err
 }
 
 func Remove(base *workspace.Workspace, name string, force bool) (*RemoveResult, error) {
@@ -441,15 +464,22 @@ func Remove(base *workspace.Workspace, name string, force bool) (*RemoveResult, 
 
 	res := &RemoveResult{Name: rec.FullName(), BaseName: rec.Base, StackRoot: rec.Root}
 
-	if rw, err := config.ResolveWorkspace(rec.Root); err == nil {
-		for _, p := range stackWorktreeRoots(rw) {
-			if err := worktree.Remove(p, force); err != nil {
+	paths, resolveErr := worktreePaths(rec)
+	if resolveErr != nil {
+		if !force {
+			return res, fmt.Errorf("devstack can not resolve the stack manifest at %s, so it can not tell if a worktree holds uncommitted work: %v\nTo remove the stack and everything in it, use --force", rec.Root, resolveErr)
+		}
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not resolve the stack manifest, so it removes the worktrees the stack record names: %v", resolveErr))
+	}
+	for _, p := range paths {
+		if err := worktree.Remove(p, force); err != nil {
+			if resolveErr == nil {
 				return res, fmt.Errorf("devstack can not remove the worktree %s: %w\nTo discard the uncommitted work, use --force", p, err)
 			}
-			res.RemovedWorktrees = append(res.RemovedWorktrees, p)
+			res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not remove the worktree %s: %v", p, err))
+			continue
 		}
-	} else {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not resolve the stack manifest, so it can not list the worktrees: %v", err))
+		res.RemovedWorktrees = append(res.RemovedWorktrees, p)
 	}
 
 	if err := workspace.ReleasePorts(rec.RuntimeKey()); err != nil {

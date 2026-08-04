@@ -136,7 +136,7 @@ func Ensure(ws *workspace.Workspace) (*EnsureResult, error) {
 		}
 		// Detached, never on a branch: the template checkout usually holds the
 		// default branch, and git refuses to check one branch out twice.
-		if _, err := git(r.Toplevel, "worktree", "add", "--detach", path, ref); err != nil {
+		if _, err := addWorktree(r.Toplevel, path, ref); err != nil {
 			return nil, fmt.Errorf("worktree for the repository %s: %w", r.Dir, err)
 		}
 		materialized, err := worktree.MaterializeIgnoredConfig(r.Toplevel, path)
@@ -330,6 +330,25 @@ func serviceNames(rw *config.ResolvedWorkspace) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// git says this when the destination is gone but its admin record is not. The
+// text is the only signal git gives: the exit status is 128 for every failure.
+const alreadyRegistered = "already registered worktree"
+
+// addWorktree adds the replica worktree, and prunes the source repository once
+// if git rejects the add because the deleted destination is still registered.
+// `rm -rf` on the replica root is the documented way to rebuild it, and it
+// leaves that record behind in every source repository.
+func addWorktree(repo, path, ref string) (string, error) {
+	out, err := git(repo, "worktree", "add", "--detach", path, ref)
+	if err == nil || !strings.Contains(err.Error(), alreadyRegistered) {
+		return out, err
+	}
+	if err := worktree.Prune(repo); err != nil {
+		return "", err
+	}
+	return git(repo, "worktree", "add", "--detach", path, ref)
 }
 
 func git(dir string, args ...string) (string, error) {

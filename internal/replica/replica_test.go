@@ -211,6 +211,61 @@ func TestEnsureIsIdempotent(t *testing.T) {
 	}
 }
 
+// `rm -rf` on the replica root is the documented way to roll the replica back.
+// It leaves a registered worktree in each source repository whose directory is
+// gone, and git refuses to add that path again. devstack has to recover from it,
+// or the rollback bricks the workspace.
+func TestEnsureRebuildsAReplicaWhoseDirectoryWasDeleted(t *testing.T) {
+	ws := newTemplate(t)
+	first, err := Ensure(ws)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if err := os.RemoveAll(first.Root); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := Ensure(ws)
+	if err != nil {
+		t.Fatalf("Ensure after the replica root was deleted: %v", err)
+	}
+	if got := strings.Join(services(second.Created), ","); got != "backend,frontend" {
+		t.Errorf("Created = %v, want every repository rebuilt", services(second.Created))
+	}
+	for _, name := range []string{"backend", "frontend"} {
+		if _, err := os.Stat(filepath.Join(second.Root, name)); err != nil {
+			t.Errorf("%s worktree was not rebuilt: %v", name, err)
+		}
+	}
+}
+
+// The prune belongs to the state that needs it. A healthy replica skips the add
+// altogether, so a worktree that a repository holds for some other reason keeps
+// its record.
+func TestEnsurePrunesNothingWhenTheReplicaIsHealthy(t *testing.T) {
+	ws := newTemplate(t)
+	if _, err := Ensure(ws); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	backend := filepath.Join(ws.Path, "backend")
+	stray := filepath.Join(t.TempDir(), "stray")
+	rungit(t, backend, "worktree", "add", "--detach", stray)
+	if err := os.RemoveAll(stray); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := Ensure(ws)
+	if err != nil {
+		t.Fatalf("second Ensure: %v", err)
+	}
+	if len(second.Created) != 0 {
+		t.Errorf("Created = %v, want a healthy replica skipped", services(second.Created))
+	}
+	if !strings.Contains(rungit(t, backend, "worktree", "list"), stray) {
+		t.Error("Ensure pruned a worktree record it had no reason to touch")
+	}
+}
+
 func TestEnsureAddsServiceAddedToManifest(t *testing.T) {
 	ws := newTemplate(t)
 	if _, err := Ensure(ws); err != nil {

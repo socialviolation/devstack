@@ -145,7 +145,7 @@ func runAgentFiles(ws *workspace.Workspace) (migrate.Result, error) {
 	}
 	lines = append(lines, agentFilesCounts(res)...)
 
-	out := migrate.Result{Changed: res.Changed() > 0, Lines: lines, Items: commitItems(res.Repos)}
+	out := migrate.Result{Changed: res.Changed() > 0, Lines: lines, Items: commitItems(res.Repos), Incomplete: res.NeedsHuman > 0}
 	return out, errors.Join(errs...)
 }
 

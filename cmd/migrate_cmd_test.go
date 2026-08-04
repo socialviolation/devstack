@@ -208,6 +208,48 @@ func TestTheReportAsksForAHumanAndCountsNoChange(t *testing.T) {
 	}
 }
 
+// A file devstack could not finish keeps the migration pending. If the version
+// moved, the block would stay forever: the doctor would keep reporting the file,
+// and its remedy, `devstack migrate`, would keep answering that there is nothing
+// to do.
+func TestAFileThatNeedsAHumanLeavesTheVersionAlone(t *testing.T) {
+	ws, svcDir, _ := setupWorkspaceWithStack(t)
+	writeFile(t, filepath.Join(svcDir, "CLAUDE.md"), "# api\n\n"+agentsSentinelBegin+"\n\ntruncated\n")
+
+	only := []migrate.Patch{agentFilesPatch()}
+	if err := migrate.Apply(&strings.Builder{}, only, []workspace.Workspace{*ws}); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+
+	if v, err := config.WorkspaceVersion(ws.Path); err != nil || v != 1 {
+		t.Errorf("the workspace is at version %d, want 1 while a file still needs a human (err = %v)", v, err)
+	}
+	if st := migrate.List(only, []workspace.Workspace{*ws}); !st[0].Pending() {
+		t.Errorf("the migration is not pending, so the doctor's remedy has no exit: %+v", st[0].Rows)
+	}
+
+	res, err := runAgentFiles(ws)
+	if err != nil {
+		t.Fatalf("second runAgentFiles() = %v", err)
+	}
+	if !res.Incomplete {
+		t.Errorf("the run is not incomplete, and the file is still there:\n%s", strings.Join(res.Lines, "\n"))
+	}
+	if !strings.Contains(strings.Join(res.Lines, "\n"), "needs a human") {
+		t.Errorf("the report no longer asks for a human:\n%s", strings.Join(res.Lines, "\n"))
+	}
+
+	if err := os.Remove(filepath.Join(svcDir, "CLAUDE.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate.Apply(&strings.Builder{}, only, []workspace.Workspace{*ws}); err != nil {
+		t.Fatalf("Apply() after the human acted = %v", err)
+	}
+	if v, err := config.WorkspaceVersion(ws.Path); err != nil || v != 2 {
+		t.Errorf("the workspace is at version %d after the file went, want 2 (err = %v)", v, err)
+	}
+}
+
 // --list is the read-only view. It reports by version, and it changes nothing.
 func TestListReportsTheVersionAndChangesNothing(t *testing.T) {
 	ws, svcDir, _ := setupWorkspaceWithStack(t)

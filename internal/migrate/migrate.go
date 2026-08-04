@@ -96,6 +96,11 @@ type Result struct {
 	Changed   bool
 	Lines     []string
 	Items     []Item
+
+	// Incomplete is true when the patch left something that only a human can
+	// finish. devstack writes no new version for an incomplete run, so the
+	// migration stays pending and the remedy that names the file keeps working.
+	Incomplete bool
 }
 
 // Patch is one migration: the step from one version of the workspace manifest
@@ -160,8 +165,9 @@ func Apply(w io.Writer, patches []Patch, all []workspace.Workspace) error {
 // met a fifth it can not read has still changed four files, and the reader has
 // to hear about them.
 //
-// devstack writes the new version only after the run succeeded. A failed run
-// leaves the old version in the manifest, so the next run tries again.
+// devstack writes the new version only after the run succeeded and finished. A
+// failed run, and a run that left work for a human, both leave the old version
+// in the manifest, so the next run tries again.
 func applyOne(w io.Writer, p Patch, ws *workspace.Workspace) (Result, error) {
 	version, err := config.WorkspaceVersion(ws.Path)
 	if err != nil {
@@ -182,6 +188,9 @@ func applyOne(w io.Writer, p Patch, ws *workspace.Workspace) (Result, error) {
 	if err != nil {
 		fmt.Fprintf(w, "    failed: %v\n", err)
 		return res, err
+	}
+	if res.Incomplete {
+		return res, nil
 	}
 	if err := config.SetWorkspaceVersion(ws.Path, p.To, Stamp); err != nil {
 		fmt.Fprintf(w, "    failed: %v\n", err)

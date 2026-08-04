@@ -180,12 +180,7 @@ func stripLegacySections(s, header string) string {
 }
 
 func stripOneLegacySection(s, header string) (string, bool) {
-	start := -1
-	if strings.HasPrefix(s, header) {
-		start = 0
-	} else if i := strings.Index(s, "\n"+header); i != -1 {
-		start = i + 1
-	}
+	start := findHeaderLine(s, header)
 	if start == -1 {
 		return s, false
 	}
@@ -194,6 +189,26 @@ func stripOneLegacySection(s, header string) (string, bool) {
 		return joinSeam(s[:start], rest[i+1:]), true
 	}
 	return joinSeam(s[:start], ""), true
+}
+
+// findHeaderLine gives the offset of the first line that is header and nothing
+// else, or -1. The header must fill the line: "## devstack (local dev services)
+// and MY OWN NOTES" is a heading a human extended, and everything below it is
+// theirs.
+func findHeaderLine(s, header string) int {
+	for at := 0; at < len(s); {
+		i := strings.Index(s[at:], header)
+		if i == -1 {
+			return -1
+		}
+		start := at + i
+		rest := s[start+len(header):]
+		if (start == 0 || s[start-1] == '\n') && (rest == "" || rest[0] == '\n' || rest[0] == '\r') {
+			return start
+		}
+		at = start + 1
+	}
+	return -1
 }
 
 // joinSeam closes the gap a removed block leaves, with one blank line between

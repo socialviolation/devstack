@@ -128,6 +128,43 @@ func TestPointerFilesLoseOnlyTheDevstackBlock(t *testing.T) {
 	}
 }
 
+// devstack wrote the legacy heading, so a human who extends it writes an
+// ordinary heading of their own. It is not the devstack heading, and everything
+// below it is theirs.
+func TestAHeadingThatStartsWithTheLegacyHeaderIsNotTheLegacyHeader(t *testing.T) {
+	dir := t.TempDir()
+	copilot := filepath.Join(dir, ".github", "copilot-instructions.md")
+	mine := "# api\n\n" + legacyPointerHeader + " and MY OWN NOTES\n\n" +
+		"Run `devstack status` to see what is running.\n\nIt took me a week to write this.\n"
+	writeAt(t, copilot, mine)
+
+	if changes := stripDir(dir); len(changes) != 0 {
+		t.Fatalf("stripDir() = %+v, want nothing reported", changes)
+	}
+	if got := readString(t, copilot); got != mine {
+		t.Fatalf("the file changed:\n--- want ---\n%s\n--- got ---\n%s", mine, got)
+	}
+}
+
+// The heading devstack wrote still goes, on the last line of a file as well as
+// in the middle of one.
+func TestTheLegacyHeaderStillGoesAtTheEndOfAFile(t *testing.T) {
+	dir := t.TempDir()
+	claude := filepath.Join(dir, "CLAUDE.md")
+	writeFile(t, claude, "# api\n\nMine.\n\n"+legacyPointerHeader)
+
+	if changes := stripDir(dir); len(changes) != 1 || changes[0].Action != actionRemoved {
+		t.Fatalf("stripDir() = %+v, want one removal", changes)
+	}
+	got := readString(t, claude)
+	if strings.Contains(got, legacyPointerHeader) {
+		t.Errorf("the legacy header survived:\n%s", got)
+	}
+	if !strings.Contains(got, "Mine.") {
+		t.Errorf("content that is not devstack's was lost:\n%s", got)
+	}
+}
+
 // A file devstack never wrote into is a file devstack never opens for writing.
 func TestAFileDevstackNeverTouchedIsLeftAlone(t *testing.T) {
 	dir := t.TempDir()
