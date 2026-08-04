@@ -21,14 +21,12 @@ import (
 func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName, workspacePath, defaultService string, ws *workspace.Workspace) {
 	tool := mcp.NewTool("environment",
 		mcp.WithDescription(
-			"Show the active workspace and available tools. "+
-				"Call this first to understand what you can and cannot do in the current context. "+
+			"Show the active workspace and the available tools. Call this tool first, to learn what you can do and can not do in this context. "+
 				baseTermDesc+
-				"A tool that starts, stops or restarts a service has to be told which copy to act on — a stack's short name, or \"base\". The read-only tools default to base. "+
-				"An 'env' here is a CONFIG-PATCH environment — a named set of config vars (for example 'staging') that a workspace, service, or stack instance is pointed at via env_use (CLI: devstack env use). status and env_which show which env each instance currently points at. "+
-				"devstack is a LOCAL development environment. Data is ephemeral and local — not production. "+
-				"The available tools depend on this workspace's configuration: trace/telemetry tools appear only when observability is enabled, tunnel tools only when an ssh client is available. "+
-				"Call this tool first to understand the context before using other tools.",
+				"A tool that starts, stops or restarts a service must be told which copy to act on: a stack's short name, or \"base\". The read-only tools default to base. "+
+				"An 'env' here is a CONFIG-PATCH environment. That is a named set of config vars, for example 'staging'. env_use points a workspace, a service or a stack at one of them (CLI: devstack env use). status and env_which show which env each copy points at. "+
+				"devstack is a LOCAL development environment. Its data is local and ephemeral, and it is not production. "+
+				"The tools available depend on this workspace's configuration. The trace and telemetry tools appear only when observability is enabled. The tunnel tool appears only when this machine has an ssh client.",
 		),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
@@ -55,9 +53,9 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		if line := stacksSummary(ws); line != "" {
 			sb.WriteString(line)
 		}
-		sb.WriteString("instances: base runs from a replica of the workspace, never from the user's checkouts — those are the template it is built from, and nothing runs in them.\n" +
-			"  start, stop, restart and env_use have no default instance: pass stack=\"<name>\" or stack=\"base\", or the call is read from the working directory and fails where that is neither. The read-only tools still default to base.\n" +
-			"  The base tool works on the replica: action=\"path\" prints where base runs from, action=\"sync\" moves it to each service's default branch tip without restarting anything. An edit in a checkout reaches base only once it is on the default branch and that sync has run; to see a change run now, put it in a stack.\n")
+		sb.WriteString("copies: base runs from a replica of the workspace, and never from the user's checkouts. Those checkouts are the template devstack builds the replica from, and nothing runs in them.\n" +
+			"  start, stop, restart and env_use have no default copy: pass stack=\"<name>\" or stack=\"base\". If you pass neither, devstack reads the copy from the working directory, and the call fails where that directory is neither. The read-only tools still default to base.\n" +
+			"  The base tool works on the replica. action=\"path\" prints where base runs from. action=\"sync\" moves the replica to each service's default branch tip, and it restarts nothing. An edit in a checkout reaches base only after it is on the default branch and that sync has run. To see a change run now, put it in a stack.\n")
 		if line := servicesSummary(workspacePath, defaultService); line != "" {
 			sb.WriteString(line)
 		}
@@ -71,7 +69,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		fmt.Fprintf(&sb, "tools: %s\n", strings.Join(tools, ", "))
 		if otelOn {
 			fmt.Fprintf(&sb, "recommended order: environment -> status -> observability -> process_logs/investigate\n")
-			fmt.Fprintf(&sb, "query scope: telemetry results stay inside this workspace; investigate's recent-executions mode defaults to the base instance and to this repo's service (pass a stack's short name, or 'all'), its attribute search has no default service, and a trace_id/span_id lookup ignores service and stack entirely.\n")
+			fmt.Fprintf(&sb, "query scope: telemetry results stay inside this workspace. investigate's recent-executions mode defaults to base and to this repo's service. To widen it, pass a stack's short name, or 'all'. Its attribute search has no default service. A trace_id/span_id lookup ignores service and stack entirely.\n")
 		} else {
 			fmt.Fprintf(&sb, "recommended order: environment -> status -> process_logs\n")
 			fmt.Fprintf(&sb, "note: observability disabled — no trace/telemetry tools. Turn it on with the observability tool (action=config_on).\n")
@@ -85,7 +83,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 			fmt.Fprintf(&sb, "groups: %s\n", availableGroups(cfg))
 		}
 		fmt.Fprintf(&sb, "envs: %s\n", envCatalog(workspacePath))
-		fmt.Fprintf(&sb, "config-patch env: services/workspace/stack are pointed at a named config env via env_use (devstack env use); status and env_which show where each instance points.\n")
+		fmt.Fprintf(&sb, "config-patch env: env_use points a service, the workspace or a stack at a named config env (devstack env use). status and env_which show where each copy points.\n")
 
 		return mcp.NewToolResultText(sb.String()), nil
 	})
@@ -130,7 +128,7 @@ func servicesSummary(workspacePath, defaultService string) string {
 	if defaultService != "" {
 		def = fmt.Sprintf(" (default: %s)", defaultService)
 	}
-	return fmt.Sprintf("services: %s%s%s — exact names; other tools reject partial matches\n", strings.Join(listed, ", "), suffix, def)
+	return fmt.Sprintf("services: %s%s%s — exact names. Other tools reject a partial match\n", strings.Join(listed, ", "), suffix, def)
 }
 
 // servicesListCap bounds how many service names orientation prints inline.
@@ -162,8 +160,9 @@ func stacksSummary(ws *workspace.Workspace) string {
 	}
 	line := fmt.Sprintf("workspace: %s — base + %d feature stack(s) in flight: %s — those are the short names every 'stack' parameter takes (full identity is %s--<name>)\n", ws.Name, len(stacks), strings.Join(parts, ", "), ws.Name)
 	if anyDown {
-		line += "down = the stack's worktrees and record exist but none of its services run: status/process_logs/restart/stop/configure against it error \"not up\" instead of falling through to base, " +
-			"service_env still reads and writes its worktree config, and investigate returns only what it emitted while it was last up.\n"
+		line += "down = the stack's worktrees and its record exist, and none of its services run. status, process_logs, restart, stop and configure against it " +
+			"error \"not up\" instead of falling through to base. " +
+			"service_env still reads and writes its worktree config. investigate returns only what the stack emitted while it was last up.\n"
 	}
 	return line
 }
@@ -198,8 +197,8 @@ func hooksSummary(ws *workspace.Workspace) string {
 			parts = append(parts, fmt.Sprintf("%s (%s)", event, strings.Join(names, ", ")))
 		}
 	}
-	return fmt.Sprintf("hooks: %d declared, firing on %s\n"+
-		"  These run automatically on stack_create/stack_add/stack_up/stack_down/stack_rm/start/stop and can change state outside this machine. "+
-		"List them with the hooks tool before creating or tearing down a stack. A failed SETUP hook means the thing exists but is not provisioned; a failed TEARDOWN hook means teardown finished but external cleanup probably did not.\n",
+	return fmt.Sprintf("hooks: %d declared. They fire on %s\n"+
+		"  They run on their own when you call stack_create, stack_add, stack_up, stack_down, stack_rm, start or stop. They can change state outside this machine. "+
+		"List them with the hooks tool before you create or tear down a stack. A SETUP hook that fails means that the thing exists and is not provisioned. A TEARDOWN hook that fails means that the teardown finished and the external cleanup probably did not.\n",
 		total, strings.Join(parts, ", "))
 }

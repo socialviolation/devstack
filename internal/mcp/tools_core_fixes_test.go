@@ -138,7 +138,7 @@ func TestStopDescriptionStatesStackScoping(t *testing.T) {
 		"stops the default service for this repo",
 		"Stopping everything requires all=true",
 		"never base's",
-		"touches only that stack's instances",
+		"touches only that stack's copies",
 	} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("stop description missing %q; got %s", want, desc)
@@ -215,7 +215,7 @@ func TestCoreLogEmptyNoteNamesFiltersAndWidening(t *testing.T) {
 	}
 
 	base := coreLogEmptyNote(coreLogFilters{Lines: 100})
-	if !strings.Contains(base, "scope=every service of this instance") {
+	if !strings.Contains(base, "scope=every service") {
 		t.Errorf("unscoped note should say it covered every service; got:\n%s", base)
 	}
 	if !strings.Contains(base, "stack=base") {
@@ -261,8 +261,8 @@ func TestCoreInvestigateEmptyNoteNamesFiltersAndWidening(t *testing.T) {
 	if !strings.Contains(withErrors, "7 execution(s) matched everything except errors_only") {
 		t.Errorf("note should report what errors_only discarded; got:\n%s", withErrors)
 	}
-	if !strings.Contains(withErrors, "stack=all instances") {
-		t.Errorf("note should say an empty stack filter means all instances; got:\n%s", withErrors)
+	if !strings.Contains(withErrors, "stack=base and every feature stack") {
+		t.Errorf("note should say an empty stack filter means every copy; got:\n%s", withErrors)
 	}
 	if !strings.Contains(withErrors, "service=(none — every service)") {
 		t.Errorf("note should say no service filter was applied; got:\n%s", withErrors)

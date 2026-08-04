@@ -15,16 +15,16 @@ import (
 
 func registerBaseTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("base",
-		mcp.WithDescription("Inspect or refresh the replica base runs from. "+baseTermDesc+
-			"action=\"path\" reads only: it prints the replica root, or one service's replica worktree, which is the directory that service's base copy runs out of — the directory to read when you need the code base is actually executing. "+
-			"action=\"sync\" is the one that changes something: it fetches each service and moves its replica worktree to that service's default branch tip, then re-materialises the machine-local gitignored config copied from the checkout, and reports each service's before and after short SHA. "+
-			"This is how an edit made in a checkout reaches base: put it on the default branch, then sync. A fetch that fails is a warning, not an error — being offline leaves that worktree on the ref it already has and base keeps running. "+
-			"sync moves the code base runs, and nothing else: it does not restart anything, so every already-running copy keeps serving the OLD code until it is restarted (restart tool, stack=\"base\"). "+
-			"Errors when no replica has been built yet — 'devstack workspace up' builds it. Mirrors 'devstack base path' and 'devstack base sync'."),
+		mcp.WithDescription("Inspect or refresh the replica that base runs from. "+baseTermDesc+
+			"action=\"path\" reads only. It prints the replica root, or one service's replica worktree. That worktree is the directory that service's base copy runs out of. Read it when you need the code that base runs.\n"+
+			"action=\"sync\" is the one that changes something. It fetches each service and moves that service's replica worktree to the default branch tip. It then copies the machine-local gitignored config out of the checkout again. It reports each service's short SHA before and after.\n"+
+			"This is how an edit made in a checkout reaches base: put the edit on the default branch, then sync. A fetch that fails is a warning, and not an error. If this machine is offline, that worktree stays on the ref it already has, and base keeps running.\n"+
+			"sync moves the code that base runs, and nothing else. It does not restart anything. So every copy that already runs keeps serving the OLD code until somebody restarts it (restart tool, stack=\"base\").\n"+
+			"The tool errors when devstack has built no replica yet. 'devstack workspace up' builds one. This tool mirrors 'devstack base path' and 'devstack base sync'."),
 		mcp.WithString("action", mcp.Required(),
-			mcp.Description("\"path\" — print the replica root, or one service's worktree (read only, changes nothing). \"sync\" — move every service's worktree to its default branch tip and refresh its machine-local config (this one writes).")),
+			mcp.Description("\"path\" prints the replica root, or one service's worktree. It reads only and changes nothing. \"sync\" moves every service's worktree to its default branch tip and refreshes its machine-local config. This action writes.")),
 		mcp.WithString("service",
-			mcp.Description("Exact service name, for example 'api-service'. Only meaningful with action=\"path\", where it prints that service's replica worktree instead of the replica root; ignored by \"sync\", which syncs every service.")),
+			mcp.Description("Exact service name, for example 'api-service'. It applies only to action=\"path\", where the tool prints that service's replica worktree instead of the replica root. action=\"sync\" ignores it and syncs every service.")),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -33,7 +33,7 @@ func registerBaseTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if ws == nil {
-			return mcp.NewToolResultError("no workspace resolved, so there is no replica to inspect"), nil
+			return mcp.NewToolResultError("devstack resolved no workspace, so there is no replica to inspect"), nil
 		}
 		service := strings.TrimSpace(request.GetString("service", ""))
 		switch request.GetString("action", "") {
@@ -62,7 +62,7 @@ func baseReplicaPath(ws *workspace.Workspace, service string) *mcp.CallToolResul
 			names = append(names, n)
 		}
 		sort.Strings(names)
-		return mcp.NewToolResultError(fmt.Sprintf("service %q is not in workspace %q; services: %s", service, ws.Name, strings.Join(names, ", ")))
+		return mcp.NewToolResultError(fmt.Sprintf("service %q is not in workspace %q. Services: %s", service, ws.Name, strings.Join(names, ", ")))
 	}
 	return mcp.NewToolResultText(svc.RepoPath)
 }
@@ -88,9 +88,9 @@ func baseReplicaSync(ws *workspace.Workspace) *mcp.CallToolResult {
 		fmt.Fprintf(&sb, "warning: %s\n", w)
 	}
 	if moved == 0 {
-		sb.WriteString("Nothing moved — every service was already at its default branch tip.\n")
+		sb.WriteString("Nothing moved. Every service was already at its default branch tip.\n")
 		return mcp.NewToolResultText(sb.String())
 	}
-	fmt.Fprintf(&sb, "%d service(s) moved. Nothing was restarted: each running copy still serves the code it started with — restart it (stack=\"base\") before concluding anything about the new tip.\n", moved)
+	fmt.Fprintf(&sb, "%d service(s) moved. Nothing was restarted. Each running copy still serves the code it started with. Restart it (stack=\"base\") before you conclude anything about the new tip.\n", moved)
 	return mcp.NewToolResultText(sb.String())
 }

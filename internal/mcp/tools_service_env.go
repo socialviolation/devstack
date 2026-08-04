@@ -23,7 +23,7 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 		mcp.WithDescription(
 			"Read and write the environment variables of a local service, in the config FILES of its checkout. This tool does not touch the running process. A write takes effect on the next generate and restart of the copy that runs those files.\n\n"+
 				"Its stack parameter picks which CHECKOUT to read or write. Every other tool uses stack to pick which running copy to act on.\n\n"+
-				"With no stack, it reads and writes the base workspace's checkout. That checkout is the TEMPLATE base is built from, not the replica base runs, so a write there reaches base's running copy only after 'devstack base sync' has copied the machine-local config across. A write with a stack named lands in that stack's worktree, which its copy runs directly.\n\n"+
+				"With no stack, it reads and writes the base workspace's checkout. That checkout is the TEMPLATE devstack builds base from. It is not the replica that base runs. So a write there reaches base's running copy only after 'devstack base sync' copies the machine-local config across. A write with a stack named lands in that stack's worktree, which its copy runs directly.\n\n"+
 				"Actions:\n"+
 				"  get    show the environment a service resolves to, with the rung that each value comes from.\n"+
 				"  diff   compare the resolved environment across several services, or across a group, side by side.\n"+
@@ -38,7 +38,7 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 			mcp.Description("One of: get, diff, check, drift — read only, change nothing. set — writes a file (the service's devstack.service.yaml or its .envrc)."),
 		),
 		mcp.WithString("service",
-			mcp.Description("Exact service name. For diff, can be comma-separated list of 2+ services."),
+			mcp.Description("Exact service name. For diff, this can be a comma-separated list of two or more services."),
 		),
 		mcp.WithString("group",
 			mcp.Description("Group name — a named set of services declared under 'groups' in the workspace manifest. It expands to its member services. The environment tool lists this workspace's group names."),
@@ -55,20 +55,19 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 		mcp.WithString("target",
 			mcp.Description(
 				"Where to write (required for set). "+
-					"'manifest' — the service's devstack.service.yaml env.values. devstack treats that file as machine-local and expects it gitignored (it holds absolute tool paths), but whether it is ignored is per-repo — check with git check-ignore -v devstack.service.yaml before trusting it. "+
-					"Use for devstack-managed config: service addresses, ports, URLs of other services, feature flags. "+
-					"'envrc' — the service's local .envrc. Not committed. "+
-					"Use for secrets and anything credential-bearing: API keys, tokens, passwords, DSNs with credentials. "+
-					"Keep secrets out of 'manifest' regardless: .envrc is the conventional credential store, is never committed, and is what direnv loads.",
+					"'manifest' — the service's devstack.service.yaml env.values. devstack treats that file as machine-local and expects it to be gitignored, because it holds absolute tool paths. Each repo decides that for itself. Make sure that the file is ignored: run git check-ignore -v devstack.service.yaml before you trust it. "+
+					"Use 'manifest' for devstack-managed config: service addresses, ports, URLs of other services, and feature flags. "+
+					"'envrc' — the service's local .envrc. Nobody commits it. "+
+					"Use 'envrc' for secrets and for anything that carries a credential: API keys, tokens, passwords, and DSNs with credentials. "+
+					"Keep secrets out of 'manifest' in every case. .envrc is the conventional credential store, nobody commits it, and direnv loads it.",
 			),
 		),
 		mcp.WithString("stack",
 			mcp.Description(
 				"Optional. "+stackShortNameDesc+" "+
-					"Source-tree semantics, unlike the running-process semantics 'stack' has on every other tool: it names the checkout to read/write. "+
-					"Absent (default) reads/writes the BASE workspace's service repos — the template, which is where this config is meant to be edited, and which reaches base's running copy only after 'devstack base sync'. Never the replica: nothing edits that. "+
-					"When set, reads/writes the named stack's worktree of the service instead — so an agent edits its "+
-					"stack's config, never base's.",
+					"Source-tree semantics, unlike the running-process semantics that 'stack' has on every other tool: it names the checkout to read and to write. "+
+					"Absent (the default) reads and writes the BASE workspace's service repos. Those repos are the template. You edit this config there, and it reaches base's running copy only after 'devstack base sync'. It is never the replica, because nothing edits the replica. "+
+					"When you set it, the tool reads and writes the named stack's worktree of the service instead. So an agent edits its own stack's config, and never base's.",
 			),
 		),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -130,7 +129,7 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 func resolveLadders(ws *workspace.Workspace, workspacePath, stackEnv string, services []string) (map[string][]config.EnvLayer, error) {
 	rw, err := config.ResolveWorkspace(workspacePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve workspace manifests: %w", err)
+		return nil, fmt.Errorf("can not resolve the workspace manifests: %w", err)
 	}
 	managed := workspace.ManagedEnv(ws, services, workspace.ActiveEnvNames(rw, stackEnv))
 
@@ -142,7 +141,7 @@ func resolveLadders(ws *workspace.Workspace, workspacePath, stackEnv string, ser
 		}
 		layers, err := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, stackEnv, managed[name])
 		if err != nil {
-			return nil, fmt.Errorf("failed to resolve env for %s: %w", name, err)
+			return nil, fmt.Errorf("can not resolve the environment for %s: %w", name, err)
 		}
 		out[name] = layers
 	}
@@ -230,7 +229,7 @@ func handleServiceEnvGet(ws *workspace.Workspace, workspacePath, stackEnv string
 
 		layers, ok := ladders[svc]
 		if !ok {
-			fmt.Fprintf(&sb, "  (no %s for %s \u2014 env cannot be resolved)\n\n", config.ServiceManifestFileName, svc)
+			fmt.Fprintf(&sb, "  (no %s for %s \u2014 devstack can not resolve its env)\n\n", config.ServiceManifestFileName, svc)
 			continue
 		}
 
@@ -302,7 +301,7 @@ func handleServiceEnvDiff(ws *workspace.Workspace, workspacePath, stackEnv strin
 	sort.Strings(sharedKeys)
 
 	if len(sharedKeys) == 0 {
-		return mcp.NewToolResultText("No shared keys found across selected services."), nil
+		return mcp.NewToolResultText("No key is shared across the selected services."), nil
 	}
 
 	var sb strings.Builder
@@ -377,41 +376,41 @@ func handleServiceEnvSet(ws *workspace.Workspace, workspacePath, stackEnv, servi
 		rung = config.RungEnvrc
 	case "":
 		return mcp.NewToolResultError(
-			"target is required for set — 'manifest' for devstack-managed config (env.values, committed to git), " +
-				"'envrc' for secrets and credentials (local, not committed)"), nil
+			"target is required for set. Use 'manifest' for devstack-managed config (env.values, committed to git). " +
+				"Use 'envrc' for secrets and credentials (local, never committed)"), nil
 	default:
 		return mcp.NewToolResultError(fmt.Sprintf("unknown target %q — must be 'manifest' or 'envrc'", target)), nil
 	}
 
 	rw, err := config.ResolveWorkspace(workspacePath)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to resolve workspace manifests: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("can not resolve the workspace manifests: %v", err)), nil
 	}
 	svc, ok := rw.Services[serviceName]
 	if !ok {
 		return mcp.NewToolResultError(fmt.Sprintf("service %q not found in workspace", serviceName)), nil
 	}
 	if svc.Manifest == nil {
-		return mcp.NewToolResultError(fmt.Sprintf("service %q has no %s — env cannot be resolved for it", serviceName, config.ServiceManifestFileName)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("service %q has no %s, so devstack can not resolve its env", serviceName, config.ServiceManifestFileName)), nil
 	}
 
 	var written string
 	if target == "manifest" {
 		if err := config.SetServiceEnvValue(svc.RepoPath, key, value); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to write %s: %v", key, err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("can not write %s: %v", key, err)), nil
 		}
 		written = config.ServiceManifestPath(svc.RepoPath)
 	} else {
 		written, err = setEnvrcValue(svc.EnvDir(), key, value)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to write %s: %v", key, err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("can not write %s: %v", key, err)), nil
 		}
 	}
 
 	layers, err := reresolveLadder(ws, workspacePath, stackEnv, serviceName)
 	if err != nil {
 		return mcp.NewToolResultText(fmt.Sprintf(
-			"wrote %s to %s (%s), but the env ladder can not be resolved to confirm it takes effect: %v",
+			"wrote %s to %s (%s). devstack can not resolve the env ladder, so it can not make sure that the value takes effect: %v",
 			key, written, rung, err)), nil
 	}
 
@@ -423,9 +422,9 @@ func handleServiceEnvSet(ws *workspace.Workspace, workspacePath, stackEnv, servi
 	}
 
 	return mcp.NewToolResultText(fmt.Sprintf(
-		"wrote %s to %s (%s) — no higher rung overrides it. It reaches the copy that runs this directory on its next restart: the restart tool "+
-			"(CLI: devstack service restart %s --stack <name>) regenerates the Tiltfile from the manifests before triggering, so there is no separate generate step. "+
-			"A write with no stack targeted lands in the BASE workspace's checkout, which is the template base is built from and not what base runs — run 'devstack base sync' to copy it into the replica, then restart with --stack base.",
+		"wrote %s to %s (%s) — no higher rung overrides it. It reaches the copy that runs this directory on its next restart. The restart tool "+
+			"(CLI: devstack service restart %s --stack <name>) regenerates the Tiltfile from the manifests before it triggers, so there is no separate generate step. "+
+			"A write with no stack targeted lands in the BASE workspace's checkout. That checkout is the template devstack builds base from, and it is not what base runs. Run 'devstack base sync' to copy the write into the replica, then restart with --stack base.",
 		key, written, rung, serviceName)), nil
 }
 
@@ -438,7 +437,7 @@ func reresolveLadder(ws *workspace.Workspace, workspacePath, stackEnv, serviceNa
 	}
 	layers, ok := ladders[serviceName]
 	if !ok {
-		return nil, fmt.Errorf("service %q can not be resolved", serviceName)
+		return nil, fmt.Errorf("devstack can not resolve service %q", serviceName)
 	}
 	return layers, nil
 }
@@ -450,7 +449,7 @@ func setEnvrcValue(dir, key, value string) (string, error) {
 	path := filepath.Join(dir, config.EnvrcFileName)
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("failed to read %s: %w", path, err)
+		return "", fmt.Errorf("can not read %s: %w", path, err)
 	}
 
 	lines := []string{}
@@ -460,7 +459,7 @@ func setEnvrcValue(dir, key, value string) (string, error) {
 			lines = append(lines, scanner.Text())
 		}
 		if err := scanner.Err(); err != nil {
-			return "", fmt.Errorf("failed to parse %s: %w", path, err)
+			return "", fmt.Errorf("can not parse %s: %w", path, err)
 		}
 	}
 
@@ -485,7 +484,7 @@ func setEnvrcValue(dir, key, value string) (string, error) {
 	}
 
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		return "", fmt.Errorf("failed to write %s: %w", path, err)
+		return "", fmt.Errorf("can not write %s: %w", path, err)
 	}
 	return path, nil
 }
@@ -645,7 +644,7 @@ func handleServiceEnvDrift(ws *workspace.Workspace, workspacePath, stackEnv stri
 
 	rw, err := config.ResolveWorkspace(workspacePath)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to resolve workspace manifests: %v", err)), nil
+		return mcp.NewToolResultError(fmt.Sprintf("can not resolve the workspace manifests: %v", err)), nil
 	}
 	svcEnvs, err := resolvedEnvs(ws, workspacePath, stackEnv, services)
 	if err != nil {
@@ -673,11 +672,11 @@ func handleServiceEnvDrift(ws *workspace.Workspace, workspacePath, stackEnv stri
 
 	if len(undeclared) > 0 {
 		fmt.Fprintf(&sb, "not comparable (no config.sources declared in devstack.service.yaml): %s\n", strings.Join(undeclared, ", "))
-		sb.WriteString("Point config.sources at the service's deployment manifest or appsettings file to make it comparable.\n")
+		sb.WriteString("To make it comparable, point config.sources at the service's deployment manifest or at its appsettings file.\n")
 	}
 	if total > 0 {
-		sb.WriteString("\n'missing' is the one to act on: the key is declared with a value where the service is deployed but unset here, so the local process silently uses its code default.\n")
-		sb.WriteString("Fix by setting it with service_env action=set (target=manifest for plain config, target=envrc for anything credential-bearing), then restart the service.\n")
+		sb.WriteString("\n'missing' is the one to act on. The key has a value where the service is deployed, and it is unset here. So the local process silently uses its code default.\n")
+		sb.WriteString("To fix it, set it with service_env action=set. Use target=manifest for plain config, and target=envrc for anything that carries a credential. Then restart the service.\n")
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil

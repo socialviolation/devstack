@@ -101,7 +101,7 @@ func TestBaseToolSaysWhenNoReplicaIsBuilt(t *testing.T) {
 
 	for _, action := range []string{"path", "sync"} {
 		out := callTool(t, s, "base", map[string]string{"action": action})
-		if !strings.Contains(out, "no replica built yet") || !strings.Contains(out, "devstack workspace up") {
+		if !strings.Contains(out, "has not built the replica") || !strings.Contains(out, "devstack workspace up") {
 			t.Errorf("action=%s must say no replica is built and how to build one; got %s", action, out)
 		}
 	}
