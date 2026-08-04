@@ -20,7 +20,7 @@ const workspaceManifestTemplate = `# devstack workspace manifest. This file is t
 # generate' to write the Tiltfile again.
 #
 # This directory is the TEMPLATE. Nothing runs here. 'devstack workspace up'
-# builds a REPLICA from it: one git worktree per service at its default branch
+# builds a REPLICA from it: one git worktree per repository at its default branch
 # tip, in a .devstack-base directory beside this one. The base workspace runs
 # there. To see that directory, run 'devstack status --all' and read the DIR
 # column. Work that you park in a checkout does not run, and it blocks nothing.

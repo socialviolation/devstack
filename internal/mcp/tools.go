@@ -299,7 +299,7 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 		sb.WriteString(targetHeader(t.label))
 		sb.WriteString("Tilt is running.\n\n")
 		sb.WriteString(renderColumns(rows))
-		sb.WriteString("\nPATH and BRANCH are the directory this copy runs from. A * marks uncommitted changes.\nA branch that you did not expect means that the process does not hold the work you look for.\nFor base that directory is the replica, and not the checkout devstack built it from. An edit in the checkout reaches base after two steps: put it on the default branch, then run the base tool (action=\"sync\").\nRELOAD auto means that an edit in the directory a copy runs from applies on its own. RELOAD manual means that you must restart that copy after an edit. If you do not restart it, the copy keeps the old code.\n")
+		sb.WriteString("\nPATH and BRANCH are the directory this copy runs from. A * marks uncommitted changes.\nA branch that you did not expect means that the process does not hold the work you look for.\nFor base that directory is the replica, and not the checkout devstack built it from. An edit in the checkout reaches a running base copy after three steps: put it on the default branch, run the base tool (action=\"sync\"), then restart that copy (restart tool, stack=\"base\"). In a shell, `devstack workspace up` does all three.\nRELOAD auto means that an edit in the directory a copy runs from applies on its own. RELOAD manual means that you must restart that copy after an edit. If you do not restart it, the copy keeps the old code.\n")
 
 		// Groups summary section.
 		if len(cfg.Groups) > 0 {
@@ -1563,6 +1563,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 	tool := mcp.NewTool("tunnel",
 		mcp.WithDescription("Forward this workspace's LOCAL service ports to a remote host over SSH, or from one. A remote machine can then reach the services that run on this dev box.\n\n"+
 			"Actions:\n"+
+			"  list    the ports a push forwards, with the exact service name of each and whether it serves now. It changes nothing.\n"+
 			"  status  what this workspace forwards now. Add planned=true to see what a push will forward instead. It reads this machine only.\n"+
 			"  check   ask the remote host what already holds the ports a push binds. It changes nothing. Run it before reclaim=true, which kills those processes.\n"+
 			"  push    expose local ports on the remote over ssh -R. This is the common case.\n"+

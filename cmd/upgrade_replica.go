@@ -39,7 +39,7 @@ func ensureReplicas(w io.Writer) error {
 			fmt.Fprintln(w, l)
 		}
 		if err != nil {
-			fmt.Fprintf(w, "  warning: devstack can not build this replica: %v\n", err)
+			fmt.Fprintf(w, "  FAILED: devstack can not build this replica: %v\n", err)
 			fmt.Fprintln(w, "  To build it after you fix the cause, run: devstack workspace up")
 			errs = append(errs, fmt.Errorf("%s: %w", ws.Name, err))
 			continue

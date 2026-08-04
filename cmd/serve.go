@@ -57,9 +57,9 @@ The tool set adapts to the active workspace. The telemetry tools appear only whe
 the manifest enables observability. The tunnel tools appear only when an ssh
 client is available. Call the 'environment' tool first to see what is available.
 
-The tools do not cover every command. These are shell only: workspace up and down,
-ports, dependencies, group add and remove, env list, show and remove, stack config,
-and init.
+The tools do not cover every command. Among the commands with no tool: upgrade,
+init, ports, dependencies, stack config, group add and remove, env list, show and
+remove, and every workspace command but topology. Run those in the shell.
 
 TRANSPORT
   stdio (default)   Claude Code and most AI tooling use this

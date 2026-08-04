@@ -26,7 +26,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 				"A tool that starts, stops or restarts a service must be told which copy to act on: a stack's short name, or \"base\". The read-only tools default to base. "+
 				"An 'env' here is a CONFIG-PATCH environment. That is a named set of config vars, for example 'staging'. env_use points a workspace, a service or a stack at one of them (CLI: devstack env use). status and env_which show which env each copy points at. "+
 				"devstack is a LOCAL development environment. Its data is local and ephemeral, and it is not production. "+
-				"The tools available depend on this workspace's configuration. The trace and telemetry tools appear only when observability is enabled. The tunnel tool appears only when this machine has an ssh client.",
+				"The tools available depend on this workspace's configuration. The investigate tool appears only when observability is enabled; the observability tool is always there, and it is what turns observability on. The tunnel tool appears only when this machine has an ssh client.",
 		),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
@@ -55,7 +55,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		}
 		sb.WriteString("copies: base runs from a replica of the workspace, and never from the user's checkouts. Those checkouts are the template devstack builds the replica from, and nothing runs in them.\n" +
 			"  start, stop, restart and env_use have no default copy: pass stack=\"<name>\" or stack=\"base\". If you pass neither, devstack reads the copy from the working directory, and the call fails where that directory is neither. The read-only tools still default to base.\n" +
-			"  The base tool works on the replica. action=\"path\" prints where base runs from. action=\"sync\" moves the replica to each service's default branch tip, and it restarts nothing. An edit in a checkout reaches base only after it is on the default branch and that sync has run. To see a change run now, put it in a stack.\n")
+			"  The base tool works on the replica. action=\"path\" prints where base runs from. action=\"sync\" moves the replica to each service's default branch tip, and it restarts nothing. An edit in a checkout reaches a running base copy only after it is on the default branch, that sync has run, and the copy has restarted (restart tool, stack=\"base\"). To see a change run now, put it in a stack.\n")
 		if line := servicesSummary(workspacePath, defaultService); line != "" {
 			sb.WriteString(line)
 		}
@@ -72,7 +72,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 			fmt.Fprintf(&sb, "query scope: telemetry results stay inside this workspace. investigate's recent-executions mode defaults to base and to this repo's service. To widen it, pass a stack's short name, or 'all'. Its attribute search has no default service. A trace_id/span_id lookup ignores service and stack entirely.\n")
 		} else {
 			fmt.Fprintf(&sb, "recommended order: environment -> status -> process_logs\n")
-			fmt.Fprintf(&sb, "note: observability disabled — no trace/telemetry tools. Turn it on with the observability tool (action=config_on).\n")
+			fmt.Fprintf(&sb, "note: observability disabled — the investigate tool is not registered. Turn observability on with the observability tool (action=config_on).\n")
 		}
 		if !tunnelsOn {
 			fmt.Fprintf(&sb, "note: tunnel tool unavailable — no ssh client on this machine.\n")

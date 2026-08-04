@@ -36,7 +36,7 @@ var helpGroups = []helpGroup{
 		{"devstack env use <name> --stack <name>", "which database, which endpoints"},
 	}},
 	{"SET UP THIS MACHINE", []helpRow{
-		{"devstack workspace add <path>", "register your services"},
+		{"devstack workspace add <path>", "register the directory of your services"},
 		{"devstack workspace up", "start the daemon, and base"},
 		{"devstack upgrade", "new devstack, migrated"},
 	}},
@@ -64,7 +64,7 @@ To read the commands that the first screen leaves out, run: devstack help more`,
 	Run: func(c *cobra.Command, args []string) {
 		target, _, err := rootCmd.Find(args)
 		if err != nil || target == nil {
-			fmt.Fprintf(c.OutOrStdout(), "There is no command %q. For the list of commands, run: devstack --help\n", strings.Join(args, " "))
+			fmt.Fprintf(c.OutOrStdout(), "There is no command %q. For the commands of the daily flow, run: devstack --help\nFor the rest, run: devstack help more\n", strings.Join(args, " "))
 			return
 		}
 		target.InitDefaultHelpFlag()

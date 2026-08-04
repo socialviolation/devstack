@@ -41,26 +41,18 @@ func registeredToolNames(t *testing.T) map[string]bool {
 	return names
 }
 
-// The session briefing tells an agent that the tools mirror the commands, and
-// names the operations that have no tool. Both halves are claims that go stale
-// the moment someone adds a tool, and a briefing that lies about what exists
-// sends an agent to the shell for something it could have called, or to a tool
-// that is not there.
+// The session briefing names the operations that have no tool. That claim goes
+// stale the moment someone adds a tool, and a briefing that lies about it sends
+// an agent to the shell for something it could have called.
 func TestBriefingParityClaimHolds(t *testing.T) {
 	names := registeredToolNames(t)
-
-	// Named in the briefing as tools that exist.
-	for _, want := range []string{"status", "start", "stop", "restart", "stack_up", "env_use", "environment", "migrate"} {
-		if !names[want] {
-			t.Errorf("the briefing names %q as a tool, and it is not registered", want)
-		}
-	}
 
 	// Named in the briefing as shell-only. A tool covering one of these means
 	// the briefing is sending agents to the shell needlessly.
 	shellOnly := map[string]string{
-		"workspace_up":   "workspace up and down",
-		"workspace_down": "workspace up and down",
+		"workspace_up":   "every workspace command but topology",
+		"workspace_down": "every workspace command but topology",
+		"workspace_add":  "every workspace command but topology",
 		"ports":          "ports",
 		"ports_free":     "ports",
 		"dependencies":   "dependencies",
@@ -69,6 +61,10 @@ func TestBriefingParityClaimHolds(t *testing.T) {
 		"groups":         "group add and remove",
 		"stack_config":   "stack config",
 		"init":           "init",
+		"upgrade":        "upgrade",
+		"env_list":       "env list, show and remove",
+		"env_show":       "env list, show and remove",
+		"env_remove":     "env list, show and remove",
 	}
 	for tool, claim := range shellOnly {
 		if names[tool] {
@@ -88,7 +84,10 @@ func TestEnvironmentToolIsAlwaysRegistered(t *testing.T) {
 func TestParityClaimNamesNoToolThatVanished(t *testing.T) {
 	names := registeredToolNames(t)
 	var missing []string
-	for _, n := range []string{"hooks", "tunnel", "topology", "service_env", "observability", "process_logs"} {
+	for _, n := range []string{
+		"hooks", "tunnel", "topology", "service_env", "observability", "process_logs",
+		"status", "start", "stop", "restart", "stack_up", "env_use", "migrate",
+	} {
 		if !names[n] {
 			missing = append(missing, n)
 		}

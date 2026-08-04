@@ -41,7 +41,7 @@ const optionalStackNameDesc = stackShortNameDesc +
 // checkout, for a workspace, for a stack, and for the absence of a stack, and
 // the disagreeing paragraph was pasted into eight parameter descriptions.
 const baseTermDesc = "\"base\" is this workspace with no stack. base does not run from the user's checkouts. It runs from a managed replica of the workspace. " +
-	"That replica holds one git worktree per service, detached at that service's default branch tip, under a .devstack-base sibling. " +
+	"That replica holds one git worktree per repository, detached at that repository's default branch tip, under a .devstack-base sibling. A repository that holds several services gets one worktree, with a directory for each service. " +
 	"The checkout is the template that devstack builds the replica from. base is not a stack. "
 
 // serviceLinksDesc defines the "service links" these tools return: one
@@ -311,7 +311,7 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			"  latest    the newest dated entry of the stack's note log, written by stack_note. It says where the work got to.\n"+
 			"  covers    how much of each group the stack was cut to cover.\n"+
 			"  links     the stack's allocated service links.\n"+
-			"It also shows the stack's base, its status, and the port of the base daemon its services run in while it is up.\n"+
+			"It also shows each stack's status, and the port of the host daemon its copies run in while it is up.\n"+
 			"A status of up means that devstack folded the stack's resources into the host daemon. A status of down means that the worktrees and the record exist, and that nothing of the stack is registered. So the tools that act on running services error \"not up\" for it.\n"+
 			"A stack that is up can still hold copies that do not run. \"up\" is about the stack, and each copy has its own state: running, starting, building, erroring, stopped, disabled, down, or unknown. Read those states with status.\n"+
 			"Telemetry and daemon resources name a stack by its full identity '<base>--<name>'. This tool prints the short '<name>' half, and every stack parameter across these tools takes that short half.\n"+
@@ -449,7 +449,8 @@ func registerStackNoteTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 
 func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_rm",
-		mcp.WithDescription("Tear down a feature stack of THIS workspace. devstack stops its daemon, removes its worktrees, releases its ports, deletes its record, and deletes its stack root. "+
+		mcp.WithDescription("Tear down a feature stack of THIS workspace. devstack removes its worktrees, releases its ports, deletes its record, and deletes its stack root. "+
+			"There is no daemon of its own to stop. If the stack is up, call stack_down first, so the host daemon drops its copies. "+
 			"It refuses a worktree that has uncommitted changes, until you set force. "+
 			"devstack keeps the branch of the stack, and somebody must decide what happens to it. Before you call this tool, ask the user: merge the branch of this stack, or discard it? NEVER merge it without an answer. After a merge, delete the branch with `git branch -d <branch>`. "+
 			"This workspace can declare lifecycle HOOKS that de-provision external state on stack.destroy. They fire before devstack removes anything, while the ports and the record can still be read. "+

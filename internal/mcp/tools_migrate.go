@@ -24,10 +24,10 @@ func registerMigrateTool(mcpServer *server.MCPServer, patches []migrate.Patch) {
 			"action=\"run\" applies each pending migration, and then writes the new version into each manifest. It changes files.\n"+
 			"CAUTION: devstack does not own the service repositories. A run writes .mcp.json and .claude/settings.json in each repository of each workspace. It removes the devstack block from AGENTS.md, CLAUDE.md, GEMINI.md, .cursorrules and .github/copilot-instructions.md. It deletes a file that holds that block and nothing else. devstack removes only what devstack wrote. Your own text stays, byte for byte.\n"+
 			"A run makes a real git diff in each repository it writes in. devstack does not commit, and it does not push. Read the diff yourself, and commit it in that repository. The version reaches your teammates only after you commit devstack.workspace.yaml.\n"+
-			"The report ends with a NEXT block. That block is the work this tool can not do for you:\n"+
+			"A run that changed something ends with a NEXT block. That block is the work this tool can not do for you:\n"+
 			"- Commit each diff.\n"+
 			"- Restart the session, so that the tools of a new .mcp.json load.\n"+
-			"Read that block, and do what it says.\n"+
+			"Where that block is there, read it and do what it says. A run that changed nothing, and every action=\"list\", ends with its own closing line instead.\n"+
 			"This tool builds no replica and starts nothing. To find a workspace with no replica, run 'devstack workspace doctor'.\n"+
 			"A second run changes nothing. This tool mirrors 'devstack migrate' and 'devstack migrate --list'."),
 		mcp.WithString("action", mcp.Required(),

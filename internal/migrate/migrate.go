@@ -260,7 +260,8 @@ func writeNote(w io.Writer, note []string, failed, incomplete int) {
 		fmt.Fprintln(w, "\nNEXT")
 		fmt.Fprintf(w, "A MIGRATION IS NOT FINISHED. devstack found a file that only you can change, in %s.\n", pluralWorkspaces(incomplete))
 		fmt.Fprintln(w, "This migration stays pending until that file is clean.")
-		fmt.Fprintln(w, "The report above names each file. Remove the devstack block from it by hand.")
+		fmt.Fprintln(w, "The report above names each file, and says what stopped devstack: a devstack block you must")
+		fmt.Fprintln(w, "remove by hand, or a write that failed.")
 		fmt.Fprintln(w, "Then run this command again: devstack migrate")
 		for _, l := range note {
 			fmt.Fprintln(w, l)

@@ -462,7 +462,7 @@ devstack once wrote a block of instructions into `AGENTS.md`, and a shorter bloc
 devstack migrate
 ```
 
-That file work is one of the migrations that `devstack migrate` runs. The command runs every pending migration. The other migration builds the replica that base runs from. To read what is pending without changing anything, run `devstack migrate --list`. An agent does the same with the `migrate` tool: `action="list"` to read, `action="run"` to apply.
+That file work is the migration that `devstack migrate` runs today. The command runs every pending migration. Building the replica that base runs from is not a migration: `devstack upgrade` builds it, and so does `devstack workspace up`. To read what is pending without changing anything, run `devstack migrate --list`. An agent does the same with the `migrate` tool: `action="list"` to read, `action="run"` to apply.
 
 A migration runs one time in each workspace, and then it is done for ever. `devstack upgrade` runs the pending ones for you. Run `devstack migrate` yourself when you clone a repository that still holds a block an older devstack committed, because nothing else finds that block.
 

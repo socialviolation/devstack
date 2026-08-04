@@ -53,8 +53,8 @@ it yourself.
   devstack upgrade                install, migrate, then restart what runs
   devstack upgrade --no-migrate   install only, and name each pending migration
   devstack upgrade --no-restart   install and migrate, and restart nothing
-  devstack upgrade --force        install even when devstack can not show that the
-                                  published branch is newer
+  devstack upgrade --force        install over every refusal: a build that is
+                                  current, local, ahead, or unidentified
 
 To read what a migration does, and change nothing, run: devstack migrate --list`,
 	SilenceUsage: true,
@@ -65,7 +65,7 @@ func init() {
 	rootCmd.AddCommand(upgradeCmd)
 	upgradeCmd.Flags().Bool("no-migrate", false, "Do not run the pending migrations. devstack names them instead")
 	upgradeCmd.Flags().Bool("no-restart", false, "Do not restart the copies that run. They keep serving the old code")
-	upgradeCmd.Flags().Bool("force", false, "Install even when this build is current, is a local build, or can not be identified")
+	upgradeCmd.Flags().Bool("force", false, "Install over every refusal: a build that is current, is local, is ahead of the published branch, or can not be identified")
 }
 
 func runUpgrade(cmd *cobra.Command, args []string) error {

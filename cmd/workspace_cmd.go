@@ -88,7 +88,8 @@ links. devstack writes into the current directory by default. The name defaults
 to the directory basename.
 
 'devstack init' supersedes this command. It writes a filled manifest, registers
-the repo, and connects MCP and AGENTS in one step.`,
+the repo, and writes the .mcp.json that connects an agent to devstack, in one
+step.`,
 	Hidden:       true,
 	Deprecated:   "use `devstack init --name=<n> --path=<p> --cmd=<c>` instead.",
 	Args:         cobra.MaximumNArgs(1),
