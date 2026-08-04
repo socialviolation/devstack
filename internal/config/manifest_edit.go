@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strconv"
@@ -25,29 +26,38 @@ func editWorkspaceManifest(workspacePath string, mutate func(root *yaml.Node) er
 
 // editManifest applies mutate to the manifest's root mapping node at path and
 // writes the result back.
+//
+// A file can hold more than one YAML document. devstack reads only the first
+// one, but it writes back every one of them: the others are the user's, and a
+// migration that sweeps every workspace must not delete what it does not read.
 func editManifest(path string, mutate func(root *yaml.Node) error) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("can not read the manifest %s: %w", path, err)
 	}
 
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	docs, err := decodeDocuments(data)
+	if err != nil {
 		return fmt.Errorf("can not parse the manifest %s: %w", path, err)
 	}
-	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+	if len(docs) == 0 || len(docs[0].Content) == 0 || docs[0].Content[0].Kind != yaml.MappingNode {
 		return fmt.Errorf("the manifest %s is not a mapping", path)
 	}
 
-	if err := mutate(doc.Content[0]); err != nil {
+	if err := mutate(docs[0].Content[0]); err != nil {
 		return err
 	}
 
 	var buf bytes.Buffer
+	if startsWithDocumentMarker(data) {
+		buf.WriteString("---\n")
+	}
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
-	if err := enc.Encode(&doc); err != nil {
-		return fmt.Errorf("can not encode the manifest %s: %w", path, err)
+	for _, doc := range docs {
+		if err := enc.Encode(doc); err != nil {
+			return fmt.Errorf("can not encode the manifest %s: %w", path, err)
+		}
 	}
 	enc.Close()
 
@@ -55,6 +65,32 @@ func editManifest(path string, mutate func(root *yaml.Node) error) error {
 		return fmt.Errorf("can not write the manifest %s: %w", path, err)
 	}
 	return nil
+}
+
+// decodeDocuments parses every YAML document in data, in file order.
+func decodeDocuments(data []byte) ([]*yaml.Node, error) {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	var docs []*yaml.Node
+	for {
+		var doc yaml.Node
+		err := dec.Decode(&doc)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		docs = append(docs, &doc)
+	}
+	return docs, nil
+}
+
+// startsWithDocumentMarker reports whether the file opens with an explicit "---"
+// line. The encoder writes a marker between documents, but not before the first
+// one, so a file that had one keeps it here.
+func startsWithDocumentMarker(data []byte) bool {
+	rest := strings.TrimLeft(string(data), " \t\r\n")
+	return rest == "---" || strings.HasPrefix(rest, "---\n") || strings.HasPrefix(rest, "--- ") || strings.HasPrefix(rest, "---\r\n")
 }
 
 // WorkspaceVersion reports the version of the workspace manifest at
@@ -342,11 +378,16 @@ func mapValue(m *yaml.Node, key string) *yaml.Node {
 
 // setScalar sets key to a scalar value+tag in a mapping node, updating in place
 // if the key already exists, otherwise appending it.
+//
+// It clears the style the old value had. A hand-quoted "false" that keeps its
+// quotes becomes the string "true", and the manifest then fails to load with a
+// type error that no devstack command can repair.
 func setScalar(m *yaml.Node, key, value, tag string) {
 	if v := mapValue(m, key); v != nil {
 		v.Kind = yaml.ScalarNode
 		v.Tag = tag
 		v.Value = value
+		v.Style = 0
 		return
 	}
 	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}

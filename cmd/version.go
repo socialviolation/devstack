@@ -33,14 +33,18 @@ import (
 func buildVersion() string {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
-		return "unknown"
+		return devVersion
 	}
 	v := strings.TrimSuffix(info.Main.Version, "+dirty")
 	if v == "" || v == "(devel)" || pseudoVersion.MatchString(v) {
-		return "dev"
+		return devVersion
 	}
 	return v
 }
+
+// devVersion is what a build that carries no semver tag calls itself: a build
+// from source, and never a published release.
+const devVersion = "dev"
 
 // pseudoVersion matches the version Go synthesises when a build is not exactly
 // at a semver tag: a 14-digit timestamp and a 12-character commit. The separator

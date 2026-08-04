@@ -88,20 +88,54 @@ func TestMigrationReportsItsFailure(t *testing.T) {
 // itself, and it is newer than anything published. Installing @latest there
 // replaces that work with the branch, from a command whose name promises the
 // opposite — so it must refuse without --force.
-func TestUpgradeRefusesToMoveALocalBuildBackwards(t *testing.T) {
-	for _, status := range []selfcheck.Status{selfcheck.StatusLocal, selfcheck.StatusAhead} {
-		if err := checkUpgradeWorthDoing(selfcheck.Result{Status: status, AheadBy: 2}, false); err == nil {
-			t.Errorf("%s: upgrade must refuse rather than install an older published commit", status)
-		}
-		if err := checkUpgradeWorthDoing(selfcheck.Result{Status: status, AheadBy: 2}, true); err != nil {
-			t.Errorf("%s with --force = %v, want it to proceed", status, err)
-		}
-	}
-}
-
-func TestUpgradeProceedsWhenBehind(t *testing.T) {
-	if err := checkUpgradeWorthDoing(selfcheck.Result{Status: selfcheck.StatusBehind, BehindBy: 3}, false); err != nil {
-		t.Errorf("a build that is behind is the case upgrade exists for: %v", err)
+//
+// A binary made with `go build` outside a git checkout carries no commit, and
+// calls itself "dev". The check then has nothing to compare and answers
+// "unknown", which used to install: the guard read the status and never the
+// identity, so the one build most likely to hold unpushed work was the one build
+// it did not protect.
+//
+// A binary from `go install ...@latest` carries no commit either, and it is the
+// case upgrade exists for. Its version tag is what tells the two apart.
+func TestUpgradeRefusesEveryInstallThatCanMoveTheBuildBackwards(t *testing.T) {
+	const rev = "a615867a615867a615867a615867a615867a6158"
+	for _, tc := range []struct {
+		name       string
+		res        selfcheck.Result
+		version    string
+		wantRefuse bool
+		wantIn     string
+	}{
+		{"built from source, no commit and no answer", selfcheck.Result{Status: selfcheck.StatusUnknown}, "dev", true, "carries no commit to compare"},
+		{"built from source, no answer from the branch", selfcheck.Result{Status: selfcheck.StatusUnknown, Revision: rev}, "dev", true, "can not read what the published branch holds"},
+		{"built from source, commit not published", selfcheck.Result{Status: selfcheck.StatusLocal, Revision: rev}, "dev", true, "local build"},
+		{"built from source, ahead of the branch", selfcheck.Result{Status: selfcheck.StatusAhead, AheadBy: 2, Revision: rev}, "dev", true, "ahead"},
+		{"built from source, behind the branch", selfcheck.Result{Status: selfcheck.StatusBehind, BehindBy: 3, Revision: rev}, "dev", false, ""},
+		{"released build, no commit and no answer", selfcheck.Result{Status: selfcheck.StatusUnknown}, "v0.1.2", false, ""},
+		{"released build, behind the branch", selfcheck.Result{Status: selfcheck.StatusBehind, BehindBy: 3, Revision: rev}, "v0.1.2", false, ""},
+		{"released build, ahead of the branch", selfcheck.Result{Status: selfcheck.StatusAhead, AheadBy: 2, Revision: rev}, "v0.1.2", true, "ahead"},
+		{"already current", selfcheck.Result{Status: selfcheck.StatusCurrent, Revision: rev}, "v0.1.2", false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkUpgradeWorthDoing(tc.res, tc.version, false)
+			switch {
+			case tc.wantRefuse && err == nil:
+				t.Fatal("upgrade installed rather than refused: it can not tell that the published branch is newer")
+			case !tc.wantRefuse && err != nil:
+				t.Fatalf("checkUpgradeWorthDoing() = %v, want it to proceed", err)
+			}
+			if err != nil {
+				if !strings.Contains(err.Error(), tc.wantIn) {
+					t.Errorf("the refusal never states the reason %q: %v", tc.wantIn, err)
+				}
+				if !strings.Contains(err.Error(), "--force") {
+					t.Errorf("the refusal never names the flag that overrides it: %v", err)
+				}
+			}
+			if err := checkUpgradeWorthDoing(tc.res, tc.version, true); err != nil {
+				t.Errorf("--force = %v, want it to proceed", err)
+			}
+		})
 	}
 }
 

@@ -53,7 +53,8 @@ it yourself.
   devstack upgrade                install, migrate, then restart what runs
   devstack upgrade --no-migrate   install only, and name each pending migration
   devstack upgrade --no-restart   install and migrate, and restart nothing
-  devstack upgrade --force        install even when this build is current or local
+  devstack upgrade --force        install even when devstack can not show that the
+                                  published branch is newer
 
 To read what a migration does, and change nothing, run: devstack migrate --list`,
 	SilenceUsage: true,
@@ -64,7 +65,7 @@ func init() {
 	rootCmd.AddCommand(upgradeCmd)
 	upgradeCmd.Flags().Bool("no-migrate", false, "Do not run the pending migrations. devstack names them instead")
 	upgradeCmd.Flags().Bool("no-restart", false, "Do not restart the copies that run. They keep serving the old code")
-	upgradeCmd.Flags().Bool("force", false, "Install even when this build is already current, or is a local build")
+	upgradeCmd.Flags().Bool("force", false, "Install even when this build is current, is a local build, or can not be identified")
 }
 
 func runUpgrade(cmd *cobra.Command, args []string) error {
@@ -81,7 +82,7 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	fmt.Printf("installed: %s\n", buildStamp())
 
 	res := selfcheck.Refresh(mod, buildRevision())
-	if err := checkUpgradeWorthDoing(res, force); err != nil {
+	if err := checkUpgradeWorthDoing(res, buildVersion(), force); err != nil {
 		return err
 	}
 
@@ -155,9 +156,26 @@ func writeUpgradeNext(w io.Writer) {
 // itself, and it is always "newer" than what is published. Installing @latest
 // there replaces your work with the branch, silently, from a command whose name
 // promises the opposite.
-func checkUpgradeWorthDoing(res selfcheck.Result, force bool) error {
+//
+// The comparison needs the commit, and a binary made with `go build` outside a
+// git checkout carries none. The status is then "unknown", which used to
+// install: the guard read the status and never the identity, so the one build
+// most likely to hold unpushed work was the one build it did not protect.
+//
+// A build with no version tag is a build from source, so devstack refuses it
+// whenever the comparison gives no answer, whatever the cause. A wrong install
+// here destroys work, and a wrong refusal costs one flag. A tagged build is a
+// published release, which holds no work of yours, so it installs.
+func checkUpgradeWorthDoing(res selfcheck.Result, version string, force bool) error {
 	if force {
 		return nil
+	}
+	if version == devVersion && res.Status == selfcheck.StatusUnknown {
+		why := "devstack can not read what the published branch holds"
+		if res.Revision == "" {
+			why = "this build carries no commit to compare"
+		}
+		return fmt.Errorf("this build carries no version tag, and %s. devstack can not tell whether an install moves it backwards\nTo install the published branch over it, run: devstack upgrade --force", why)
 	}
 	switch res.Status {
 	case selfcheck.StatusLocal:
