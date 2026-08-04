@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/socialviolation/devstack/internal/stack"
-	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 func TestBriefingCarriesTheLatestEntryOfTheInferredStack(t *testing.T) {
@@ -22,8 +21,7 @@ func TestBriefingCarriesTheLatestEntryOfTheInferredStack(t *testing.T) {
 	}
 
 	var b strings.Builder
-	writePrimeIdentity(&b, &workspace.Workspace{Name: "navexa"}, "navexa-api", "", "master", "base", false,
-		&workingStack{Rec: rec, Reason: "branch match"}, nil)
+	writePrimeTask(&b, "navexa-api", "base", &workingStack{Rec: rec, Reason: "branch match"}, nil, false, false)
 
 	got := b.String()
 	if !strings.Contains(got, "purpose NAV-412 daily value spike") {
@@ -41,8 +39,7 @@ func TestBriefingOmitsTheEntryLineWhenAStackHasNoLog(t *testing.T) {
 	rec := &stack.Record{Name: "perf", Base: "navexa", Note: "NAV-412 daily value spike"}
 
 	var b strings.Builder
-	writePrimeIdentity(&b, &workspace.Workspace{Name: "navexa"}, "navexa-api", "", "master", "base", false,
-		&workingStack{Rec: rec, Reason: "branch match"}, nil)
+	writePrimeTask(&b, "navexa-api", "base", &workingStack{Rec: rec, Reason: "branch match"}, nil, false, false)
 
 	if got := b.String(); strings.Contains(got, "latest") {
 		t.Fatalf("briefing = %q, want no latest line without entries", got)

@@ -81,7 +81,7 @@ func TestTheScopeBlockNamesTheCodeTheWorktreeHoldsAndNothingRuns(t *testing.T) {
 	}
 
 	var b strings.Builder
-	writePrimeScope(&b, rec, "feat", stackSiblings(rw, rec))
+	writePrimeStackTask(&b, rec, "web", stackSiblings(rw, rec), false)
 	got := b.String()
 
 	for _, want := range []string{
@@ -91,7 +91,7 @@ func TestTheScopeBlockNamesTheCodeTheWorktreeHoldsAndNothingRuns(t *testing.T) {
 		"devstack stack add feat <service>",
 	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("the scope block never states %q:\n%s", want, got)
+			t.Errorf("the task block never states %q:\n%s", want, got)
 		}
 	}
 	if strings.Contains(got, "Every other service is base's copy") {
@@ -158,6 +158,18 @@ func TestTheWholeBriefingFromASiblingDirectory(t *testing.T) {
 			t.Errorf("the briefing never states %q:\n%s", want, got)
 		}
 	}
+	if !strings.HasPrefix(got, "## YOUR TASK\nstack feat · web\n") {
+		t.Errorf("the briefing must open with the task, and name this stack and its services:\n%s", got)
+	}
+	for _, want := range []string{
+		"devstack service restart web --stack feat",
+		`devstack stack note feat --add "what you found"`,
+		"The worktrees also hold the code of: worker",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the briefing never states %q:\n%s", want, got)
+		}
+	}
 	if strings.Contains(got, "Every other service is base's copy") {
 		t.Errorf("the directory the session stands in is not base's copy:\n%s", got)
 	}
@@ -174,7 +186,7 @@ func TestTheBriefingCarriesTheCloseOutOfAStack(t *testing.T) {
 	writePrimeCloseOut(&b, "nick/feat")
 	got := b.String()
 
-	for _, want := range []string{"ask the user", "merge this branch, or discard it", "Never merge", "git branch -d nick/feat"} {
+	for _, want := range []string{"Ask the user", "merge this branch, or discard it", "Never merge", "git branch -d nick/feat"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the close-out never states %q:\n%s", want, got)
 		}

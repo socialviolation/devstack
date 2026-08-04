@@ -181,7 +181,7 @@ func TestEnvironmentsBlockLabelsItsDescriptionColumn(t *testing.T) {
 // its parts are named. THIS SERVICE is omitted outside a service directory,
 // because a heading with nothing under it reads as missing data.
 func TestPrimeSectionsAreNamedAndContextual(t *testing.T) {
-	always := []string{"## DEVSTACK", "## TERMS", "## WHERE YOU ARE", "## THIS WORKSPACE", "## REFERENCE"}
+	always := []string{"## YOUR TASK", "## DEVSTACK", "## TERMS", "## WHERE YOU ARE", "## THIS WORKSPACE", "## REFERENCE"}
 	for _, want := range always {
 		if !strings.HasPrefix(want, "## ") {
 			t.Fatalf("section heading %q must be a markdown heading", want)
