@@ -186,7 +186,7 @@ func TestTheBriefingCarriesTheCloseOutOfAStack(t *testing.T) {
 	writePrimeCloseOut(&b, "nick/feat")
 	got := b.String()
 
-	for _, want := range []string{"Ask the user", "merge this branch, or discard it", "Never merge", "git branch -d nick/feat"} {
+	for _, want := range []string{"ask the user", "merge this branch, or discard it", "Never merge", "git branch -d nick/feat"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the close-out never states %q:\n%s", want, got)
 		}

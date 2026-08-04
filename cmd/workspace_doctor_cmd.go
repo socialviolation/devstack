@@ -212,7 +212,7 @@ func runWorkspaceDoctor(cmd *cobra.Command, args []string) error {
 	for _, issue := range graph.Issues {
 		fmt.Printf("- [%s] %s\n", issue.Severity, issue.Message)
 	}
-	return fmt.Errorf("workspace doctor found %d issue(s)", len(graph.Issues))
+	return fmt.Errorf("workspace doctor found %s", pluralIssues(len(graph.Issues)))
 }
 
 // reportConfigDrift prints, for every service that declares config sources, the

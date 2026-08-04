@@ -28,7 +28,7 @@ func registerMigrateTool(mcpServer *server.MCPServer, patches []migrate.Patch) {
 			"A run that changed something ends with a NEXT block. That block is the work this tool can not do for you:\n"+
 			"- Commit each diff.\n"+
 			"- Restart the session, so that the tools of a new .mcp.json load.\n"+
-			"Where that block is there, read it and do what it says. A run that changed nothing, and every action=\"list\", ends with its own closing line instead.\n"+
+			"If that block is there, read it and do what it says. A run that changed nothing, and every action=\"list\", ends with its own closing line instead.\n"+
 			"This tool builds no replica and starts nothing. To find a workspace with no replica, run 'devstack workspace doctor'.\n"+
 			"A second run changes nothing. This tool mirrors 'devstack migrate' and 'devstack migrate --list'."),
 		mcp.WithString("action", mcp.Required(),

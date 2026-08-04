@@ -28,7 +28,7 @@ This command also makes base current, in three steps.
      branch tip, under a .devstack-base sibling of the workspace.
   2. It moves each worktree to the current default branch tip.
   3. It restarts each copy of this workspace that runs now, so that copy serves
-     the code which step 2 moved under it.
+     the code that step 2 moved under it.
 
 CAUTION: Step 3 restarts services that serve right now. devstack restarts only
 the copies that were already running. It starts no copy that is stopped, and it

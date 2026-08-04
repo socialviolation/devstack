@@ -30,7 +30,7 @@ func TestBriefingNamesTheServicesTheStackOwns(t *testing.T) {
 		"stack fx-rates · navexa-api, nxPriceService",
 		"1. Change code in these directories, and in no others:",
 		"/home/nick/dev/.devstack-stacks/navexa/fx-rates/Navexa",
-		"base is shared",
+		"every other stack share base",
 		"devstack stack add fx-rates",
 	} {
 		if !strings.Contains(got, want) {

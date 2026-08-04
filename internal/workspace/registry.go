@@ -241,25 +241,25 @@ func Save(workspaces []Workspace) error {
 
 	tmp, err := os.CreateTemp(dir, "workspaces-*.json")
 	if err != nil {
-		return fmt.Errorf("can not write the registry: %w", err)
+		return fmt.Errorf("can not write the workspace registry: %w", err)
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
-		return fmt.Errorf("can not write the registry: %w", err)
+		return fmt.Errorf("can not write the workspace registry: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		tmp.Close()
-		return fmt.Errorf("can not write the registry: %w", err)
+		return fmt.Errorf("can not write the workspace registry: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("can not write the registry: %w", err)
+		return fmt.Errorf("can not write the workspace registry: %w", err)
 	}
 	if err := os.Chmod(tmp.Name(), 0644); err != nil {
-		return fmt.Errorf("can not write the registry: %w", err)
+		return fmt.Errorf("can not write the workspace registry: %w", err)
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
-		return fmt.Errorf("can not write the registry: %w", err)
+		return fmt.Errorf("can not write the workspace registry: %w", err)
 	}
 	return nil
 }
@@ -546,19 +546,19 @@ func Deregister(name string) (Workspace, error) {
 	err := withRegistryLock(func() error {
 		workspaces, err := Load()
 		if err != nil {
-			return fmt.Errorf("can not load the workspace registry: %w", err)
+			return fmt.Errorf("can not read the workspace registry: %w", err)
 		}
 		for i, ws := range workspaces {
 			if strings.EqualFold(ws.Name, name) {
 				removed = ws
 				workspaces = append(workspaces[:i], workspaces[i+1:]...)
 				if err := Save(workspaces); err != nil {
-					return fmt.Errorf("can not save the workspace registry: %w", err)
+					return fmt.Errorf("can not write the workspace registry: %w", err)
 				}
 				return nil
 			}
 		}
-		return fmt.Errorf("there is no workspace %q", name)
+		return fmt.Errorf("devstack can not find the workspace %q", name)
 	})
 	if err != nil {
 		return Workspace{}, err

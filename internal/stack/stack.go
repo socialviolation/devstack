@@ -425,7 +425,7 @@ func CheckRemovable(base *workspace.Workspace, name string, force bool) error {
 		return fmt.Errorf("devstack can not remove the worktree %s. The worktree has uncommitted changes.\nTo discard the uncommitted work, use --force", p)
 	}
 	if resolveErr != nil {
-		return fmt.Errorf("devstack can not resolve the stack manifest at %s, so it can not tell if a worktree holds uncommitted work: %v\nTo remove the stack and everything in it, use --force", rec.Root, resolveErr)
+		return fmt.Errorf("devstack can not resolve the stack manifest at %s, so it can not tell whether a worktree holds uncommitted work: %v\nTo remove the stack and everything in it, use --force", rec.Root, resolveErr)
 	}
 	return nil
 }
@@ -467,7 +467,7 @@ func Remove(base *workspace.Workspace, name string, force bool) (*RemoveResult, 
 	paths, resolveErr := worktreePaths(rec)
 	if resolveErr != nil {
 		if !force {
-			return res, fmt.Errorf("devstack can not resolve the stack manifest at %s, so it can not tell if a worktree holds uncommitted work: %v\nTo remove the stack and everything in it, use --force", rec.Root, resolveErr)
+			return res, fmt.Errorf("devstack can not resolve the stack manifest at %s, so it can not tell whether a worktree holds uncommitted work: %v\nTo remove the stack and everything in it, use --force", rec.Root, resolveErr)
 		}
 		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not resolve the stack manifest, so it removes the worktrees the stack record names: %v", resolveErr))
 	}

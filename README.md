@@ -464,7 +464,7 @@ devstack migrate
 
 That file work is the migration that `devstack migrate` runs today. The command runs every pending migration. Building the replica that base runs from is not a migration: `devstack upgrade` builds it, and so does `devstack workspace up`. To read what is pending without changing anything, run `devstack migrate --list`. An agent does the same with the `migrate` tool: `action="list"` to read, `action="run"` to apply.
 
-A migration runs one time in each workspace, and then it is done for ever. `devstack upgrade` runs the pending ones for you. Run `devstack migrate` yourself when you clone a repository that still holds a block an older devstack committed, because nothing else finds that block.
+A migration runs one time in each workspace, and then it is done forever. `devstack upgrade` runs the pending ones for you. Run `devstack migrate` yourself when you clone a repository that still holds a block an older devstack committed, because nothing else finds that block.
 
 A migration does not watch this machine. To find a repository devstack is not connected to, a devstack file that nobody committed, or a workspace with no replica, run `devstack workspace doctor`. The doctor reports these, and it fixes none of them. Each report names the command that does fix it.
 

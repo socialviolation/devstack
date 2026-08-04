@@ -172,7 +172,7 @@ func transformStep(noMigrate, noRestart bool, step step2Result) error {
 	}
 	if len(step.Unbuilt) > 0 {
 		fmt.Printf("devstack restarts no copy of %s. The replica of each one did not build in step 2, so a\n", pluralWorkspaceList(step.Unbuilt))
-		fmt.Println("restart there would move a copy onto your checkout. Each copy keeps serving the old code.")
+		fmt.Println("restart there moves a copy onto your checkout. Each copy keeps serving the old code.")
 		fmt.Println("To build a replica after you fix the cause, run in that workspace: devstack workspace up")
 		fmt.Println("devstack restarts every other workspace now.")
 	}
@@ -231,7 +231,7 @@ func checkUpgradeWorthDoing(res selfcheck.Result, version string, force bool) er
 	case selfcheck.StatusLocal:
 		return fmt.Errorf("this is a local build, and its commit is not published. An install replaces it with the published branch\nTo do that anyway, run: devstack upgrade --force")
 	case selfcheck.StatusAhead:
-		return fmt.Errorf("this build is %d commit(s) ahead of the published branch. An install moves it backwards\nTo do that anyway, run: devstack upgrade --force", res.AheadBy)
+		return fmt.Errorf("this build is %s ahead of the published branch. An install moves it backwards\nTo do that anyway, run: devstack upgrade --force", pluralCommits(res.AheadBy))
 	case selfcheck.StatusCurrent:
 		fmt.Println("This is the current build. devstack has nothing to install.")
 		return nil
@@ -404,14 +404,14 @@ func runMigration(bin string) error {
 // devstack does not own, and of the code the running copies serve. A reader who
 // learns that from the report has already had it done to them.
 func writeUpgradeIntent(w io.Writer, noMigrate, noRestart bool) {
-	fmt.Fprintf(w, "devstack upgrade migrates your configuration to version %d, which is the version that\nthis devstack needs. That version is written in %s, which you commit.\n", config.WorkspaceManifestVersion, config.WorkspaceManifestFileName)
+	fmt.Fprintf(w, "devstack upgrade migrates your configuration to version %d, which is the version that\nthis devstack needs. devstack writes that version in %s, and you commit that file.\n", config.WorkspaceManifestVersion, config.WorkspaceManifestFileName)
 	switch {
 	case noMigrate:
-		fmt.Fprintln(w, "You passed --no-migrate, so devstack installs the binary and changes nothing else.")
+		fmt.Fprintln(w, "You gave --no-migrate, so devstack installs the binary and changes nothing else.")
 		fmt.Fprintln(w, "Your configuration stays on its current version. To read what is pending, run: devstack migrate --list")
 	case noRestart:
 		fmt.Fprintln(w, "It writes files in your repositories, and it builds the replica that base runs from.")
-		fmt.Fprintln(w, "You passed --no-restart, so each copy that runs keeps serving the old code.")
+		fmt.Fprintln(w, "You gave --no-restart, so each copy that runs keeps serving the old code.")
 	default:
 		fmt.Fprintln(w, "It writes files in your repositories. It builds the replica that base runs from.")
 		fmt.Fprintln(w, "It then restarts each copy that runs, so that copy serves the code in the replica.")

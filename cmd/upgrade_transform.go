@@ -46,7 +46,7 @@ func transformRunningState(w io.Writer, wsName string, skip []string) error {
 		return nil
 	}
 
-	fmt.Fprintf(w, "%s run now. devstack restarts each one, so that it serves the code in the replica.\n", pluralCopies(len(copies)))
+	fmt.Fprintf(w, "%s now. devstack restarts each one, so that it serves the code in the replica.\n", pluralCopyRunning(len(copies)))
 	fmt.Fprintln(w, "devstack restarts no copy that is stopped, and no copy of a feature stack.")
 	fmt.Fprintln(w, "This step is slow. Each replica worktree is a new checkout, and a service can need its")
 	fmt.Fprintln(w, "own dependency install before it serves again.")
@@ -224,4 +224,18 @@ func pluralCopies(n int) string {
 		return "1 copy"
 	}
 	return fmt.Sprintf("%d copies", n)
+}
+
+func pluralCommits(n int) string {
+	if n == 1 {
+		return "1 commit"
+	}
+	return fmt.Sprintf("%d commits", n)
+}
+
+func pluralIssues(n int) string {
+	if n == 1 {
+		return "1 issue"
+	}
+	return fmt.Sprintf("%d issues", n)
 }

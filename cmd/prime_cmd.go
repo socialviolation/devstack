@@ -259,8 +259,8 @@ func writePrimeStackTask(b *strings.Builder, rec *stack.Record, service string, 
 	fmt.Fprintf(b, "4. Record where you got to: devstack stack note %s --add \"what you found\"\n", rec.Name)
 	writePrimeCloseOut(b, rec.Branch)
 	b.WriteString("Every commit you make here goes on the branch of this stack, and not on base.\n")
-	b.WriteString("Everything else runs from base. base is shared with the user and with every other stack, and\n")
-	b.WriteString("devstack keeps it current. Do not change it to finish this feature.\n")
+	b.WriteString("Everything else runs from base. The user and every other stack share base, and devstack\n")
+	b.WriteString("keeps base current. Do not change base to finish this feature.\n")
 	fmt.Fprintf(b, "To make this stack run one more service, add it: devstack stack add %s <service>\n", rec.Name)
 }
 
@@ -285,8 +285,8 @@ func writePrimeOtherStackTask(b *strings.Builder, working *workingStack, service
 	fmt.Fprintf(b, "3. Restart the copy you changed: devstack service restart %s --stack %s\n", taskService(rec, service), rec.Name)
 	fmt.Fprintf(b, "4. Record where you got to: devstack stack note %s --add \"what you found\"\n", rec.Name)
 	writePrimeCloseOut(b, rec.Branch)
-	b.WriteString("Everything else runs from base. base is shared with the user and with every other stack, and\n")
-	b.WriteString("devstack keeps it current. Do not change it to finish this feature.\n")
+	b.WriteString("Everything else runs from base. The user and every other stack share base, and devstack\n")
+	b.WriteString("keeps base current. Do not change base to finish this feature.\n")
 }
 
 // writePrimeNoStackTask is the loop for a session with no stack in sight. It
@@ -298,7 +298,7 @@ func writePrimeNoStackTask(b *strings.Builder, inReplica bool) {
 	b.WriteString("\n1. Ask the user which feature this session is for.\n")
 	b.WriteString("2. To see a change run, cut a stack for it: devstack stack create <name> --repos <service>\n")
 	b.WriteString("   Then work in the directory that command prints.\n")
-	b.WriteString("3. What runs now, and where: devstack status\n")
+	b.WriteString("3. See what runs now, and where: devstack status\n")
 	if inReplica {
 		b.WriteString("This directory is devstack's own copy of base, and `devstack workspace up` overwrites it. Do not edit here.\n")
 		return
@@ -523,8 +523,9 @@ func writePrimeCloseOut(b *strings.Builder, branch string) {
 	if branch == "" {
 		branch = "<branch>"
 	}
-	b.WriteString("5. Finished? Ask the user: merge this branch, or discard it? Never merge it without an\n")
-	fmt.Fprintf(b, "   answer. After a merge, delete the branch: git branch -d %s\n", branch)
+	b.WriteString("5. If this feature is finished, ask the user: merge this branch, or discard it?\n")
+	b.WriteString("   Never merge it without an answer.\n")
+	fmt.Fprintf(b, "   After a merge, delete the branch: git branch -d %s\n", branch)
 }
 
 // writePrimeSafety carries the two rules about what a repository commits.

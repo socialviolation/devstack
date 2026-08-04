@@ -196,7 +196,7 @@ func Sync(ws *workspace.Workspace) (*SyncResult, error) {
 	for _, r := range repos {
 		path := r.Path(root)
 		if _, err := os.Stat(path); err != nil {
-			res.Warnings = append(res.Warnings, fmt.Sprintf("the services %s have no worktree at %s. To build it, run devstack workspace up", strings.Join(r.Services, ", "), path))
+			res.Warnings = append(res.Warnings, fmt.Sprintf("there is no worktree at %s for these services: %s. To build this worktree, run devstack workspace up", path, strings.Join(r.Services, ", ")))
 			continue
 		}
 
