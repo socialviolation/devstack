@@ -69,6 +69,7 @@ func TestBriefingParityClaimHolds(t *testing.T) {
 		"groups":         "group add and remove",
 		"stack_config":   "stack config",
 		"init":           "init",
+		"migrate":        "migrate",
 	}
 	for tool, claim := range shellOnly {
 		if names[tool] {

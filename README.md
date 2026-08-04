@@ -61,6 +61,7 @@ Your checkout is the template. It holds the git objects, the workspace manifest 
 ```bash
 devstack base path            # the replica root: where base runs
 devstack base path <service>  # the replica worktree of one service
+devstack base build           # build the replica, and start nothing
 devstack base sync            # move base to the current default branch tip
 ```
 
@@ -318,12 +319,15 @@ devstack otel services               # which copies report telemetry
 devstack otel traces                 # recent root spans
 devstack otel traces --service=api --since=15m
 devstack otel traces --stack=feat-x
+devstack otel traces --stack=all     # base and every stack together
 devstack otel traces <trace-id>      # full span tree
 devstack otel logs --trace=<trace-id>
 devstack otel status                 # collector state, ports, per-service evidence
 devstack otel open                   # the UI
 devstack otel plugins                # backends and their config keys
 ```
+
+A query with no `--stack` covers base alone. Pass a stack's short name for that stack alone, or `--stack all` for base and every stack together. The `investigate` MCP tool has the same default, so the two surfaces cover the same copies.
 
 Every copy reports to that one backend. devstack stamps each report with `devstack.workspace`, `devstack.service`, `devstack.stack` and `devstack.env`. These attributes carry the `devstack` prefix on purpose. `deployment.environment` belongs to the owner of the destination, and the `forwarding` backend sets it for each workspace. So you run one backend, and you slice the data at query time.
 
@@ -453,6 +457,8 @@ devstack once wrote a block of instructions into `AGENTS.md`, and a shorter bloc
 devstack migrate
 ```
 
+The file sweep is one of the migrations that `devstack migrate` runs. The command runs every pending migration, and the other one builds the replica that base runs from. To read what is pending without changing anything, run `devstack migrate --list`.
+
 devstack removes only what devstack wrote. Your own text stays, byte for byte. Where devstack can not find the end of its own block, it changes nothing and it names the file for you. Run the command again at any time: a second run changes nothing.
 
 devstack does not own these repositories, so read the diff in each one before you commit it.
@@ -528,12 +534,12 @@ To find out which case you are in, run `git check-ignore -v devstack.workspace.y
 ```bash
 cd <devstack repo> && git pull
 go install ./...              # replace the binary on your PATH
-devstack migrate              # remove the instructions an older devstack wrote
+devstack migrate              # run every pending migration for this machine
                               # then restart your MCP server / agent session
 devstack status               # make sure that the daemon and the services still answer
 ```
 
-`devstack upgrade` runs the first step for you. It installs the current devstack, then counts the files that still hold instructions an older devstack wrote. `devstack upgrade --migrate` runs `devstack migrate` too.
+`devstack upgrade` runs the first step for you. It installs the current devstack, then names each migration that is still pending. `devstack upgrade --migrate` runs `devstack migrate` too.
 
 Two of those steps carry a risk.
 
@@ -541,6 +547,6 @@ CAUTION: A stale binary does not fail on configuration that it does not understa
 
 CAUTION: The MCP server reads its tool descriptions one time, at startup. A session that already runs keeps the old tool list. New tools do not appear, and the server rejects new parameters. Restart the MCP server.
 
-`devstack migrate` writes files only, and restarts nothing. Expect a git diff in every service repository.
+`devstack migrate` writes files and cuts git worktrees. It restarts nothing. Expect a git diff in each service repository that it writes into.
 
 If a workspace is part-way through an upgrade, `devstack otel start` replaces the observability container when its pinned image moved.

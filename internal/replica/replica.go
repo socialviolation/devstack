@@ -183,7 +183,7 @@ func Sync(ws *workspace.Workspace) (*SyncResult, error) {
 	for _, r := range repos {
 		path := r.Path(root)
 		if _, err := os.Stat(path); err != nil {
-			res.Warnings = append(res.Warnings, fmt.Sprintf("the services %s have no worktree at %s. To build it, run devstack workspace up", strings.Join(r.Services, ", "), path))
+			res.Warnings = append(res.Warnings, fmt.Sprintf("the services %s have no worktree at %s. To build it, run devstack base build", strings.Join(r.Services, ", "), path))
 			continue
 		}
 
@@ -267,7 +267,7 @@ func Resolve(ws *workspace.Workspace) (*config.ResolvedWorkspace, error) {
 
 // Wrapped by every "no replica yet" error, so a caller that can carry on with
 // the template can tell it from a manifest that will not resolve.
-var ErrNotBuilt = errors.New("devstack has not built the replica. To build it, run devstack workspace up")
+var ErrNotBuilt = errors.New("devstack has not built the replica. To build it, run devstack base build. To build it and start its services, run devstack workspace up")
 
 func notBuilt(ws *workspace.Workspace, root string) error {
 	return fmt.Errorf("workspace %q at %s: %w", ws.Name, root, ErrNotBuilt)

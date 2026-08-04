@@ -359,8 +359,10 @@ func nextAgentFiles(results []migrate.Result) []string {
 			"devstack does not push. Push it yourself, or leave it.",
 			"This session does not have the tools that .mcp.json connects. An MCP client reads its",
 			"server list at session start only. To get those tools, restart the session.",
-			"WHY: until you commit the diff, the next clone of that repository still carries",
-			"the old instructions, and an agent that reads them acts on text that is not true.")
+			"WHY: until you commit the diff, the next clone of that repository does not get it. It",
+			"still carries any old instructions devstack wrote there, and an agent that reads them",
+			"acts on text that is not true. It also connects no agent to the MCP server, and no",
+			"session to `devstack prime`.")
 	}
 	if len(loose) > 0 {
 		out = append(out, "COMMIT THESE ELSEWHERE. None of these directories is the root of a git repository.")

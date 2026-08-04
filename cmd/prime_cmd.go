@@ -531,7 +531,7 @@ func writePrimeWhatThisIs(b *strings.Builder) {
 	b.WriteString("status, start, stop, restart, stack_up, env_use. Use the one that your session has. Call the `environment` tool\n")
 	b.WriteString("first. It lists the tools that this workspace has. The tools do not cover every command. If there is no tool\n")
 	b.WriteString("for what you want, run the command in the shell. These have no tool: workspace up and down, ports,\n")
-	b.WriteString("dependencies, group add and remove, stack config, and init.\n")
+	b.WriteString("dependencies, group add and remove, stack config, init, and migrate.\n")
 }
 
 // writePrimeTerms defines the words the rest of the briefing uses. It is its own

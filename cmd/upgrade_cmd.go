@@ -19,8 +19,8 @@ import (
 var upgradeCmd = &cobra.Command{
 	Use:   "upgrade",
 	Short: "Install the current devstack, and report what it leaves out of date",
-	Long: `Install the current devstack from its source. Then report the instructions that
-an older devstack wrote into your repositories.
+	Long: `Install the current devstack from its source. Then report each migration that
+this machine still needs.
 
 An upgrade is explicit on purpose. devstack manages a daemon that runs services
 right now. If you replace the binary under a live MCP server, the running process
@@ -32,8 +32,8 @@ An MCP server reads its tool descriptions once, when it starts. A session that
 already runs therefore keeps the old tool list. Restart that session after the
 upgrade.
 
-A migration is a second and separate decision. Every service repo commits its
-AGENTS.md, so a removal produces a real git diff in repos that devstack does not
+A migration is a second and separate decision. The file sweep writes files that a
+repository commits, so it produces a real git diff in repos that devstack does not
 own. A replica is one git worktree for each repository, and each worktree needs
 its own dependency install. This command names each pending patch, and then it
 stops. Pass --migrate to run them. The migration runs 'devstack migrate' through
@@ -229,8 +229,8 @@ func writePendingReport(w io.Writer, statuses []migrate.Status, doMigrate bool) 
 		fmt.Fprintf(w, "\n%d migrations are pending. devstack upgrade --migrate runs them, through the binary\n", pending)
 	}
 	fmt.Fprintln(w, "it just installed. This command changes nothing.")
-	fmt.Fprintln(w, "Every repository commits its AGENTS.md, so the file sweep is a real git diff in")
-	fmt.Fprintln(w, "each one. Read the diff before you commit it. Do this when you are not mid-task.")
+	fmt.Fprintln(w, "The file sweep writes files that a repository commits, so where it has work it makes")
+	fmt.Fprintln(w, "a real git diff. Read the diff before you commit it. Do this when you are not mid-task.")
 }
 
 func registeredWorkspaces() []workspace.Workspace {
