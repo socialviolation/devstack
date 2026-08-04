@@ -100,7 +100,7 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	merr := reportAndMigrate(!noMigrate)
 
 	fmt.Println("\nSTEP 3 of 3: transform the running state")
-	terr := transformStep(noMigrate, noRestart)
+	terr := transformStep(noMigrate, noRestart, merr)
 
 	writeUpgradeNext(os.Stdout)
 	writeDeprecations(os.Stdout)
@@ -112,7 +112,11 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 // It is skipped with step 2 as well: step 2 builds the replicas that the copies
 // must serve from, so a restart before it moves a copy onto a replica that is
 // not there.
-func transformStep(noMigrate, noRestart bool) error {
+//
+// merr is the failure of step 2. A restart after that failure stops a service
+// that serves now and starts it again on a replica that step 2 did not build.
+// The copy then runs the checkout, which holds whatever work is parked there.
+func transformStep(noMigrate, noRestart bool, merr error) error {
 	if noRestart {
 		fmt.Println("You gave --no-restart, so devstack restarts nothing.")
 		fmt.Println("Each copy that runs keeps serving the code it started with.")
@@ -122,6 +126,12 @@ func transformStep(noMigrate, noRestart bool) error {
 	if noMigrate {
 		fmt.Println("You gave --no-migrate, so devstack restarts nothing. A copy can only serve a replica")
 		fmt.Println("that is built. Run the migrations first: devstack migrate")
+		return nil
+	}
+	if merr != nil {
+		fmt.Println("STEP 2 FAILED, so devstack restarts nothing. A copy can only serve a replica that is")
+		fmt.Println("built. A restart now would move a copy onto your checkout instead.")
+		fmt.Println("Read the failure in step 2. After you fix the cause, run: devstack upgrade")
 		return nil
 	}
 	return transformRunningState(os.Stdout, "")
@@ -234,7 +244,10 @@ func parseVersionOutput(out string) string {
 // The replica is machine state, so no migration owns it. An upgraded machine
 // must still have one, so the upgrade builds it here, directly.
 func reportAndMigrate(doMigrate bool) error {
-	all := migrate.Workspaces()
+	all, err := migrate.Workspaces()
+	if err != nil {
+		return err
+	}
 	writePendingReport(os.Stdout, migrate.List(patches(), all), doMigrate)
 
 	if !doMigrate {

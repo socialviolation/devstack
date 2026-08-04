@@ -30,13 +30,17 @@ var Stamp = "devstack"
 
 // Workspaces is every workspace registered on this machine, in name order. One
 // migration sweeps the whole machine, so this is the set each surface passes.
-func Workspaces() []workspace.Workspace {
+//
+// A registry devstack can not read is an error and not an empty machine. An
+// empty set reads as "there is nothing to migrate", and a caller that reports
+// that has told the user their upgrade is complete when it did nothing.
+func Workspaces() ([]workspace.Workspace, error) {
 	all, err := workspace.All()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("devstack can not read the workspace registry, so it migrates nothing: %w", err)
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
-	return all
+	return all, nil
 }
 
 // Sweep writes one migration report. It is the whole of what a caller reads:
@@ -133,6 +137,7 @@ func (p Patch) Name() string { return fmt.Sprintf("version %d to %d", p.From, p.
 func Apply(w io.Writer, patches []Patch, all []workspace.Workspace) error {
 	var errs []error
 	var note []string
+	incomplete := 0
 	for _, p := range patches {
 		fmt.Fprintf(w, "\n%s  %s\n", p.Name(), p.Title)
 		var changed []Result
@@ -141,6 +146,9 @@ func Apply(w io.Writer, patches []Patch, all []workspace.Workspace) error {
 			res, err := applyOne(w, p, ws)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("%s: %s: %w", p.Name(), ws.Name, err))
+			}
+			if res.Incomplete {
+				incomplete++
 			}
 			if !res.Changed && len(res.Items) == 0 {
 				continue
@@ -156,7 +164,7 @@ func Apply(w io.Writer, patches []Patch, all []workspace.Workspace) error {
 		note = append(note, p.Next(changed)...)
 	}
 
-	writeNote(w, note, len(errs))
+	writeNote(w, note, len(errs), incomplete)
 	return errors.Join(errs...)
 }
 
@@ -234,11 +242,26 @@ func why(version int, p Patch) string {
 // A failure changes nothing, so it reaches here with no next action. The closing
 // line is the one an agent acts on, and "every migration is applied" after a
 // patch failed is the one thing this output must never say.
-func writeNote(w io.Writer, note []string, failed int) {
+//
+// incomplete counts the workspaces where the patch left work that only a person
+// can do. devstack writes no new version there, so the migration is still
+// pending, and the closing line must send the reader back to the file.
+func writeNote(w io.Writer, note []string, failed, incomplete int) {
 	if failed > 0 {
 		fmt.Fprintln(w, "\nNEXT")
 		fmt.Fprintf(w, "A MIGRATION FAILED. devstack did not apply %s. Read the failure above.\n", pluralMigrations(failed))
 		fmt.Fprintln(w, "After you fix the cause, run this command again: devstack migrate")
+		for _, l := range note {
+			fmt.Fprintln(w, l)
+		}
+		return
+	}
+	if incomplete > 0 {
+		fmt.Fprintln(w, "\nNEXT")
+		fmt.Fprintf(w, "A MIGRATION IS NOT FINISHED. devstack found a file that only you can change, in %s.\n", pluralWorkspaces(incomplete))
+		fmt.Fprintln(w, "This migration stays pending until that file is clean.")
+		fmt.Fprintln(w, "The report above names each file. Remove the devstack block from it by hand.")
+		fmt.Fprintln(w, "Then run this command again: devstack migrate")
 		for _, l := range note {
 			fmt.Fprintln(w, l)
 		}

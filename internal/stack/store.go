@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -73,6 +74,38 @@ func storePath(workspaceName string) string {
 	return workspace.DataDir(workspaceName) + "stacks.json"
 }
 
+// storeLockPath returns the lockfile that serialises every change to one base
+// workspace's store. It is per workspace because each store is one file, and a
+// change to one workspace's stacks never reads another's.
+func storeLockPath(workspaceName string) string {
+	return workspace.DataDir(workspaceName) + "stacks.lock"
+}
+
+// withStoreLock runs fn while it holds an exclusive advisory lock on the store
+// of one base workspace.
+//
+// Every change to the store is read-mutate-write, and the whole of it runs in
+// here. A lock around the write only is not enough: two callers that read the
+// same records both write a full file, and the second one erases the change of
+// the first. The MCP agent and the shell are two processes on one store, so this
+// lock is between processes and not only between goroutines.
+func withStoreLock(workspaceName string, fn func() error) error {
+	dir := workspace.DataDir(workspaceName)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("can not create the workspace data directory: %w", err)
+	}
+	f, err := os.OpenFile(storeLockPath(workspaceName), os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return fmt.Errorf("can not open the stacks lock: %w", err)
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("can not lock the stacks store: %w", err)
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return fn()
+}
+
 // LoadStore reads a base workspace's stacks, returning an empty slice when it has
 // none.
 func LoadStore(workspaceName string) ([]Record, error) {
@@ -91,15 +124,40 @@ func LoadStore(workspaceName string) ([]Record, error) {
 }
 
 // saveStore writes a base workspace's stacks, creating its data dir if needed.
+//
+// It writes a temporary file in the same directory and renames it over the
+// store, so the store goes from one whole content to the next whole content. A
+// reader always gets a file it can parse, and a write that stops in the middle
+// leaves the records that were there before.
 func saveStore(workspaceName string, recs []Record) error {
-	if err := os.MkdirAll(workspace.DataDir(workspaceName), 0755); err != nil {
+	dir := workspace.DataDir(workspaceName)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("can not create the workspace data directory: %w", err)
 	}
 	data, err := json.MarshalIndent(recs, "", "  ")
 	if err != nil {
 		return fmt.Errorf("can not encode the stacks store: %w", err)
 	}
-	if err := os.WriteFile(storePath(workspaceName), data, 0644); err != nil {
+	tmp, err := os.CreateTemp(dir, "stacks-*.json")
+	if err != nil {
+		return fmt.Errorf("can not write the stacks store: %w", err)
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("can not write the stacks store: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("can not write the stacks store: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("can not write the stacks store: %w", err)
+	}
+	if err := os.Chmod(tmp.Name(), 0644); err != nil {
+		return fmt.Errorf("can not write the stacks store: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), storePath(workspaceName)); err != nil {
 		return fmt.Errorf("can not write the stacks store: %w", err)
 	}
 	return nil
@@ -125,20 +183,22 @@ func FindStack(workspaceName, name string) (*Record, error) {
 // (note == "") also drops the log: the entries are progress against a purpose
 // that no longer exists.
 func SetNote(base, name, note string) error {
-	recs, err := LoadStore(base)
-	if err != nil {
-		return err
-	}
-	for i := range recs {
-		if strings.EqualFold(recs[i].Name, name) {
-			recs[i].Note = note
-			if note == "" {
-				recs[i].Log = nil
-			}
-			return saveStore(base, recs)
+	return withStoreLock(base, func() error {
+		recs, err := LoadStore(base)
+		if err != nil {
+			return err
 		}
-	}
-	return fmt.Errorf("stack %q not found in workspace %q", name, base)
+		for i := range recs {
+			if strings.EqualFold(recs[i].Name, name) {
+				recs[i].Note = note
+				if note == "" {
+					recs[i].Log = nil
+				}
+				return saveStore(base, recs)
+			}
+		}
+		return fmt.Errorf("stack %q not found in workspace %q", name, base)
+	})
 }
 
 // Reports appended == false when the entry repeats the last one verbatim, which
@@ -152,43 +212,53 @@ func AppendNote(base, name, text string) (appended bool, entry NoteEntry, err er
 		return false, NoteEntry{}, fmt.Errorf("the entry is %d characters, and the limit is %d: write one line on what changed, not the detail behind it", n, NoteEntryMax)
 	}
 
-	recs, err := LoadStore(base)
+	err = withStoreLock(base, func() error {
+		recs, err := LoadStore(base)
+		if err != nil {
+			return err
+		}
+		for i := range recs {
+			if !strings.EqualFold(recs[i].Name, name) {
+				continue
+			}
+			if last, ok := recs[i].LatestEntry(); ok && strings.EqualFold(last.Text, text) {
+				entry = last
+				return nil
+			}
+			entry = NoteEntry{At: time.Now(), Text: text}
+			log := append(recs[i].Log, entry)
+			if len(log) > NoteLogEntries {
+				log = log[len(log)-NoteLogEntries:]
+			}
+			recs[i].Log = log
+			appended = true
+			return saveStore(base, recs)
+		}
+		return fmt.Errorf("stack %q not found in workspace %q", name, base)
+	})
 	if err != nil {
 		return false, NoteEntry{}, err
 	}
-	for i := range recs {
-		if !strings.EqualFold(recs[i].Name, name) {
-			continue
-		}
-		if last, ok := recs[i].LatestEntry(); ok && strings.EqualFold(last.Text, text) {
-			return false, last, nil
-		}
-		entry = NoteEntry{At: time.Now(), Text: text}
-		log := append(recs[i].Log, entry)
-		if len(log) > NoteLogEntries {
-			log = log[len(log)-NoteLogEntries:]
-		}
-		recs[i].Log = log
-		return true, entry, saveStore(base, recs)
-	}
-	return false, NoteEntry{}, fmt.Errorf("stack %q not found in workspace %q", name, base)
+	return appended, entry, nil
 }
 
 // SetActive marks a base workspace's stack active or inactive and persists it. An
 // active stack's overlay services are folded into the base workspace's Tiltfile as
 // namespaced resources; an inactive one is left out. Errors if the stack is unknown.
 func SetActive(base, name string, active bool) error {
-	recs, err := LoadStore(base)
-	if err != nil {
-		return err
-	}
-	for i := range recs {
-		if strings.EqualFold(recs[i].Name, name) {
-			recs[i].Active = active
-			return saveStore(base, recs)
+	return withStoreLock(base, func() error {
+		recs, err := LoadStore(base)
+		if err != nil {
+			return err
 		}
-	}
-	return fmt.Errorf("stack %q not found in workspace %q", name, base)
+		for i := range recs {
+			if strings.EqualFold(recs[i].Name, name) {
+				recs[i].Active = active
+				return saveStore(base, recs)
+			}
+		}
+		return fmt.Errorf("stack %q not found in workspace %q", name, base)
+	})
 }
 
 // AnyActive reports whether a base workspace has any stack marked active.
@@ -210,21 +280,25 @@ func AnyActive(base string) (bool, error) {
 // Bringing a base down calls it so no stack record lingers marked active once
 // the daemon that ran it is gone.
 func DeactivateAll(base string) ([]string, error) {
-	recs, err := LoadStore(base)
-	if err != nil {
-		return nil, err
-	}
 	var deactivated []string
-	for i := range recs {
-		if recs[i].Active {
-			recs[i].Active = false
-			deactivated = append(deactivated, recs[i].Name)
+	err := withStoreLock(base, func() error {
+		recs, err := LoadStore(base)
+		if err != nil {
+			return err
 		}
-	}
-	if len(deactivated) == 0 {
-		return nil, nil
-	}
-	if err := saveStore(base, recs); err != nil {
+		deactivated = nil
+		for i := range recs {
+			if recs[i].Active {
+				recs[i].Active = false
+				deactivated = append(deactivated, recs[i].Name)
+			}
+		}
+		if len(deactivated) == 0 {
+			return nil
+		}
+		return saveStore(base, recs)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return deactivated, nil
@@ -233,48 +307,60 @@ func DeactivateAll(base string) ([]string, error) {
 // SetEnv sets the active env applied at a base workspace's stack scope and
 // persists it. Errors if the stack is unknown.
 func SetEnv(base, name, envName string) error {
-	recs, err := LoadStore(base)
-	if err != nil {
-		return err
-	}
-	for i := range recs {
-		if strings.EqualFold(recs[i].Name, name) {
-			recs[i].Env = envName
-			return saveStore(base, recs)
+	return withStoreLock(base, func() error {
+		recs, err := LoadStore(base)
+		if err != nil {
+			return err
 		}
-	}
-	return fmt.Errorf("stack %q not found in workspace %q", name, base)
+		for i := range recs {
+			if strings.EqualFold(recs[i].Name, name) {
+				recs[i].Env = envName
+				return saveStore(base, recs)
+			}
+		}
+		return fmt.Errorf("stack %q not found in workspace %q", name, base)
+	})
 }
 
 // upsertStack inserts or replaces a record in its base workspace's store.
 func upsertStack(rec Record) error {
-	recs, err := LoadStore(rec.Base)
-	if err != nil {
-		return err
-	}
-	for i := range recs {
-		if strings.EqualFold(recs[i].Name, rec.Name) {
-			recs[i] = rec
-			return saveStore(rec.Base, recs)
+	return withStoreLock(rec.Base, func() error {
+		recs, err := LoadStore(rec.Base)
+		if err != nil {
+			return err
 		}
-	}
-	recs = append(recs, rec)
-	return saveStore(rec.Base, recs)
+		for i := range recs {
+			if strings.EqualFold(recs[i].Name, rec.Name) {
+				recs[i] = rec
+				return saveStore(rec.Base, recs)
+			}
+		}
+		recs = append(recs, rec)
+		return saveStore(rec.Base, recs)
+	})
 }
 
 // deleteStack removes a record from its base workspace's store.
 func deleteStack(workspaceName, name string) (bool, error) {
-	recs, err := LoadStore(workspaceName)
+	var found bool
+	err := withStoreLock(workspaceName, func() error {
+		recs, err := LoadStore(workspaceName)
+		if err != nil {
+			return err
+		}
+		for i := range recs {
+			if strings.EqualFold(recs[i].Name, name) {
+				recs = append(recs[:i], recs[i+1:]...)
+				found = true
+				return saveStore(workspaceName, recs)
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return false, err
 	}
-	for i := range recs {
-		if strings.EqualFold(recs[i].Name, name) {
-			recs = append(recs[:i], recs[i+1:]...)
-			return true, saveStore(workspaceName, recs)
-		}
-	}
-	return false, nil
+	return found, nil
 }
 
 // DetectFromCwd resolves the (base workspace, stack) that owns the current

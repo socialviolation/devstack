@@ -137,15 +137,6 @@ func Add(in AddInput) (*AddResult, error) {
 		res.Added = append(res.Added, OverlayMember{Service: s, Reason: reason})
 	}
 
-	// A caller was pulled into the stack on a detached HEAD, so nobody can
-	// commit in it. Putting its worktree on the stack's branch is the only way
-	// to commit there that does not destroy the stack and cut it again.
-	promoted, err := held.promote(promote, rec.Branch)
-	if err != nil {
-		return nil, err
-	}
-	res.Promoted = promoted
-
 	worktreePaths := map[string]string{}
 	for s, p := range rec.Worktrees {
 		worktreePaths[s] = p
@@ -160,13 +151,39 @@ func Add(in AddInput) (*AddResult, error) {
 	}
 
 	// A failed add must leave nothing behind, so the retry does not die on
-	// "already exists". The worktrees the stack already holds are never touched.
+	// "already exists", and the stack the caller had before the add is the stack
+	// they have after it. That covers the worktrees this call cut, the branch it
+	// put a held worktree on, and the manifest it wrote. The worktrees the stack
+	// already holds are never removed.
 	var built []string
+	var promotions []promotion
+	var manifestBefore []byte
+	manifestWritten := false
 	unwind := func() {
 		for i := len(built) - 1; i >= 0; i-- {
 			_ = worktree.Remove(built[i], true)
 		}
+		if manifestWritten {
+			if manifestBefore == nil {
+				_ = os.Remove(res.ManifestPath)
+			} else {
+				_ = os.WriteFile(res.ManifestPath, manifestBefore, 0644)
+			}
+		}
+		for _, p := range promotions {
+			_ = p.restore()
+		}
 	}
+
+	// A caller was pulled into the stack on a detached HEAD, so nobody can
+	// commit in it. Putting its worktree on the stack's branch is the only way
+	// to commit there that does not destroy the stack and cut it again.
+	promoted, promotions, err := held.promote(promote, rec.Branch)
+	if err != nil {
+		unwind()
+		return nil, err
+	}
+	res.Promoted = promoted
 
 	var leftBehind []string
 	for _, r := range repos {
@@ -245,6 +262,10 @@ func Add(in AddInput) (*AddResult, error) {
 		return nil, fmt.Errorf("can not encode the stack manifest: %w", err)
 	}
 	res.ManifestPath = config.WorkspaceManifestPath(rec.Root)
+	if before, err := os.ReadFile(res.ManifestPath); err == nil {
+		manifestBefore = before
+	}
+	manifestWritten = true
 	if err := os.WriteFile(res.ManifestPath, data, 0644); err != nil {
 		unwind()
 		return nil, fmt.Errorf("can not write the stack manifest: %w", err)
@@ -323,25 +344,55 @@ func (h *heldWorktrees) branchOf(service string) (string, error) {
 	return branch, nil
 }
 
+// promotion is where one worktree stood before Add put it on the stack's
+// branch. That worktree holds work somebody owns, so a failed add puts it back.
+type promotion struct {
+	root   string
+	branch string
+	commit string
+}
+
+// restore puts the worktree back on the branch it had, or back on the commit it
+// had when it was on no branch.
+func (p promotion) restore() error {
+	if p.branch != "" {
+		return worktree.Attach(p.root, p.branch)
+	}
+	return worktree.Detach(p.root, p.commit)
+}
+
 // promote puts the worktree of each named service on branch and reports every
 // service that moved. One worktree can hold several services, and all of them
 // move together, so the report names them all.
-func (h *heldWorktrees) promote(services []string, branch string) ([]string, error) {
+//
+// It also returns what each worktree it moved stood on before. A move that fails
+// halfway still returns the moves it made, because the caller has to undo them.
+func (h *heldWorktrees) promote(services []string, branch string) ([]string, []promotion, error) {
 	if len(services) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	moved := map[string]bool{}
+	var undo []promotion
 	for _, s := range services {
 		root, ok := h.ofSvc[s]
 		if !ok {
-			return nil, fmt.Errorf("devstack has no worktree recorded for the service %q", s)
+			return nil, undo, fmt.Errorf("devstack has no worktree recorded for the service %q", s)
 		}
 		if moved[root] {
 			continue
 		}
-		if err := worktree.Attach(root, branch); err != nil {
-			return nil, fmt.Errorf("devstack can not put the worktree %s on branch %s: %w", root, branch, err)
+		was, err := worktree.CurrentBranch(root)
+		if err != nil {
+			return nil, undo, fmt.Errorf("devstack can not read the branch of the worktree %s: %w", root, err)
 		}
+		commit, err := worktree.Head(root)
+		if err != nil {
+			return nil, undo, fmt.Errorf("devstack can not read the commit of the worktree %s: %w", root, err)
+		}
+		if err := worktree.Attach(root, branch); err != nil {
+			return nil, undo, fmt.Errorf("devstack can not put the worktree %s on branch %s: %w", root, branch, err)
+		}
+		undo = append(undo, promotion{root: root, branch: was, commit: commit})
 		moved[root] = true
 	}
 
@@ -350,7 +401,7 @@ func (h *heldWorktrees) promote(services []string, branch string) ([]string, err
 		out = append(out, h.inRoot[root]...)
 	}
 	sort.Strings(out)
-	return out, nil
+	return out, undo, nil
 }
 
 // portKeys lists the qualified port keys the given services declare, in the

@@ -165,6 +165,9 @@ func syncBase(ws *workspace.Workspace) error {
 	}
 
 	fmt.Printf("Replica for %q: %s\n", ws.Name, res.Root)
+	for _, wt := range res.Created {
+		fmt.Printf("  ✓ replica worktree %-16s %s (%s)\n", wt.Repo, wt.Path, wt.Branch)
+	}
 	for _, s := range res.Services {
 		if s.Before == s.After {
 			fmt.Printf("  %-16s %-24s %s\n", s.Service, s.Ref, s.After)

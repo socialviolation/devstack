@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/socialviolation/devstack/internal/hostdaemon"
+	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -50,23 +51,80 @@ func transformRunningState(w io.Writer, wsName string) error {
 		fmt.Fprintln(w, note)
 	}
 
-	errs := restartCopies(w, copies, func(name string) error {
+	restarted, errs := restartCopies(w, copies, func(name string) error {
 		out, cerr := client.RunCLI("trigger", name)
 		if cerr != nil {
 			return fmt.Errorf("%v: %s", cerr, strings.TrimSpace(out))
 		}
 		return nil
 	})
+	writeRestartReport(w, restarted, readableReplicas())
 	if len(errs) == 0 {
-		fmt.Fprintf(w, "devstack restarted %s. Each one serves the replica now.\n", pluralCopies(len(copies)))
 		return nil
 	}
-	fmt.Fprintf(w, "devstack restarted %d of %d copies. %s did not restart:\n", len(copies)-len(errs), len(copies), pluralCopies(len(errs)))
+	fmt.Fprintf(w, "%s did not restart:\n", pluralCopies(len(errs)))
 	for _, e := range errs {
 		fmt.Fprintf(w, "  %v\n", e)
 	}
-	fmt.Fprintln(w, "Every other copy restarted. To try one of these again, run: devstack service restart <svc> --stack base")
+	fmt.Fprintln(w, "To try one of these again, run: devstack service restart <svc> --stack base")
 	return errors.Join(errs...)
+}
+
+// writeRestartReport states what each workspace's copies serve now.
+//
+// A copy serves the replica only when devstack can read that workspace's
+// replica. Where it can not, generation falls back to the checkout, and the copy
+// runs whatever work is parked there. One line for the whole machine can not say
+// that, so the report is per workspace.
+func writeRestartReport(w io.Writer, restarted []string, readable map[string]bool) {
+	if len(restarted) == 0 {
+		return
+	}
+	counts := map[string]int{}
+	var names []string
+	for _, copyName := range restarted {
+		ws := workspaceOfCopy(copyName)
+		if _, seen := counts[ws]; !seen {
+			names = append(names, ws)
+		}
+		counts[ws]++
+	}
+	sort.Strings(names)
+
+	fmt.Fprintf(w, "devstack restarted %s.\n", pluralCopies(len(restarted)))
+	for _, name := range names {
+		if readable[name] {
+			fmt.Fprintf(w, "  %-16s %s. Each one serves the replica now.\n", name, pluralCopies(counts[name]))
+			continue
+		}
+		fmt.Fprintf(w, "  %-16s %s. devstack can not read the replica of this workspace, so each one\n", name, pluralCopies(counts[name]))
+		fmt.Fprintf(w, "  %-16s serves your checkout. To build the replica, run: devstack workspace up\n", "")
+	}
+}
+
+// workspaceOfCopy reads the workspace name out of a copy name. The daemon names
+// a base copy <workspace>:<service>.
+func workspaceOfCopy(name string) string {
+	if i := strings.Index(name, ":"); i >= 0 {
+		return name[:i]
+	}
+	return name
+}
+
+// readableReplicas reports, for each registered workspace, whether devstack can
+// read its replica. It asks the same question the generator asks, because the
+// generator falls back to the checkout for every workspace it can not read.
+func readableReplicas() map[string]bool {
+	out := map[string]bool{}
+	all, err := workspace.All()
+	if err != nil {
+		return out
+	}
+	for i := range all {
+		_, err := replica.Resolve(&all[i])
+		out[all[i].Name] = err == nil
+	}
+	return out
 }
 
 // runningBaseCopies names the base copies that the daemon serves now, in name
@@ -113,13 +171,13 @@ func isRunningCopy(r tilt.UIResource) bool {
 	return false
 }
 
-// restartCopies restarts each copy in turn and reports as it goes.
+// restartCopies restarts each copy in turn and reports as it goes. It returns
+// the copies that came back, and the failures.
 //
 // A restart can take minutes, so each copy is named before its restart starts
 // and again when it ends. One copy that fails does not stop the copies after it:
 // the failures are collected, and the caller reports them together.
-func restartCopies(w io.Writer, names []string, restart func(string) error) []error {
-	var errs []error
+func restartCopies(w io.Writer, names []string, restart func(string) error) (restarted []string, errs []error) {
 	for i, name := range names {
 		fmt.Fprintf(w, "  [%d/%d] %-28s restarts ...\n", i+1, len(names), name)
 		if err := restart(name); err != nil {
@@ -128,8 +186,9 @@ func restartCopies(w io.Writer, names []string, restart func(string) error) []er
 			continue
 		}
 		fmt.Fprintf(w, "  [%d/%d] %-28s restarted\n", i+1, len(names), name)
+		restarted = append(restarted, name)
 	}
-	return errs
+	return restarted, errs
 }
 
 func pluralCopies(n int) string {

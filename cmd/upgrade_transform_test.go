@@ -81,7 +81,7 @@ func TestARestartFailureDoesNotStopTheCopiesAfterIt(t *testing.T) {
 	names := []string{"shop:api", "shop:web", "shop:worker"}
 	var tried []string
 
-	errs := restartCopies(&b, names, func(name string) error {
+	_, errs := restartCopies(&b, names, func(name string) error {
 		tried = append(tried, name)
 		if name == "shop:web" {
 			return fmt.Errorf("the daemon refused the trigger")
@@ -109,7 +109,7 @@ func TestARestartFailureDoesNotStopTheCopiesAfterIt(t *testing.T) {
 // whether devstack is working or stuck.
 func TestTheRestartStepNamesEachCopyBeforeItRestartsIt(t *testing.T) {
 	var b strings.Builder
-	restartCopies(&b, []string{"shop:api"}, func(string) error {
+	_, _ = restartCopies(&b, []string{"shop:api"}, func(string) error {
 		if got := b.String(); !strings.Contains(got, "shop:api") {
 			t.Errorf("devstack restarts a copy it has not named yet:\n%s", got)
 		}

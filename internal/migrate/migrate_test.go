@@ -401,3 +401,35 @@ var errBoom = boom{}
 type boom struct{}
 
 func (boom) Error() string { return "boom" }
+
+// blocked is a patch that leaves a file only a person can change. It writes no
+// new version, so it stays pending.
+func blocked() Patch {
+	return Patch{
+		From:  1,
+		To:    2,
+		Title: "a patch that can not finish",
+		Run: func(ws *workspace.Workspace) (Result, error) {
+			return Result{Lines: []string{"    1 file needs a human"}, Incomplete: true}, nil
+		},
+	}
+}
+
+func TestApplyClosesABlockedRunWithTheWorkThatIsLeft(t *testing.T) {
+	ws := at(t, "navexa", 1)
+
+	var b strings.Builder
+	if err := Apply(&b, []Patch{blocked()}, []workspace.Workspace{ws}); err != nil {
+		t.Fatalf("Apply() = %v", err)
+	}
+	got := b.String()
+	if strings.Contains(got, "Every migration is applied") {
+		t.Errorf("the report says the migration is applied, and it is still pending:\n%s", got)
+	}
+	if !strings.Contains(got, "NOT FINISHED") {
+		t.Errorf("the report never says what is left:\n%s", got)
+	}
+	if v := versionOf(t, ws); v != 1 {
+		t.Errorf("the manifest is at version %d, want 1: a blocked patch writes no version", v)
+	}
+}

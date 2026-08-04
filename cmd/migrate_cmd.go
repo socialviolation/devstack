@@ -81,7 +81,11 @@ func patches() []migrate.Patch {
 
 func runMigrate(cmd *cobra.Command, args []string) error {
 	list, _ := cmd.Flags().GetBool("list")
-	return migrate.Sweep(os.Stdout, patches(), migrate.Workspaces(), !list)
+	all, err := migrate.Workspaces()
+	if err != nil {
+		return err
+	}
+	return migrate.Sweep(os.Stdout, patches(), all, !list)
 }
 
 // agentFilesPatch removes the instructions that an older devstack wrote into

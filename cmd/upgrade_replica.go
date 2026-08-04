@@ -22,8 +22,11 @@ import (
 // A workspace whose replica devstack can not build is a warning and not a stop:
 // the workspaces after it still get theirs.
 func ensureReplicas(w io.Writer) error {
+	all, err := migrate.Workspaces()
+	if err != nil {
+		return err
+	}
 	var errs []error
-	all := migrate.Workspaces()
 	for i := range all {
 		ws := &all[i]
 		if config.HasWorkspaceManifest(replica.Root(ws)) {

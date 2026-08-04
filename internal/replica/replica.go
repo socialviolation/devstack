@@ -54,7 +54,10 @@ type ServiceSync struct {
 }
 
 type SyncResult struct {
-	Root     string
+	Root string
+	// Created holds the worktrees this sync had to build, because the workspace
+	// configuration named a repository the replica did not hold yet.
+	Created  []Worktree
 	Services []ServiceSync
 	Warnings []string
 }
@@ -161,6 +164,12 @@ func Ensure(ws *workspace.Workspace) (*EnsureResult, error) {
 
 // A fetch that fails syncs to the local ref instead: being offline must not stop
 // the replica from running.
+//
+// Sync builds the replica again before it moves anything. The workspace
+// configuration is edited between one sync and the next: a service is added, a
+// dependency is declared, a group is named. The replica manifest is generated
+// from that configuration, so a sync that only moves the worktrees leaves base
+// running the configuration of the last build.
 func Sync(ws *workspace.Workspace) (*SyncResult, error) {
 	if ws == nil {
 		return nil, fmt.Errorf("devstack can not resolve the workspace")
@@ -168,6 +177,10 @@ func Sync(ws *workspace.Workspace) (*SyncResult, error) {
 	root := Root(ws)
 	if !config.HasWorkspaceManifest(root) {
 		return nil, notBuilt(ws, root)
+	}
+	ensured, err := Ensure(ws)
+	if err != nil {
+		return nil, err
 	}
 	template, err := config.ResolveWorkspace(ws.Path)
 	if err != nil {
@@ -179,7 +192,7 @@ func Sync(ws *workspace.Workspace) (*SyncResult, error) {
 		return nil, err
 	}
 
-	res := &SyncResult{Root: root}
+	res := &SyncResult{Root: root, Created: ensured.Created, Warnings: ensured.Warnings}
 	for _, r := range repos {
 		path := r.Path(root)
 		if _, err := os.Stat(path); err != nil {
@@ -240,6 +253,13 @@ func plan(template *config.ResolvedWorkspace, names []string) ([]worktree.Repo, 
 // own. The replica is the workspace, so all three are folded back in: without
 // that a caller reads zero values and takes an instrumented workspace for a bare
 // one.
+//
+// The groups, the dependencies, the calls, the start order and the workspace
+// env are folded back for the same reason, and for one more: they are pure
+// configuration that the user edits in the checkout. A replica that was
+// generated before that edit holds the old values, and base runs with no
+// dependency order and no group. The checkout is the source of truth for all of
+// them, so the template wins.
 func Resolve(ws *workspace.Workspace) (*config.ResolvedWorkspace, error) {
 	if ws == nil {
 		return nil, fmt.Errorf("devstack can not resolve the workspace")
@@ -259,6 +279,11 @@ func Resolve(ws *workspace.Workspace) (*config.ResolvedWorkspace, error) {
 	rw.Manifest.Environments = template.Manifest.Environments
 	rw.Manifest.Observability = template.Manifest.Observability
 	rw.Manifest.Runtime = template.Manifest.Runtime
+	rw.Manifest.Groups = template.Manifest.Groups
+	rw.Manifest.Dependencies = template.Manifest.Dependencies
+	rw.Manifest.Calls = template.Manifest.Calls
+	rw.Manifest.StartsAfter = template.Manifest.StartsAfter
+	rw.Manifest.Env = template.Manifest.Env
 	if rw.Manifest.Workspace.Env == "" {
 		rw.Manifest.Workspace.Env = template.Manifest.Workspace.Env
 	}

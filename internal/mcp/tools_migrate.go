@@ -49,9 +49,12 @@ func registerMigrateTool(mcpServer *server.MCPServer, patches []migrate.Patch) {
 			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — use \"list\" or \"run\"", action)), nil
 		}
 
-		var sb strings.Builder
-		err := migrate.Sweep(&sb, patches, migrate.Workspaces(), run)
+		all, err := migrate.Workspaces()
 		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		var sb strings.Builder
+		if err := migrate.Sweep(&sb, patches, all, run); err != nil {
 			return mcp.NewToolResultError(strings.TrimRight(sb.String(), "\n") + "\n" + err.Error()), nil
 		}
 		return mcp.NewToolResultText(sb.String()), nil

@@ -172,6 +172,33 @@ func Attach(path, branch string) error {
 	return nil
 }
 
+// Head is the commit that the worktree at path has now. A caller that has to
+// put a worktree back where it found it reads this first: a branch moves, and a
+// commit does not.
+func Head(path string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = path
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse HEAD in %s failed: %w\n%s", path, err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// Detach puts the worktree at path on commit, and on no branch. It is the
+// reverse of Attach, for a caller that has to undo what it did.
+func Detach(path, commit string) error {
+	if commit == "" {
+		return fmt.Errorf("devstack can not detach the worktree %s at an empty commit", path)
+	}
+	cmd := exec.Command("git", "checkout", "--detach", commit)
+	cmd.Dir = path
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git checkout --detach %s in %s failed: %w\n%s", commit, path, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func relativeTo(top, path string) (string, error) {
 	rel, err := filepath.Rel(top, resolve(path))
 	if err != nil {
