@@ -13,8 +13,8 @@ import (
 
 // Whatever creates a thing configures the thing it creates. 'stack create' wires
 // each worktree it cuts, and 'workspace add' now does the same for the workspace
-// it registers. A workspace that devstack registered must never read as work a
-// migration still has to do.
+// it registers. A workspace whose configuration is at the current version must
+// never read as work a migration still has to do.
 func TestWorkspaceAddLeavesNothingPending(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -22,6 +22,9 @@ func TestWorkspaceAddLeavesNothingPending(t *testing.T) {
 	root := filepath.Join(home, "dev", "shop")
 	gitRepoWith(t, filepath.Join(root, "api"), map[string]string{".": "api"})
 	ws := workspaceAt(t, root, "shop", "api")
+	if err := config.SetWorkspaceVersion(root, config.WorkspaceManifestVersion, "test"); err != nil {
+		t.Fatal(err)
+	}
 	if err := workspace.Register(*ws); err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -39,13 +42,9 @@ func TestWorkspaceAddLeavesNothingPending(t *testing.T) {
 		t.Errorf("no replica at %s", replica.Root(registered))
 	}
 
-	st, err := migrate.List(patches(), []workspace.Workspace{*registered})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, s := range st {
+	for _, s := range migrate.List(patches(), []workspace.Workspace{*registered}) {
 		if s.Pending() {
-			t.Errorf("a workspace devstack has just registered has migration %s pending: %+v", s.ID, s.Rows)
+			t.Errorf("a workspace devstack has just registered has migration %s pending: %+v", s.Name(), s.Rows)
 		}
 	}
 }

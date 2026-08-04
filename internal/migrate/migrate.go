@@ -1,15 +1,16 @@
-// Package migrate runs devstack's migrations.
+// Package migrate moves a workspace configuration from one version to the next.
 //
-// A migration is a patch: one versioned unit of work, with a detector that says
-// whether it is pending, a runner that applies it, and its own next action. Each
-// patch answers for itself what a reader must do after it changed something,
-// because "commit the diff" is the right instruction after a file sweep and the
-// wrong one after a replica build.
+// A migration is a patch: it declares the version it moves from and the version
+// it moves to, and it runs when the workspace manifest is at the from version.
+// After it runs, devstack writes the to version into that manifest.
 //
-// A patch runs one time in each workspace, and devstack records the run. It
-// never becomes pending again. Continuous work is not a migration: a command
-// that creates a thing configures the thing it creates, and 'workspace doctor'
-// reports the state that drifts.
+// The version is the whole of the state, and it lives in the manifest, which is
+// committed. So a teammate who clones a repository that somebody migrated
+// already gets the answer with the clone, and devstack asks them for nothing.
+//
+// Machine state is not a migration. A git worktree, a file that nobody
+// committed, and a repository that devstack is not connected to all come back
+// when somebody adds a service. 'devstack workspace doctor' reports those.
 package migrate
 
 import (
@@ -17,10 +18,15 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"time"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
+
+// Stamp names the devstack that migrates. It goes in the manifest beside the
+// version, for a person who reads the file. The cmd package sets it from the
+// build stamp: this package must not decide how a binary names itself.
+var Stamp = "devstack"
 
 // Workspaces is every workspace registered on this machine, in name order. One
 // migration sweeps the whole machine, so this is the set each surface passes.
@@ -45,29 +51,23 @@ func Sweep(w io.Writer, patches []Patch, all []workspace.Workspace, run bool) er
 		return nil
 	}
 	if !run {
-		statuses, err := List(patches, all)
-		if err != nil {
-			return err
-		}
-		WriteList(w, statuses)
+		WriteList(w, List(patches, all))
 		return nil
 	}
 	fmt.Fprintf(w, "devstack runs %s over %s.\n", pluralMigrations(len(patches)), pluralWorkspaces(len(all)))
 	return Apply(w, patches, all)
 }
 
-// WriteList prints every migration, applied or pending. It changes nothing.
+// WriteList prints every migration, pending or done. It changes nothing.
 func WriteList(w io.Writer, statuses []Status) {
 	for _, st := range statuses {
-		fmt.Fprintf(w, "\n%s  %s\n", st.ID, st.Title)
+		fmt.Fprintf(w, "\n%s  %s\n", st.Name(), st.Title)
 		for _, row := range st.Rows {
 			switch {
 			case row.Err != nil:
 				fmt.Fprintf(w, "  %-16s blocked: %v\n", row.Name, row.Err)
 			case row.Pending:
 				fmt.Fprintf(w, "  %-16s pending: %s\n", row.Name, row.Why)
-			case !row.AppliedAt.IsZero():
-				fmt.Fprintf(w, "  %-16s applied on %s\n", row.Name, row.AppliedAt.Local().Format("2006-01-02 15:04"))
 			default:
 				fmt.Fprintf(w, "  %-16s nothing to do: %s\n", row.Name, row.Why)
 			}
@@ -98,26 +98,27 @@ type Result struct {
 	Items     []Item
 }
 
-// Patch is one migration. It runs once for each workspace.
+// Patch is one migration: the step from one version of the workspace manifest
+// to the next.
 //
-// Detect reads only. It reports whether the patch is pending, and a phrase that
-// describes the state either way, which is what `upgrade` and `--list` print.
+// From and To are that step. A patch runs in a workspace whose manifest is at
+// From, and after it succeeds devstack writes To into that manifest. The version
+// is the gate: it stops a second run, and it travels with the repository, so a
+// clone of a migrated repository runs nothing.
 //
 // Next is the instruction the reader gets while the patch leaves work to do. It
 // receives the results of every workspace where the patch changed something, or
-// where it left an Item the reader still has to act on. A patch that changed
-// nothing and named nothing prints no instruction.
-//
-// A recorded patch never runs again, and never reports itself pending again.
-// The record is the gate: it keeps an expensive run from being repeated, and it
-// keeps a patch the user has undone on purpose from being applied a second time.
+// where it left an Item the reader still has to act on.
 type Patch struct {
-	ID     string
-	Title  string
-	Detect func(*workspace.Workspace) (pending bool, why string, err error)
-	Run    func(*workspace.Workspace) (Result, error)
-	Next   func([]Result) []string
+	From  int
+	To    int
+	Title string
+	Run   func(*workspace.Workspace) (Result, error)
+	Next  func([]Result) []string
 }
+
+// Name is how a report calls this patch.
+func (p Patch) Name() string { return fmt.Sprintf("version %d to %d", p.From, p.To) }
 
 // Apply runs every pending patch, in declared order, over every workspace.
 //
@@ -125,28 +126,16 @@ type Patch struct {
 // fails does not stop the patches after it, nor the workspaces after it: the
 // failures are collected and returned together.
 func Apply(w io.Writer, patches []Patch, all []workspace.Workspace) error {
-	recs, err := Load()
-	if err != nil {
-		return err
-	}
-
 	var errs []error
 	var note []string
 	for _, p := range patches {
-		fmt.Fprintf(w, "\n%s  %s\n", p.ID, p.Title)
+		fmt.Fprintf(w, "\n%s  %s\n", p.Name(), p.Title)
 		var changed []Result
 		for i := range all {
 			ws := &all[i]
-			res, err := applyOne(w, p, ws, recs)
+			res, err := applyOne(w, p, ws)
 			if err != nil {
-				errs = append(errs, fmt.Errorf("%s: %s: %w", p.ID, ws.Name, err))
-			}
-			if res.Changed {
-				rec := Record{ID: p.ID, Workspace: ws.Name, AppliedAt: time.Now()}
-				if aerr := Append(rec); aerr != nil {
-					errs = append(errs, aerr)
-				}
-				recs = append(recs, rec)
+				errs = append(errs, fmt.Errorf("%s: %s: %w", p.Name(), ws.Name, err))
 			}
 			if !res.Changed && len(res.Items) == 0 {
 				continue
@@ -170,19 +159,17 @@ func Apply(w io.Writer, patches []Patch, all []workspace.Workspace) error {
 // the result even when the run failed: a sweep that changed four files and then
 // met a fifth it can not read has still changed four files, and the reader has
 // to hear about them.
-func applyOne(w io.Writer, p Patch, ws *workspace.Workspace, recs []Record) (Result, error) {
-	if at := appliedAt(recs, p.ID, ws.Name); !at.IsZero() {
-		fmt.Fprintf(w, "  %-16s applied already, on %s\n", ws.Name, at.Local().Format("2006-01-02 15:04"))
-		return Result{Workspace: ws.Name}, nil
-	}
-
-	pending, why, err := p.Detect(ws)
+//
+// devstack writes the new version only after the run succeeded. A failed run
+// leaves the old version in the manifest, so the next run tries again.
+func applyOne(w io.Writer, p Patch, ws *workspace.Workspace) (Result, error) {
+	version, err := config.WorkspaceVersion(ws.Path)
 	if err != nil {
 		fmt.Fprintf(w, "  %-16s devstack can not read this workspace: %v\n", ws.Name, err)
 		return Result{Workspace: ws.Name}, err
 	}
-	if !pending {
-		fmt.Fprintf(w, "  %-16s nothing to do%s\n", ws.Name, phrase(why))
+	if version != p.From {
+		fmt.Fprintf(w, "  %-16s nothing to do: %s\n", ws.Name, why(version, p))
 		return Result{Workspace: ws.Name}, nil
 	}
 
@@ -194,18 +181,41 @@ func applyOne(w io.Writer, p Patch, ws *workspace.Workspace, recs []Record) (Res
 	}
 	if err != nil {
 		fmt.Fprintf(w, "    failed: %v\n", err)
+		return res, err
 	}
-	if !res.Changed && err == nil {
-		fmt.Fprintln(w, "    devstack changed nothing")
+	if err := config.SetWorkspaceVersion(ws.Path, p.To, Stamp); err != nil {
+		fmt.Fprintf(w, "    failed: %v\n", err)
+		return res, err
 	}
-	return res, err
+	fmt.Fprintf(w, "    %-24s is at version %d now\n", config.WorkspaceManifestFileName, p.To)
+
+	res.Changed = true
+	res.Items = withItem(res.Items, Item{Label: "workspace root", Path: ws.Path})
+	return res, nil
 }
 
-func phrase(why string) string {
-	if why == "" {
-		return ""
+// withItem adds an item unless that path is named already. The version goes in a
+// file that a human commits, so the workspace root is always work to finish, and
+// a patch that wrote in that same directory must not name it twice.
+func withItem(items []Item, add Item) []Item {
+	for _, it := range items {
+		if it.Path == add.Path {
+			return items
+		}
 	}
-	return ": " + why
+	return append(items, add)
+}
+
+// why states where a workspace stands against one patch, in versions.
+func why(version int, p Patch) string {
+	switch {
+	case version == 0:
+		return fmt.Sprintf("there is no %s here", config.WorkspaceManifestFileName)
+	case version == p.From:
+		return fmt.Sprintf("this workspace is at version %d, and this devstack needs version %d", version, p.To)
+	default:
+		return fmt.Sprintf("this workspace is at version %d", version)
+	}
 }
 
 // writeNote prints the next actions, last, so it is what an agent reads before
@@ -242,22 +252,25 @@ func pluralMigrations(n int) string {
 	return fmt.Sprintf("%d migrations", n)
 }
 
-// WorkspaceStatus is what one patch has done, and still has to do, in one
-// workspace.
+// WorkspaceStatus is where one workspace stands against one patch.
 type WorkspaceStatus struct {
-	Name      string
-	AppliedAt time.Time
-	Pending   bool
-	Why       string
-	Err       error
+	Name    string
+	Version int
+	Pending bool
+	Why     string
+	Err     error
 }
 
 // Status is one patch across every workspace.
 type Status struct {
-	ID    string
+	From  int
+	To    int
 	Title string
 	Rows  []WorkspaceStatus
 }
+
+// Name is how a report calls this patch.
+func (s Status) Name() string { return fmt.Sprintf("version %d to %d", s.From, s.To) }
 
 // Pending reports whether the patch still has work in any workspace.
 func (s Status) Pending() bool {
@@ -269,27 +282,23 @@ func (s Status) Pending() bool {
 	return false
 }
 
-// List reports every patch, applied or pending. It reads only: `upgrade` and
+// List reports every patch against every workspace. It reads only: `upgrade` and
 // `migrate --list` both print it, and neither may change a file.
-func List(patches []Patch, all []workspace.Workspace) ([]Status, error) {
-	recs, err := Load()
-	if err != nil {
-		return nil, err
-	}
+func List(patches []Patch, all []workspace.Workspace) []Status {
 	out := make([]Status, 0, len(patches))
 	for _, p := range patches {
-		st := Status{ID: p.ID, Title: p.Title}
+		st := Status{From: p.From, To: p.To, Title: p.Title}
 		for i := range all {
 			ws := &all[i]
-			row := WorkspaceStatus{Name: ws.Name, AppliedAt: appliedAt(recs, p.ID, ws.Name)}
-			if !row.AppliedAt.IsZero() {
-				st.Rows = append(st.Rows, row)
-				continue
+			row := WorkspaceStatus{Name: ws.Name}
+			row.Version, row.Err = config.WorkspaceVersion(ws.Path)
+			if row.Err == nil {
+				row.Pending = row.Version == p.From
+				row.Why = why(row.Version, p)
 			}
-			row.Pending, row.Why, row.Err = p.Detect(ws)
 			st.Rows = append(st.Rows, row)
 		}
 		out = append(out, st)
 	}
-	return out, nil
+	return out
 }

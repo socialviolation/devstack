@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/migrate"
 	"github.com/socialviolation/devstack/internal/selfcheck"
 )
@@ -21,8 +22,10 @@ var upgradeCmd = &cobra.Command{
 	Long: `Upgrade this machine in three steps.
 
   1. Install the current devstack from its source.
-  2. Run each migration that this machine still needs. A migration is one-off:
-     devstack records it, and it never runs a second time. The migration runs
+  2. Move your configuration to the version that this devstack needs, and build
+     the replica of each workspace that has none. The version lives in
+     devstack.workspace.yaml, which you commit, so a migration runs one time for
+     the repository and not one time for each machine. The migration runs
      'devstack migrate' through the devstack that was just installed, and never
      through this one.
   3. Transform the running state. devstack regenerates the daemon's Tiltfile and
@@ -106,9 +109,9 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 
 // transformStep restarts what runs, unless the user asked devstack not to.
 //
-// It is skipped with the migrations as well: the replicas the copies must serve
-// from are what the migrations build, so a restart before them moves a copy onto
-// a replica that is not there.
+// It is skipped with step 2 as well: step 2 builds the replicas that the copies
+// must serve from, so a restart before it moves a copy onto a replica that is
+// not there.
 func transformStep(noMigrate, noRestart bool) error {
 	if noRestart {
 		fmt.Println("You gave --no-restart, so devstack restarts nothing.")
@@ -225,13 +228,14 @@ func parseVersionOutput(out string) string {
 	return strings.TrimSpace(rest)
 }
 
+// reportAndMigrate moves the configuration to the version this devstack needs,
+// and then builds each replica that is missing.
+//
+// The replica is machine state, so no migration owns it. An upgraded machine
+// must still have one, so the upgrade builds it here, directly.
 func reportAndMigrate(doMigrate bool) error {
 	all := migrate.Workspaces()
-	statuses, err := migrate.List(patches(), all)
-	if err != nil {
-		return err
-	}
-	writePendingReport(os.Stdout, statuses, doMigrate)
+	writePendingReport(os.Stdout, migrate.List(patches(), all), doMigrate)
 
 	if !doMigrate {
 		return nil
@@ -243,7 +247,7 @@ func reportAndMigrate(doMigrate bool) error {
 	}
 
 	fmt.Println()
-	return runMigration(bin)
+	return errors.Join(runMigration(bin), ensureReplicas(os.Stdout))
 }
 
 // writePendingReport names each patch that still has work, and the workspaces it
@@ -256,7 +260,7 @@ func writePendingReport(w io.Writer, statuses []migrate.Status, doMigrate bool) 
 			continue
 		}
 		pending++
-		fmt.Fprintf(w, "\n%s  %s\n", st.ID, st.Title)
+		fmt.Fprintf(w, "\n%s  %s\n", st.Name(), st.Title)
 		for _, row := range st.Rows {
 			switch {
 			case row.Err != nil:
@@ -306,7 +310,7 @@ func runMigration(bin string) error {
 // devstack does not own, and of the code the running copies serve. A reader who
 // learns that from the report has already had it done to them.
 func writeUpgradeIntent(w io.Writer, noMigrate, noRestart bool) {
-	fmt.Fprintln(w, "devstack upgrade migrates your configuration to the version that this devstack needs.")
+	fmt.Fprintf(w, "devstack upgrade migrates your configuration to version %d, which is the version that\nthis devstack needs. That version is written in %s, which you commit.\n", config.WorkspaceManifestVersion, config.WorkspaceManifestFileName)
 	switch {
 	case noMigrate:
 		fmt.Fprintln(w, "You passed --no-migrate, so devstack installs the binary and changes nothing else.")

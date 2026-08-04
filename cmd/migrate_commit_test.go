@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/migrate"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -43,14 +44,6 @@ func TestTheDoctorReportsTheUncommittedDiffTheMigrationLeft(t *testing.T) {
 	note := strings.Join(nextAgentFiles([]migrate.Result{res}), "\n")
 	if !strings.Contains(note, "NOW COMMIT") || !strings.Contains(note, svcDir) {
 		t.Fatalf("the run that wrote the diff drops the commit instruction:\n%s", note)
-	}
-
-	pending, why, err := detectAgentFiles(ws)
-	if err != nil {
-		t.Fatalf("detectAgentFiles() = %v", err)
-	}
-	if pending {
-		t.Errorf("an uncommitted diff is not work for a one-off migration: %q", why)
 	}
 
 	var b strings.Builder
@@ -105,18 +98,24 @@ func TestTheDoctorReportsAnUnconnectedRepositoryAndFixesNothing(t *testing.T) {
 // the NEXT block. Apply used to drop every result that changed no file, which
 // is what bound the instruction to the run instead of to the state.
 func TestApplyCarriesAResultThatChangedNothingAndLeftWork(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := filepath.Join(home, "dev", "shop")
+	writeAt(t, filepath.Join(root, config.WorkspaceManifestFileName),
+		"version: 1\nworkspace:\n  name: shop\n  repoDiscovery:\n    mode: explicit\n    repos:\n      - ./api\n")
+
 	var b strings.Builder
 	p := migrate.Patch{
-		ID:     "test-patch",
-		Title:  "test",
-		Detect: func(*workspace.Workspace) (bool, string, error) { return true, "", nil },
+		From:  1,
+		To:    2,
+		Title: "test",
 		Run: func(ws *workspace.Workspace) (migrate.Result, error) {
 			return migrate.Result{Items: []migrate.Item{{Label: "api", Path: "/tmp/api"}}}, nil
 		},
 		Next: func(res []migrate.Result) []string { return []string{"FINISH THE JOB"} },
 	}
 
-	if err := migrate.Apply(&b, []migrate.Patch{p}, []workspace.Workspace{{Name: "shop"}}); err != nil {
+	if err := migrate.Apply(&b, []migrate.Patch{p}, []workspace.Workspace{{Name: "shop", Path: root}}); err != nil {
 		t.Fatalf("Apply() = %v", err)
 	}
 	if got := b.String(); !strings.Contains(got, "FINISH THE JOB") {

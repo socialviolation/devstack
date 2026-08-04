@@ -9,7 +9,8 @@ import (
 )
 
 // workspaceManifestTemplate is an educational devstack.workspace.yaml scaffold.
-// %s = workspace name. It teaches an agent (or human) the whole model in comments.
+// %d = configuration version, %s = workspace name. It teaches an agent (or
+// human) the whole model in comments.
 const workspaceManifestTemplate = `# devstack workspace manifest. This file is the SINGLE SOURCE OF TRUTH for this
 # workspace.
 #
@@ -23,7 +24,10 @@ const workspaceManifestTemplate = `# devstack workspace manifest. This file is t
 # tip, in a .devstack-base directory beside this one. The base workspace runs
 # there. To see that directory, run 'devstack base path'. Work that you park in
 # a checkout does not run, and it blocks nothing.
-version: 1
+#
+# version is the version of this configuration. 'devstack migrate' moves it to
+# the version that your devstack needs, and it writes the new number here.
+version: %d
 
 workspace:
   name: %s
@@ -110,7 +114,7 @@ func scaffoldWorkspaceManifest(path, name string) (bool, error) {
 	if _, err := os.Stat(target); err == nil {
 		return false, nil // already exists — never clobber
 	}
-	content := fmt.Sprintf(workspaceManifestTemplate, name)
+	content := fmt.Sprintf(workspaceManifestTemplate, config.WorkspaceManifestVersion, name)
 	if err := os.WriteFile(target, []byte(content), 0644); err != nil {
 		return false, err
 	}

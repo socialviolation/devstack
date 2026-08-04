@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -53,6 +55,33 @@ func editManifest(path string, mutate func(root *yaml.Node) error) error {
 		return fmt.Errorf("can not write the manifest %s: %w", path, err)
 	}
 	return nil
+}
+
+// WorkspaceVersion reports the version of the workspace manifest at
+// workspacePath. A directory that holds no workspace manifest has no version,
+// and it reports 0.
+func WorkspaceVersion(workspacePath string) (int, error) {
+	if !HasWorkspaceManifest(workspacePath) {
+		return 0, nil
+	}
+	m, err := LoadWorkspaceManifest(workspacePath)
+	if err != nil {
+		return 0, err
+	}
+	return m.Version, nil
+}
+
+// SetWorkspaceVersion writes version into the workspace manifest, and a note
+// beside it that says which devstack wrote it and when.
+//
+// The note is for a person who reads the file. devstack never reads it back: the
+// version alone decides what a migration runs.
+func SetWorkspaceVersion(workspacePath string, version int, by string) error {
+	return editWorkspaceManifest(workspacePath, func(root *yaml.Node) error {
+		setScalar(root, "version", strconv.Itoa(version), "!!int")
+		mapValue(root, "version").LineComment = fmt.Sprintf("devstack migrate wrote this: %s, %s", by, time.Now().Format("2006-01-02"))
+		return nil
+	})
 }
 
 // SetServiceEnvValue writes key=value into the service manifest's env.values at

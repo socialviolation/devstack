@@ -119,8 +119,8 @@ func TestMigrateToolPreviewsThenMigratesARealWorkspace(t *testing.T) {
 	list := migrateToolText(t, s, "list")
 	t.Logf("action=list\n%s", list)
 	for _, want := range []string{
-		"0.2.0-agent-files", "0.2.0-replica",
-		"2 files hold a devstack block", "no replica yet",
+		"version 1 to 2",
+		"this workspace is at version 1, and this devstack needs version 2",
 		"This command changes nothing.",
 	} {
 		if !strings.Contains(list, want) {
@@ -133,10 +133,6 @@ func TestMigrateToolPreviewsThenMigratesARealWorkspace(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(svcDir, ".mcp.json")); !os.IsNotExist(err) {
 		t.Errorf("action=list wrote .mcp.json (stat err = %v)", err)
 	}
-	if _, err := os.Stat(replica.Root(ws)); !os.IsNotExist(err) {
-		t.Errorf("action=list built the replica (stat err = %v)", err)
-	}
-
 	run := migrateToolText(t, s, "run")
 	t.Logf("action=run\n%s", run)
 
@@ -155,8 +151,8 @@ func TestMigrateToolPreviewsThenMigratesARealWorkspace(t *testing.T) {
 			t.Errorf("the run did not write %s: %v", rel, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(replica.Root(ws), "api")); err != nil {
-		t.Errorf("the run did not build the replica worktree: %v", err)
+	if _, err := os.Stat(replica.Root(ws)); !os.IsNotExist(err) {
+		t.Errorf("a migration builds no replica, and this run built one (stat err = %v)", err)
 	}
 
 	for _, want := range []string{
@@ -164,7 +160,7 @@ func TestMigrateToolPreviewsThenMigratesARealWorkspace(t *testing.T) {
 		"NOW COMMIT",
 		commitCommand,
 		"restart the session",
-		"RESTART YOUR SERVICES",
+		"is at version 2 now",
 	} {
 		if !strings.Contains(run, want) {
 			t.Errorf("action=run never states %q:\n%s", want, run)
@@ -173,7 +169,7 @@ func TestMigrateToolPreviewsThenMigratesARealWorkspace(t *testing.T) {
 
 	after := migrateToolText(t, s, "list")
 	t.Logf("action=list, after the run\n%s", after)
-	if !strings.Contains(after, "applied on") {
-		t.Errorf("the replica patch is applied, and the list does not say so:\n%s", after)
+	if !strings.Contains(after, "nothing to do: this workspace is at version 2") {
+		t.Errorf("the migration is applied, and the list does not say so:\n%s", after)
 	}
 }

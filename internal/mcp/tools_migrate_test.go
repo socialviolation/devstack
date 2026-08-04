@@ -9,6 +9,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/migrate"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -25,6 +26,8 @@ func migrateFixture(t *testing.T) (*server.MCPServer, string, *int) {
 	if err := os.MkdirAll(root, 0755); err != nil {
 		t.Fatal(err)
 	}
+	writeFile(t, filepath.Join(root, config.WorkspaceManifestFileName),
+		"version: 1\nworkspace:\n  name: navexa\n  repoDiscovery:\n    mode: explicit\n    repos:\n      - ./api\n")
 	if err := workspace.Register(workspace.Workspace{Name: "navexa", Path: root, TiltPort: 10350}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -32,14 +35,9 @@ func migrateFixture(t *testing.T) (*server.MCPServer, string, *int) {
 	ran := 0
 	touched := filepath.Join(root, "the-patch-ran")
 	patch := migrate.Patch{
-		ID:    "0.0.0-fixture",
+		From:  1,
+		To:    2,
 		Title: "Write one file, so a run can be told from a report",
-		Detect: func(ws *workspace.Workspace) (bool, string, error) {
-			if _, err := os.Stat(touched); err == nil {
-				return false, "the fixture patch ran already", nil
-			}
-			return true, "the fixture patch has not run", nil
-		},
 		Run: func(ws *workspace.Workspace) (migrate.Result, error) {
 			ran++
 			if err := os.WriteFile(touched, []byte("ran"), 0644); err != nil {
@@ -72,7 +70,7 @@ func TestMigrateListRunsNoPatch(t *testing.T) {
 	if _, err := os.Stat(touched); !os.IsNotExist(err) {
 		t.Fatalf("action=list wrote %s (stat err = %v)", touched, err)
 	}
-	for _, want := range []string{"0.0.0-fixture", "pending", "changes nothing"} {
+	for _, want := range []string{"version 1 to 2", "pending", "changes nothing"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("action=list never states %q:\n%s", want, out)
 		}
@@ -129,7 +127,8 @@ func TestMigrateToolDeclaresWhatItChanges(t *testing.T) {
 
 	desc := tool.Description
 	for _, want := range []string{
-		"does not own", ".mcp.json", "git worktree", "does not commit", "NEXT",
+		"does not own", ".mcp.json", "does not commit", "NEXT",
+		"devstack.workspace.yaml", "builds no replica",
 		"action=\"list\" reads only", "action=\"run\"",
 	} {
 		if !strings.Contains(desc, want) {

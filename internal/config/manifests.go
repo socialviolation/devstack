@@ -18,6 +18,12 @@ const (
 	ServiceManifestFileName   = "devstack.service.yaml"
 )
 
+// WorkspaceManifestVersion is the version of the workspace manifest that this
+// devstack needs. The version lives in the manifest, which is committed, so a
+// clone of a repository carries the answer with it. 'devstack migrate' moves an
+// older manifest to this version.
+const WorkspaceManifestVersion = 2
+
 type RepoDiscoveryMode string
 
 const (
@@ -408,7 +414,10 @@ func (m *WorkspaceManifest) Validate() error {
 	if m == nil {
 		return errors.New("the workspace manifest is nil")
 	}
-	if m.Version != 1 {
+	if m.Version > WorkspaceManifestVersion {
+		return fmt.Errorf("this workspace is at version %d, and this devstack knows version %d. A newer devstack wrote this manifest. To read it, install the current devstack: devstack upgrade", m.Version, WorkspaceManifestVersion)
+	}
+	if m.Version < 1 {
 		return fmt.Errorf("devstack does not support version %d of the workspace manifest", m.Version)
 	}
 	if strings.TrimSpace(m.Workspace.Name) == "" {
@@ -593,7 +602,7 @@ func (rw *ResolvedWorkspace) ToLegacyConfig() *WorkspaceConfig {
 func LegacyWorkspaceManifest(workspacePath string, cfg *WorkspaceConfig) (*WorkspaceManifest, error) {
 	workspacePath = filepath.Clean(workspacePath)
 	manifest := &WorkspaceManifest{
-		Version: 1,
+		Version: WorkspaceManifestVersion,
 		Workspace: WorkspaceManifestWorkspace{
 			Name: filepath.Base(workspacePath),
 			RepoDiscovery: WorkspaceManifestRepoDiscovery{

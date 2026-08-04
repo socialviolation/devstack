@@ -20,40 +20,35 @@ import (
 var migrateCmd = &cobra.Command{
 	Use:   "migrate",
 	Short: "Run every migration this devstack needs, and print what to do next",
-	Long: `Run each migration that this machine still needs.
+	Long: `Run each migration that your configuration still needs.
 
-A migration is one versioned unit of work. It has an id, a detector, and its own
-next action. It runs one time in each workspace, and then it is done for ever.
-devstack runs every pending migration, over every workspace, in declared order. A
-migration that applies to nothing reports that and stops. A migration that fails
-does not stop the migrations after it.
+A migration moves the workspace configuration from one version to the next. The
+version is the number at the top of devstack.workspace.yaml. A migration runs
+when that number is at the version it moves from, and devstack writes the new
+number into the manifest after the migration succeeds.
+
+That manifest is committed. So the version travels with the repository: a
+teammate who clones a repository that somebody migrated already gets a manifest
+that is current, and devstack asks them for nothing.
 
 'devstack upgrade' runs these migrations for you. Run this command when you clone
 a repository that still holds a block an older devstack committed, because
 nothing else finds that block.
 
 THE MIGRATIONS
-  0.2.0-agent-files  It removes the instructions that an older devstack wrote
-                     into AGENTS.md, CLAUDE.md, GEMINI.md, .cursorrules and
-                     .github/copilot-instructions.md. It deletes a file that
-                     holds that block and nothing else. It writes .mcp.json,
-                     which connects an agent to the devstack MCP server. It
-                     writes the Claude Code SessionStart hook, so that each
-                     session runs 'devstack prime'. It acts in the workspace
-                     root, in each service repository, and in the worktree of
-                     each feature stack.
-  0.2.0-replica      It builds the replica that base runs from: one git worktree
-                     for each repository of the workspace.
-
-WHAT DEVSTACK RECORDS
-  This binary records each migration it applied, and the workspace it applied it
-  in, under ~/.local/share/devstack/migrations.json. A migration that is recorded
-  never runs again, and it never reports itself pending again.
+  version 1 to 2  It removes the instructions that an older devstack wrote into
+                  AGENTS.md, CLAUDE.md, GEMINI.md, .cursorrules and
+                  .github/copilot-instructions.md. It deletes a file that holds
+                  that block and nothing else. It writes .mcp.json, which
+                  connects an agent to the devstack MCP server. It writes the
+                  Claude Code SessionStart hook, so that each session runs
+                  'devstack prime'. It acts in the workspace root, in each
+                  service repository, and in the worktree of each feature stack.
 
 WHAT A MIGRATION IS NOT
-  A migration does not watch this machine. To find a repository devstack is not
-  connected to, a devstack file that nobody committed, or a workspace with no
-  replica, run 'devstack workspace doctor'.
+  A migration does not watch this machine, and it holds no machine state. To find
+  a repository devstack is not connected to, a devstack file that nobody
+  committed, or a workspace with no replica, run 'devstack workspace doctor'.
 
 devstack removes only what devstack wrote. If a file holds text of your own, that
 text stays, byte for byte. If devstack can not find the end of its own block, it
@@ -63,7 +58,7 @@ CAUTION: devstack does not own these repositories. Read the diff in each one
 before you commit it.
 
   devstack migrate          run every pending migration
-  devstack migrate --list   print every migration, applied or pending
+  devstack migrate --list   print the version of each workspace, and what is pending
 
 Run this command again at any time. A second run changes nothing.`,
 	SilenceUsage: true,
@@ -72,13 +67,15 @@ Run this command again at any time. A second run changes nothing.`,
 
 func init() {
 	rootCmd.AddCommand(migrateCmd)
-	migrateCmd.Flags().Bool("list", false, "Print every migration, applied or pending, and change nothing")
+	migrateCmd.Flags().Bool("list", false, "Print the version of each workspace, and what is pending. Change nothing")
+	migrate.Stamp = buildStamp()
 }
 
 // patches is every migration devstack knows, in the order it runs them. To add
-// one, write a migrate.Patch and put it in this list.
+// one, write a migrate.Patch that moves the version one step, and put it in this
+// list.
 func patches() []migrate.Patch {
-	return []migrate.Patch{agentFilesPatch(), replicaPatch()}
+	return []migrate.Patch{agentFilesPatch()}
 }
 
 func runMigrate(cmd *cobra.Command, args []string) error {
@@ -95,39 +92,23 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 // from the binary and never from a committed file. A committed copy of a live
 // fact goes stale, and a stale fact reads exactly like a true one.
 //
-// The detector reads the committed blocks only. A repository that devstack has
-// not connected, and a devstack file that nobody committed, are states that
-// change each time somebody adds a service. 'devstack workspace doctor' reports
-// those. This patch is the one-off removal of what an older devstack wrote, and
-// a machine that is up to date has it applied for ever.
+// A repository that devstack has not connected, and a devstack file that nobody
+// committed, are states that change each time somebody adds a service. 'devstack
+// workspace doctor' reports those. This patch is the one-off removal of what an
+// older devstack wrote, and the version in the manifest says when it is done.
 func agentFilesPatch() migrate.Patch {
 	return migrate.Patch{
-		ID:     "0.2.0-agent-files",
-		Title:  "Remove the devstack instructions from every repository, and connect each one to devstack",
-		Detect: detectAgentFiles,
-		Run:    runAgentFiles,
-		Next:   nextAgentFiles,
+		From:  1,
+		To:    2,
+		Title: "Remove the devstack instructions from every repository, and connect each one to devstack",
+		Run:   runAgentFiles,
+		Next:  nextAgentFiles,
 	}
-}
-
-func detectAgentFiles(ws *workspace.Workspace) (bool, string, error) {
-	targets, _ := migrateTargets(ws)
-	files := 0
-	for _, t := range targets {
-		files += len(scanResidue(t.Dir))
-	}
-	if files == 0 {
-		return false, "no file holds a devstack block", nil
-	}
-	if files == 1 {
-		return true, "1 file holds a devstack block", nil
-	}
-	return true, fmt.Sprintf("%d files hold a devstack block", files), nil
 }
 
 // devstackOwnedFiles are the files this patch writes, strips or deletes. The
-// detector, the report and the commit instruction read one list, so that all
-// three mean the same set of files.
+// report and the commit instruction read one list, so that both mean the same
+// set of files.
 func devstackOwnedFiles() []string {
 	out := make([]string, 0, len(aiInstructionFiles)+3)
 	out = append(out, agentsFileName)
@@ -244,7 +225,8 @@ func nextAgentFiles(results []migrate.Result) []string {
 			"WHY: if you do not commit the diff, the next clone of that repository does not get it.",
 			"That clone still carries any old instructions that devstack wrote there. An agent that",
 			"reads them acts on text that is not true. That clone also connects no agent to the MCP",
-			"server, and no session to `devstack prime`.")
+			"server, and no session to `devstack prime`. The workspace manifest carries the version",
+			"of your configuration, so a clone without it reports this migration as pending again.")
 	}
 	if len(loose) > 0 {
 		out = append(out, "COMMIT THESE ELSEWHERE. None of these directories is the root of a git repository.")

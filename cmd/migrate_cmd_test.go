@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/migrate"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -96,17 +96,6 @@ func TestMigrateRemovesTheBlockEverywhereAndIsIdempotent(t *testing.T) {
 		writeFile(t, filepath.Join(dir, "CLAUDE.md"), block("a pointer block")+"\n")
 	}
 
-	pending, why, err := detectAgentFiles(ws)
-	if err != nil {
-		t.Fatalf("detectAgentFiles() = %v", err)
-	}
-	if !pending {
-		t.Fatal("a workspace that holds devstack blocks must read as pending")
-	}
-	if !strings.Contains(why, "4 files hold a devstack block") {
-		t.Errorf("the detector says %q, which does not count the files", why)
-	}
-
 	res, err := runAgentFiles(ws)
 	if err != nil {
 		t.Fatalf("runAgentFiles() = %v", err)
@@ -133,14 +122,6 @@ func TestMigrateRemovesTheBlockEverywhereAndIsIdempotent(t *testing.T) {
 		}
 	}
 
-	pending, why, err = detectAgentFiles(ws)
-	if err != nil {
-		t.Fatalf("detectAgentFiles() = %v", err)
-	}
-	if pending {
-		t.Fatalf("the sweep is not idempotent: it is still pending with %q", why)
-	}
-
 	second, err := runAgentFiles(ws)
 	if err != nil {
 		t.Fatalf("second runAgentFiles() = %v", err)
@@ -150,10 +131,9 @@ func TestMigrateRemovesTheBlockEverywhereAndIsIdempotent(t *testing.T) {
 	}
 }
 
-// A migration is one-off. Adding a service to a workspace once turned an applied
-// migration back into a pending one, because the detector spoke for state that
-// keeps changing. The detector reads the committed blocks only, and the doctor
-// reports the rest.
+// A migration is one-off. Adding a service to a workspace must not make a
+// migration pending again: the version in the manifest says the work is done,
+// and the doctor reports the service that nobody connected.
 func TestTheAgentFilesMigrationStaysAppliedWhenAServiceIsAdded(t *testing.T) {
 	ws, svcDir, _ := setupWorkspaceWithStack(t)
 	writeFile(t, filepath.Join(svcDir, agentsFileName), "# api\n\nMine.\n\n"+block("generated")+"\n")
@@ -166,23 +146,13 @@ func TestTheAgentFilesMigrationStaysAppliedWhenAServiceIsAdded(t *testing.T) {
 	// A second service arrives: unconnected, and with nothing committed.
 	web := filepath.Join(ws.Path, "web")
 	writeAt(t, filepath.Join(web, "devstack.service.yaml"), serviceManifest("web"))
-	writeFile(t, filepath.Join(ws.Path, "devstack.workspace.yaml"),
-		"version: 1\nworkspace:\n  name: navexa\n  repoDiscovery:\n    mode: explicit\n    repos:\n      - ./api\n      - ./web\n")
-
-	pending, why, err := detectAgentFiles(ws)
-	if err != nil {
-		t.Fatalf("detectAgentFiles() = %v", err)
-	}
-	if pending {
-		t.Errorf("the detector reads an unconnected service as work for the migration: %q", why)
-	}
-
-	st, err := migrate.List(only, []workspace.Workspace{*ws})
-	if err != nil {
+	if err := config.AddServiceRepo(ws.Path, "./web"); err != nil {
 		t.Fatal(err)
 	}
+
+	st := migrate.List(only, []workspace.Workspace{*ws})
 	if st[0].Pending() {
-		t.Errorf("migration %s is pending again after a service was added: %+v", st[0].ID, st[0].Rows)
+		t.Errorf("migration %s is pending again after a service was added: %+v", st[0].Name(), st[0].Rows)
 	}
 
 	if !wiringPending(migrateTarget{Label: "web", Dir: web, Service: "web"}) {
@@ -225,31 +195,6 @@ func TestTheAgentFilesNoteNamesEveryChangedRepositoryAndTheCommitCommand(t *test
 	}
 }
 
-// The replica note answers a different question from the file sweep. A commit is
-// the wrong next action here: the services that run are the thing that is now
-// out of date.
-func TestTheReplicaNoteAsksForARestartAndNeverForACommit(t *testing.T) {
-	got := strings.Join(nextReplica([]migrate.Result{{
-		Workspace: "navexa",
-		Items:     []migrate.Item{{Label: "navexa", Path: "/home/nick/dev/.devstack-base/navexa"}},
-	}}), "\n")
-
-	for _, want := range []string{
-		"RESTART YOUR SERVICES",
-		"/home/nick/dev/.devstack-base/navexa",
-		"devstack service restart <svc> --stack base",
-		"devstack base sync",
-		"default branch",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the note never states %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, commitCommand) {
-		t.Errorf("a replica build produces no diff to commit:\n%s", got)
-	}
-}
-
 // A file devstack can not migrate is named, and it never becomes an instruction
 // to commit work that does not exist.
 func TestTheReportAsksForAHumanAndCountsNoChange(t *testing.T) {
@@ -263,26 +208,18 @@ func TestTheReportAsksForAHumanAndCountsNoChange(t *testing.T) {
 	}
 }
 
-// --list is the read-only view: it shows the patch that is done and the patch
-// that is not, and it changes nothing.
-func TestListShowsEveryPatchAppliedAndPending(t *testing.T) {
+// --list is the read-only view. It reports by version, and it changes nothing.
+func TestListReportsTheVersionAndChangesNothing(t *testing.T) {
 	ws, svcDir, _ := setupWorkspaceWithStack(t)
 	writeFile(t, filepath.Join(svcDir, agentsFileName), "# api\n\nMine.\n\n"+block("generated")+"\n")
-	if err := migrate.Append(migrate.Record{ID: "0.2.0-replica", Workspace: "navexa", AppliedAt: time.Now()}); err != nil {
-		t.Fatal(err)
-	}
 
-	st, err := migrate.List(patches(), []workspace.Workspace{*ws})
-	if err != nil {
-		t.Fatal(err)
-	}
 	var b strings.Builder
-	migrate.WriteList(&b, st)
+	migrate.WriteList(&b, migrate.List(patches(), []workspace.Workspace{*ws}))
 	got := b.String()
 
 	for _, want := range []string{
-		"0.2.0-agent-files", "pending", "a devstack block",
-		"0.2.0-replica", "applied on",
+		"version 1 to 2",
+		"pending: this workspace is at version 1, and this devstack needs version 2",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("--list never states %q:\n%s", want, got)
@@ -290,5 +227,8 @@ func TestListShowsEveryPatchAppliedAndPending(t *testing.T) {
 	}
 	if len(scanResidue(svcDir)) != 1 {
 		t.Error("--list changed a file")
+	}
+	if v, err := config.WorkspaceVersion(ws.Path); err != nil || v != 1 {
+		t.Errorf("--list moved the workspace to version %d (err = %v)", v, err)
 	}
 }

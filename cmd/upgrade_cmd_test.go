@@ -164,12 +164,8 @@ func TestThePendingReportChangesNothing(t *testing.T) {
 	seed := "# api\n\nMine.\n\n" + agentsSentinelBegin + "\ngenerated\n" + agentsSentinelEnd + "\n"
 	writeFile(t, filepath.Join(root, "api", agentsFileName), seed)
 
-	st, err := migrate.List(patches(), []workspace.Workspace{*ws})
-	if err != nil {
-		t.Fatal(err)
-	}
 	var b strings.Builder
-	writePendingReport(&b, st, false)
+	writePendingReport(&b, migrate.List(patches(), []workspace.Workspace{*ws}), false)
 	got := b.String()
 
 	if readString(t, filepath.Join(root, "api", agentsFileName)) != seed {
@@ -178,7 +174,7 @@ func TestThePendingReportChangesNothing(t *testing.T) {
 	if _, err := os.Stat(replica.Root(ws)); !os.IsNotExist(err) {
 		t.Fatalf("the report built a replica at %s", replica.Root(ws))
 	}
-	for _, want := range []string{"0.2.0-agent-files", "0.2.0-replica", "shop", "devstack migrate"} {
+	for _, want := range []string{"version 1 to 2", "shop", "this workspace is at version 1", "devstack migrate"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the report never states %q:\n%s", want, got)
 		}
@@ -188,7 +184,7 @@ func TestThePendingReportChangesNothing(t *testing.T) {
 // A machine with nothing to do must say so, and must not ask for a migration.
 func TestThePendingReportIsSilentWhenEveryPatchIsApplied(t *testing.T) {
 	var b strings.Builder
-	writePendingReport(&b, []migrate.Status{{ID: "0.2.0-replica", Title: "t"}}, false)
+	writePendingReport(&b, []migrate.Status{{From: 1, To: 2, Title: "t"}}, false)
 	got := b.String()
 
 	if !strings.Contains(got, "Every migration is applied") {
