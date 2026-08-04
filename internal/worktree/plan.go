@@ -118,6 +118,21 @@ func Toplevel(path string) (string, error) {
 	return resolve(strings.TrimSpace(string(out))), nil
 }
 
+// IsRoot reports whether path is the root of a git repository, and names the
+// repository root that holds it. A path that no repository holds answers false
+// with an empty root.
+//
+// A caller that prints "commit here" needs both answers: a directory below a
+// root commits the repository above it, and a directory in no repository
+// commits nothing at all.
+func IsRoot(path string) (bool, string) {
+	top, err := Toplevel(path)
+	if err != nil {
+		return false, ""
+	}
+	return top == resolve(path), top
+}
+
 // CurrentBranch is the branch that the worktree at path has checked out. A
 // detached worktree answers with an empty string.
 func CurrentBranch(path string) (string, error) {

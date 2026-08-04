@@ -23,7 +23,7 @@ func TestBriefingCarriesTheLatestEntryOfTheInferredStack(t *testing.T) {
 
 	var b strings.Builder
 	writePrimeIdentity(&b, &workspace.Workspace{Name: "navexa"}, "navexa-api", "", "master", "base", false,
-		&workingStack{Rec: rec, Reason: "branch match"})
+		&workingStack{Rec: rec, Reason: "branch match"}, nil)
 
 	got := b.String()
 	if !strings.Contains(got, "purpose NAV-412 daily value spike") {
@@ -42,7 +42,7 @@ func TestBriefingOmitsTheEntryLineWhenAStackHasNoLog(t *testing.T) {
 
 	var b strings.Builder
 	writePrimeIdentity(&b, &workspace.Workspace{Name: "navexa"}, "navexa-api", "", "master", "base", false,
-		&workingStack{Rec: rec, Reason: "branch match"})
+		&workingStack{Rec: rec, Reason: "branch match"}, nil)
 
 	if got := b.String(); strings.Contains(got, "latest") {
 		t.Fatalf("briefing = %q, want no latest line without entries", got)

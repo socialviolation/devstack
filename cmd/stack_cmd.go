@@ -103,6 +103,11 @@ The branch stays. The commits that you pushed stay. Work that is only in a
 worktree does not stay. devstack deletes the worktree, and that work goes with
 it.
 
+BEFORE YOU REMOVE A STACK
+devstack keeps the branch, and somebody must decide what happens to it. Ask the
+user: merge the branch of this stack, or discard it? Never merge it without an
+answer. After a merge, delete the branch: git branch -d <branch>
+
 CAUTION: You can not undo this command.
 
   --force  devstack deletes worktrees that have uncommitted changes, and

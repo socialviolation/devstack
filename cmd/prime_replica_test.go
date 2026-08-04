@@ -60,7 +60,7 @@ func TestBriefingNamesTheCheckoutATemplateAndPointsAtTheReplica(t *testing.T) {
 	writeFile(t, filepath.Join(replica.Root(ws), config.WorkspaceManifestFileName), "version: 1\nworkspace:\n  name: navexa\n")
 
 	var b strings.Builder
-	writePrimeIdentity(&b, ws, "api", "", "master", "base", false, nil)
+	writePrimeIdentity(&b, ws, "api", "", "master", "base", false, nil, nil)
 	got := b.String()
 
 	if !strings.Contains(got, "template checkout") {
@@ -71,7 +71,7 @@ func TestBriefingNamesTheCheckoutATemplateAndPointsAtTheReplica(t *testing.T) {
 	}
 
 	b.Reset()
-	writePrimeIdentity(&b, ws, "api", "", "master", "base", true, nil)
+	writePrimeIdentity(&b, ws, "api", "", "master", "base", true, nil, nil)
 	if got := b.String(); !strings.Contains(got, "base replica") || !strings.Contains(got, "do not edit here") {
 		t.Errorf("identity in the replica = %q, want it named and marked read-only", got)
 	}
@@ -84,7 +84,7 @@ func TestBriefingSaysSoWhileNoReplicaIsBuilt(t *testing.T) {
 	ws := &workspace.Workspace{Name: "navexa", Path: filepath.Join(t.TempDir(), "navexa")}
 
 	var b strings.Builder
-	writePrimeIdentity(&b, ws, "api", "", "master", "base", false, nil)
+	writePrimeIdentity(&b, ws, "api", "", "master", "base", false, nil, nil)
 	got := b.String()
 
 	if !strings.Contains(got, "No replica is built yet") || !strings.Contains(got, "devstack workspace up") {

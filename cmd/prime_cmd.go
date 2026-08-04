@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -146,8 +147,9 @@ func buildPrime() (string, error) {
 		return "", err
 	}
 
+	cwd, _ := os.Getwd()
 	service := ""
-	if cwd, cerr := os.Getwd(); cerr == nil {
+	if cwd != "" {
 		if id, ierr := config.ResolveIdentity(cwd); ierr == nil {
 			service = id.ServiceName
 		}
@@ -168,8 +170,12 @@ func buildPrime() (string, error) {
 	// service, is a guess about intent and says nothing about the directory.
 	here := "base"
 	inReplica := false
+	var hereRec *stack.Record
+	siblings := map[string]string{}
 	if _, rec, derr := stack.DetectFromCwd(); derr == nil && rec != nil {
 		here = rec.Name
+		hereRec = rec
+		siblings = stackSiblings(rw, rec)
 		if wt, ok := rec.Worktrees[service]; ok && wt != "" {
 			repo = wt
 			branch = gitinfo.ReadAll(map[string]string{wt: wt})[wt].Label()
@@ -185,12 +191,16 @@ func buildPrime() (string, error) {
 	writePrimeTerms(&b)
 
 	section(&b, "WHERE YOU ARE")
-	writePrimeIdentity(&b, ws, service, repo, branch, here, inReplica, working)
+	writePrimeIdentity(&b, ws, service, repo, branch, here, inReplica, working, siblings)
 
-	if service != "" {
+	switch {
+	case service != "":
 		section(&b, "THIS SERVICE — "+service)
 		writePrimeInstances(&b, ws, rw, service, here, working)
 		writePrimeReload(&b, rw, service, here, inReplica, config.HasWorkspaceManifest(replica.Root(ws)), working)
+	case hereRec != nil:
+		section(&b, "THIS DIRECTORY")
+		writePrimeStackDirectory(&b, hereRec, here, cwd, siblings)
 	}
 
 	section(&b, "THIS WORKSPACE — "+ws.Name)
@@ -206,11 +216,15 @@ func buildPrime() (string, error) {
 
 // writePrimeScope draws the edge of the work. A stack overlays a few services
 // and borrows every other one from base, and an agent sent to finish a feature
-// reads the whole workspace as its subject unless something says otherwise. The
-// services it does NOT overlay are base's copies, shared with the user and with
-// every other stack, so a change to one of them reaches work nobody asked this
-// session to touch.
-func writePrimeScope(b *strings.Builder, rec *stack.Record, here string) {
+// reads the whole workspace as its subject unless something says otherwise.
+//
+// The edge has two sides, and they are different. A service outside the
+// worktrees is base's copy, shared with the user and with every other stack. A
+// service inside a worktree that the stack does not overlay is neither: its code
+// is here, on the branch of the stack, and no copy anywhere runs it. Saying
+// "every other service is base's copy" in that directory is false, and it reads
+// as permission to edit the code the sentence just excluded.
+func writePrimeScope(b *strings.Builder, rec *stack.Record, here string, siblings map[string]string) {
 	if len(rec.Overlay) == 0 {
 		return
 	}
@@ -221,12 +235,134 @@ func writePrimeScope(b *strings.Builder, rec *stack.Record, here string) {
 			fmt.Fprintf(b, "    %-24s %s\n", svc, path)
 		}
 	}
-	b.WriteString("  Every other service is base's copy. base is shared with the user and with every\n")
-	b.WriteString("  other stack, so do not change one to finish this feature.\n")
-	fmt.Fprintf(b, "  If the feature needs another service, add it: devstack stack add %s <service>\n", here)
+	if names := sortedServices(siblings); len(names) > 0 {
+		fmt.Fprintf(b, "  The worktrees also hold the code of: %s. This stack runs no copy of them.\n", strings.Join(names, ", "))
+		b.WriteString("  base runs its own copy of each, from its own directory elsewhere. A change you make to\n")
+		b.WriteString("  one here goes on the branch of this stack, and no process runs it.\n")
+	}
+	b.WriteString("  Every service outside these worktrees is base's copy. base is shared with the user and\n")
+	b.WriteString("  with every other stack, so do not change one to finish this feature.\n")
+	fmt.Fprintf(b, "  To make this stack run another service, add it: devstack stack add %s <service>\n", here)
 }
 
-func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, repo, branch, here string, inReplica bool, working *workingStack) {
+// stackSiblings names the services whose code a stack's worktrees hold, and
+// which the stack does not run, with the directory of each.
+//
+// git cuts a worktree of a whole repository and never of a subdirectory, so a
+// stack that overlays one service of a repository gets the code of every other
+// service in that repository too. Nothing runs that code: base runs its own copy
+// from its own directory.
+func stackSiblings(rw *config.ResolvedWorkspace, rec *stack.Record) map[string]string {
+	overlay := map[string]bool{}
+	for _, s := range rec.Overlay {
+		overlay[s] = true
+	}
+
+	out := map[string]string{}
+	for _, s := range rec.Overlay {
+		repoDir, top := splitStackWorktree(rec.Root, rec.Worktrees[s], rw.Services[s].RepoPath)
+		if repoDir == "" {
+			continue
+		}
+		for name, svc := range rw.Services {
+			if overlay[name] || out[name] != "" {
+				continue
+			}
+			rel, err := filepath.Rel(top, svc.RepoPath)
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				continue
+			}
+			path := filepath.Join(repoDir, rel)
+			if fi, err := os.Stat(path); err == nil && fi.IsDir() {
+				out[name] = path
+			}
+		}
+	}
+	return out
+}
+
+// splitStackWorktree finds the two roots that one worktree path implies: the
+// directory of the whole repository inside the stack, and the root of that
+// repository in the base checkout.
+//
+// devstack builds the worktree path as <stack root>/<repository directory>/<path
+// of the service below its repository>. The repository directory is always one
+// element, so the same suffix cuts the base path and gives its repository root.
+func splitStackWorktree(stackRoot, worktreePath, basePath string) (repoDir, toplevel string) {
+	if stackRoot == "" || worktreePath == "" || basePath == "" {
+		return "", ""
+	}
+	rel, err := filepath.Rel(stackRoot, worktreePath)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return "", ""
+	}
+	parts := strings.Split(rel, string(filepath.Separator))
+	repoDir = filepath.Join(stackRoot, parts[0])
+	sub := filepath.Join(parts[1:]...)
+	if sub == "" {
+		return repoDir, basePath
+	}
+	suffix := string(filepath.Separator) + sub
+	if !strings.HasSuffix(basePath, suffix) {
+		return "", ""
+	}
+	return repoDir, strings.TrimSuffix(basePath, suffix)
+}
+
+func sortedServices(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// writePrimeStackDirectory says what a directory of a stack worktree is when the
+// stack runs nothing from it.
+//
+// config.ResolveIdentity answers with no service in that directory, because the
+// generated manifest of a stack lists the overlay only. The whole THIS SERVICE
+// section then disappears for the very code the session is looking at, and
+// silence there reads as "an ordinary service directory of this stack".
+func writePrimeStackDirectory(b *strings.Builder, rec *stack.Record, here, cwd string, siblings map[string]string) {
+	svc := siblingAt(siblings, cwd)
+	if svc == "" {
+		fmt.Fprintf(b, "This directory is in the worktree of stack %s. devstack can not name a service in it.\n", here)
+		fmt.Fprintf(b, "The stack runs its own copy of these services only: %s.\n", strings.Join(rec.Overlay, ", "))
+		b.WriteString("A change you make here goes on the branch of this stack. Before you change code here,\n")
+		b.WriteString("run `devstack status` and find out which copy runs it.\n")
+		return
+	}
+	fmt.Fprintf(b, "This directory holds the code of %s, on the branch of stack %s.\n", svc, here)
+	fmt.Fprintf(b, "This stack runs no copy of %s. It runs its own copy of: %s.\n", svc, strings.Join(rec.Overlay, ", "))
+	fmt.Fprintf(b, "base runs its own copy of %s, from its own directory elsewhere.\n", svc)
+	b.WriteString("A change you make here runs nowhere. No copy serves it, and no test executes it.\n")
+	fmt.Fprintf(b, "To make this stack run %s, run: devstack stack add %s %s\n", svc, here, svc)
+}
+
+// siblingAt names the service whose code the caller stands in, out of the
+// services the worktrees hold and the stack does not run.
+func siblingAt(siblings map[string]string, cwd string) string {
+	if cwd == "" {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolved
+	}
+	for _, name := range sortedServices(siblings) {
+		dir := siblings[name]
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			dir = resolved
+		}
+		if cwd == dir || strings.HasPrefix(cwd, dir+string(filepath.Separator)) {
+			return name
+		}
+	}
+	return ""
+}
+
+func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, repo, branch, here string, inReplica bool, working *workingStack, siblings map[string]string) {
 	fmt.Fprintf(b, "workspace %s", ws.Name)
 	if service != "" {
 		fmt.Fprintf(b, " · service %s", service)
@@ -247,16 +383,19 @@ func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, re
 	if here != "base" {
 		// Standing in a stack. The fact that matters is that commits land on its
 		// branch and not on base — the copies table below carries the rest.
+		branch := ""
 		if rec, err := stack.Resolve(ws.Name, here); err == nil {
+			branch = rec.Branch
 			if note := firstLine(rec.Note, 110); note != "" {
 				fmt.Fprintf(b, "  purpose %s\n", note)
 			}
 			if e, ok := rec.LatestEntry(); ok {
 				fmt.Fprintf(b, "  latest  %s  %s\n", e.At.Format("2006-01-02"), firstLine(e.Text, 100))
 			}
-			writePrimeScope(b, rec, here)
+			writePrimeScope(b, rec, here, siblings)
 		}
-		b.WriteString("  Your changes here go on the branch of this stack, not on base.\n")
+		b.WriteString("  Every commit you make here goes on the branch of this stack, and not on base.\n")
+		writePrimeCloseOut(b, branch)
 		return
 	}
 
@@ -272,6 +411,17 @@ func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, re
 	}
 	fmt.Fprintf(b, "  You are not in that stack. The directory of that stack is %s.\n  Before you change any code, ask the user which stack this session is for.\n",
 		orDash(working.Rec.Worktrees[service]))
+}
+
+// writePrimeCloseOut carries the end of a stack. `devstack stack rm` deletes the
+// worktrees and keeps the branch, so the session that closes a stack meets a
+// decision it can not make alone: merge the work, or throw it away.
+func writePrimeCloseOut(b *strings.Builder, branch string) {
+	if branch == "" {
+		branch = "<branch>"
+	}
+	b.WriteString("  When the feature is finished, ask the user: merge this branch, or discard it? Never merge\n")
+	fmt.Fprintf(b, "  it without an answer. After a merge, delete the branch: git branch -d %s\n", branch)
 }
 
 // writePrimeSafety carries the two rules about what a repository commits.

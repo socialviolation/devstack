@@ -36,9 +36,14 @@ type Result struct {
 // Detect reads only. It reports whether the patch is pending, and a phrase that
 // describes the state either way, which is what `upgrade` and `--list` print.
 //
-// Next is the instruction the reader gets after the patch changed something. It
-// receives the results of every workspace the patch changed, and nothing else:
-// a patch that changed nothing prints no instruction.
+// Next is the instruction the reader gets while the patch leaves work to do. It
+// receives the results of every workspace where the patch changed something, or
+// where it left an Item the reader still has to act on. A patch that changed
+// nothing and named nothing prints no instruction.
+//
+// A run that changes a file and a run that finds that file still uncommitted
+// both reach Next, so the instruction survives a session that ends between the
+// two.
 //
 // Rescan makes the filesystem authoritative. A record then never suppresses the
 // run, and Detect alone decides. Set it where the run is cheap and idempotent,
@@ -76,14 +81,16 @@ func Apply(w io.Writer, patches []Patch, all []workspace.Workspace) error {
 			if err != nil {
 				errs = append(errs, fmt.Errorf("%s: %s: %w", p.ID, ws.Name, err))
 			}
-			if !res.Changed {
+			if res.Changed {
+				rec := Record{ID: p.ID, Workspace: ws.Name, AppliedAt: time.Now()}
+				if aerr := Append(rec); aerr != nil {
+					errs = append(errs, aerr)
+				}
+				recs = append(recs, rec)
+			}
+			if !res.Changed && len(res.Items) == 0 {
 				continue
 			}
-			rec := Record{ID: p.ID, Workspace: ws.Name, AppliedAt: time.Now()}
-			if aerr := Append(rec); aerr != nil {
-				errs = append(errs, aerr)
-			}
-			recs = append(recs, rec)
 			changed = append(changed, res)
 		}
 		if len(changed) == 0 || p.Next == nil {

@@ -23,7 +23,7 @@ func TestBriefingNamesTheServicesTheStackOwns(t *testing.T) {
 	}
 
 	var b strings.Builder
-	writePrimeScope(&b, rec, "fx-rates")
+	writePrimeScope(&b, rec, "fx-rates", nil)
 	got := b.String()
 
 	for _, want := range []string{
@@ -46,7 +46,7 @@ func TestBriefingSaysHowToWidenTheStack(t *testing.T) {
 	rec := &stack.Record{Name: "perf", Overlay: []string{"api"}, Worktrees: map[string]string{"api": "/tmp/perf/api"}}
 
 	var b strings.Builder
-	writePrimeScope(&b, rec, "perf")
+	writePrimeScope(&b, rec, "perf", nil)
 
 	if !strings.Contains(b.String(), "devstack stack add perf <service>") {
 		t.Errorf("the scope block must name the command that widens the stack, got:\n%s", b.String())
@@ -55,7 +55,7 @@ func TestBriefingSaysHowToWidenTheStack(t *testing.T) {
 
 func TestBriefingWritesNoScopeBlockForAStackWithNoOverlay(t *testing.T) {
 	var b strings.Builder
-	writePrimeScope(&b, &stack.Record{Name: "empty"}, "empty")
+	writePrimeScope(&b, &stack.Record{Name: "empty"}, "empty", nil)
 
 	if b.String() != "" {
 		t.Errorf("a stack with no overlay has no edge to draw, got:\n%s", b.String())

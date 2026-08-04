@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/socialviolation/devstack/internal/migrate"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
+	"github.com/socialviolation/devstack/internal/worktree"
 )
 
 var migrateCmd = &cobra.Command{
@@ -142,20 +144,23 @@ func agentFilesPatch() migrate.Patch {
 
 func detectAgentFiles(ws *workspace.Workspace) (bool, string, error) {
 	targets, _ := migrateTargets(ws)
-	files, repos := 0, 0
+	files, repos, dirty := 0, 0, 0
 	for _, t := range targets {
 		files += len(scanResidue(t.Dir))
 		if wiringPending(t) {
 			repos++
 		}
+		if uncommittedAgentFiles(t.Dir) {
+			dirty++
+		}
 	}
-	if files == 0 && repos == 0 {
-		return false, "no file holds a devstack block, and every repository is wired", nil
+	if files == 0 && repos == 0 && dirty == 0 {
+		return false, "no file holds a devstack block, every repository is wired, and every devstack file is committed", nil
 	}
-	return true, agentFilesPhrase(files, repos), nil
+	return true, agentFilesPhrase(files, repos, dirty), nil
 }
 
-func agentFilesPhrase(files, repos int) string {
+func agentFilesPhrase(files, repos, dirty int) string {
 	var parts []string
 	if files == 1 {
 		parts = append(parts, "1 file holds a devstack block")
@@ -167,7 +172,58 @@ func agentFilesPhrase(files, repos int) string {
 	} else if repos > 1 {
 		parts = append(parts, fmt.Sprintf("%d repositories are not wired to devstack", repos))
 	}
+	if dirty == 1 {
+		parts = append(parts, "1 repository holds an uncommitted devstack file")
+	} else if dirty > 1 {
+		parts = append(parts, fmt.Sprintf("%d repositories hold an uncommitted devstack file", dirty))
+	}
 	return strings.Join(parts, ", and ")
+}
+
+// devstackOwnedFiles are the files this patch writes, strips or deletes. The
+// detector, the report and the commit instruction read one list, so that all
+// three mean the same set of files.
+func devstackOwnedFiles() []string {
+	out := make([]string, 0, len(aiInstructionFiles)+3)
+	out = append(out, agentsFileName)
+	out = append(out, aiInstructionFiles...)
+	return append(out, ".mcp.json", claudeSettingsRel)
+}
+
+// uncommittedAgentFiles reports whether dir holds an uncommitted change to a
+// file devstack owns.
+//
+// The sweep writes a real git diff, and the commit is a separate act by the
+// reader. An instruction that prints only on the run that wrote the diff is
+// lost the moment the session ends between the two, so the state prints it
+// instead: the diff is on the disk, and it says so on each run until somebody
+// commits it. git reads the index and the working tree only, and it reaches no
+// network.
+//
+// The pathspec is relative to dir, so a service in a subdirectory of a
+// repository reports its own files and never a sibling's.
+func uncommittedAgentFiles(dir string) bool {
+	args := append([]string{"status", "--porcelain", "--"}, devstackOwnedFiles()...)
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return len(bytes.TrimSpace(out)) > 0
+}
+
+// agentFilesPresent names the files devstack owns that dir holds now. A
+// directory that can not be committed in is reported with the files that are
+// stranded there, because "commit this" is no use without "commit what".
+func agentFilesPresent(dir string) []string {
+	var out []string
+	for _, rel := range devstackOwnedFiles() {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
+			out = append(out, rel)
+		}
+	}
+	return out
 }
 
 // wiringPending reads the two files the patch writes, and reports whether
@@ -220,11 +276,26 @@ func runAgentFiles(ws *workspace.Workspace) (migrate.Result, error) {
 	}
 	lines = append(lines, agentFilesCounts(res)...)
 
-	out := migrate.Result{Changed: res.Changed() > 0, Lines: lines}
-	for _, t := range res.Repos {
-		out.Items = append(out.Items, migrate.Item{Label: t.Label, Path: t.Dir})
-	}
+	out := migrate.Result{Changed: res.Changed() > 0, Lines: lines, Items: commitItems(targets, res.Repos)}
 	return out, errors.Join(errs...)
+}
+
+// commitItems names every directory that still holds a devstack file nobody
+// committed: the ones this run changed, and the ones an earlier run changed and
+// nobody finished. The second set is what keeps the instruction alive, because
+// the session that ran the sweep is often not the session that commits.
+func commitItems(targets, changed []migrateTarget) []migrate.Item {
+	set := make(map[string]bool, len(changed))
+	for _, t := range changed {
+		set[t.Dir] = true
+	}
+	var out []migrate.Item
+	for _, t := range targets {
+		if set[t.Dir] || uncommittedAgentFiles(t.Dir) {
+			out = append(out, migrate.Item{Label: t.Label, Path: t.Dir})
+		}
+	}
+	return out
 }
 
 // agentFilesCounts states what the sweep did in one workspace. A file devstack
@@ -259,23 +330,118 @@ func agentFilesCounts(res migrateResult) []string {
 // machine.
 const commitCommand = `git add -A && git commit -m "chore: devstack migrate"`
 
-// nextAgentFiles is the instruction after the sweep changed something. Each
-// change is a real git diff in a repository devstack does not own, so the run is
+// nextAgentFiles is the instruction the state of the disk earns. Each devstack
+// file is a real git diff in a repository devstack does not own, so the work is
 // not finished until a human reads that diff and commits it.
+//
+// A directory that is not the root of a git repository gets its own list. The
+// commit command stages a whole repository: below another repository's root it
+// stages that repository, and outside every repository it fails.
 func nextAgentFiles(results []migrate.Result) []string {
-	out := []string{"NOW COMMIT. These repositories hold uncommitted changes:"}
+	var commit, loose []string
 	for _, r := range results {
-		out = append(out, "  "+r.Workspace)
-		for _, it := range r.Items {
-			out = append(out, fmt.Sprintf("    %-24s %s", it.Label, it.Path))
+		roots, elsewhere := splitByRepoRoot(r.Items)
+		if len(roots) > 0 {
+			commit = append(append(commit, "  "+r.Workspace), roots...)
+		}
+		if len(elsewhere) > 0 {
+			loose = append(append(loose, "  "+r.Workspace), elsewhere...)
 		}
 	}
-	return append(out,
-		"Read the diff in each repository. Then commit it there:",
-		"  "+commitCommand,
-		"devstack does not push. Push it yourself, or leave it.",
-		"WHY: until you commit the diff, the next clone of that repository still carries",
-		"the old instructions, and an agent that reads them acts on text that is not true.")
+
+	var out []string
+	if len(commit) > 0 {
+		out = append(out, "NOW COMMIT. These repositories hold an uncommitted devstack file:")
+		out = append(out, commit...)
+		out = append(out,
+			"Read the diff in each repository. Then commit it there:",
+			"  "+commitCommand,
+			"devstack does not push. Push it yourself, or leave it.",
+			"This session does not have the tools that .mcp.json connects. An MCP client reads its",
+			"server list at session start only. To get those tools, restart the session.",
+			"WHY: until you commit the diff, the next clone of that repository still carries",
+			"the old instructions, and an agent that reads them acts on text that is not true.")
+	}
+	if len(loose) > 0 {
+		out = append(out, "COMMIT THESE ELSEWHERE. None of these directories is the root of a git repository.")
+		out = append(out, "Do not run `git add -A` in them:")
+		out = append(out, loose...)
+	}
+	return out
+}
+
+// splitByRepoRoot sorts the directories into the ones a commit can happen in
+// and the ones it can not. A directory below another repository's root joins
+// the group of that root, so one repository gets one instruction and not one
+// for each of its services.
+func splitByRepoRoot(items []migrate.Item) (roots, elsewhere []string) {
+	byTop := map[string][]migrate.Item{}
+	var tops []string
+	for _, it := range items {
+		isRoot, top := worktree.IsRoot(it.Path)
+		switch {
+		case isRoot:
+			roots = append(roots, fmt.Sprintf("    %-24s %s", it.Label, it.Path))
+		case top == "":
+			elsewhere = append(elsewhere, orphanLines(it)...)
+		default:
+			if _, seen := byTop[top]; !seen {
+				tops = append(tops, top)
+			}
+			byTop[top] = append(byTop[top], it)
+		}
+	}
+	for _, top := range tops {
+		elsewhere = append(elsewhere, looseLines(top, byTop[top])...)
+	}
+	return roots, elsewhere
+}
+
+// looseLines say what the directories below one repository root hold, and where
+// their files have to go instead.
+func looseLines(top string, items []migrate.Item) []string {
+	labels := make([]string, 0, len(items))
+	var paths []string
+	for _, it := range items {
+		labels = append(labels, it.Label)
+		for _, f := range agentFilesPresent(it.Path) {
+			paths = append(paths, repoRelative(top, filepath.Join(it.Path, f)))
+		}
+	}
+	return []string{
+		fmt.Sprintf("    %-24s in the repository %s", strings.Join(labels, ", "), top),
+		fmt.Sprintf("      It holds: %s. `git add -A` here stages that whole repository.", listOrNone(paths)),
+		"      To commit these files only, run:",
+		fmt.Sprintf("        git -C %s add %s && git -C %s commit -m \"chore: devstack migrate\"", top, strings.Join(paths, " "), top),
+	}
+}
+
+// orphanLines are for a directory that no git repository holds. Nothing commits
+// its files, and the reader has to hear that rather than run a command that
+// exits with an error.
+func orphanLines(it migrate.Item) []string {
+	return []string{
+		fmt.Sprintf("    %-24s %s", it.Label, it.Path),
+		fmt.Sprintf("      No git repository holds this directory. It holds: %s.", listOrNone(agentFilesPresent(it.Path))),
+		"      No commit reaches these files. They stay on this machine, and no clone gets them.",
+	}
+}
+
+func listOrNone(files []string) string {
+	if len(files) == 0 {
+		return "no devstack file"
+	}
+	return strings.Join(files, ", ")
+}
+
+// repoRelative is the path of a file below a repository root, which is what git
+// takes after -C. A file that resolves outside the root keeps its full path.
+func repoRelative(top, abs string) string {
+	rel, err := filepath.Rel(top, abs)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return abs
+	}
+	return rel
 }
 
 // migrateTarget is one directory devstack migrates: the root of a workspace, a

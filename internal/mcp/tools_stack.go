@@ -451,6 +451,7 @@ func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 	tool := mcp.NewTool("stack_rm",
 		mcp.WithDescription("Tear down a feature stack of THIS workspace. devstack stops its daemon, removes its worktrees, releases its ports, deletes its record, and deletes its stack root. "+
 			"It refuses a worktree that has uncommitted changes, until you set force. "+
+			"devstack keeps the branch of the stack, and somebody must decide what happens to it. Before you call this tool, ask the user: merge the branch of this stack, or discard it? NEVER merge it without an answer. After a merge, delete the branch with `git branch -d <branch>`. "+
 			"This workspace can declare lifecycle HOOKS that de-provision external state on stack.destroy. They fire before devstack removes anything, while the ports and the record can still be read. "+
 			"A hook failure does NOT block the teardown. So it means that the external cleanup probably did not happen. You can not retry it afterwards, because the removal deletes the record that its ${self...} references resolve against. "+
 			"devstack prints the resolved URLs at the point of failure. Pass those on, rather than report a clean teardown."),

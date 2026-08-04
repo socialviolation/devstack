@@ -166,19 +166,25 @@ func TestTheAgentFilesPatchAnswersToTheFilesystemAndNotTheRecord(t *testing.T) {
 // has to name every repository that changed and give the command that finishes
 // the job.
 func TestTheAgentFilesNoteNamesEveryChangedRepositoryAndTheCommitCommand(t *testing.T) {
+	home := t.TempDir()
+	api := filepath.Join(home, "dev", "navexa", "api")
+	stacked := filepath.Join(home, "dev", ".devstack-stacks", "navexa", "feat", "web")
+	gitRepoWith(t, api, map[string]string{".": "api"})
+	gitRepoWith(t, stacked, map[string]string{".": "web"})
+
 	got := strings.Join(nextAgentFiles([]migrate.Result{{
 		Workspace: "navexa",
 		Items: []migrate.Item{
-			{Label: "api", Path: "/home/nick/dev/navexa/api"},
-			{Label: "web (stack feat)", Path: "/home/nick/dev/.devstack-stacks/navexa/feat/web"},
+			{Label: "api", Path: api},
+			{Label: "web (stack feat)", Path: stacked},
 		},
 	}}), "\n")
 
 	for _, want := range []string{
 		"NOW COMMIT",
 		"navexa",
-		"/home/nick/dev/navexa/api",
-		"/home/nick/dev/.devstack-stacks/navexa/feat/web",
+		api,
+		stacked,
 		commitCommand,
 		"next clone",
 	} {
