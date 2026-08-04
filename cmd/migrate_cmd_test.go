@@ -150,15 +150,43 @@ func TestMigrateRemovesTheBlockEverywhereAndIsIdempotent(t *testing.T) {
 	}
 }
 
-// The record is a log and never a gate for this patch: the sweep is cheap and
-// idempotent, so a repository cloned after the record was written still gets
-// cleaned. A record that could hide a stale AGENTS.md would be worse than none.
-func TestTheAgentFilesPatchAnswersToTheFilesystemAndNotTheRecord(t *testing.T) {
-	if !agentFilesPatch().Rescan {
-		t.Fatal("the file sweep must rescan, so a record can never hide a repository that still holds a block")
+// A migration is one-off. Adding a service to a workspace once turned an applied
+// migration back into a pending one, because the detector spoke for state that
+// keeps changing. The detector reads the committed blocks only, and the doctor
+// reports the rest.
+func TestTheAgentFilesMigrationStaysAppliedWhenAServiceIsAdded(t *testing.T) {
+	ws, svcDir, _ := setupWorkspaceWithStack(t)
+	writeFile(t, filepath.Join(svcDir, agentsFileName), "# api\n\nMine.\n\n"+block("generated")+"\n")
+
+	only := []migrate.Patch{agentFilesPatch()}
+	if err := migrate.Apply(&strings.Builder{}, only, []workspace.Workspace{*ws}); err != nil {
+		t.Fatalf("Apply() = %v", err)
 	}
-	if replicaPatch().Rescan {
-		t.Error("the replica build must not rescan: a user who removed a replica did that on purpose")
+
+	// A second service arrives: unconnected, and with nothing committed.
+	web := filepath.Join(ws.Path, "web")
+	writeAt(t, filepath.Join(web, "devstack.service.yaml"), serviceManifest("web"))
+	writeFile(t, filepath.Join(ws.Path, "devstack.workspace.yaml"),
+		"version: 1\nworkspace:\n  name: navexa\n  repoDiscovery:\n    mode: explicit\n    repos:\n      - ./api\n      - ./web\n")
+
+	pending, why, err := detectAgentFiles(ws)
+	if err != nil {
+		t.Fatalf("detectAgentFiles() = %v", err)
+	}
+	if pending {
+		t.Errorf("the detector reads an unconnected service as work for the migration: %q", why)
+	}
+
+	st, err := migrate.List(only, []workspace.Workspace{*ws})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st[0].Pending() {
+		t.Errorf("migration %s is pending again after a service was added: %+v", st[0].ID, st[0].Rows)
+	}
+
+	if !wiringPending(migrateTarget{Label: "web", Dir: web, Service: "web"}) {
+		t.Error("the new service is not connected to devstack, and the doctor's check must say so")
 	}
 }
 

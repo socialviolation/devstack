@@ -64,19 +64,24 @@ func workspaceAt(t *testing.T, root, name string, repos ...string) *workspace.Wo
 	return &workspace.Workspace{Name: name, Path: root}
 }
 
-// base build exists so a migration can build a replica without bringing
-// anything up. 'workspace up' builds one too, but it also starts the daemon and
-// every service, which a migration must never do behind the user's back.
-func TestBaseBuildCutsTheWorktreesAndStartsNothing(t *testing.T) {
+// 'base build' existed so a migration could build a replica without bringing
+// anything up. The migration builds in this process now, and nobody else asked
+// for a verb that only builds. sync does the whole job: it builds the replica
+// that is not there, and it starts nothing.
+func TestBaseSyncBuildsTheReplicaThatIsNotThereAndStartsNothing(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
 	root := filepath.Join(home, "dev", "shop")
 	gitRepoWith(t, filepath.Join(root, "api"), map[string]string{".": "api"})
 	ws := workspaceAt(t, root, "shop", "api")
+	if err := workspace.Register(*ws); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	useWorkspaceKey(t, ws.Name)
 
-	if err := buildBase(ws); err != nil {
-		t.Fatalf("buildBase() = %v", err)
+	if err := runBaseSync(nil, nil); err != nil {
+		t.Fatalf("runBaseSync() with no replica = %v", err)
 	}
 
 	if !config.HasWorkspaceManifest(replica.Root(ws)) {
@@ -88,7 +93,11 @@ func TestBaseBuildCutsTheWorktreesAndStartsNothing(t *testing.T) {
 
 	for _, path := range []string{workspace.HostTiltDir(), workspace.HostPIDFile()} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Errorf("base build started the daemon: %s exists", path)
+			t.Errorf("base sync started the daemon: %s exists", path)
 		}
+	}
+
+	if err := runBaseSync(nil, nil); err != nil {
+		t.Fatalf("runBaseSync() on a built replica = %v", err)
 	}
 }

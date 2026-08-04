@@ -1,12 +1,9 @@
 package cmd
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -26,9 +23,14 @@ var migrateCmd = &cobra.Command{
 	Long: `Run each migration that this machine still needs.
 
 A migration is one versioned unit of work. It has an id, a detector, and its own
-next action. devstack runs every pending migration, over every workspace, in
-declared order. A migration that applies to nothing reports that and stops. A
-migration that fails does not stop the migrations after it.
+next action. It runs one time in each workspace, and then it is done for ever.
+devstack runs every pending migration, over every workspace, in declared order. A
+migration that applies to nothing reports that and stops. A migration that fails
+does not stop the migrations after it.
+
+'devstack upgrade' runs these migrations for you. Run this command when you clone
+a repository that still holds a block an older devstack committed, because
+nothing else finds that block.
 
 THE MIGRATIONS
   0.2.0-agent-files  It removes the instructions that an older devstack wrote
@@ -45,10 +47,13 @@ THE MIGRATIONS
 
 WHAT DEVSTACK RECORDS
   This binary records each migration it applied, and the workspace it applied it
-  in, under ~/.local/share/devstack/migrations.json. Some migrations are cheap to
-  repeat. Each of those reads the filesystem instead of the record, and it runs
-  again whenever the filesystem needs it. The record never hides a repository
-  that still holds a devstack block.
+  in, under ~/.local/share/devstack/migrations.json. A migration that is recorded
+  never runs again, and it never reports itself pending again.
+
+WHAT A MIGRATION IS NOT
+  A migration does not watch this machine. To find a repository devstack is not
+  connected to, a devstack file that nobody committed, or a workspace with no
+  replica, run 'devstack workspace doctor'.
 
 devstack removes only what devstack wrote. If a file holds text of your own, that
 text stays, byte for byte. If devstack can not find the end of its own block, it
@@ -90,14 +95,15 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 // from the binary and never from a committed file. A committed copy of a live
 // fact goes stale, and a stale fact reads exactly like a true one.
 //
-// It rescans: the sweep is cheap and idempotent, so the filesystem decides and
-// not the record. A repository cloned after the record was written still holds
-// the old block, and a record must never be the thing that hides it.
+// The detector reads the committed blocks only. A repository that devstack has
+// not connected, and a devstack file that nobody committed, are states that
+// change each time somebody adds a service. 'devstack workspace doctor' reports
+// those. This patch is the one-off removal of what an older devstack wrote, and
+// a machine that is up to date has it applied for ever.
 func agentFilesPatch() migrate.Patch {
 	return migrate.Patch{
 		ID:     "0.2.0-agent-files",
 		Title:  "Remove the devstack instructions from every repository, and connect each one to devstack",
-		Rescan: true,
 		Detect: detectAgentFiles,
 		Run:    runAgentFiles,
 		Next:   nextAgentFiles,
@@ -106,40 +112,17 @@ func agentFilesPatch() migrate.Patch {
 
 func detectAgentFiles(ws *workspace.Workspace) (bool, string, error) {
 	targets, _ := migrateTargets(ws)
-	files, repos, dirty := 0, 0, 0
+	files := 0
 	for _, t := range targets {
 		files += len(scanResidue(t.Dir))
-		if wiringPending(t) {
-			repos++
-		}
-		if uncommittedAgentFiles(t.Dir) {
-			dirty++
-		}
 	}
-	if files == 0 && repos == 0 && dirty == 0 {
-		return false, "no file holds a devstack block, every repository is connected to devstack, and every devstack file is committed", nil
+	if files == 0 {
+		return false, "no file holds a devstack block", nil
 	}
-	return true, agentFilesPhrase(files, repos, dirty), nil
-}
-
-func agentFilesPhrase(files, repos, dirty int) string {
-	var parts []string
 	if files == 1 {
-		parts = append(parts, "1 file holds a devstack block")
-	} else if files > 1 {
-		parts = append(parts, fmt.Sprintf("%d files hold a devstack block", files))
+		return true, "1 file holds a devstack block", nil
 	}
-	if repos == 1 {
-		parts = append(parts, "1 repository is not connected to devstack")
-	} else if repos > 1 {
-		parts = append(parts, fmt.Sprintf("%d repositories are not connected to devstack", repos))
-	}
-	if dirty == 1 {
-		parts = append(parts, "1 repository holds an uncommitted devstack file")
-	} else if dirty > 1 {
-		parts = append(parts, fmt.Sprintf("%d repositories hold an uncommitted devstack file", dirty))
-	}
-	return strings.Join(parts, ". ")
+	return true, fmt.Sprintf("%d files hold a devstack block", files), nil
 }
 
 // devstackOwnedFiles are the files this patch writes, strips or deletes. The
@@ -150,29 +133,6 @@ func devstackOwnedFiles() []string {
 	out = append(out, agentsFileName)
 	out = append(out, aiInstructionFiles...)
 	return append(out, ".mcp.json", claudeSettingsRel)
-}
-
-// uncommittedAgentFiles reports whether dir holds an uncommitted change to a
-// file devstack owns.
-//
-// The sweep writes a real git diff, and the commit is a separate act by the
-// reader. An instruction that prints only on the run that wrote the diff is
-// lost the moment the session ends between the two, so the state prints it
-// instead: the diff is on the disk, and it says so on each run until somebody
-// commits it. git reads the index and the working tree only, and it reaches no
-// network.
-//
-// The pathspec is relative to dir, so a service in a subdirectory of a
-// repository reports its own files and never a sibling's.
-func uncommittedAgentFiles(dir string) bool {
-	args := append([]string{"status", "--porcelain", "--"}, devstackOwnedFiles()...)
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	return len(bytes.TrimSpace(out)) > 0
 }
 
 // agentFilesPresent names the files devstack owns that dir holds now. A
@@ -186,40 +146,6 @@ func agentFilesPresent(dir string) []string {
 		}
 	}
 	return out
-}
-
-// wiringPending reads the two files the patch writes, and reports whether
-// either one is missing or out of date. It writes nothing: 'upgrade' and
-// '--list' both call it, and a report must change no file.
-func wiringPending(t migrateTarget) bool {
-	if t.Service != "" && mcpPending(t.Dir, t.Service) {
-		return true
-	}
-	return hookPending(t.Dir)
-}
-
-func mcpPending(dir, service string) bool {
-	want, err := mcpJSONContent(dir, service)
-	if err != nil {
-		return true
-	}
-	got, err := os.ReadFile(filepath.Join(dir, ".mcp.json"))
-	return err != nil || !bytes.Equal(got, want)
-}
-
-func hookPending(dir string) bool {
-	data, err := os.ReadFile(filepath.Join(dir, claudeSettingsRel))
-	if err != nil {
-		return true
-	}
-	settings := map[string]any{}
-	if json.Unmarshal(data, &settings) != nil {
-		return true
-	}
-	hooks, _ := settings["hooks"].(map[string]any)
-	sessionStart, _ := hooks["SessionStart"].([]any)
-	_, changed := mergePrimeHook(sessionStart)
-	return changed
 }
 
 func runAgentFiles(ws *workspace.Workspace) (migrate.Result, error) {
@@ -238,24 +164,18 @@ func runAgentFiles(ws *workspace.Workspace) (migrate.Result, error) {
 	}
 	lines = append(lines, agentFilesCounts(res)...)
 
-	out := migrate.Result{Changed: res.Changed() > 0, Lines: lines, Items: commitItems(targets, res.Repos)}
+	out := migrate.Result{Changed: res.Changed() > 0, Lines: lines, Items: commitItems(res.Repos)}
 	return out, errors.Join(errs...)
 }
 
-// commitItems names every directory that still holds a devstack file nobody
-// committed: the ones this run changed, and the ones an earlier run changed and
-// nobody finished. The second set is what keeps the instruction alive, because
-// the session that ran the sweep is often not the session that commits.
-func commitItems(targets, changed []migrateTarget) []migrate.Item {
-	set := make(map[string]bool, len(changed))
+// commitItems names each directory this run wrote in. Every one of them holds a
+// git diff that a human has to read and commit. A directory this run did not
+// change is not this migration's business: 'devstack workspace doctor' reports a
+// devstack file that stays uncommitted.
+func commitItems(changed []migrateTarget) []migrate.Item {
+	out := make([]migrate.Item, 0, len(changed))
 	for _, t := range changed {
-		set[t.Dir] = true
-	}
-	var out []migrate.Item
-	for _, t := range targets {
-		if set[t.Dir] || uncommittedAgentFiles(t.Dir) {
-			out = append(out, migrate.Item{Label: t.Label, Path: t.Dir})
-		}
+		out = append(out, migrate.Item{Label: t.Label, Path: t.Dir})
 	}
 	return out
 }

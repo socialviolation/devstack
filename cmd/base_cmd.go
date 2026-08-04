@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -32,51 +33,38 @@ manifest.
 
 SUBCOMMANDS
   devstack base         print the replica root (the same as 'base path')
-  devstack base build   build the replica, and start nothing
-  devstack base sync    move every service's worktree to its default branch tip
+  devstack base sync    build the replica if it does not exist, then move every
+                        service's worktree to its default branch tip
   devstack base path    print the replica root, or one service's worktree
 
-These commands have one MCP tool: 'base', with action="path", action="build"
-or action="sync".`,
+These commands have one MCP tool: 'base', with action="path" or action="sync".`,
 	SilenceUsage: true,
 	RunE:         runBasePath,
 }
 
 var baseSyncCmd = &cobra.Command{
 	Use:   "sync",
-	Short: "Move every replica worktree to its service's default branch tip",
-	Long: `For each service, devstack fetches the repo and moves the replica worktree to
-the default branch tip. devstack then refreshes the machine-local configuration
-that it copies out of the template.
+	Short: "Build the replica if it is absent, then move every worktree to its default branch tip",
+	Long: `If the replica does not exist, devstack builds it first. It cuts one git
+worktree for each repository of the workspace, under a .devstack-base sibling of
+the workspace, and it removes a worktree that the manifest no longer lists.
 
-This command restarts nothing. A copy that runs keeps the old code until
-somebody restarts it.
+For each service, devstack then fetches the repo and moves the replica worktree
+to the default branch tip. devstack then refreshes the machine-local
+configuration that it copies out of the template.
+
+This command starts nothing, and it restarts nothing. It does not start the
+daemon, and it does not start a service. A copy that runs keeps the old code
+until somebody restarts it. To build the replica and run its services, run
+'devstack workspace up'.
+
+Each worktree is a new checkout. Before a service starts, its worktree needs its
+own dependency install.
 
 A fetch that fails is a warning, not an error. If the machine is offline, the
 worktree stays on the ref that it already has, and base keeps running.`,
 	SilenceUsage: true,
 	RunE:         runBaseSync,
-}
-
-var baseBuildCmd = &cobra.Command{
-	Use:   "build",
-	Short: "Build the replica that base runs from, and start nothing",
-	Long: `devstack cuts one git worktree for each repository of the workspace, under a
-.devstack-base sibling of the workspace. Each worktree is detached at its
-repository's default branch tip. devstack then writes the replica manifest, and
-removes a worktree that the manifest no longer lists.
-
-This command starts nothing. It does not start the daemon, and it does not start
-a service. To build the replica and run its services, run 'devstack workspace
-up'.
-
-A worktree that exists already stays where it is. To move every worktree to the
-current default branch tip, run 'devstack base sync'.
-
-Each worktree is a new checkout. Before a service starts, its worktree needs its
-own dependency install.`,
-	SilenceUsage: true,
-	RunE:         runBaseBuild,
 }
 
 var basePathCmd = &cobra.Command{
@@ -91,27 +79,15 @@ func init() {
 	rootCmd.AddCommand(baseCmd)
 	baseCmd.AddCommand(baseSyncCmd)
 	baseCmd.AddCommand(basePathCmd)
-	baseCmd.AddCommand(baseBuildCmd)
 }
 
-func runBaseBuild(cmd *cobra.Command, args []string) error {
-	ws, err := resolveWorkspace(viper.GetString("workspace"))
-	if err != nil {
-		return err
-	}
-	return buildBase(ws)
-}
-
+// buildBase builds the replica of one workspace and prints what it cut. Each
+// command that creates something base runs from calls it: 'workspace add',
+// 'workspace up' and 'base sync'.
 func buildBase(ws *workspace.Workspace) error {
 	fmt.Printf("Replica for %q: %s\n", ws.Name, replica.Root(ws))
-	res, err := ensureReplica(ws)
-	if err != nil {
-		return err
-	}
-	if len(res.Created) == 0 && len(res.Removed) == 0 {
-		fmt.Println("Every repository has its worktree already. To move each worktree to its default branch tip, run: devstack base sync")
-	}
-	return nil
+	_, err := ensureReplica(ws)
+	return err
 }
 
 func ensureReplica(ws *workspace.Workspace) (*replica.EnsureResult, error) {
@@ -129,7 +105,7 @@ func ensureReplica(ws *workspace.Workspace) (*replica.EnsureResult, error) {
 }
 
 // replicaReport builds the replica and returns the report lines it earned, so
-// `base build` can print them and the migration can nest them under its own
+// `base sync` can print them and the migration can nest them under its own
 // heading.
 func replicaReport(ws *workspace.Workspace) ([]string, *replica.EnsureResult, error) {
 	res, err := replica.Ensure(ws)
@@ -153,6 +129,14 @@ func runBaseSync(cmd *cobra.Command, args []string) error {
 	ws, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
 		return err
+	}
+	// A sync of a replica that is not there has nothing to move, and the user
+	// wants the same end state either way: the replica at its default branch tip.
+	if !config.HasWorkspaceManifest(replica.Root(ws)) {
+		fmt.Printf("There is no replica for %q yet, so devstack builds it first.\n", ws.Name)
+		if err := buildBase(ws); err != nil {
+			return err
+		}
 	}
 	res, err := replica.Sync(ws)
 	if err != nil {

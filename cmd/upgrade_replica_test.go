@@ -85,9 +85,9 @@ func TestReplicaDetectorSaysWhenTheReplicaIsBuilt(t *testing.T) {
 	}
 }
 
-// The patch builds the replica in this process. `upgrade --migrate` runs
-// `devstack migrate` through the binary it just installed, so the code that runs
-// here is already the new one.
+// The patch builds the replica in this process. `upgrade` runs `devstack
+// migrate` through the binary it just installed, so the code that runs here is
+// already the new one.
 func TestReplicaPatchBuildsTheReplicaAndNamesIt(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

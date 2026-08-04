@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -54,6 +55,16 @@ var workspaceAddCmd = &cobra.Command{
 	Long: `Register a directory in the global workspace registry. After you register it,
 every devstack command that you run in that directory, or in a subdirectory of
 it, targets this workspace. You do not need a flag.
+
+devstack then makes the workspace ready to use:
+  1. It writes the Claude Code SessionStart hook, so that each session in this
+     directory runs 'devstack prime'.
+  2. It builds the replica that base runs from: one git worktree for each
+     repository of the workspace. A workspace with no service yet gets an empty
+     replica, and each later 'devstack init' adds to it.
+
+This command starts nothing. It does not start the daemon, and it does not start
+a service.
 
 If you give no path, devstack uses the current working directory.`,
 	Args: cobra.MaximumNArgs(1),
@@ -234,7 +245,32 @@ func runWorkspaceAdd(cmd *cobra.Command, args []string) error {
 			}
 		}
 	}
+
+	prepareWorkspace(registered)
 	return nil
+}
+
+// prepareWorkspace connects the new workspace to devstack and builds its
+// replica, the way 'devstack stack create' prepares each worktree it cuts.
+// Whatever creates a thing configures the thing it creates, so a workspace that
+// devstack has just registered is ready and never pending.
+//
+// Neither step is fatal. The directory can hold no manifest yet, and the user
+// still has a registered workspace to put one in.
+func prepareWorkspace(ws *workspace.Workspace) {
+	switch changed, err := ensureClaudeSessionHook(ws.Path); {
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "  warning: can not write the SessionStart hook: %v\n", err)
+	case changed:
+		fmt.Printf("  ✓ %s briefs each session with 'devstack prime'\n", filepath.Join(ws.Path, claudeSettingsRel))
+	}
+
+	if _, err := ensureReplica(ws); err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: can not build the replica: %v\n", err)
+		fmt.Fprintln(os.Stderr, "  To build it after you add a service, run: devstack base sync")
+		return
+	}
+	fmt.Printf("  ✓ Built the replica that base runs from: %s\n", replica.Root(ws))
 }
 
 func runWorkspaceRemove(cmd *cobra.Command, args []string) error {

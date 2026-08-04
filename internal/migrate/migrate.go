@@ -5,6 +5,11 @@
 // patch answers for itself what a reader must do after it changed something,
 // because "commit the diff" is the right instruction after a file sweep and the
 // wrong one after a replica build.
+//
+// A patch runs one time in each workspace, and devstack records the run. It
+// never becomes pending again. Continuous work is not a migration: a command
+// that creates a thing configures the thing it creates, and 'workspace doctor'
+// reports the state that drifts.
 package migrate
 
 import (
@@ -59,8 +64,6 @@ func WriteList(w io.Writer, statuses []Status) {
 			switch {
 			case row.Err != nil:
 				fmt.Fprintf(w, "  %-16s blocked: %v\n", row.Name, row.Err)
-			case row.Pending && !row.AppliedAt.IsZero():
-				fmt.Fprintf(w, "  %-16s pending again (applied on %s): %s\n", row.Name, row.AppliedAt.Local().Format("2006-01-02 15:04"), row.Why)
 			case row.Pending:
 				fmt.Fprintf(w, "  %-16s pending: %s\n", row.Name, row.Why)
 			case !row.AppliedAt.IsZero():
@@ -105,19 +108,12 @@ type Result struct {
 // where it left an Item the reader still has to act on. A patch that changed
 // nothing and named nothing prints no instruction.
 //
-// A run that changes a file and a run that finds that file still uncommitted
-// both reach Next, so the instruction survives a session that ends between the
-// two.
-//
-// Rescan makes the filesystem authoritative. A record then never suppresses the
-// run, and Detect alone decides. Set it where the run is cheap and idempotent,
-// so a lost or stale record can never stand between a user and a correct tree.
-// Leave it false where the run is expensive, or where the user may have undone
-// the patch on purpose and must not have it done again.
+// A recorded patch never runs again, and never reports itself pending again.
+// The record is the gate: it keeps an expensive run from being repeated, and it
+// keeps a patch the user has undone on purpose from being applied a second time.
 type Patch struct {
 	ID     string
 	Title  string
-	Rescan bool
 	Detect func(*workspace.Workspace) (pending bool, why string, err error)
 	Run    func(*workspace.Workspace) (Result, error)
 	Next   func([]Result) []string
@@ -175,11 +171,9 @@ func Apply(w io.Writer, patches []Patch, all []workspace.Workspace) error {
 // met a fifth it can not read has still changed four files, and the reader has
 // to hear about them.
 func applyOne(w io.Writer, p Patch, ws *workspace.Workspace, recs []Record) (Result, error) {
-	if !p.Rescan {
-		if at := appliedAt(recs, p.ID, ws.Name); !at.IsZero() {
-			fmt.Fprintf(w, "  %-16s applied already, on %s\n", ws.Name, at.Local().Format("2006-01-02 15:04"))
-			return Result{Workspace: ws.Name}, nil
-		}
+	if at := appliedAt(recs, p.ID, ws.Name); !at.IsZero() {
+		fmt.Fprintf(w, "  %-16s applied already, on %s\n", ws.Name, at.Local().Format("2006-01-02 15:04"))
+		return Result{Workspace: ws.Name}, nil
 	}
 
 	pending, why, err := p.Detect(ws)
@@ -288,7 +282,7 @@ func List(patches []Patch, all []workspace.Workspace) ([]Status, error) {
 		for i := range all {
 			ws := &all[i]
 			row := WorkspaceStatus{Name: ws.Name, AppliedAt: appliedAt(recs, p.ID, ws.Name)}
-			if !p.Rescan && !row.AppliedAt.IsZero() {
+			if !row.AppliedAt.IsZero() {
 				st.Rows = append(st.Rows, row)
 				continue
 			}

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,51 +17,63 @@ import (
 
 var upgradeCmd = &cobra.Command{
 	Use:   "upgrade",
-	Short: "Install the current devstack, and report what it leaves out of date",
-	Long: `Install the current devstack from its source. Then report each migration that
-this machine still needs.
+	Short: "Install the current devstack, migrate this machine, and restart what runs",
+	Long: `Upgrade this machine in three steps.
+
+  1. Install the current devstack from its source.
+  2. Run each migration that this machine still needs. A migration is one-off:
+     devstack records it, and it never runs a second time. The migration runs
+     'devstack migrate' through the devstack that was just installed, and never
+     through this one.
+  3. Transform the running state. devstack regenerates the daemon's Tiltfile and
+     restarts each copy that runs now, so that what runs comes from the replica
+     and not from your checkout.
 
 An upgrade is explicit on purpose. devstack manages a daemon that runs services
 right now. If you replace the binary under a live MCP server, the running process
-stays on the old code. Every new run then uses the new code. That state is worse
-than the stale build it corrects. So nothing upgrades on its own. The session
-briefing tells you when an upgrade is worth doing.
+stays on the old code. So nothing upgrades on its own. The session briefing tells
+you when an upgrade is worth doing.
 
 An MCP server reads its tool descriptions once, when it starts. A session that
 already runs therefore keeps the old tool list. Restart that session after the
 upgrade.
 
-A migration is a second and separate decision. One migration writes files in each
-repository, and it makes a real git diff there. devstack does not own those
-repositories. Another migration builds a replica: one git worktree for each
-repository. Each worktree needs its own dependency install. This command names
-each pending migration, and then it stops. Pass --migrate to run them. The
-migration runs 'devstack migrate' through the devstack that was just installed,
-and never through this one.
+CAUTION: Step 3 restarts services that serve right now. devstack restarts only
+the copies that were already running. It starts no copy that is stopped, and it
+starts no daemon. Each replica worktree is a new checkout, so a service can need
+its own dependency install before it serves again. This step is slow.
 
-  devstack upgrade             install, then report each pending migration
-  devstack upgrade --migrate   also run devstack migrate
-  devstack upgrade --force     install even when this build is current or local
+devstack does not own your service repositories. A migration makes a real git
+diff in each one. devstack neither commits nor pushes. Read each diff, and commit
+it yourself.
 
-To read the same report without installing anything, run: devstack migrate --list`,
+  devstack upgrade                install, migrate, then restart what runs
+  devstack upgrade --no-migrate   install only, and name each pending migration
+  devstack upgrade --no-restart   install and migrate, and restart nothing
+  devstack upgrade --force        install even when this build is current or local
+
+To read what a migration does, and change nothing, run: devstack migrate --list`,
 	SilenceUsage: true,
 	RunE:         runUpgrade,
 }
 
 func init() {
 	rootCmd.AddCommand(upgradeCmd)
-	upgradeCmd.Flags().Bool("migrate", false, "Also remove the instructions that an older devstack wrote, and build each workspace's replica")
+	upgradeCmd.Flags().Bool("no-migrate", false, "Do not run the pending migrations. devstack names them instead")
+	upgradeCmd.Flags().Bool("no-restart", false, "Do not restart the copies that run. They keep serving the old code")
 	upgradeCmd.Flags().Bool("force", false, "Install even when this build is already current, or is a local build")
 }
 
 func runUpgrade(cmd *cobra.Command, args []string) error {
-	migrate, _ := cmd.Flags().GetBool("migrate")
+	noMigrate, _ := cmd.Flags().GetBool("no-migrate")
+	noRestart, _ := cmd.Flags().GetBool("no-restart")
 	force, _ := cmd.Flags().GetBool("force")
 
 	mod := modulePath()
 	if mod == "" {
 		return fmt.Errorf("this binary carries no module path, so devstack has nothing to install from")
 	}
+	fmt.Println("STEP 1 of 3: install the binary")
 	fmt.Printf("installed: %s\n", buildStamp())
 
 	res := selfcheck.Refresh(mod, buildRevision())
@@ -78,7 +91,48 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	if newStamp != "" && newStamp != buildStamp() {
 		fmt.Printf("now:       %s\n", newStamp)
 	}
-	return reportAndMigrate(migrate)
+
+	fmt.Println("\nSTEP 2 of 3: run each pending migration")
+	merr := reportAndMigrate(!noMigrate)
+
+	fmt.Println("\nSTEP 3 of 3: transform the running state")
+	terr := transformStep(noMigrate, noRestart)
+
+	writeUpgradeNext(os.Stdout)
+	writeDeprecations(os.Stdout)
+	return errors.Join(merr, terr)
+}
+
+// transformStep restarts what runs, unless the user asked devstack not to.
+//
+// It is skipped with the migrations as well: the replicas the copies must serve
+// from are what the migrations build, so a restart before them moves a copy onto
+// a replica that is not there.
+func transformStep(noMigrate, noRestart bool) error {
+	if noRestart {
+		fmt.Println("You gave --no-restart, so devstack restarts nothing.")
+		fmt.Println("Each copy that runs keeps serving the code it started with.")
+		fmt.Println("To move one copy to the replica, run: devstack service restart <svc> --stack base")
+		return nil
+	}
+	if noMigrate {
+		fmt.Println("You gave --no-migrate, so devstack restarts nothing. A copy can only serve a replica")
+		fmt.Println("that is built. Run the migrations first: devstack migrate")
+		return nil
+	}
+	return transformRunningState(os.Stdout)
+}
+
+// writeUpgradeNext is the work that is left for a human. devstack does not own
+// the service repositories, so it can not read a diff and decide that it is
+// right to keep.
+func writeUpgradeNext(w io.Writer) {
+	fmt.Fprintln(w, "\nNEXT")
+	fmt.Fprintln(w, "1. Read the diff in each repository a migration wrote in. Then commit it there:")
+	fmt.Fprintln(w, "   "+commitCommand)
+	fmt.Fprintln(w, "   devstack does not commit, and it does not push.")
+	fmt.Fprintln(w, "2. Restart your agent session. It holds the tool list from before this upgrade.")
+	fmt.Fprintln(w, "3. Check what runs: devstack status")
 }
 
 // checkUpgradeWorthDoing stops an install that would move the binary backwards.
@@ -179,7 +233,6 @@ func reportAndMigrate(doMigrate bool) error {
 	writePendingReport(os.Stdout, statuses, doMigrate)
 
 	if !doMigrate {
-		writeDeprecations(os.Stdout)
 		return nil
 	}
 
@@ -189,9 +242,7 @@ func reportAndMigrate(doMigrate bool) error {
 	}
 
 	fmt.Println()
-	merr := runMigration(bin)
-	writeDeprecations(os.Stdout)
-	return merr
+	return runMigration(bin)
 }
 
 // writePendingReport names each patch that still has work, and the workspaces it
@@ -223,14 +274,13 @@ func writePendingReport(w io.Writer, statuses []migrate.Status, doMigrate bool) 
 		return
 	}
 	if pending == 1 {
-		fmt.Fprintln(w, "\n1 migration is pending. devstack upgrade --migrate runs it, through the binary")
+		fmt.Fprintln(w, "\n1 migration is pending. You gave --no-migrate, so devstack did not run it.")
 	} else {
-		fmt.Fprintf(w, "\n%d migrations are pending. devstack upgrade --migrate runs them, through the binary\n", pending)
+		fmt.Fprintf(w, "\n%d migrations are pending. You gave --no-migrate, so devstack did not run them.\n", pending)
 	}
-	fmt.Fprintln(w, "it just installed. This command changes nothing.")
 	fmt.Fprintln(w, "A migration writes files in your repositories. Where it does, it makes a real git diff.")
-	fmt.Fprintln(w, "Read that diff before you commit it. Run the migration when you are not in the middle")
-	fmt.Fprintln(w, "of a task.")
+	fmt.Fprintln(w, "Read that diff before you commit it.")
+	fmt.Fprintln(w, "To run the migrations, run: devstack migrate")
 }
 
 // migrateArgs runs the sweep of every workspace. `devstack migrate` is one

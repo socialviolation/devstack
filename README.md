@@ -61,11 +61,11 @@ Your checkout is the template. It holds the git objects, the workspace manifest 
 ```bash
 devstack base path            # the replica root: where base runs
 devstack base path <service>  # the replica worktree of one service
-devstack base build           # build the replica, and start nothing
-devstack base sync            # move base to the current default branch tip
+devstack base sync            # build the replica if it is absent, then move base
+                              # to the current default branch tip
 ```
 
-The MCP `base` tool does all three jobs. Pass `action="path"` to read a path, `action="build"` to build the replica, or `action="sync"` to move base to the default branch tip.
+The MCP `base` tool does both jobs. Pass `action="path"` to read a path, or `action="sync"` to build the replica and move base to the default branch tip.
 
 CAUTION: `devstack base sync` restarts nothing. A running copy keeps serving the old code. It serves the old code until somebody restarts it.
 
@@ -385,7 +385,7 @@ stack_list   stack_rm  stack_note
 env_use      env_which env_set
 ```
 
-`base` reads the path of the replica with `action="path"`, builds the replica with `action="build"`, and moves base to the default branch tip with `action="sync"`. `stack_add` adds services to a stack that already exists. `migrate` lists the migrations of this machine with `action="list"`, and runs the pending ones with `action="run"`. A run writes and deletes files in the service repositories, so read the git diff it makes and commit it yourself.
+`base` reads the path of the replica with `action="path"`, and builds the replica and moves base to the default branch tip with `action="sync"`. `stack_add` adds services to a stack that already exists. `migrate` lists the migrations of this machine with `action="list"`, and runs the pending ones with `action="run"`. A run writes and deletes files in the service repositories, so read the git diff it makes and commit it yourself.
 
 The set of tools adapts to the workspace. `investigate` appears only when observability is on. `tunnel` appears only when the machine has an ssh client. Call `environment` first. It reports the observability state of the workspace, the stacks in flight, and the tools that exist here.
 
@@ -460,6 +460,10 @@ devstack migrate
 
 That file work is one of the migrations that `devstack migrate` runs. The command runs every pending migration. The other migration builds the replica that base runs from. To read what is pending without changing anything, run `devstack migrate --list`. An agent does the same with the `migrate` tool: `action="list"` to read, `action="run"` to apply.
 
+A migration runs one time in each workspace, and then it is done for ever. `devstack upgrade` runs the pending ones for you. Run `devstack migrate` yourself when you clone a repository that still holds a block an older devstack committed, because nothing else finds that block.
+
+A migration does not watch this machine. To find a repository devstack is not connected to, a devstack file that nobody committed, or a workspace with no replica, run `devstack workspace doctor`. The doctor reports these, and it fixes none of them. Each report names the command that does fix it.
+
 devstack removes only what devstack wrote. Your own text stays, byte for byte. Where devstack can not find the end of its own block, it changes nothing and it names the file for you. Run the command again at any time: a second run changes nothing.
 
 devstack does not own these repositories, so read the diff in each one before you commit it.
@@ -533,14 +537,20 @@ To find out which case you are in, run `git check-ignore -v devstack.workspace.y
 ## Updating devstack
 
 ```bash
-cd <devstack repo> && git pull
-go install ./...              # replace the binary on your PATH
-devstack migrate              # run every pending migration for this machine
+devstack upgrade              # install, migrate, then restart what runs
                               # then restart your MCP server / agent session
 devstack status               # make sure that the daemon and the services still answer
 ```
 
-`devstack upgrade` runs the first step for you. It installs the current devstack, then names each migration that is still pending. `devstack upgrade --migrate` runs `devstack migrate` too.
+`devstack upgrade` does three things, in order.
+
+1. It installs the current devstack. It refuses to move a local build backwards. To install anyway, give `--force`.
+2. It runs each pending migration. A migration is one-off: devstack records it, and it never runs a second time. To skip this step, give `--no-migrate`.
+3. It transforms the running state. devstack regenerates the daemon's Tiltfile and restarts each copy that runs now, so that what runs comes from the replica and not from your checkout. To skip this step, give `--no-restart`.
+
+CAUTION: Step 3 restarts services that serve right now. devstack restarts only the copies that were already running. It starts no copy that is stopped, and it starts no daemon. Each replica worktree is a new checkout, so a service can need its own dependency install before it serves again. This step is slow.
+
+devstack leaves one job for you: read the git diff that a migration made in each service repository, and commit it there. devstack does not commit, and it does not push.
 
 Two of those steps carry a risk.
 

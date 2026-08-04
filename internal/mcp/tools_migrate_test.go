@@ -32,9 +32,8 @@ func migrateFixture(t *testing.T) (*server.MCPServer, string, *int) {
 	ran := 0
 	touched := filepath.Join(root, "the-patch-ran")
 	patch := migrate.Patch{
-		ID:     "0.0.0-fixture",
-		Title:  "Write one file, so a run can be told from a report",
-		Rescan: true,
+		ID:    "0.0.0-fixture",
+		Title: "Write one file, so a run can be told from a report",
 		Detect: func(ws *workspace.Workspace) (bool, string, error) {
 			if _, err := os.Stat(touched); err == nil {
 				return false, "the fixture patch ran already", nil

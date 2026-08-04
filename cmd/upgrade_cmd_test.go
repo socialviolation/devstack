@@ -178,7 +178,7 @@ func TestThePendingReportChangesNothing(t *testing.T) {
 	if _, err := os.Stat(replica.Root(ws)); !os.IsNotExist(err) {
 		t.Fatalf("the report built a replica at %s", replica.Root(ws))
 	}
-	for _, want := range []string{"0.2.0-agent-files", "0.2.0-replica", "shop", "devstack upgrade --migrate"} {
+	for _, want := range []string{"0.2.0-agent-files", "0.2.0-replica", "shop", "devstack migrate"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the report never states %q:\n%s", want, got)
 		}
@@ -194,7 +194,7 @@ func TestThePendingReportIsSilentWhenEveryPatchIsApplied(t *testing.T) {
 	if !strings.Contains(got, "Every migration is applied") {
 		t.Errorf("the report never says the machine is up to date:\n%s", got)
 	}
-	if strings.Contains(got, "--migrate") {
+	if strings.Contains(got, "devstack migrate") {
 		t.Errorf("nothing is pending, so the report must not ask for a migration:\n%s", got)
 	}
 }

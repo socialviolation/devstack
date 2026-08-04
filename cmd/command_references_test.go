@@ -138,8 +138,8 @@ func TestEveryReferencedCommandExists(t *testing.T) {
 		"also": true, "can": true, "never": true, "then": true, "will": true,
 		// simple-past and past-participle forms
 		"cut": true, "deleted": true, "did": true, "found": true, "regenerated": true,
-		"removed": true, "resolved": true, "saw": true, "skipped": true, "stored": true,
-		"turned": true, "wired": true, "wrote": true,
+		"removed": true, "resolved": true, "restarted": true, "saw": true, "skipped": true,
+		"stored": true, "turned": true, "wired": true, "wrote": true,
 		// third-person present verbs
 		"allocates": true, "builds": true, "checks": true, "cuts": true,
 		"defines": true, "deletes": true, "derives": true, "detects": true, "does": true,
@@ -147,8 +147,8 @@ func TestEveryReferencedCommandExists(t *testing.T) {
 		"is": true, "keeps": true, "leaves": true, "looks": true,
 		"maintains": true, "manages": true, "merges": true, "opens": true,
 		"prints": true, "reads": true, "redacts": true, "refreshes": true,
-		"registers": true, "remembers": true, "removes": true, "resolves": true,
-		"runs": true, "sets": true, "starts": true, "stops": true,
+		"records": true, "registers": true, "remembers": true, "removes": true,
+		"resolves": true, "restarts": true, "runs": true, "sets": true, "starts": true, "stops": true,
 		"stores": true, "terminates": true, "upgrades": true, "writes": true,
 		// plural nouns that are not command names
 		"capabilities": true, "instructions": true, "tunnels": true,

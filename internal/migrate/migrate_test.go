@@ -83,24 +83,38 @@ func TestRecordedPatchDoesNotRunAgain(t *testing.T) {
 	}
 }
 
-// A patch that rescans is never suppressed by its record. The filesystem stays
-// authoritative where the work is cheap and idempotent, so a stale record can
-// not stand between a user and a correct tree.
-func TestRescanPatchRunsAgainWhenTheFilesystemSaysSo(t *testing.T) {
+// A migration is one-off. After it is applied, it never reads as pending again,
+// whatever the detector says. A detector that speaks for state that keeps
+// changing made every new service in a workspace turn an applied migration back
+// into a pending one, which is not a thing a migration can be.
+func TestAnAppliedPatchNeverReportsPendingAgain(t *testing.T) {
 	isolate(t)
 	pending, runs := true, 0
 	p := counter("p1", &pending, &runs)
-	p.Rescan = true
 
 	if err := Apply(&strings.Builder{}, []Patch{p}, one()); err != nil {
-		t.Fatalf("first Apply() = %v", err)
+		t.Fatalf("Apply() = %v", err)
 	}
 	pending = true
-	if err := Apply(&strings.Builder{}, []Patch{p}, one()); err != nil {
-		t.Fatalf("second Apply() = %v", err)
+
+	st, err := List([]Patch{p}, one())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if runs != 2 {
-		t.Fatalf("the patch ran %d times, want 2: a rescan patch answers to the filesystem", runs)
+	if st[0].Pending() {
+		t.Fatalf("an applied migration reads as pending again: %+v", st[0].Rows)
+	}
+
+	var b strings.Builder
+	WriteList(&b, st)
+	if strings.Contains(b.String(), "pending:") || strings.Contains(b.String(), "pending again") {
+		t.Errorf("the list calls an applied migration pending:\n%s", b.String())
+	}
+	if !strings.Contains(b.String(), "applied on") {
+		t.Errorf("the list never says when the migration was applied:\n%s", b.String())
+	}
+	if runs != 1 {
+		t.Errorf("the patch ran %d times, want 1", runs)
 	}
 }
 

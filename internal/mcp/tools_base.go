@@ -9,6 +9,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -17,15 +18,14 @@ func registerBaseTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("base",
 		mcp.WithDescription("Build, inspect or refresh the replica that base runs from. "+baseTermDesc+
 			"action=\"path\" reads only. It prints the replica root, or one service's replica worktree. That worktree is the directory that service's base copy runs out of. Read it when you need the code that base runs.\n"+
-			"action=\"build\" builds the replica. It cuts one git worktree for each repository, detached at that repository's default branch tip, and it removes a worktree that the workspace manifest no longer lists. A worktree that exists already stays where it is. This action starts nothing: no daemon, and no service. Each worktree is a new checkout, so a service needs its own dependency install there before it starts. Use this action when another tool says that devstack has built no replica.\n"+
-			"action=\"sync\" moves what base runs. It fetches each service and moves that service's replica worktree to the default branch tip. It then copies the machine-local gitignored config out of the checkout again. It reports each service's short SHA before and after.\n"+
+			"action=\"sync\" builds the replica and moves what base runs. If there is no replica yet, it cuts one git worktree for each repository first, and it removes a worktree that the workspace manifest no longer lists. It then fetches each service and moves that service's replica worktree to the default branch tip. It then copies the machine-local gitignored config out of the checkout again. It reports each service's short SHA before and after.\n"+
 			"This is how an edit made in a checkout reaches base: put the edit on the default branch, then sync. A fetch that fails is a warning, and not an error. If this machine is offline, that worktree stays on the ref it already has, and base keeps running.\n"+
-			"sync moves the code that base runs, and nothing else. It does not restart anything. So every copy that already runs keeps serving the OLD code until somebody restarts it (restart tool, stack=\"base\").\n"+
-			"path and sync error when devstack has built no replica yet. Then use action=\"build\", or run 'devstack workspace up' to build the replica and start its services. This tool mirrors 'devstack base path', 'devstack base build' and 'devstack base sync'."),
+			"sync moves the code that base runs, and nothing else. It starts nothing, and it restarts nothing. So every copy that already runs keeps serving the OLD code until somebody restarts it (restart tool, stack=\"base\"). Each worktree is a new checkout, so a service can need its own dependency install there before it starts.\n"+
+			"path errors when devstack has built no replica yet. Then use action=\"sync\", or run 'devstack workspace up' to build the replica and start its services. This tool mirrors 'devstack base path' and 'devstack base sync'."),
 		mcp.WithString("action", mcp.Required(),
-			mcp.Description("\"path\" prints the replica root, or one service's worktree. It reads only and changes nothing. \"build\" builds the replica and starts nothing. \"sync\" moves every service's worktree to its default branch tip and refreshes its machine-local config. build and sync write.")),
+			mcp.Description("\"path\" prints the replica root, or one service's worktree. It reads only and changes nothing. \"sync\" builds the replica if it is absent, moves every service's worktree to its default branch tip, and refreshes its machine-local config. sync writes.")),
 		mcp.WithString("service",
-			mcp.Description("Exact service name, for example 'api-service'. It applies only to action=\"path\", where the tool prints that service's replica worktree instead of the replica root. action=\"build\" and action=\"sync\" ignore it, and they act on every service.")),
+			mcp.Description("Exact service name, for example 'api-service'. It applies only to action=\"path\", where the tool prints that service's replica worktree instead of the replica root. action=\"sync\" ignores it, and it acts on every service.")),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -40,12 +40,10 @@ func registerBaseTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 		switch request.GetString("action", "") {
 		case "path":
 			return baseReplicaPath(ws, service), nil
-		case "build":
-			return baseReplicaBuild(ws), nil
 		case "sync":
 			return baseReplicaSync(ws), nil
 		default:
-			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — use \"path\", \"build\" or \"sync\"", request.GetString("action", ""))), nil
+			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — use \"path\" or \"sync\"", request.GetString("action", ""))), nil
 		}
 	})
 }
@@ -70,42 +68,44 @@ func baseReplicaPath(ws *workspace.Workspace, service string) *mcp.CallToolResul
 	return mcp.NewToolResultText(svc.RepoPath)
 }
 
-func baseReplicaBuild(ws *workspace.Workspace) *mcp.CallToolResult {
+// baseReplicaBuild builds the replica that is not there yet. sync calls it
+// first, so an agent that reaches for sync gets the replica either way and never
+// has to know which of the two states the machine was in.
+func baseReplicaBuild(ws *workspace.Workspace, sb *strings.Builder) error {
 	res, err := replica.Ensure(ws)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error())
+		return err
 	}
-
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "Replica for %q: %s\n", ws.Name, res.Root)
 	for _, wt := range res.Created {
-		fmt.Fprintf(&sb, "  built replica worktree %-16s %s (%s)\n", wt.Repo, wt.Path, wt.Branch)
+		fmt.Fprintf(sb, "  built replica worktree %-16s %s (%s)\n", wt.Repo, wt.Path, wt.Branch)
 		if len(wt.Services) > 1 || (len(wt.Services) == 1 && wt.Services[0] != wt.Repo) {
-			fmt.Fprintf(&sb, "    it holds the services %s\n", strings.Join(wt.Services, ", "))
+			fmt.Fprintf(sb, "    it holds the services %s\n", strings.Join(wt.Services, ", "))
 		}
 	}
 	for _, name := range res.Removed {
-		fmt.Fprintf(&sb, "  removed replica worktree %s — the manifest no longer lists it\n", name)
+		fmt.Fprintf(sb, "  removed replica worktree %s — the manifest no longer lists it\n", name)
 	}
 	for _, w := range res.Warnings {
-		fmt.Fprintf(&sb, "warning: %s\n", w)
+		fmt.Fprintf(sb, "warning: %s\n", w)
 	}
-	if len(res.Created) == 0 && len(res.Removed) == 0 {
-		sb.WriteString("Every repository has its worktree already. To move each worktree to its default branch tip, use action=\"sync\".\n")
-		return mcp.NewToolResultText(sb.String())
-	}
-	sb.WriteString("The replica is built, and nothing runs yet. This action starts no daemon and no service. Each worktree is a new checkout, so a service needs its own dependency install there. To start base's services, run: devstack workspace up\n")
-	return mcp.NewToolResultText(sb.String())
+	return nil
 }
 
 func baseReplicaSync(ws *workspace.Workspace) *mcp.CallToolResult {
+	var sb strings.Builder
+	if !config.HasWorkspaceManifest(replica.Root(ws)) {
+		sb.WriteString("There is no replica yet, so devstack builds it first.\n")
+		if err := baseReplicaBuild(ws, &sb); err != nil {
+			return mcp.NewToolResultError(sb.String() + err.Error())
+		}
+	}
+
 	res, err := replica.Sync(ws)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error())
+		return mcp.NewToolResultError(sb.String() + err.Error())
 	}
 
 	moved := 0
-	var sb strings.Builder
 	fmt.Fprintf(&sb, "Replica for %q: %s\n", ws.Name, res.Root)
 	for _, s := range res.Services {
 		if s.Before == s.After {

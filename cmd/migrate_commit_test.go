@@ -30,55 +30,74 @@ func setupCommittableWorkspace(t *testing.T) (*workspace.Workspace, string) {
 }
 
 // The sweep writes a git diff, and a human commits it. Those are two acts, and
-// a session often ends between them. An instruction that prints only on the run
-// that wrote the diff is lost, and the diff stays uncommitted for ever, so the
-// state of the disk prints it instead.
-func TestTheCommitInstructionOutlivesTheRunThatWroteTheDiff(t *testing.T) {
+// a session often ends between them. The migration is one-off, so it can not be
+// what carries that instruction to the next session. The doctor reports the
+// uncommitted diff for as long as it is there, and it fixes nothing.
+func TestTheDoctorReportsTheUncommittedDiffTheMigrationLeft(t *testing.T) {
 	ws, svcDir := setupCommittableWorkspace(t)
 
-	if _, err := runAgentFiles(ws); err != nil {
+	res, err := runAgentFiles(ws)
+	if err != nil {
 		t.Fatalf("runAgentFiles() = %v", err)
+	}
+	note := strings.Join(nextAgentFiles([]migrate.Result{res}), "\n")
+	if !strings.Contains(note, "NOW COMMIT") || !strings.Contains(note, svcDir) {
+		t.Fatalf("the run that wrote the diff drops the commit instruction:\n%s", note)
 	}
 
 	pending, why, err := detectAgentFiles(ws)
 	if err != nil {
 		t.Fatalf("detectAgentFiles() = %v", err)
 	}
-	if !pending {
-		t.Fatalf("the diff is uncommitted, so the patch still has work: %q", why)
-	}
-	if !strings.Contains(why, "uncommitted") {
-		t.Errorf("the detector says %q, which never mentions the uncommitted diff", why)
+	if pending {
+		t.Errorf("an uncommitted diff is not work for a one-off migration: %q", why)
 	}
 
-	second, err := runAgentFiles(ws)
-	if err != nil {
-		t.Fatalf("second runAgentFiles() = %v", err)
+	var b strings.Builder
+	if n := reportWorkspaceDrift(&b, ws.Path); n == 0 {
+		t.Fatalf("the doctor reports nothing while a devstack file is uncommitted:\n%s", b.String())
 	}
-	if second.Changed {
-		t.Errorf("the second run must change no file:\n%s", strings.Join(second.Lines, "\n"))
+	got := b.String()
+	if !strings.Contains(got, svcDir) || !strings.Contains(got, commitCommand) {
+		t.Errorf("the doctor never names the repository and the command that fixes it:\n%s", got)
 	}
-	note := strings.Join(nextAgentFiles([]migrate.Result{second}), "\n")
-	if !strings.Contains(note, "NOW COMMIT") || !strings.Contains(note, svcDir) {
-		t.Errorf("the second run drops the commit instruction:\n%s", note)
+	if uncommittedAgentFiles(svcDir) == false {
+		t.Fatal("the fixture holds no uncommitted devstack file")
 	}
 
 	gitCmd(t, svcDir, "add", "-A")
 	gitCmd(t, svcDir, "commit", "-q", "-m", "chore: devstack migrate")
 
-	pending, why, err = detectAgentFiles(ws)
-	if err != nil {
-		t.Fatalf("detectAgentFiles() = %v", err)
+	var after strings.Builder
+	reportWorkspaceDrift(&after, ws.Path)
+	if strings.Contains(after.String(), "nobody committed") {
+		t.Errorf("everything is committed, and the doctor still asks for a commit:\n%s", after.String())
 	}
-	if pending {
-		t.Errorf("everything is committed, so the patch asks for nothing: %q", why)
+}
+
+// The doctor reports, and it changes nothing. A doctor that wired a repository
+// would hide the state it exists to report, and would write in a repository
+// nobody asked it to write in.
+func TestTheDoctorReportsAnUnconnectedRepositoryAndFixesNothing(t *testing.T) {
+	ws, svcDir := setupCommittableWorkspace(t)
+
+	var b strings.Builder
+	if n := reportWorkspaceDrift(&b, ws.Path); n == 0 {
+		t.Fatalf("the doctor reports nothing for a repository with no .mcp.json:\n%s", b.String())
 	}
-	third, err := runAgentFiles(ws)
-	if err != nil {
-		t.Fatalf("third runAgentFiles() = %v", err)
+	got := b.String()
+	for _, want := range []string{"not connected", svcDir, "devstack init --all --claude-hook"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the doctor never states %q:\n%s", want, got)
+		}
 	}
-	if len(third.Items) != 0 {
-		t.Errorf("a committed repository must not be listed again: %+v", third.Items)
+	for _, rel := range []string{".mcp.json", claudeSettingsRel} {
+		if _, err := os.Stat(filepath.Join(svcDir, rel)); !os.IsNotExist(err) {
+			t.Errorf("the doctor wrote %s (stat err = %v)", rel, err)
+		}
+	}
+	if !strings.Contains(got, "no replica") || !strings.Contains(got, "devstack base sync") {
+		t.Errorf("the doctor never reports the missing replica and the command that builds it:\n%s", got)
 	}
 }
 
@@ -90,7 +109,6 @@ func TestApplyCarriesAResultThatChangedNothingAndLeftWork(t *testing.T) {
 	p := migrate.Patch{
 		ID:     "test-patch",
 		Title:  "test",
-		Rescan: true,
 		Detect: func(*workspace.Workspace) (bool, string, error) { return true, "", nil },
 		Run: func(ws *workspace.Workspace) (migrate.Result, error) {
 			return migrate.Result{Items: []migrate.Item{{Label: "api", Path: "/tmp/api"}}}, nil
