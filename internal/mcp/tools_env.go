@@ -92,7 +92,7 @@ func registerEnvUseTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 			if !ok {
 				return mcp.NewToolResultError(fmt.Sprintf("service %q is not in workspace %q. Services: %s", svcName, ws.Name, strings.Join(sortedServiceNames(rw), ", "))), nil
 			}
-			if err := config.SetServiceEnv(svc.RepoPath, name); err != nil {
+			if err := config.SetServiceEnv(svc.ManifestPath, name); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			return mcp.NewToolResultText(fmt.Sprintf("service %q now uses env %q", svcName, name)), nil

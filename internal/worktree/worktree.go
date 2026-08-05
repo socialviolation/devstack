@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/socialviolation/devstack/internal/config"
 )
 
 // Result reports facts about a Create that the CLI layer needs but a library
@@ -134,11 +136,19 @@ var configPatterns = []string{
 	".envrc",
 	".env",
 	".env.*",
-	"devstack.service.yaml",
+	// Every service manifest, which is devstack.service.yaml and any
+	// devstack.<name>.yaml beside it. devstack.workspace.yaml is not one of
+	// these: a worktree gets the generated manifest of its stack instead.
+	"devstack.*.yaml",
 }
 
 func isConfigFile(rel string) bool {
 	base := filepath.Base(rel)
+	// A worktree runs from the generated manifest of its stack. Copying the
+	// template's over it would point the stack back at base's repositories.
+	if base == config.WorkspaceManifestFileName {
+		return false
+	}
 	for _, p := range configPatterns {
 		if ok, _ := filepath.Match(p, base); ok {
 			return true

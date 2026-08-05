@@ -147,7 +147,7 @@ func runEnvUse(cmd *cobra.Command, args []string) error {
 		if !ok {
 			return fmt.Errorf("devstack did not find service %q in workspace %q. Services: %s", svcName, ws.Name, strings.Join(sortedServiceNames(rw), ", "))
 		}
-		if err := config.SetServiceEnv(svc.RepoPath, name); err != nil {
+		if err := config.SetServiceEnv(svc.ManifestPath, name); err != nil {
 			return err
 		}
 		fmt.Printf("service %q now uses environment %q\n", svcName, name)

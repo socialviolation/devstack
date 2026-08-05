@@ -125,14 +125,16 @@ func SetWorkspaceVersion(workspacePath string, version int, by string) error {
 // unrelated fields.
 //
 // env.values is committed to git: callers must not route secrets here.
-func SetServiceEnvValue(repoPath, key, value string) error {
-	if !HasServiceManifest(repoPath) {
-		return fmt.Errorf("there is no %s in %s", ServiceManifestFileName, repoPath)
+// manifestPath names the file, not the directory: a directory may declare
+// several services, and each one owns its own file.
+func SetServiceEnvValue(manifestPath, key, value string) error {
+	if _, err := os.Stat(manifestPath); err != nil {
+		return fmt.Errorf("there is no service manifest at %s", manifestPath)
 	}
-	return editManifest(ServiceManifestPath(repoPath), func(root *yaml.Node) error {
+	return editManifest(manifestPath, func(root *yaml.Node) error {
 		values := mappingChild(mappingChild(root, "env"), "values")
 		if values.Kind != yaml.MappingNode {
-			return fmt.Errorf("env.values in %s is not a mapping", ServiceManifestPath(repoPath))
+			return fmt.Errorf("env.values in %s is not a mapping", manifestPath)
 		}
 		setScalar(values, key, value, "!!str")
 		return nil
@@ -176,11 +178,11 @@ func SetWorkspaceEnv(workspacePath, envName string) error {
 
 // SetServiceEnv sets service.env to envName in the service manifest at repoPath,
 // selecting the active env at the service scope.
-func SetServiceEnv(repoPath, envName string) error {
-	if !HasServiceManifest(repoPath) {
-		return fmt.Errorf("there is no %s in %s", ServiceManifestFileName, repoPath)
+func SetServiceEnv(manifestPath, envName string) error {
+	if _, err := os.Stat(manifestPath); err != nil {
+		return fmt.Errorf("there is no service manifest at %s", manifestPath)
 	}
-	return editManifest(ServiceManifestPath(repoPath), func(root *yaml.Node) error {
+	return editManifest(manifestPath, func(root *yaml.Node) error {
 		setScalar(mappingChild(root, "service"), "env", envName, "!!str")
 		return nil
 	})

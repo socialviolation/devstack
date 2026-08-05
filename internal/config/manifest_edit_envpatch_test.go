@@ -70,7 +70,7 @@ runtime:
     command: go run .
 `)
 
-	if err := SetServiceEnv(dir, "staging"); err != nil {
+	if err := SetServiceEnv(ServiceManifestPath(dir), "staging"); err != nil {
 		t.Fatalf("SetServiceEnv: %v", err)
 	}
 
@@ -84,7 +84,7 @@ runtime:
 }
 
 func TestSetServiceEnvRequiresManifest(t *testing.T) {
-	if err := SetServiceEnv(t.TempDir(), "staging"); err == nil {
+	if err := SetServiceEnv(ServiceManifestPath(t.TempDir()), "staging"); err == nil {
 		t.Fatal("expected an error when the service has no manifest")
 	}
 }

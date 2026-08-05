@@ -396,10 +396,10 @@ func handleServiceEnvSet(ws *workspace.Workspace, workspacePath, stackEnv, servi
 
 	var written string
 	if target == "manifest" {
-		if err := config.SetServiceEnvValue(svc.RepoPath, key, value); err != nil {
+		if err := config.SetServiceEnvValue(svc.ManifestPath, key, value); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("can not write %s: %v", key, err)), nil
 		}
-		written = config.ServiceManifestPath(svc.RepoPath)
+		written = svc.ManifestPath
 	} else {
 		written, err = setEnvrcValue(svc.EnvDir(), key, value)
 		if err != nil {
