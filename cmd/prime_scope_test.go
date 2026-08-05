@@ -120,7 +120,7 @@ func TestTheTaskBlockAsksBeforeItActsOnAGuessedStack(t *testing.T) {
 	}
 
 	var b strings.Builder
-	writePrimeTask(&b, "nxFileProcessor", "base", &workingStack{Rec: rec, Reason: "this is the only stack that runs nxFileProcessor"}, nil, false, false)
+	writePrimeTask(&b, "nxFileProcessor", "base", &workingStack{Rec: rec, Reason: "this is the only stack that runs nxFileProcessor"}, nil, false, false, nil)
 	got := b.String()
 
 	for _, want := range []string{
@@ -142,7 +142,7 @@ func TestTheTaskBlockAsksBeforeItActsOnAGuessedStack(t *testing.T) {
 // to run at all. Naming a stack here would be a guess with no evidence.
 func TestTheTaskBlockAsksWhenThereIsNoStack(t *testing.T) {
 	var b strings.Builder
-	writePrimeTask(&b, "api", "base", nil, nil, false, false)
+	writePrimeTask(&b, "api", "base", nil, nil, false, false, nil)
 	got := b.String()
 
 	for _, want := range []string{
@@ -160,7 +160,7 @@ func TestTheTaskBlockAsksWhenThereIsNoStack(t *testing.T) {
 // warning: this directory IS what base runs, and `workspace up` overwrites it.
 func TestTheTaskBlockSaysTheReplicaIsOverwritten(t *testing.T) {
 	var b strings.Builder
-	writePrimeTask(&b, "api", "base", nil, nil, false, true)
+	writePrimeTask(&b, "api", "base", nil, nil, false, true, nil)
 
 	if got := b.String(); !strings.Contains(got, "overwrites it. Do not edit here.") {
 		t.Errorf("the task block must say an edit in the replica is overwritten:\n%s", got)
