@@ -204,8 +204,6 @@ NAV-412 daily value spike
 
 > WARNING: Shared state is not isolated. A stack isolates code and ports. A stack does not isolate the database, the queues or the caches. Two stacks on one database read and write the same rows. If that matters, point one stack at another database with an [environment](#environments).
 
-The original design record is [docs/stacks-spec.md](docs/stacks-spec.md). Read it for the model of reuse and ports. Its daemon topology is older than the change to one daemon for each host.
-
 ## Environments
 
 An environment is a named set of configuration values in the workspace manifest. It holds database URLs, feature flags and endpoints. You repoint a service with an environment, and you touch no code. Base can run against `local` while one stack runs against `staging`.
