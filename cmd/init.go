@@ -30,7 +30,9 @@ FIRST SETUP OF A SERVICE (give --name, --path and --cmd)
   devstack registers a new service, so that it can run the service and observe it:
     1. It writes a service manifest in the directory of the service. That file says how devstack runs it.
        The first service in a directory gets devstack.service.yaml. Each service after it gets
-       devstack.<name>.yaml, so one directory can run as many services as it declares
+       devstack.<name>.yaml, so one directory can run as many services as it declares.
+       Where a directory holds several services, name every file after its service. Rename the
+       first one yourself. devstack reads both names
     2. It adds the repo to the repoDiscovery.repos list in the workspace manifest
     3. It writes .mcp.json, which connects an AI agent to the devstack MCP server
     4. It generates the daemon configuration again, so that 'devstack service start' can run the service

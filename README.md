@@ -35,7 +35,12 @@ devstack init --name=api --path=~/dev/my-workspace/api --cmd="go run ." --port=8
 
 devstack detects the language from `go.mod`, `package.json`, `requirements.txt` or `*.csproj`. To name the language yourself, pass `--language`.
 
-One directory declares as many services as it runs. `devstack init` writes `devstack.service.yaml` for the first service in a directory. It writes `devstack.<name>.yaml` for each service after that. Run `devstack init` once for each service, with the same `--path`.
+One directory declares as many services as it runs. Name the files for what the directory holds:
+
+- One service in the directory: call the file `devstack.service.yaml`.
+- Several services in the directory: name each file after its service, `devstack.<name>.yaml`. Then every file says which service it declares.
+
+`devstack init` writes `devstack.service.yaml` for the first service in a directory, and `devstack.<name>.yaml` for each service after that. Run it once for each service, with the same `--path`. If a directory grows a second service, rename the first file to `devstack.<name>.yaml` yourself. devstack reads both names, so the rename is safe.
 
 ## Concepts
 
