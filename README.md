@@ -387,7 +387,7 @@ CAUTION: `--reclaim` kills what already holds those ports on the far host. What 
 environment  status  topology  start  stop  restart  process_logs  service_env
 configure    observability     investigate    tunnel      hooks       base
 migrate      stack_create      stack_add   stack_up    stack_down
-stack_list   stack_rm  stack_note
+stack_list   stack_rm  stack_note   stack_config
 env_use      env_which env_set
 ```
 
@@ -413,7 +413,7 @@ The `stack` parameter scopes the search. An absent `stack` searches base. A name
 | `check` | Audit for placeholders and missing keys |
 | `drift` | Compare what devstack resolves with what the repository says it needs |
 
-Some commands have no tool and need a shell. They are: `upgrade`, `init`, `prime`, `serve`, `ports`, `dependencies`, `stack config`, `group add`, `group remove`, `group list`, `env list`, `env show`, `env remove`, `tunnel restart`, `otel start`, `otel stop`, `otel open`, `otel plugins`, and every `workspace` command but `topology`.
+Some commands have no tool and need a shell. They are: `upgrade`, `init`, `prime`, `serve`, `ports`, `dependencies`, `group add`, `group remove`, `group list`, `env list`, `env show`, `env remove`, `otel start`, `otel stop`, `otel open`, `otel plugins`, and every `workspace` command but `topology`.
 
 The remaining otel commands have a tool. `investigate` covers `otel traces` and `otel logs`. The `observability` tool covers `otel status` with `action="status"`, `otel services` with `action="variants"`, and `otel config` with the three `config_*` actions.
 

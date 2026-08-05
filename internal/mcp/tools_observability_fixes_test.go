@@ -33,7 +33,7 @@ func TestRenderVariantsNamesStackEnvAndReportedName(t *testing.T) {
 
 func TestRenderVariantsEmpty(t *testing.T) {
 	got := renderVariants(nil)
-	if !strings.Contains(got, "No variant reported telemetry") {
+	if !strings.Contains(got, "No copy reported telemetry") {
 		t.Errorf("unexpected empty rendering: %q", got)
 	}
 }

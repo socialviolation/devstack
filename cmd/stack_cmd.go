@@ -641,7 +641,7 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 	if oerr == nil {
 		managed = opts.ManagedEnv[svc.Name]
 	}
-	layers, lerr := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, rec.Env, managed)
+	layers, lerr := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, rec.Env, managed, svc.ManifestPath)
 	if lerr != nil {
 		fmt.Printf("\nEnvironment (serve_env ladder): unavailable: %v\n", lerr)
 		return nil
@@ -670,7 +670,7 @@ func runBaseConfig(service string) error {
 		return fmt.Errorf("devstack has not built the replica of workspace %q, and base runs from it. There is no configuration to read yet. To build the replica, run: devstack workspace up", ws.Name)
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("base runs from the replica of workspace %q. The replica is stale or incomplete. To rebuild it, run: devstack workspace up. devstack could not read it: %w", ws.Name, err)
 	}
 	svc, ok := rw.Services[service]
 	if !ok {

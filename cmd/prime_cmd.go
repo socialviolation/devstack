@@ -607,7 +607,7 @@ func writePrimeWhatThisIs(b *strings.Builder) {
 	b.WriteString("devstack is a CLI and an MCP server. The tools share the names of the commands. This briefing already\n")
 	b.WriteString("says where you are and what runs. Call the `environment` tool for the list of tools this workspace\n")
 	b.WriteString("has, or later, when this briefing is old. Among the commands with no tool: upgrade, init,\n")
-	b.WriteString("ports, dependencies, stack config, group add and remove, env list, show and remove, and every\n")
+	b.WriteString("ports, dependencies, group add and remove, env list, show and remove, and every\n")
 	b.WriteString("workspace command but topology. Run those in the shell.\n")
 }
 

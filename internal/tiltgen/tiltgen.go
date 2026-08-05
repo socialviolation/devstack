@@ -216,7 +216,7 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	fmt.Fprintf(&b, "    serve_cmd=%s,\n", starStr(runCmd))
 	fmt.Fprintf(&b, "    serve_dir=%s,\n", starStr(serveDir))
 
-	layers, err := config.EnvLadder(serveDir, ws, m, opts.StackEnv, opts.ManagedEnv[svc.Name])
+	layers, err := config.EnvLadder(serveDir, ws, m, opts.StackEnv, opts.ManagedEnv[svc.Name], svc.ManifestPath)
 	if err != nil {
 		return "", err
 	}

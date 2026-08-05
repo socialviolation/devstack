@@ -178,3 +178,66 @@ func TestMCPTunnelOffersCheckBeforeReclaim(t *testing.T) {
 		t.Errorf("unknown-action message does not name check: %s", out)
 	}
 }
+
+// The tool used to list six actions and then tell the agent to run the seventh
+// in a shell. An agent that can not restart a tunnel tears the forwards down and
+// pushes again, with the flag defaults and not the shape that was up.
+func TestMCPTunnelOffersRestartAndSendsNobodyToAShell(t *testing.T) {
+	s, _ := newTunnelToolServer(t, oneBaseService)
+	tool, ok := listTools(t, s)["tunnel"]
+	if !ok {
+		t.Fatal("the tunnel tool is not registered")
+	}
+	if !strings.Contains(tool.Description, "restart") {
+		t.Errorf("the tunnel tool does not advertise the restart action: %s", tool.Description)
+	}
+	if strings.Contains(tool.Description, "in a shell") {
+		t.Errorf("the tunnel tool still sends the agent to a shell for restart: %s", tool.Description)
+	}
+	if action := tool.InputSchema.Properties["action"].Description; !strings.Contains(action, "restart") {
+		t.Errorf("the action parameter does not accept restart: %s", action)
+	}
+
+	out := callTool(t, s, "tunnel", map[string]string{"action": "sniff"})
+	if !strings.Contains(out, "restart") {
+		t.Errorf("the unknown-action message does not name restart: %s", out)
+	}
+}
+
+// restart reaches the forward path rather than the unknown-action branch, and it
+// asks for the remote the same way push does.
+func TestMCPTunnelRestartNeedsARemoteLikePush(t *testing.T) {
+	s, _ := newTunnelToolServer(t, oneBaseService)
+	out := callTool(t, s, "tunnel", map[string]string{"action": "restart"})
+	if !strings.Contains(out, "no remote host given") {
+		t.Errorf("restart with no saved remote must ask for the host: %s", out)
+	}
+}
+
+// A bare restart repeats the last run. Without the saved shape it would push
+// base's ports back over a stack that was mapped onto them, and say nothing.
+func TestResumeTunnelForwardRestoresTheLastRun(t *testing.T) {
+	last := &workspace.TunnelForward{Mode: "pull", Services: "api", AsBase: "agent", Otel: true}
+
+	got, restored := resumeTunnelForward(workspace.TunnelForward{}, last)
+	if got.Mode != "pull" || got.Services != "api" || got.AsBase != "agent" || !got.Otel {
+		t.Errorf("a bare restart must repeat the last run; got %+v", got)
+	}
+	for _, want := range []string{"pull", "service=api", "as_base=agent", "otel=true"} {
+		if !strings.Contains(restored, want) {
+			t.Errorf("restart must say it restored %q; got %q", want, restored)
+		}
+	}
+
+	// The two stack modes exclude each other, so naming either one means the
+	// caller is choosing between them, and the saved as_base is not inherited.
+	asked := workspace.TunnelForward{Mode: "push", Services: "web", Stacks: true}
+	got, _ = resumeTunnelForward(asked, last)
+	if got.Mode != "push" || got.Services != "web" || !got.Stacks || got.AsBase != "" {
+		t.Errorf("what the caller passes must win; got %+v", got)
+	}
+
+	if got, restored := resumeTunnelForward(asked, nil); got != asked || restored != "" {
+		t.Errorf("with nothing saved, restart restores nothing; got %+v %q", got, restored)
+	}
+}

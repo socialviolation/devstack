@@ -38,7 +38,7 @@ func TestEnvLadderPrecedenceOrder(t *testing.T) {
 		Values: map[string]string{"K": "svc_values"},
 	}}
 
-	layers, err := EnvLadder(dir, ws, m, "", map[string]string{"K": "managed"})
+	layers, err := EnvLadder(dir, ws, m, "", map[string]string{"K": "managed"}, "")
 	if err != nil {
 		t.Fatalf("EnvLadder: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestEnvLadderEachRungBeatsTheOneBelow(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			layers, err := EnvLadder(dir, tc.ws, tc.m, "", nil)
+			layers, err := EnvLadder(dir, tc.ws, tc.m, "", nil, "")
 			if err != nil {
 				t.Fatalf("EnvLadder: %v", err)
 			}
@@ -196,6 +196,52 @@ func TestResolveEnvPatch(t *testing.T) {
 	}
 }
 
+// One directory declares several services, so the service env.values rung must
+// name the file that declares THIS service. A caller that reads the rung and
+// edits devstack.service.yaml edits a file that is not there.
+func TestEnvLadderServiceValuesRungNamesItsOwnManifestFile(t *testing.T) {
+	dir := t.TempDir()
+	ws := &WorkspaceManifest{}
+	m := &ServiceManifest{Env: ServiceEnv{Values: map[string]string{"K": "svc_values"}}}
+
+	layers, err := EnvLadder(dir, ws, m, "", nil, filepath.Join(dir, "devstack.orbit-api.yaml"))
+	if err != nil {
+		t.Fatalf("EnvLadder: %v", err)
+	}
+
+	got := ""
+	for _, l := range layers {
+		if l.Rung == RungServiceValues {
+			got = l.Source
+		}
+	}
+	if got != "devstack.orbit-api.yaml" {
+		t.Errorf("service env.values Source = %q, want %q", got, "devstack.orbit-api.yaml")
+	}
+}
+
+// Some callers build a manifest with no file behind it. They must keep working.
+func TestEnvLadderServiceValuesRungFallsBackToTheDefaultFileName(t *testing.T) {
+	dir := t.TempDir()
+	ws := &WorkspaceManifest{}
+	m := &ServiceManifest{Env: ServiceEnv{Values: map[string]string{"K": "svc_values"}}}
+
+	layers, err := EnvLadder(dir, ws, m, "", nil, "")
+	if err != nil {
+		t.Fatalf("EnvLadder: %v", err)
+	}
+
+	got := ""
+	for _, l := range layers {
+		if l.Rung == RungServiceValues {
+			got = l.Source
+		}
+	}
+	if got != ServiceManifestFileName {
+		t.Errorf("service env.values Source = %q, want %q", got, ServiceManifestFileName)
+	}
+}
+
 func TestEnvLadderActiveEnvRung(t *testing.T) {
 	dir := t.TempDir()
 
@@ -207,7 +253,7 @@ func TestEnvLadderActiveEnvRung(t *testing.T) {
 	ws.Workspace.Env = "prod"
 	m := &ServiceManifest{Env: ServiceEnv{Values: map[string]string{"K": "svc_values"}}}
 
-	layers, err := EnvLadder(dir, ws, m, "", map[string]string{"PORT": "managed_port"})
+	layers, err := EnvLadder(dir, ws, m, "", map[string]string{"PORT": "managed_port"}, "")
 	if err != nil {
 		t.Fatalf("EnvLadder: %v", err)
 	}
@@ -245,7 +291,7 @@ func TestEnvLadderActiveEnvAttributesKeysToTheEnvThatSuppliedThem(t *testing.T) 
 	ws.Workspace.Env = "dev"
 	m := &ServiceManifest{}
 
-	layers, err := EnvLadder(dir, ws, m, "perf", nil)
+	layers, err := EnvLadder(dir, ws, m, "perf", nil, "")
 	if err != nil {
 		t.Fatalf("EnvLadder: %v", err)
 	}
@@ -288,7 +334,7 @@ func TestEnvLadderActiveEnvSplitPreservesMerge(t *testing.T) {
 	m := &ServiceManifest{Env: ServiceEnv{Values: map[string]string{"A": "svc_values", "E": "svc_values"}}}
 	m.Service.Env = "staging"
 
-	layers, err := EnvLadder(dir, ws, m, "perf", map[string]string{"M": "managed"})
+	layers, err := EnvLadder(dir, ws, m, "perf", map[string]string{"M": "managed"}, "")
 	if err != nil {
 		t.Fatalf("EnvLadder: %v", err)
 	}
@@ -338,7 +384,7 @@ func TestEnvLadderActiveEnvSkipsUnsetScopes(t *testing.T) {
 	}
 	m := &ServiceManifest{}
 
-	layers, err := EnvLadder(dir, ws, m, "", nil)
+	layers, err := EnvLadder(dir, ws, m, "", nil, "")
 	if err != nil {
 		t.Fatalf("EnvLadder: %v", err)
 	}
@@ -349,7 +395,7 @@ func TestEnvLadderActiveEnvSkipsUnsetScopes(t *testing.T) {
 	}
 
 	ws.Workspace.Env = "dev"
-	layers, err = EnvLadder(dir, ws, m, "", nil)
+	layers, err = EnvLadder(dir, ws, m, "", nil, "")
 	if err != nil {
 		t.Fatalf("EnvLadder: %v", err)
 	}
@@ -384,7 +430,7 @@ func TestEnvLadderUndefinedEnvIsAnError(t *testing.T) {
 			m := &ServiceManifest{}
 			m.Service.Env = tc.svcEnv
 
-			if _, err := EnvLadder(dir, ws, m, tc.stackEnv, nil); err == nil {
+			if _, err := EnvLadder(dir, ws, m, tc.stackEnv, nil, ""); err == nil {
 				t.Fatalf("env %q applied at %s scope is not defined, want an error", "ghost", tc.name)
 			}
 		})

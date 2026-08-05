@@ -56,7 +56,12 @@ type envFileRef struct {
 // scope that is set (workspace, service, then stack — stackEnv names the stack
 // scope), each Sourced to its own env name so a key is attributed to the env
 // that actually supplied it.
-func EnvLadder(dir string, ws *WorkspaceManifest, m *ServiceManifest, stackEnv string, managed map[string]string) ([]EnvLayer, error) {
+//
+// manifestPath is the file that declares this service. One directory declares
+// several services, so the service env.values rung names devstack.<name>.yaml
+// for each service after the first one. An empty path falls back to
+// ServiceManifestFileName.
+func EnvLadder(dir string, ws *WorkspaceManifest, m *ServiceManifest, stackEnv string, managed map[string]string, manifestPath string) ([]EnvLayer, error) {
 	envrc, err := ResolveEnvrc(dir)
 	if err != nil {
 		return nil, err
@@ -89,9 +94,14 @@ func EnvLadder(dir string, ws *WorkspaceManifest, m *ServiceManifest, stackEnv s
 		return nil, err
 	}
 
+	serviceSource := ServiceManifestFileName
+	if manifestPath != "" {
+		serviceSource = filepath.Base(manifestPath)
+	}
+
 	layers = append(layers,
 		EnvLayer{Rung: RungWorkspaceValues, Source: WorkspaceManifestFileName, Values: ws.Env.Values},
-		EnvLayer{Rung: RungServiceValues, Source: ServiceManifestFileName, Values: m.Env.Values},
+		EnvLayer{Rung: RungServiceValues, Source: serviceSource, Values: m.Env.Values},
 	)
 	layers = append(layers, activeEnv...)
 	return append(layers, EnvLayer{Rung: RungManaged, Values: managed}), nil

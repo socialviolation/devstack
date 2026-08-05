@@ -53,6 +53,7 @@ func registerStackTools(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	registerStackCreateTool(mcpServer, ws)
 	registerStackAddTool(mcpServer, ws)
 	registerStackListTool(mcpServer, ws)
+	registerStackConfigTool(mcpServer, ws)
 	registerStackNoteTool(mcpServer, ws)
 	registerStackRemoveTool(mcpServer, ws)
 	registerStackUpTool(mcpServer, ws)

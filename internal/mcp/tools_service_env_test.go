@@ -9,6 +9,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/svcconfig"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -335,6 +336,51 @@ func TestServiceEnvSetUnknownService(t *testing.T) {
 	}
 }
 
+// One directory declares several services. service_env must name the file that
+// declares THIS service, or it sends the caller to edit a file that is not there.
+func TestServiceEnvGetNamesTheManifestFileTheServiceComesFrom(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repos", "mono")
+	writeFile(t, filepath.Join(root, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: testws
+  repoDiscovery:
+    mode: explicit
+    repos:
+      - ./repos/mono
+`)
+	for _, name := range []string{"orbit-api", "orbit-web"} {
+		writeFile(t, filepath.Join(repo, "devstack."+name+".yaml"), `version: 1
+service:
+  name: `+name+`
+runtime:
+  run:
+    command: go run .
+env:
+  values:
+    LOG_LEVEL: debug
+`)
+	}
+	ws := &workspace.Workspace{Name: "testws", Path: root}
+
+	cfg, err := config.Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	res, err := handleServiceEnvGet(ws, root, "", cfg, "orbit-web", "", "LOG_LEVEL")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	out := resultText(t, res)
+
+	if !strings.Contains(out, "devstack.orbit-web.yaml") {
+		t.Errorf("expected the rung to name devstack.orbit-web.yaml, got:\n%s", out)
+	}
+	if strings.Contains(out, config.ServiceManifestFileName) {
+		t.Errorf("named %s, which this directory does not have:\n%s", config.ServiceManifestFileName, out)
+	}
+}
+
 // newTwoServiceWorkspace lays down "api" and "worker" with the given env.values.
 func newTwoServiceWorkspace(t *testing.T, apiValues, workerValues string) (*workspace.Workspace, string) {
 	t.Helper()
@@ -405,5 +451,23 @@ func TestServiceEnvCheckMakesNoConsensusClaim(t *testing.T) {
 	}
 	if strings.Contains(out, "MAIN_DATABASE_URL") {
 		t.Errorf("check still makes a claim about differing DB URLs:\n%s", out)
+	}
+}
+
+// service_env get renders the environment a process receives, which is where
+// the credentials are. The CLI masks them and this tool did not, so every agent
+// that asked what a service runs with was handed the real values.
+func TestServiceEnvGetMasksCredentials(t *testing.T) {
+	secret := "Server=tcp:db.example.com;User ID=sa;Password=hunter2-PLAINTEXT;"
+	got := svcconfig.RedactValue("ConnectionStrings__Db", secret)
+
+	if strings.Contains(got, "hunter2-PLAINTEXT") {
+		t.Fatalf("RedactValue leaked the password: %s", got)
+	}
+	if !strings.Contains(got, svcconfig.MaskedValue) {
+		t.Errorf("RedactValue must mark what it hid: %s", got)
+	}
+	if !strings.Contains(got, "db.example.com") {
+		t.Errorf("RedactValue must keep the identity of the target readable: %s", got)
 	}
 }

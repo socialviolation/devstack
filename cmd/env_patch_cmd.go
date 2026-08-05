@@ -344,7 +344,7 @@ func resolvedEnvLadder(ws *workspace.Workspace, rw *config.ResolvedWorkspace, sv
 		book = config.BuildPortBook(rw)
 	}
 
-	layers, err := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, stackEnv, managed)
+	layers, err := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, stackEnv, managed, svc.ManifestPath)
 	if err != nil {
 		return nil, err
 	}

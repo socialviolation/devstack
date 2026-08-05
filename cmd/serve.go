@@ -43,6 +43,7 @@ TOOLS EXPOSED TO AI AGENTS
   stack_create    cut a feature stack from the default branch
   stack_add       put another service into a stack that already exists
   stack_list      the stacks in flight, with their overlays, links and notes
+  stack_config    the configuration one copy runs with, and where each value comes from
   stack_note      read, set or append to what a stack is for
   stack_up        start a stack in the host daemon
   stack_down      stop a stack's copies, and keep its worktrees
@@ -58,7 +59,7 @@ the manifest enables observability. The tunnel tools appear only when an ssh
 client is available. Call the 'environment' tool first to see what is available.
 
 The tools do not cover every command. Among the commands with no tool: upgrade,
-init, ports, dependencies, stack config, group add and remove, env list, show and
+init, ports, dependencies, group add and remove, env list, show and
 remove, and every workspace command but topology. Run those in the shell.
 
 TRANSPORT

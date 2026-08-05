@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -117,6 +119,36 @@ func TestStackConfigSaysWhenBaseHasNoReplica(t *testing.T) {
 		t.Fatal("--stack base without a replica must fail")
 	}
 	for _, want := range []string{"has not built the replica", "devstack workspace up"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error must state %q; got %v", want, err)
+		}
+	}
+}
+
+// A replica that no longer matches the checkout fails to resolve on whichever
+// service is incomplete, and that is rarely the one the user asked about. The
+// failure must name the stale replica and the command that rebuilds it, and it
+// must keep the detail that says which file is missing.
+func TestStackConfigSaysWhenTheReplicaIsStale(t *testing.T) {
+	buildStackScenario(t)
+	useWorkspaceKey(t, "navexa")
+	ws, err := workspace.FindByName("navexa")
+	if err != nil {
+		t.Fatalf("FindByName: %v", err)
+	}
+	if _, err := replica.Ensure(ws); err != nil {
+		t.Fatalf("replica.Ensure: %v", err)
+	}
+	stale := filepath.Join(replica.Root(ws), "frontend", "devstack.service.yaml")
+	if err := os.Remove(stale); err != nil {
+		t.Fatalf("remove the replica's frontend manifest: %v", err)
+	}
+
+	err = runStackConfig(stackConfigCmdFor(t, "base"), []string{"backend"})
+	if err == nil {
+		t.Fatal("a replica that does not resolve must fail")
+	}
+	for _, want := range []string{"stale or incomplete", "devstack workspace up", stale} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the error must state %q; got %v", want, err)
 		}

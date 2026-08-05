@@ -1572,6 +1572,63 @@ func portList(ports []int) string {
 	return strings.Join(out, " ")
 }
 
+// tunnelPortsToStop lists the forwards this workspace has up, narrowed to the
+// services the caller named. It reads what forwards, and not what discovery
+// covers now: a forward outlives its service.
+func tunnelPortsToStop(wsName string, filter map[string]bool, svcs []tunnel.Service) []int {
+	ports := tunnel.TrackedPorts(wsName)
+	if len(filter) == 0 {
+		return ports
+	}
+	wanted := map[int]bool{}
+	for _, s := range svcs {
+		wanted[s.Port] = true
+	}
+	var kept []int
+	for _, port := range ports {
+		if wanted[port] {
+			kept = append(kept, port)
+		}
+	}
+	return kept
+}
+
+// resumeTunnelForward fills the parameters the caller left out with the shape of
+// the last push or pull, so a bare restart repeats what was up. A parameter that
+// the caller passes wins. devstack never restores reclaim: it kills what holds
+// the port on the far host, and that is a decision to take each time. The second
+// return value names what devstack restored, and it is empty when nothing was.
+func resumeTunnelForward(asked workspace.TunnelForward, last *workspace.TunnelForward) (workspace.TunnelForward, string) {
+	if last == nil {
+		return asked, ""
+	}
+	// The two stack modes exclude each other, so naming either one means the
+	// caller is choosing between them and neither should be inherited.
+	stackModeGiven := asked.Stacks || asked.AsBase != ""
+	var restored []string
+	if asked.Mode == "" && last.Mode != "" {
+		asked.Mode = last.Mode
+		restored = append(restored, last.Mode)
+	}
+	if asked.Services == "" && last.Services != "" {
+		asked.Services = last.Services
+		restored = append(restored, "service="+last.Services)
+	}
+	if !stackModeGiven && last.Stacks {
+		asked.Stacks = true
+		restored = append(restored, "stacks=true")
+	}
+	if !stackModeGiven && last.AsBase != "" {
+		asked.AsBase = last.AsBase
+		restored = append(restored, "as_base="+last.AsBase)
+	}
+	if !asked.Otel && last.Otel {
+		asked.Otel = true
+		restored = append(restored, "otel=true")
+	}
+	return asked, strings.Join(restored, " ")
+}
+
 func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws *workspace.Workspace) {
 	tool := mcp.NewTool("tunnel",
 		mcp.WithDescription("Forward this workspace's LOCAL service ports to a remote host over SSH, or from one. A remote machine can then reach the services that run on this dev box.\n\n"+
@@ -1581,14 +1638,16 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			"  check   ask the remote host what already holds the ports a push binds. It changes nothing. Run it before reclaim=true, which kills those processes.\n"+
 			"  push    expose local ports on the remote over ssh -R. This is the common case.\n"+
 			"  pull    bring ports from a source machine to here over ssh -L.\n"+
-			"  stop    tear down the forwards of this workspace. Narrow it with service.\n\n"+
+			"  stop    tear down the forwards of this workspace. Narrow it with service.\n"+
+			"  restart stop the forwards of this workspace, then bring them back. It repeats the last push or pull.\n\n"+
 			"This tool needs key-based SSH access to the remote. Passwords do not work. If the keys are absent, the result tells you to run ssh-copy-id.\n"+
 			"It forwards only the ports that serve traffic now, and it skips a service that is idle or dead.\n"+
 			"Any host that you can reach over ssh works, and a plain ssh-config alias is one. A tailnet address is one such host, and not a requirement.\n\n"+
 			"status and stop read the forwards that run, and not what discovery covers now. So they report and tear down the observability UI and the forwards of a stack, whether or not this call asked for them.\n"+
-			"After the first push or pull, devstack remembers the remote, the direction and the stack mapping. A later `devstack tunnel restart` in a shell then repeats the same thing.\n"),
+			"After the first push or pull, devstack remembers the remote, the direction and the stack mapping. action=restart then repeats that same run.\n"+
+			"A parameter that you pass to restart wins over the saved one. devstack never restores reclaim, because it kills what holds the port on the far host.\n"),
 		mcp.WithString("action", mcp.Required(),
-			mcp.Description("One of: list, status, check, push, pull, stop. These read and change nothing: 'list', 'status', 'check'. (check does open an ssh session to read the far host's ports, and it alters nothing there.) These write: 'push', 'pull', 'stop'. They start or kill ssh forwards, and push and pull also save the remote.")),
+			mcp.Description("One of: list, status, check, push, pull, stop, restart. These read and change nothing: 'list', 'status', 'check'. (check does open an ssh session to read the far host's ports, and it alters nothing there.) These write: 'push', 'pull', 'stop', 'restart'. They start or kill ssh forwards, and push, pull and restart also save the remote.")),
 		mcp.WithString("host",
 			mcp.Description("Remote host or SSH config alias (for example 'macbook'). It is optional where a default is saved for this workspace.")),
 		mcp.WithString("user",
@@ -1621,14 +1680,30 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		asked := workspace.TunnelForward{
+			Services: request.GetString("service", ""),
+			Stacks:   request.GetBool("stacks", false),
+			AsBase:   strings.TrimSpace(request.GetString("as_base", "")),
+			Otel:     request.GetBool("otel", false),
+		}
+		var restored string
+		switch action {
+		case "push":
+			asked.Mode = string(tunnel.ModePush)
+		case "pull":
+			asked.Mode = string(tunnel.ModePull)
+		case "restart":
+			asked, restored = resumeTunnelForward(asked, ws.TunnelLast)
+		}
+
 		filter := map[string]bool{}
-		for _, s := range strings.Split(request.GetString("service", ""), ",") {
+		for _, s := range strings.Split(asked.Services, ",") {
 			if s = strings.TrimSpace(s); s != "" {
 				filter[s] = true
 			}
 		}
-		asBase := strings.TrimSpace(request.GetString("as_base", ""))
-		wantStacks := request.GetBool("stacks", false)
+		asBase := asked.AsBase
+		wantStacks := asked.Stacks
 		if asBase != "" && wantStacks {
 			return mcp.NewToolResultError("as_base and stacks ask for different things: as_base puts that one stack on base's ports, stacks forwards every stack on its own ports. Pick one"), nil
 		}
@@ -1648,7 +1723,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			svcs = tunnel.Discover(view, filter, ws.Name, wantStacks)
 		}
 		otelNote := otelNotePrefix
-		if request.GetBool("otel", false) {
+		if asked.Otel {
 			ui, reason, ok := coreOtelUIService(ws)
 			if ok {
 				svcs = append(svcs, ui)
@@ -1751,20 +1826,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			// forward outlives its service, and the observability UI is never a
 			// daemon resource at all. Narrowing to the ones asked for is the only
 			// time discovery decides.
-			ports := tunnel.TrackedPorts(ws.Name)
-			if len(filter) > 0 {
-				wanted := map[int]bool{}
-				for _, s := range svcs {
-					wanted[s.Port] = true
-				}
-				var kept []int
-				for _, port := range ports {
-					if wanted[port] {
-						kept = append(kept, port)
-					}
-				}
-				ports = kept
-			}
+			ports := tunnelPortsToStop(ws.Name, filter, svcs)
 			if len(ports) == 0 {
 				return mcp.NewToolResultText(otelNote + "No tunnels running for this workspace."), nil
 			}
@@ -1773,10 +1835,13 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			}
 			return mcp.NewToolResultText(otelNote + fmt.Sprintf("Stopped %d tunnel(s): %s.", len(ports), portList(ports))), nil
 
-		case "push", "pull":
-			mode := tunnel.ModePush
-			if action == "pull" {
-				mode = tunnel.ModePull
+		case "push", "pull", "restart":
+			if asked.Mode == "" {
+				asked.Mode = string(tunnel.ModePush)
+			}
+			mode := tunnel.Mode(asked.Mode)
+			if mode != tunnel.ModePush && mode != tunnel.ModePull {
+				return mcp.NewToolResultError(fmt.Sprintf("the saved direction %q is not push or pull, so restart can not repeat it. Call this tool again with action=push or action=pull", asked.Mode)), nil
 			}
 			rhost := host
 			if rhost == "" {
@@ -1825,7 +1890,19 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 
 			var sb strings.Builder
 			sb.WriteString(otelNote)
-			fmt.Fprintf(&sb, "%s tunnels → %s@%s\n", strings.ToUpper(action), ruser, rhost)
+			header := strings.ToUpper(action)
+			if action == "restart" {
+				if restored != "" {
+					fmt.Fprintf(&sb, "This repeats the last run: %s\n", restored)
+				}
+				stopped := tunnelPortsToStop(ws.Name, filter, svcs)
+				for _, port := range stopped {
+					tunnel.KillPort(ws.Name, port)
+				}
+				fmt.Fprintf(&sb, "Stopped %d tunnel(s): %s.\n", len(stopped), portList(stopped))
+				header = "RESTART " + strings.ToUpper(string(mode))
+			}
+			fmt.Fprintf(&sb, "%s tunnels → %s@%s\n", header, ruser, rhost)
 			for _, s := range skipped {
 				fmt.Fprintf(&sb, "  [skip]    %-30s :%d  (not serving)\n", s.Name, s.Port)
 			}
@@ -1841,16 +1918,11 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 				started++
 				fmt.Fprintf(&sb, "  [started] %-30s %s  (pid %d)\n", s.Name, portLabel(s), pid)
 			}
-			// Record the shape of what is now up, so a later `devstack tunnel
-			// restart` re-establishes this and not the flag defaults.
+			// Record the shape of what is now up, so a later restart
+			// re-establishes this and not the parameter defaults.
 			if started > 0 {
-				_ = workspace.UpdateTunnelForward(ws.Name, workspace.TunnelForward{
-					Mode:     string(mode),
-					Services: request.GetString("service", ""),
-					Stacks:   wantStacks,
-					AsBase:   asBase,
-					Otel:     request.GetBool("otel", false),
-				})
+				asked.Mode = string(mode)
+				_ = workspace.UpdateTunnelForward(ws.Name, asked)
 			}
 			if clashed && mode == tunnel.ModePush && !reclaim {
 				fmt.Fprintf(&sb, "\nA forward fails when something already holds the port on %s. That can be a stale "+
@@ -1859,7 +1931,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			return mcp.NewToolResultText(sb.String()), nil
 
 		default:
-			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — use list, status, check, push, pull, or stop", action)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("unknown action %q — use list, status, check, push, pull, stop, or restart", action)), nil
 		}
 	})
 }

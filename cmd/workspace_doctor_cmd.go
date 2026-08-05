@@ -243,7 +243,7 @@ func reportConfigDrift(workspacePath string) int {
 		if svc.Manifest == nil || len(svc.Manifest.Config.Sources) == 0 {
 			continue
 		}
-		layers, err := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, "", managed[name])
+		layers, err := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, "", managed[name], svc.ManifestPath)
 		if err != nil {
 			continue
 		}

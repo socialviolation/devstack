@@ -173,11 +173,11 @@ func observabilityVariants(ws *workspace.Workspace) string {
 
 func renderVariants(variants []observability.ServiceVariant) string {
 	if len(variants) == 0 {
-		return fmt.Sprintf("No variant reported telemetry in the last %s.\n", telemetry.DefaultWindow)
+		return fmt.Sprintf("No copy reported telemetry in the last %s.\n", telemetry.DefaultWindow)
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "variants that reported in the last %s:\n", telemetry.DefaultWindow)
+	fmt.Fprintf(&sb, "copies that reported in the last %s:\n", telemetry.DefaultWindow)
 	for _, v := range variants {
 		name := v.Service
 		if name == "" {

@@ -140,7 +140,7 @@ func resolveLadders(ws *workspace.Workspace, workspacePath, stackEnv string, ser
 		if !ok || svc.Manifest == nil {
 			continue
 		}
-		layers, err := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, stackEnv, managed[name])
+		layers, err := config.EnvLadder(svc.EnvDir(), rw.Manifest, svc.Manifest, stackEnv, managed[name], svc.ManifestPath)
 		if err != nil {
 			return nil, fmt.Errorf("can not resolve the environment for %s: %w", name, err)
 		}
@@ -239,7 +239,7 @@ func handleServiceEnvGet(ws *workspace.Workspace, workspacePath, stackEnv string
 			if filter != "" && !strings.Contains(strings.ToLower(k), filterLower) {
 				continue
 			}
-			fmt.Fprintf(&sb, "  %s=%s  [%s]\n", k, env[k], rungOf(layers, k))
+			fmt.Fprintf(&sb, "  %s=%s  [%s]\n", k, svcconfig.RedactValue(k, env[k]), rungOf(layers, k))
 		}
 		sb.WriteString("\n")
 	}

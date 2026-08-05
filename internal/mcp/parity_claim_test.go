@@ -59,7 +59,6 @@ func TestBriefingParityClaimHolds(t *testing.T) {
 		"deps":           "dependencies",
 		"group_add":      "group add and remove",
 		"groups":         "group add and remove",
-		"stack_config":   "stack config",
 		"init":           "init",
 		"upgrade":        "upgrade",
 		"env_list":       "env list, show and remove",
@@ -86,7 +85,7 @@ func TestParityClaimNamesNoToolThatVanished(t *testing.T) {
 	var missing []string
 	for _, n := range []string{
 		"hooks", "tunnel", "topology", "service_env", "observability", "process_logs",
-		"status", "start", "stop", "restart", "stack_up", "env_use", "migrate",
+		"status", "start", "stop", "restart", "stack_up", "stack_config", "env_use", "migrate",
 	} {
 		if !names[n] {
 			missing = append(missing, n)
