@@ -19,10 +19,17 @@ func newEnvTestCmd(stackName, service string) *cobra.Command {
 	return c
 }
 
-// The template checkout is not an implicit base: a command that restarts a
-// service refuses there and says what to type, instead of restarting base's
-// replica — which is not the code the caller is standing in.
-func TestServiceRestartInTheCheckoutRefusesWithoutATarget(t *testing.T) {
+// noTargetRefusal reports whether an error is the resolver refusing for want of
+// a named copy, rather than any of the failures a command can still hit without
+// a daemon. The refusal is gone, so no mutating verb may produce it.
+func noTargetRefusal(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no copy named")
+}
+
+// The template checkout names no copy, so a restart typed there means base. It
+// used to refuse and make the caller type `--stack base`, which was the only
+// copy it could have meant.
+func TestServiceRestartInTheCheckoutUsesBase(t *testing.T) {
 	buildStackScenario(t)
 	base, err := workspace.FindByName("navexa")
 	if err != nil {
@@ -30,20 +37,13 @@ func TestServiceRestartInTheCheckoutRefusesWithoutATarget(t *testing.T) {
 	}
 	t.Chdir(base.Path)
 
-	err = runRestart(newEnableTestCmd("navexa", ""), []string{"backend"})
-	if err == nil {
-		t.Fatal("expected a restart with no --stack in the checkout to refuse")
-	}
-	for _, want := range []string{"--stack base", "feat"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("refusal must name %q, got: %v", want, err)
-		}
+	if err := runRestart(newEnableTestCmd("navexa", ""), []string{"backend"}); noTargetRefusal(err) {
+		t.Errorf("a restart in the checkout must resolve to base, got: %v", err)
 	}
 }
 
-// Same rule for stopping and starting, so no mutating verb keeps the old silent
-// default.
-func TestServiceStartAndStopRefuseWithoutATarget(t *testing.T) {
+// Same for stopping and starting, so no mutating verb keeps the old refusal.
+func TestServiceStartAndStopUseBaseInTheCheckout(t *testing.T) {
 	buildStackScenario(t)
 	base, err := workspace.FindByName("navexa")
 	if err != nil {
@@ -55,17 +55,15 @@ func TestServiceStartAndStopRefuseWithoutATarget(t *testing.T) {
 		"start": runEnable,
 		"stop":  runStop,
 	} {
-		if err := run(newEnableTestCmd("navexa", ""), []string{"backend"}); err == nil {
-			t.Errorf("%s with no --stack in the checkout must refuse", name)
-		} else if !strings.Contains(err.Error(), "--stack base") {
-			t.Errorf("%s refusal must name --stack base, got: %v", name, err)
+		if err := run(newEnableTestCmd("navexa", ""), []string{"backend"}); noTargetRefusal(err) {
+			t.Errorf("%s in the checkout must resolve to base, got: %v", name, err)
 		}
 	}
 }
 
-// env use points a scope at an environment, so it needs the same explicit
-// instance — with --service it does not, because that names a scope of its own.
-func TestEnvUseNeedsATargetUnlessAServiceIsNamed(t *testing.T) {
+// env use points a scope at an environment. With no --stack that scope is base,
+// and with --service it is that service — neither needs the caller to say so.
+func TestEnvUseDefaultsToBase(t *testing.T) {
 	buildStackScenario(t)
 	base, err := workspace.FindByName("navexa")
 	if err != nil {
@@ -76,14 +74,9 @@ func TestEnvUseNeedsATargetUnlessAServiceIsNamed(t *testing.T) {
 	}
 	t.Chdir(base.Path)
 
-	err = runEnvUse(newEnvTestCmd("", ""), []string{"dev"})
-	if err == nil {
-		t.Fatal("expected env use with no --stack in the checkout to refuse")
+	if err := runEnvUse(newEnvTestCmd("", ""), []string{"dev"}); err != nil {
+		t.Errorf("env use with no --stack must apply to base: %v", err)
 	}
-	if !strings.Contains(err.Error(), "--stack base") {
-		t.Errorf("refusal must name --stack base, got: %v", err)
-	}
-
 	if err := runEnvUse(newEnvTestCmd("", "backend"), []string{"dev"}); err != nil {
 		t.Errorf("env use --service names its own scope and must still work: %v", err)
 	}

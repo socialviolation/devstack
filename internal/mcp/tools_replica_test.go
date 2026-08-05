@@ -29,7 +29,7 @@ func TestEnvironmentToolOrientsOnTheReplicaAndTheTargetRule(t *testing.T) {
 	registerEnvironmentTool(s, "http://localhost:5080", ws.Name, root, "", ws)
 
 	out := clarityCallTool(t, s, "environment")
-	for _, want := range []string{"replica", "template", "no default copy"} {
+	for _, want := range []string{"replica", "template", "uses base where that directory is neither"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("environment must orient on %q; got %s", want, out)
 		}

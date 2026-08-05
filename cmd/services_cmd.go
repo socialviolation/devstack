@@ -361,45 +361,12 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 	}
 	fmt.Println()
 
-	printFailures(tiltClient, view, ws.Name)
-
-	color.New(color.Faint).Printf("  within a group, top-to-bottom = startup order   ·   blank ENV = no env\n")
+	color.New(color.Faint).Printf("  within a group, top-to-bottom = startup order   ·   blank ENV = no env   ·   erroring? read its log with the process_logs tool, or `devstack workspace open`\n")
 	color.New(color.Faint).Printf("  devstack service start <service> --stack base   ·   devstack group start <group> --stack base\n")
 	color.New(color.Faint).Printf("  devstack stack up <name>   ·   devstack stack config <svc> --stack <name>\n")
 	color.New(color.Faint).Printf("  devstack condenses a group with nothing running, starting, building or erroring   ·   devstack status --all shows every one\n")
 
 	return nil
-}
-
-// printFailures says why each erroring copy of this workspace failed. The state
-// word alone sent the reader to the logs, and a copy that fails in its run
-// command leaves no build record, so the table gave no reason to read at all.
-func printFailures(client *tilt.Client, view *tilt.TiltView, wsName string) {
-	if view == nil {
-		return
-	}
-	prefix := wsName + ":"
-	printed := false
-	for _, r := range view.UiResources {
-		if !strings.HasPrefix(r.Metadata.Name, prefix) || serviceStatus(r) != "erroring" {
-			continue
-		}
-		reason := client.FailureReason(r)
-		if len(reason) == 0 {
-			continue
-		}
-		if !printed {
-			color.New(color.FgRed, color.Bold).Printf("  why the erroring copies stopped\n")
-			printed = true
-		}
-		fmt.Printf("  %s\n", r.Metadata.Name)
-		for _, line := range reason {
-			color.New(color.Faint).Printf("    %s\n", line)
-		}
-	}
-	if printed {
-		fmt.Println()
-	}
 }
 
 // stackSections turns the workspace's in-flight feature stacks into table

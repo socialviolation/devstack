@@ -22,13 +22,13 @@ var serviceCmd = &cobra.Command{
 
 With no name, devstack finds the service from the working directory.
 
-These actions change what runs, so they must also name the copy to act on. Pass
+These actions change what runs, so they also name the copy to act on. Pass
 --stack <name> for a feature stack, or --stack base for base. Base runs from the
 replica that devstack keeps, not from your checkout.
 
-There is no default. With no flag, devstack acts on the copy whose directory you
-are in. In a plain checkout, devstack refuses. No copy runs the code of a plain
-checkout, so devstack does not act on code that you are not looking at.`,
+With no flag, devstack acts on the copy whose directory you are in. Anywhere
+else it acts on base. Each action names the copy it changed: a base copy has no
+:stack suffix.`,
 }
 
 var groupCmd = &cobra.Command{
@@ -39,8 +39,9 @@ group, devstack starts every service in it, in dependency order.
 
 The name must be a group. To act on one service, run 'devstack service <action> <name>'.
 
-start, stop and restart change what runs, so they must also name the copy to act
-on: --stack <name>, or --stack base. There is no default.
+start, stop and restart change what runs, so they also name the copy to act on:
+--stack <name>, or --stack base. With no flag they use the copy whose directory
+you are in, and base anywhere else.
 
 A stack rarely overlays a whole group. With --stack <name>, the action reaches
 only the members that the stack runs its own copy of. devstack names the members
@@ -94,6 +95,6 @@ func init() {
 		serviceStartCmd, serviceStopCmd, serviceRestartCmd,
 		groupStartCmd, groupStopCmd, groupRestartCmd,
 	} {
-		c.Flags().String("stack", "", "The copy to act on: a feature stack name, or \"base\" for the replica that base runs from. Required unless the working directory is inside one of them")
+		c.Flags().String("stack", "", "The copy to act on: a feature stack name, or \"base\" for the replica that base runs from. Default: the copy your directory is in, or base")
 	}
 }

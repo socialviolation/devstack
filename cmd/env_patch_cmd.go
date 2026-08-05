@@ -71,7 +71,7 @@ func init() {
 	envCmd.AddCommand(envSetCmd, envUseCmd, envShowCmd, envWhichCmd)
 
 	envUseCmd.Flags().String("service", "", "Point this service at the environment")
-	envUseCmd.Flags().String("stack", "", "Point this stack at the environment. Use \"base\" for the workspace scope. Required, unless you pass --service, or your working directory is inside a stack or inside the replica")
+	envUseCmd.Flags().String("stack", "", "Point this stack at the environment. Use \"base\" for the workspace scope. Default: the copy your directory is in, or base")
 
 	envWhichCmd.Flags().String("service", "", "Service to resolve. Default: the service of the current directory")
 	envWhichCmd.Flags().String("stack", "", "Stack whose environment to include")
