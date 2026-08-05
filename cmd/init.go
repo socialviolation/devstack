@@ -28,7 +28,9 @@ instructions before, init removes them.
 
 FIRST SETUP OF A SERVICE (give --name, --path and --cmd)
   devstack registers a new service, so that it can run the service and observe it:
-    1. It writes devstack.service.yaml in the repo of the service. That file says how devstack runs it
+    1. It writes a service manifest in the directory of the service. That file says how devstack runs it.
+       The first service in a directory gets devstack.service.yaml. Each service after it gets
+       devstack.<name>.yaml, so one directory can run as many services as it declares
     2. It adds the repo to the repoDiscovery.repos list in the workspace manifest
     3. It writes .mcp.json, which connects an AI agent to the devstack MCP server
     4. It generates the daemon configuration again, so that 'devstack service start' can run the service
@@ -319,11 +321,11 @@ func runInitOnboard(cmd *cobra.Command, claudeHook bool) error {
 	}
 
 	// 1. Write the service manifest — the source of truth for how it runs.
-	manifestPath := config.ServiceManifestPath(path)
-	if _, statErr := os.Stat(manifestPath); statErr == nil && !force {
-		return fmt.Errorf("service %q has %s already. To overwrite it, give --force", name, config.ServiceManifestFileName)
+	manifestPath, declared := initManifestTarget(path, name)
+	if declared && !force {
+		return fmt.Errorf("service %q is declared in %s already. To overwrite it, give --force", name, manifestPath)
 	}
-	if err := writeServiceManifest(path, name, serveCmd, port, langEnv); err != nil {
+	if err := writeServiceManifest(manifestPath, name, serveCmd, port, langEnv); err != nil {
 		return fmt.Errorf("can not write the service manifest: %w", err)
 	}
 	fmt.Fprintf(os.Stderr, "✓ Wrote %s\n", manifestPath)
@@ -375,8 +377,32 @@ func runInitOnboard(cmd *cobra.Command, claudeHook bool) error {
 
 // writeServiceManifest writes a filled devstack.service.yaml for a service with
 // a known run command (and optional port/env), unlike the placeholder scaffold.
-func writeServiceManifest(dir, name, command string, port int, env map[string]string) error {
-	target := config.ServiceManifestPath(dir)
+// initManifestTarget picks the file this service is written to, and reports
+// whether that file already declares it.
+//
+// A directory may declare several services, so the name of the file can not be
+// fixed. The first service in a directory keeps devstack.service.yaml, which is
+// what every repository already has. Each one after it gets a file named after
+// it, so that --force overwrites the service the caller named and never the
+// service that happened to be written first.
+//
+// A file devstack can not parse is skipped rather than reported: it may declare
+// anything, so devstack neither matches it nor writes over it.
+func initManifestTarget(dir, name string) (path string, declared bool) {
+	files := config.ServiceManifestFiles(dir)
+	for _, f := range files {
+		m, err := config.LoadServiceManifestFile(f)
+		if err == nil && m.Service.Name == name {
+			return f, true
+		}
+	}
+	if len(files) == 0 {
+		return config.ServiceManifestPath(dir), false
+	}
+	return filepath.Join(dir, "devstack."+name+".yaml"), false
+}
+
+func writeServiceManifest(target, name, command string, port int, env map[string]string) error {
 	var sb strings.Builder
 	sb.WriteString("version: 1\n\n")
 	sb.WriteString("service:\n")
