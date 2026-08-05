@@ -187,8 +187,16 @@ func buildPrime() (string, error) {
 
 	working := inferWorkingStack(ws, service, branch)
 
+	// The candidates are read only where devstack failed to name a stack. That
+	// is the one branch of the task block that asks the user a question, and the
+	// records are what turn an open question into a closed one.
+	var candidates []stack.Record
+	if working == nil {
+		candidates, _ = stack.LoadStore(ws.Name)
+	}
+
 	var b strings.Builder
-	writePrimeTask(&b, service, here, working, siblings, rw.Manifest.Observability.IsEnabled(), inReplica)
+	writePrimeTask(&b, service, here, working, siblings, rw.Manifest.Observability.IsEnabled(), inReplica, candidates)
 	writePrimeWhatThisIs(&b)
 	writePrimeTerms(&b)
 
@@ -225,11 +233,11 @@ func buildPrime() (string, error) {
 // "restart the service you changed" is a rule the reader has to apply, and one
 // that says `devstack service restart navexa-api --stack fx-rates` is a command
 // it can run.
-func writePrimeTask(b *strings.Builder, service, here string, working *workingStack, siblings map[string]string, telemetry, inReplica bool) {
+func writePrimeTask(b *strings.Builder, service, here string, working *workingStack, siblings map[string]string, telemetry, inReplica bool, candidates []stack.Record) {
 	b.WriteString("## YOUR TASK\n")
 	switch {
 	case working == nil || working.Rec == nil:
-		writePrimeNoStackTask(b, inReplica)
+		writePrimeNoStackTask(b, inReplica, candidates)
 	case working.Rec.Name == here:
 		writePrimeStackTask(b, working.Rec, service, siblings, telemetry)
 	default:
@@ -292,9 +300,10 @@ func writePrimeOtherStackTask(b *strings.Builder, working *workingStack, service
 // writePrimeNoStackTask is the loop for a session with no stack in sight. It
 // asks rather than guesses: a confident wrong stack sends an agent to edit a
 // worktree nobody asked about.
-func writePrimeNoStackTask(b *strings.Builder, inReplica bool) {
+func writePrimeNoStackTask(b *strings.Builder, inReplica bool, candidates []stack.Record) {
 	b.WriteString("no stack. Nothing in this directory belongs to one, and devstack can not guess which feature\n")
 	b.WriteString("this session is for.\n")
+	writePrimeCandidates(b, candidates)
 	b.WriteString("\n1. Ask the user which feature this session is for.\n")
 	b.WriteString("2. To see a change run, cut a stack for it: devstack stack create <name> --repos <service>\n")
 	b.WriteString("   Then work in the directory that command prints.\n")
@@ -304,6 +313,82 @@ func writePrimeNoStackTask(b *strings.Builder, inReplica bool) {
 		return
 	}
 	b.WriteString("A change you make here reaches base only on the default branch, after `devstack workspace up`.\n")
+}
+
+// primeCandidateRows bounds the list a briefing carries. A workspace can hold
+// more stacks than a reader will weigh, and the point of the list is to make one
+// question answerable, not to reproduce `devstack stack list`.
+const primeCandidateRows = 5
+
+// writePrimeCandidates names the stacks the session could be for, strongest
+// evidence first.
+//
+// devstack reaches this branch when the directory and the branch settle nothing,
+// so it must ask. It asked with nothing beside the question, while the store held
+// a note for every stack in flight — so the agent spent a `stack list` to find
+// what devstack had already read, and the user answered an open question in
+// prose. The list does not make the guess safe. It makes the question closed.
+func writePrimeCandidates(b *strings.Builder, recs []stack.Record) {
+	if len(recs) == 0 {
+		return
+	}
+	ranked := rankStackCandidates(recs)
+	shown := ranked
+	if len(shown) > primeCandidateRows {
+		shown = shown[:primeCandidateRows]
+	}
+
+	width := 0
+	for _, r := range shown {
+		if len(r.Name) > width {
+			width = len(r.Name)
+		}
+	}
+
+	fmt.Fprintf(b, "\n%s in flight. devstack ranks them: a stack that is up first, then the newest note\n", pluralStack(len(ranked)))
+	b.WriteString("entry, then the newest stack.\n")
+	for _, r := range shown {
+		state := "down"
+		if r.Active {
+			state = "up"
+		}
+		fmt.Fprintf(b, "  ? %-*s %-4s %s\n", width, r.Name, state, orDash(firstLine(r.Note, 60)))
+	}
+	if n := len(ranked) - len(shown); n > 0 {
+		fmt.Fprintf(b, "  %d more. To see every one, run: devstack stack list\n", n)
+	}
+	b.WriteString("  The marker ? shows a guess about intent, and never a fact. Ask the user before you work on one.\n")
+}
+
+// rankStackCandidates orders the stacks by the evidence devstack already stores.
+//
+// A stack that is up has a process running now. A note appended today says
+// somebody was working here today. Neither one proves what this session is for,
+// so the order is evidence and not an answer.
+func rankStackCandidates(recs []stack.Record) []stack.Record {
+	out := append([]stack.Record(nil), recs...)
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Active != out[j].Active {
+			return out[i].Active
+		}
+		ei, iok := out[i].LatestEntry()
+		ej, jok := out[j].LatestEntry()
+		if iok != jok {
+			return iok
+		}
+		if iok && !ei.At.Equal(ej.At) {
+			return ei.At.After(ej.At)
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out
+}
+
+func pluralStack(n int) string {
+	if n == 1 {
+		return "1 stack is"
+	}
+	return fmt.Sprintf("%d stacks are", n)
 }
 
 // writePrimeReadStep names the surfaces that say what a copy did. The trace tool
@@ -630,8 +715,9 @@ func writePrimeWhatThisIs(b *strings.Builder) {
 	section(b, "DEVSTACK")
 	b.WriteString("devstack runs the local development services of this machine, and nothing else. Never point it at a\n")
 	b.WriteString("staging or a production system.\n")
-	b.WriteString("devstack is a CLI and an MCP server. The tools share the names of the commands. Call the `environment`\n")
-	b.WriteString("tool first: it lists the tools this workspace has. Among the commands with no tool: upgrade, init,\n")
+	b.WriteString("devstack is a CLI and an MCP server. The tools share the names of the commands. This briefing already\n")
+	b.WriteString("says where you are and what runs. Call the `environment` tool for the list of tools this workspace\n")
+	b.WriteString("has, or later, when this briefing is old. Among the commands with no tool: upgrade, init,\n")
 	b.WriteString("ports, dependencies, stack config, group add and remove, env list, show and remove, and every\n")
 	b.WriteString("workspace command but topology. Run those in the shell.\n")
 }
