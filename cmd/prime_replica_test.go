@@ -41,11 +41,13 @@ func TestBriefingSaysAMutatingCommandNeedsAnInstance(t *testing.T) {
 	if !strings.Contains(terms, "--stack base") {
 		t.Errorf("the briefing must name --stack base as how base is targeted:\n%s", terms)
 	}
-	if !strings.Contains(terms, "no default") {
-		t.Errorf("the briefing must say a mutating command has no default instance:\n%s", terms)
+	if !strings.Contains(terms, "the default is base") {
+		t.Errorf("the briefing must say what a mutating command does with no --stack:\n%s", terms)
 	}
-	if strings.Contains(terms, "If you do not give --stack, a command uses base") {
-		t.Errorf("the briefing still claims base is the implicit target:\n%s", terms)
+	// The fallback is only safe if the reader can see where it landed, so the
+	// briefing has to send them to the line that names the copy.
+	if !strings.Contains(terms, "names the copy it changed") {
+		t.Errorf("the briefing must say a command reports the copy it acted on:\n%s", terms)
 	}
 }
 
@@ -136,8 +138,8 @@ func TestBriefingStatesTheReplicaAndDemandsAnInstance(t *testing.T) {
 			t.Errorf("the briefing never states %q:\n%s", want, terms)
 		}
 	}
-	if !strings.Contains(terms, "no default") {
-		t.Errorf("the briefing must say that --stack has no default:\n%s", terms)
+	if !strings.Contains(terms, "the default is base") {
+		t.Errorf("the briefing must say what --stack defaults to:\n%s", terms)
 	}
 }
 

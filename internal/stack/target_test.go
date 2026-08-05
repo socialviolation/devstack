@@ -3,7 +3,6 @@ package stack
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/socialviolation/devstack/internal/replica"
@@ -54,7 +53,7 @@ func TestResolveTarget(t *testing.T) {
 		{name: "a stack worktree is that stack", dir: worktree, want: "feat"},
 		{name: "the replica is base", dir: replicaDir, want: ""},
 		{name: "an unknown name is left for the copy lookup to reject", flag: "nope", dir: checkout, want: "nope"},
-		{name: "the template checkout is not an implicit base", dir: checkout, wantErr: true},
+		{name: "the template checkout falls back to base", dir: checkout, want: ""},
 	}
 
 	for _, tc := range cases {
@@ -77,45 +76,33 @@ func TestResolveTarget(t *testing.T) {
 	}
 }
 
-// The refusal is only useful if it says what to type instead, so it names base
-// and every stack of the workspace.
-func TestResolveTargetErrorNamesBaseAndTheStacks(t *testing.T) {
-	ws, checkout, _, _ := seedTarget(t)
-	t.Chdir(checkout)
-
-	_, err := ResolveTarget(ws, "")
-	if err == nil {
-		t.Fatal("expected an error in the template checkout")
-	}
-	for _, want := range []string{"--stack base", "feat"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error must name %q, got: %v", want, err)
-		}
-	}
-}
-
-// A workspace with no stacks cannot list any, so the refusal has to say that
-// rather than print an empty list.
-func TestResolveTargetErrorWithNoStacks(t *testing.T) {
+// A workspace with no stacks resolves to base like any other directory that
+// names no copy. There is nothing to disambiguate.
+func TestResolveTargetWithNoStacksIsBase(t *testing.T) {
 	ws := newBase(t)
 	t.Chdir(ws.Path)
 
-	_, err := ResolveTarget(ws, "")
-	if err == nil {
-		t.Fatal("expected an error in the template checkout")
+	got, err := ResolveTarget(ws, "")
+	if err != nil {
+		t.Fatalf("ResolveTarget: %v", err)
 	}
-	if !strings.Contains(err.Error(), "--stack base") || !strings.Contains(err.Error(), "no stacks") {
-		t.Errorf("error must offer base and say there are no stacks, got: %v", err)
+	if got != "" {
+		t.Errorf("ResolveTarget in a workspace with no stacks = %q, want base", got)
 	}
 }
 
-// Another workspace's stack worktree is not this workspace's instance: resolving
-// it would send the command to a stack the base does not own.
+// Another workspace's stack worktree is not this workspace's copy. Standing in
+// one resolves to this workspace's base, and never to that stack — resolving it
+// would send the command to a stack the base does not own.
 func TestResolveTargetIgnoresAnotherWorkspacesStack(t *testing.T) {
 	ws, _, worktree, _ := seedTarget(t)
 	t.Chdir(worktree)
 
-	if _, err := ResolveTarget(&workspace.Workspace{Name: "other", Path: ws.Path}, ""); err == nil {
-		t.Error("a stack of workspace navexa must not resolve as a copy of workspace other")
+	got, err := ResolveTarget(&workspace.Workspace{Name: "other", Path: ws.Path}, "")
+	if err != nil {
+		t.Fatalf("ResolveTarget: %v", err)
+	}
+	if got != "" {
+		t.Errorf("a stack of workspace navexa resolved as %q for workspace other, want base", got)
 	}
 }

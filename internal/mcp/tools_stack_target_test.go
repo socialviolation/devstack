@@ -335,21 +335,19 @@ func TestStackResourceNamesScopedToWorkspace(t *testing.T) {
 	}
 }
 
-// A tool that starts or stops something takes no implicit base: with no stack
-// parameter and a working directory inside neither a stack nor the replica, it
-// refuses and names what to pass.
-func TestMutatingToolRefusesWithoutATarget(t *testing.T) {
+// A tool that starts or stops something takes base when nothing names a copy,
+// the same as the CLI. It used to refuse and make the caller pass stack="base".
+func TestMutatingToolDefaultsToBase(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	s := server.NewMCPServer("test", "0.0.0")
 	ws := &workspace.Workspace{Name: "navexa", Path: t.TempDir()}
-	registerStopTool(s, nil, "api", &config.WorkspaceConfig{}, ws)
+	registerStopTool(s, tilt.NewClient("localhost", 1), "api", &config.WorkspaceConfig{}, ws)
 
+	// It fails here on the dead daemon port, which is the point: it got past
+	// target resolution instead of refusing before it.
 	out := safetyCallTool(t, s, "stop", map[string]any{"service": "api"})
-	if !strings.Contains(out, "--stack base") {
-		t.Errorf("stop must refuse without a target and name base, got: %s", out)
-	}
-	if strings.Contains(out, "Stopped") {
-		t.Errorf("stop must not have stopped anything, got: %s", out)
+	if strings.Contains(out, "no copy named") {
+		t.Errorf("stop must resolve to base rather than refuse, got: %s", out)
 	}
 }
 

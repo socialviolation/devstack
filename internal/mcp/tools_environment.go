@@ -54,7 +54,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 			sb.WriteString(line)
 		}
 		sb.WriteString("copies: base runs from a replica of the workspace, and never from the user's checkouts. Those checkouts are the template devstack builds the replica from, and nothing runs in them.\n" +
-			"  start, stop, restart and env_use have no default copy: pass stack=\"<name>\" or stack=\"base\". If you pass neither, devstack reads the copy from the working directory, and the call fails where that directory is neither. The read-only tools still default to base.\n" +
+			"  start, stop, restart and env_use take the copy from stack=\"<name>\" or stack=\"base\". With neither, devstack reads the copy from the working directory, and uses base where that directory is neither a stack nor the replica. The read-only tools default to base too.\n" +
 			"  The base tool works on the replica. action=\"path\" prints where base runs from. action=\"sync\" moves the replica to each service's default branch tip, and it restarts nothing. An edit in a checkout reaches a running base copy only after it is on the default branch, that sync has run, and the copy has restarted (restart tool, stack=\"base\"). To see a change run now, put it in a stack.\n")
 		if line := servicesSummary(workspacePath, defaultService); line != "" {
 			sb.WriteString(line)

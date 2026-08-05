@@ -734,8 +734,9 @@ func writePrimeTerms(b *strings.Builder) {
 	b.WriteString("  base   every service no stack replaces. base runs a replica: one worktree per service at the default\n")
 	b.WriteString("         branch tip. Your own checkout is a template, and it runs nothing. An edit there reaches base\n")
 	b.WriteString("         only on the default branch, after `devstack workspace up`\n")
-	b.WriteString("Every command that starts, stops or restarts a copy needs `--stack <name>`, or `--stack base` for base.\n")
-	b.WriteString("It has no default: with no flag it acts on the stack or replica your directory is in, and refuses elsewhere.\n")
+	b.WriteString("A command that starts, stops or restarts a copy names it with `--stack <name>`, or `--stack base` for base.\n")
+	b.WriteString("With no flag it acts on the stack or replica your directory is in, and the default is base anywhere else.\n")
+	b.WriteString("Each command names the copy it changed. A base copy has no :stack suffix, so read that line to confirm it.\n")
 	writePrimeStates(b)
 }
 
@@ -998,9 +999,9 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 		b.WriteString("  The directory under each copy is the directory that copy RUNS. base has no replica built yet, so for now\n")
 		b.WriteString("  it runs your checkout. `devstack workspace up` builds one, and after that your checkout runs nothing.\n")
 	}
-	b.WriteString("  To start, stop or restart one, name it: `--stack <name>`, or `--stack base`. There is no default.\n")
+	b.WriteString("  To start, stop or restart one, name it: `--stack <name>`, or `--stack base`.\n")
 	b.WriteString("  With no flag the command uses the copy whose directory you are in: a stack worktree, or the replica.\n")
-	b.WriteString("  In a plain checkout it refuses, and it does not guess. Read-only commands need no flag.\n")
+	b.WriteString("  In a plain checkout it uses base. Each command names the copy it changed, so read that line.\n")
 	b.WriteString("  To reach a copy over the network, use its port.\n")
 }
 

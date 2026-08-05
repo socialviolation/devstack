@@ -37,9 +37,9 @@ each service, at the default branch tip. Your checkout is the template, and
 devstack builds the replica from it.
 
 Base is not a stack, and no stack can carry the name "base". A command that
-starts, stops or writes takes --stack base to act on base. That command has no
-default. With no --stack, it acts on the stack or the replica that your directory
-is in. Anywhere else, it refuses.
+starts, stops or writes takes --stack base to act on base. With no --stack, it
+acts on the stack or the replica that your directory is in, and on base anywhere
+else.
 
 The telemetry queries are the exception. 'devstack otel traces' with no --stack
 searches base alone. Pass --stack <name> for one stack, or --stack all for base
