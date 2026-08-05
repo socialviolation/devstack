@@ -63,21 +63,12 @@ func init() {
 	primeCmd.Flags().Bool("json", false, "Write the Claude Code SessionStart hookSpecificOutput envelope")
 }
 
-// workingStack is the stack a session is probably for, and why devstack thinks
-// so. Certain means the working directory settles it; otherwise it is a
-// suggestion the agent should confirm, because acting on the wrong stack edits
-// the wrong worktree.
 type workingStack struct {
 	Rec     *stack.Record
 	Reason  string
 	Certain bool
 }
 
-// inferWorkingStack picks the stack this session is for, strongest signal first:
-// the worktree you are standing in settles it outright; a checked-out branch
-// that matches a stack's is near-certain; a single stack overlaying this service
-// is a guess worth offering. Anything else is left ambiguous on purpose — a
-// confident wrong answer sends an agent to edit a worktree nobody asked about.
 func inferWorkingStack(ws *workspace.Workspace, service, branch string) *workingStack {
 	if _, rec, err := stack.DetectFromCwd(); err == nil && rec != nil {
 		return &workingStack{Rec: rec, Reason: "you are in the worktree of this stack", Certain: true}
@@ -165,10 +156,6 @@ func buildPrime() (string, error) {
 		branch = gitinfo.ReadAll(map[string]string{repo: repo})[repo].Label()
 	}
 
-	// Where the caller physically is, read from the filesystem and nothing else.
-	// Everything below distinguishes this from what devstack infers the session
-	// is about: a stack whose branch matches, or the only stack that runs this
-	// service, is a guess about intent and says nothing about the directory.
 	here := "base"
 	inReplica := false
 	var hereRec *stack.Record
@@ -187,9 +174,6 @@ func buildPrime() (string, error) {
 
 	working := inferWorkingStack(ws, service, branch)
 
-	// The candidates are read only where devstack failed to name a stack. That
-	// is the one branch of the task block that asks the user a question, and the
-	// records are what turn an open question into a closed one.
 	var candidates []stack.Record
 	if working == nil {
 		candidates, _ = stack.LoadStore(ws.Name)
@@ -224,15 +208,6 @@ func buildPrime() (string, error) {
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
-// writePrimeTask states the loop the session is here to run, with the names of
-// this stack and its services already in it.
-//
-// It is first, and it is the only block that says what to do. Everything below
-// it says where you are and what runs, which an agent can act on only after it
-// knows its job. The names are substituted because a briefing that says
-// "restart the service you changed" is a rule the reader has to apply, and one
-// that says `devstack service restart navexa-api --stack fx-rates` is a command
-// it can run.
 func writePrimeTask(b *strings.Builder, service, here string, working *workingStack, siblings map[string]string, telemetry, inReplica bool, candidates []stack.Record) {
 	b.WriteString("## YOUR TASK\n")
 	switch {
@@ -245,7 +220,6 @@ func writePrimeTask(b *strings.Builder, service, here string, working *workingSt
 	}
 }
 
-// writePrimeStackTask is the loop for a session that stands in its stack.
 func writePrimeStackTask(b *strings.Builder, rec *stack.Record, service string, siblings map[string]string, telemetry bool) {
 	fmt.Fprintf(b, "stack %s", rec.Name)
 	if len(rec.Overlay) > 0 {
@@ -272,9 +246,6 @@ func writePrimeStackTask(b *strings.Builder, rec *stack.Record, service string, 
 	fmt.Fprintf(b, "To make this stack run one more service, add it: devstack stack add %s <service>\n", rec.Name)
 }
 
-// writePrimeOtherStackTask is the loop for a session that is not in the stack
-// the evidence points at. The stack is a guess about intent, so step one is the
-// question, and no step edits anything before it is answered.
 func writePrimeOtherStackTask(b *strings.Builder, working *workingStack, service string) {
 	rec := working.Rec
 	fmt.Fprintf(b, "stack %s · a guess: %s\n", rec.Name, working.Reason)
@@ -297,9 +268,6 @@ func writePrimeOtherStackTask(b *strings.Builder, working *workingStack, service
 	b.WriteString("keeps base current. Do not change base to finish this feature.\n")
 }
 
-// writePrimeNoStackTask is the loop for a session with no stack in sight. It
-// asks rather than guesses: a confident wrong stack sends an agent to edit a
-// worktree nobody asked about.
 func writePrimeNoStackTask(b *strings.Builder, inReplica bool, candidates []stack.Record) {
 	b.WriteString("no stack. Nothing in this directory belongs to one, and devstack can not guess which feature\n")
 	b.WriteString("this session is for.\n")
@@ -315,19 +283,8 @@ func writePrimeNoStackTask(b *strings.Builder, inReplica bool, candidates []stac
 	b.WriteString("A change you make here reaches base only on the default branch, after `devstack workspace up`.\n")
 }
 
-// primeCandidateRows bounds the list a briefing carries. A workspace can hold
-// more stacks than a reader will weigh, and the point of the list is to make one
-// question answerable, not to reproduce `devstack stack list`.
 const primeCandidateRows = 5
 
-// writePrimeCandidates names the stacks the session could be for, strongest
-// evidence first.
-//
-// devstack reaches this branch when the directory and the branch settle nothing,
-// so it must ask. It asked with nothing beside the question, while the store held
-// a note for every stack in flight — so the agent spent a `stack list` to find
-// what devstack had already read, and the user answered an open question in
-// prose. The list does not make the guess safe. It makes the question closed.
 func writePrimeCandidates(b *strings.Builder, recs []stack.Record) {
 	if len(recs) == 0 {
 		return
@@ -360,11 +317,6 @@ func writePrimeCandidates(b *strings.Builder, recs []stack.Record) {
 	b.WriteString("  The marker ? shows a guess about intent, and never a fact. Ask the user before you work on one.\n")
 }
 
-// rankStackCandidates orders the stacks by the evidence devstack already stores.
-//
-// A stack that is up has a process running now. A note appended today says
-// somebody was working here today. Neither one proves what this session is for,
-// so the order is evidence and not an answer.
 func rankStackCandidates(recs []stack.Record) []stack.Record {
 	out := append([]stack.Record(nil), recs...)
 	sort.SliceStable(out, func(i, j int) bool {
@@ -411,10 +363,6 @@ func writePrimeStackNote(b *strings.Builder, rec *stack.Record) {
 	}
 }
 
-// writePrimeOverlayDirs lists the directories the work belongs in. A stack
-// overlays a few services and borrows every other one from base, and an agent
-// sent to finish a feature reads the whole workspace as its subject unless
-// something draws the edge.
 func writePrimeOverlayDirs(b *strings.Builder, rec *stack.Record) {
 	width := 0
 	for _, svc := range rec.Overlay {
@@ -429,12 +377,6 @@ func writePrimeOverlayDirs(b *strings.Builder, rec *stack.Record) {
 	}
 }
 
-// writePrimeSiblingCaution covers the other side of the edge, which is not the
-// same side. A service outside the worktrees is base's copy. A service inside a
-// worktree that the stack does not overlay is neither: its code is here, on the
-// branch of the stack, and no copy anywhere runs it. Saying "every other service
-// is base's copy" in that directory is false, and it reads as permission to edit
-// the code the sentence just excluded.
 func writePrimeSiblingCaution(b *strings.Builder, siblings map[string]string) {
 	names := sortedServices(siblings)
 	if len(names) == 0 {
@@ -445,8 +387,6 @@ func writePrimeSiblingCaution(b *strings.Builder, siblings map[string]string) {
 	b.WriteString("   one here goes on the branch of this stack, and no process runs it.\n")
 }
 
-// taskService names the service the restart step acts on: the one in hand, or
-// the first the stack overlays when the directory names none.
 func taskService(rec *stack.Record, service string) string {
 	if service != "" {
 		return service
@@ -457,9 +397,6 @@ func taskService(rec *stack.Record, service string) string {
 	return "<service>"
 }
 
-// stackSiblings names the services whose code a stack's worktrees hold, and
-// which the stack does not run, with the directory of each.
-//
 // git cuts a worktree of a whole repository and never of a subdirectory, so a
 // stack that overlays one service of a repository gets the code of every other
 // service in that repository too. Nothing runs that code: base runs its own copy
@@ -493,10 +430,6 @@ func stackSiblings(rw *config.ResolvedWorkspace, rec *stack.Record) map[string]s
 	return out
 }
 
-// splitStackWorktree finds the two roots that one worktree path implies: the
-// directory of the whole repository inside the stack, and the root of that
-// repository in the base checkout.
-//
 // devstack builds the worktree path as <stack root>/<repository directory>/<path
 // of the service below its repository>. The repository directory is always one
 // element, so the same suffix cuts the base path and gives its repository root.
@@ -530,13 +463,6 @@ func sortedServices(m map[string]string) []string {
 	return out
 }
 
-// writePrimeStackDirectory says what a directory of a stack worktree is when the
-// stack runs nothing from it.
-//
-// config.ResolveIdentity answers with no service in that directory, because the
-// generated manifest of a stack lists the overlay only. The whole THIS SERVICE
-// section then disappears for the very code the session is looking at, and
-// silence there reads as "an ordinary service directory of this stack".
 func writePrimeStackDirectory(b *strings.Builder, rec *stack.Record, here, cwd string, siblings map[string]string) {
 	svc := siblingAt(siblings, cwd)
 	if svc == "" {
@@ -553,8 +479,6 @@ func writePrimeStackDirectory(b *strings.Builder, rec *stack.Record, here, cwd s
 	fmt.Fprintf(b, "To make this stack run %s, run: devstack stack add %s %s\n", svc, here, svc)
 }
 
-// siblingAt names the service whose code the caller stands in, out of the
-// services the worktrees hold and the stack does not run.
 func siblingAt(siblings map[string]string, cwd string) string {
 	if cwd == "" {
 		return ""
@@ -574,9 +498,6 @@ func siblingAt(siblings map[string]string, cwd string) string {
 	return ""
 }
 
-// inTemplateCheckout reports whether the caller stands in the template that
-// devstack builds the replica from. base runs the replica, so nothing in the
-// template runs, and the caller is in no copy at all.
 func inTemplateCheckout(ws *workspace.Workspace, here string, inReplica bool) bool {
 	return here == "base" && !inReplica && config.HasWorkspaceManifest(replica.Root(ws))
 }
@@ -601,9 +522,6 @@ func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, he
 	}
 }
 
-// writePrimeCloseOut carries the end of a stack. `devstack stack rm` deletes the
-// worktrees and keeps the branch, so the session that closes a stack meets a
-// decision it can not make alone: merge the work, or throw it away.
 func writePrimeCloseOut(b *strings.Builder, branch string) {
 	if branch == "" {
 		branch = "<branch>"
@@ -613,12 +531,6 @@ func writePrimeCloseOut(b *strings.Builder, branch string) {
 	fmt.Fprintf(b, "   After a merge, delete the branch: git branch -d %s\n", branch)
 }
 
-// writePrimeSafety carries the two rules about what a repository commits.
-//
-// devstack no longer writes them into AGENTS.md, and no live fact replaces them:
-// they are about a file an agent is free to commit at any moment, in a
-// repository devstack does not own. So the briefing is the only place left that
-// states them, and it states them in every session.
 func writePrimeSafety(b *strings.Builder) {
 	section(b, "BEFORE YOU COMMIT")
 	b.WriteString("  Never commit `devstack.service.yaml`. It holds absolute paths of this machine. Add it to `.gitignore`.\n")
@@ -630,12 +542,6 @@ func writePrimeSafety(b *strings.Builder) {
 func writePrimeApplies(b *strings.Builder, ws *workspace.Workspace, rw *config.ResolvedWorkspace) {
 	var lines []string
 	if envs := sortedEnvNames(rw); len(envs) > 0 {
-		// A name says nothing about what selecting an environment does, so each
-		// one carries its own description. The column is labelled because an
-		// unlabelled "unset" beside an environment reads as "this environment
-		// sets nothing" — which is the opposite of the truth, and was read that
-		// way while an environment was live on a stack. What is unset is the
-		// description, and the column heading is what says so.
 		lines = append(lines, fmt.Sprintf("  environments  active: %s. Each environment sets different configuration values.", orDash(rw.Manifest.Workspace.Env)))
 		lines = append(lines, fmt.Sprintf("                %-10s %s", "NAME", "PURPOSE"))
 		for _, n := range envs {
@@ -658,15 +564,6 @@ func writePrimeApplies(b *strings.Builder, ws *workspace.Workspace, rw *config.R
 	}
 
 	if rw.Manifest.Observability.IsEnabled() {
-		// Which backend stores the telemetry is devstack's problem, not the
-		// agent's: every query resolves the backend, endpoint and credentials
-		// itself. Naming the product invites an agent to go around devstack and
-		// query it directly, which is how you get a query that ignores the
-		// workspace scoping.
-		// The scoping sentence states what the commands do: `otel traces` with
-		// no flag returns base alone, the same as the investigate tool with no
-		// stack, and `otel logs` has no --stack at all. An agent told the
-		// opposite reads a stack's traffic as base's.
 		lines = append(lines,
 			"  telemetry     every copy sends traces and logs. Query them with `devstack otel traces` and `devstack otel logs`,",
 			"                or with the investigate tool over MCP. The attribute devstack.stack identifies each copy.",
@@ -692,8 +589,6 @@ func sortedEnvNames(rw *config.ResolvedWorkspace) []string {
 	return names
 }
 
-// countHooks counts every hook this workspace declares, workspace-level and
-// per-service, so the briefing can say whether lifecycle automation runs here.
 func countHooks(ws *workspace.Workspace, rw *config.ResolvedWorkspace) int {
 	n := len(rw.Manifest.Hooks)
 	for _, svc := range rw.Services {
@@ -704,13 +599,6 @@ func countHooks(ws *workspace.Workspace, rw *config.ResolvedWorkspace) int {
 	return n
 }
 
-// writePrimeWhatThisIs states the few facts an agent that has never met devstack
-// will otherwise get wrong. Each line earns its place by naming a wrong
-// conclusion it prevents, not by describing a feature: that a service has
-// several running copies, that "stopped" is a registration state rather than a
-// fault, and that none of this is safe to point at production. Everything else
-// about devstack is a `devstack <command> --help` away and does not belong in
-// every session.
 func writePrimeWhatThisIs(b *strings.Builder) {
 	section(b, "DEVSTACK")
 	b.WriteString("devstack runs the local development services of this machine, and nothing else. Never point it at a\n")
@@ -722,9 +610,6 @@ func writePrimeWhatThisIs(b *strings.Builder) {
 	b.WriteString("workspace command but topology. Run those in the shell.\n")
 }
 
-// writePrimeTerms defines the words the rest of the briefing uses. It is its own
-// section because a reader who already knows them can skip it, and a reader who
-// does not cannot parse a single line below without it.
 func writePrimeTerms(b *strings.Builder) {
 	section(b, "TERMS")
 	b.WriteString("  stack  a group of services you cut for one feature. It has its own branch, its own directories and\n")
@@ -740,11 +625,6 @@ func writePrimeTerms(b *strings.Builder) {
 	writePrimeStates(b)
 }
 
-// writePrimeStates defines every state word devstack prints, in one place. The
-// same stack was reported "active" by one command, "idle" by another and
-// "stopped" by this briefing, and nothing said the three were one state. A word
-// that appears on no surface, or a surface that prints a word absent from here,
-// is the drift returning — TestStateWordsAreDefinedOnce fails on both.
 func writePrimeStates(b *strings.Builder) {
 	b.WriteString("\nSTATES. A stack is up or down. A copy has one of these states:\n")
 	b.WriteString("  running    the process is up and healthy\n")
@@ -757,11 +637,6 @@ func writePrimeStates(b *strings.Builder) {
 	b.WriteString("  unknown    the daemon does not answer. Run `devstack workspace up`\n")
 }
 
-// writePrimeLiveCount reports how much of the workspace is up. The daemon runs
-// one resource per copy, so the total counts copies and not services — a
-// workspace of 16 services reporting "17 running" was read as more services than
-// it has. The base and stack halves are split because they are the two numbers a
-// reader is about to act on, and because `devstack status` prints the same split.
 func writePrimeLiveCount(b *strings.Builder, ws *workspace.Workspace) {
 	view, err := tilt.NewClient("localhost", workspace.HostTiltPort).GetView()
 	if err != nil {
@@ -780,26 +655,11 @@ func writePrimeLiveCount(b *strings.Builder, ws *workspace.Workspace) {
 			base++
 		}
 	}
-	// "in the daemon" would count the stopped copies too, and this counts only
-	// the running ones. The briefing defines "stopped" as registered-not-started
-	// on the same page, so the loose phrasing contradicted itself.
 	fmt.Fprintf(b, "  live          %s now, on daemon port %d: %d in base, %d in stacks\n",
 		pluralCopyRunning(base+stacked), workspace.HostTiltPort, base, stacked)
 	writePrimeBuild(b)
 }
 
-// writePrimeBuild names the binary the session is talking to, and says so only
-// when it is not the current one.
-//
-// This is the surface the check exists for. An agent inherits whichever devstack
-// was on the path, and a stale one answers current commands with "unknown
-// command" and serves MCP tool descriptions for tools that were renamed —
-// neither of which names the cause. The briefing is the one place every session
-// reads, so it is the one place worth saying it.
-//
-// It is also where the check refreshes: at most once a day, bounded by a short
-// timeout, and silent on every failure. `devstack --version` reads what this
-// leaves behind rather than paying for its own.
 func writePrimeBuild(b *strings.Builder) {
 	rev := buildRevision()
 	if rev == "" {
@@ -813,10 +673,6 @@ func writePrimeBuild(b *strings.Builder) {
 	fmt.Fprintf(b, "                %s\n", line)
 }
 
-// writePrimeReload gives the reload verdict for the service in hand rather than
-// the general rule, because the general rule is what an agent skips. A service
-// that does not self-watch keeps executing old code after an edit, and the
-// resulting "my fix did nothing" is expensive to debug from the wrong end.
 func writePrimeReload(b *strings.Builder, rw *config.ResolvedWorkspace, service, here string, inReplica, replicaBuilt bool, working *workingStack) {
 	if service == "" {
 		return
@@ -830,9 +686,6 @@ func writePrimeReload(b *strings.Builder, rw *config.ResolvedWorkspace, service,
 		return
 	}
 
-	// A restart names an instance or it is refused, so the hint always carries
-	// one. Base is the honest fallback: it is the copy a directory that settles
-	// nothing is nearest to.
 	target := service + " --stack base"
 	switch {
 	case here != "base":
@@ -841,9 +694,6 @@ func writePrimeReload(b *strings.Builder, rw *config.ResolvedWorkspace, service,
 		target = service + " --stack " + working.Rec.Name
 	}
 
-	// Reload is a property of the directory the copy runs from, not of yours.
-	// For base that directory is the replica, which nobody edits, so "applies
-	// without a restart" is a claim about a stack's worktree only.
 	switch {
 	case looksHotReloading(runCmd) || looksHotReloading(resolveRunScript(runCmd, svc.RepoPath)):
 		fmt.Fprintf(b, "\n  reload        automatic (run command: `%s`). An edit in the directory a copy runs from applies\n", runCmd)
@@ -864,14 +714,6 @@ func writePrimeReload(b *strings.Builder, rw *config.ResolvedWorkspace, service,
 	b.WriteString("                If you change the configuration or an environment variable, you must restart the service.\n")
 }
 
-// writePrimeInstances is the one table that answers the three questions an agent
-// has about the service in front of it: where is it running, on which port, and
-// what is that copy for. Base and every stack are the same kind of thing — an
-// instance — so splitting them across two blocks made the reader join them up,
-// and left base's own port stated nowhere at all.
-// template says that the caller stands in the template checkout. base runs the
-// replica there, so the caller is in no copy on this table, and the marker that
-// says otherwise has to go.
 func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config.ResolvedWorkspace, service, here string, working *workingStack, template bool) {
 	view, err := tilt.NewClient("localhost", workspace.HostTiltPort).GetView()
 	if err != nil {
@@ -898,10 +740,6 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 
 	type instance struct{ name, port, state, branch, dir, note string }
 
-	// A copy the daemon does not hold is down, and the STATES block on this same
-	// page defines that word. A stack row already prints it. The base row printed
-	// "(none)", which no surface of devstack defines, so a reader met a state word
-	// that the briefing beside it never explained.
 	baseState := states[service]
 	if baseState == "" {
 		baseState = "down"
@@ -909,9 +747,6 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 	rows := []instance{{name: "base", port: "-", state: baseState}}
 	replicaBuilt := false
 	if svc, ok := rw.Services[service]; ok {
-		// The directory base RUNS from, which is the replica's worktree and never
-		// the checkout this command was typed in. Printing the checkout here sent
-		// an agent to edit a directory whose code no process executes.
 		rows[0].dir, replicaBuilt = replicaDir(ws, service, svc.RepoPath)
 		if svc.Manifest != nil {
 			if p, ok := svc.Manifest.Ports["http"]; ok {
@@ -961,15 +796,6 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 	}
 
 	for _, r := range rows {
-		// ▸ is a filesystem fact: the directory this command ran in. ? is a
-		// guess about intent. Marking a guess with ▸ told an agent it was
-		// standing somewhere it was not, and the worktree path beside it made
-		// the claim look verified.
-		//
-		// The template checkout is no copy at all. This same page says that
-		// nothing runs there and that base runs the replica, and then it marked
-		// the base row ▸ and printed the replica's path beside it. So the one
-		// marker that is a filesystem fact contradicted the two lines above it.
 		marker := " "
 		switch {
 		case r.name == here && !template:
@@ -1005,9 +831,6 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 	b.WriteString("  To reach a copy over the network, use its port.\n")
 }
 
-// replicaDir is the worktree base runs a service from, and whether there is one.
-// Until the replica is built the daemon really does run the checkout, so saying
-// otherwise here would be as wrong as the path it replaced.
 func replicaDir(ws *workspace.Workspace, service, fallback string) (string, bool) {
 	rw, err := replica.Resolve(ws)
 	if err != nil {
@@ -1019,8 +842,6 @@ func replicaDir(ws *workspace.Workspace, service, fallback string) (string, bool
 	return fallback, false
 }
 
-// pluralCopy keeps the count grammatical. "1 copy(s)" makes a reader stop and
-// parse, which is the opposite of what a briefing is for.
 func pluralCopyRunning(n int) string {
 	if n == 1 {
 		return "1 copy runs"
@@ -1035,9 +856,6 @@ func pluralCopy(n int) string {
 	return fmt.Sprintf("%d copies", n)
 }
 
-// section writes a heading. The briefing is injected whole into a session, so a
-// reader cannot skip to the part it needs unless the parts are named. The
-// headings are short because every one of them is paid for on every session.
 func section(b *strings.Builder, title string) {
 	fmt.Fprintf(b, "\n## %s\n", title)
 }

@@ -14,8 +14,6 @@ func entry(at time.Time, text string) []stack.NoteEntry {
 	return []stack.NoteEntry{{At: at, Text: text}}
 }
 
-// A stack that is up has a process running now, which outranks every stack that
-// has none.
 func TestARunningStackOutranksADownOne(t *testing.T) {
 	got := rankStackCandidates([]stack.Record{
 		{Name: "old-down", CreatedAt: day(4), Log: entry(day(5), "touched today")},
@@ -26,8 +24,6 @@ func TestARunningStackOutranksADownOne(t *testing.T) {
 	}
 }
 
-// Between two stacks in the same state, the one somebody wrote a note entry on
-// most recently is the better guess.
 func TestTheNewestNoteEntryWinsWithinAState(t *testing.T) {
 	got := rankStackCandidates([]stack.Record{
 		{Name: "stale", Active: true, CreatedAt: day(5), Log: entry(day(1), "last week")},
@@ -38,8 +34,6 @@ func TestTheNewestNoteEntryWinsWithinAState(t *testing.T) {
 	}
 }
 
-// A stack with any entry beats one with none, whatever the dates say, because
-// an absent entry is no evidence rather than old evidence.
 func TestAStackWithAnEntryOutranksOneWithout(t *testing.T) {
 	got := rankStackCandidates([]stack.Record{
 		{Name: "silent", CreatedAt: day(6)},
@@ -60,8 +54,6 @@ func TestTheNewestStackBreaksARemainingTie(t *testing.T) {
 	}
 }
 
-// The whole point of the list: the agent asks a closed question. So the note
-// that identifies each stack has to be on the row.
 func TestTheCandidateRowsCarryTheNote(t *testing.T) {
 	var b strings.Builder
 	writePrimeCandidates(&b, []stack.Record{
@@ -77,9 +69,6 @@ func TestTheCandidateRowsCarryTheNote(t *testing.T) {
 	}
 }
 
-// A candidate is a guess about intent. The briefing marks a guess ? and reserves
-// ▸ for the directory the caller is actually in, so a candidate row must never
-// carry ▸.
 func TestACandidateRowIsMarkedAsAGuess(t *testing.T) {
 	var b strings.Builder
 	writePrimeCandidates(&b, []stack.Record{{Name: "fx-rates", Note: "NAV-412"}})
@@ -96,8 +85,6 @@ func TestACandidateRowIsMarkedAsAGuess(t *testing.T) {
 	}
 }
 
-// The briefing is generated into every session against a character budget, so
-// the list is bounded and says what it left out.
 func TestTheCandidateListIsBoundedAndSaysSo(t *testing.T) {
 	var recs []stack.Record
 	for i := 0; i < primeCandidateRows+3; i++ {
@@ -115,8 +102,6 @@ func TestTheCandidateListIsBoundedAndSaysSo(t *testing.T) {
 	}
 }
 
-// With no stacks in the store there is nothing to rank, and the task block must
-// read exactly as it did before.
 func TestNoStacksAddsNothingToTheTaskBlock(t *testing.T) {
 	var b strings.Builder
 	writePrimeCandidates(&b, nil)
@@ -125,7 +110,6 @@ func TestNoStacksAddsNothingToTheTaskBlock(t *testing.T) {
 	}
 }
 
-// The list gives the question its material. It must not replace the question.
 func TestTheTaskBlockStillAsksWhenItHasCandidates(t *testing.T) {
 	var b strings.Builder
 	writePrimeTask(&b, "api", "base", nil, nil, false, false, []stack.Record{

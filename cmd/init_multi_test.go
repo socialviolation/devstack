@@ -17,7 +17,6 @@ func writeSvc(t *testing.T, path, name string) {
 	}
 }
 
-// The first service in a directory keeps the name every repository already has.
 func TestInitWritesTheOriginalNameForTheFirstService(t *testing.T) {
 	dir := t.TempDir()
 
@@ -30,7 +29,6 @@ func TestInitWritesTheOriginalNameForTheFirstService(t *testing.T) {
 	}
 }
 
-// A second service cannot take the same file, so it gets one named after it.
 func TestInitNamesTheFileAfterEachServiceAfterTheFirst(t *testing.T) {
 	dir := t.TempDir()
 	writeSvc(t, filepath.Join(dir, "devstack.service.yaml"), "api")
@@ -44,9 +42,6 @@ func TestInitNamesTheFileAfterEachServiceAfterTheFirst(t *testing.T) {
 	}
 }
 
-// The regression this guards: --force must overwrite the service the caller
-// named. Returning devstack.service.yaml for every name would let `init --force
-// --name worker` destroy the definition of api.
 func TestInitTargetsTheFileThatDeclaresTheNamedService(t *testing.T) {
 	dir := t.TempDir()
 	writeSvc(t, filepath.Join(dir, "devstack.service.yaml"), "api")
@@ -69,8 +64,6 @@ func TestInitTargetsTheFileThatDeclaresTheNamedService(t *testing.T) {
 	}
 }
 
-// A file devstack cannot parse may declare anything, so it is never the target:
-// the new service takes its own name and overwrites nothing.
 func TestInitNeverWritesOverAManifestItCannotRead(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "devstack.service.yaml"), []byte("{{{ not yaml"), 0644); err != nil {

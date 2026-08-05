@@ -9,9 +9,6 @@ import (
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
-// seedTarget registers a base workspace, records a stack with one worktree, and
-// creates the replica directory base runs from: the three places a working
-// directory can be, and which the resolver has to tell apart.
 func seedTarget(t *testing.T) (ws *workspace.Workspace, checkout, worktree, replicaDir string) {
 	t.Helper()
 	ws = newBase(t)
@@ -76,8 +73,6 @@ func TestResolveTarget(t *testing.T) {
 	}
 }
 
-// A workspace with no stacks resolves to base like any other directory that
-// names no copy. There is nothing to disambiguate.
 func TestResolveTargetWithNoStacksIsBase(t *testing.T) {
 	ws := newBase(t)
 	t.Chdir(ws.Path)
@@ -91,9 +86,6 @@ func TestResolveTargetWithNoStacksIsBase(t *testing.T) {
 	}
 }
 
-// Another workspace's stack worktree is not this workspace's copy. Standing in
-// one resolves to this workspace's base, and never to that stack — resolving it
-// would send the command to a stack the base does not own.
 func TestResolveTargetIgnoresAnotherWorkspacesStack(t *testing.T) {
 	ws, _, worktree, _ := seedTarget(t)
 	t.Chdir(worktree)

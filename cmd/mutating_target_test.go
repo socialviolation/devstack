@@ -19,16 +19,10 @@ func newEnvTestCmd(stackName, service string) *cobra.Command {
 	return c
 }
 
-// noTargetRefusal reports whether an error is the resolver refusing for want of
-// a named copy, rather than any of the failures a command can still hit without
-// a daemon. The refusal is gone, so no mutating verb may produce it.
 func noTargetRefusal(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "no copy named")
 }
 
-// The template checkout names no copy, so a restart typed there means base. It
-// used to refuse and make the caller type `--stack base`, which was the only
-// copy it could have meant.
 func TestServiceRestartInTheCheckoutUsesBase(t *testing.T) {
 	buildStackScenario(t)
 	base, err := workspace.FindByName("navexa")
@@ -42,7 +36,6 @@ func TestServiceRestartInTheCheckoutUsesBase(t *testing.T) {
 	}
 }
 
-// Same for stopping and starting, so no mutating verb keeps the old refusal.
 func TestServiceStartAndStopUseBaseInTheCheckout(t *testing.T) {
 	buildStackScenario(t)
 	base, err := workspace.FindByName("navexa")
@@ -61,8 +54,6 @@ func TestServiceStartAndStopUseBaseInTheCheckout(t *testing.T) {
 	}
 }
 
-// env use points a scope at an environment. With no --stack that scope is base,
-// and with --service it is that service — neither needs the caller to say so.
 func TestEnvUseDefaultsToBase(t *testing.T) {
 	buildStackScenario(t)
 	base, err := workspace.FindByName("navexa")
@@ -82,10 +73,6 @@ func TestEnvUseDefaultsToBase(t *testing.T) {
 	}
 }
 
-// env set defines an environment in the workspace manifest, which every stack
-// inherits. There is no instance to pick, so the target rule does not apply to
-// it — requiring one would be friction with nothing behind it, and would refuse
-// the command outright inside a stack worktree.
 func TestEnvSetNeedsNoTarget(t *testing.T) {
 	buildStackScenario(t)
 	base, err := workspace.FindByName("navexa")
@@ -99,9 +86,6 @@ func TestEnvSetNeedsNoTarget(t *testing.T) {
 	}
 }
 
-// The regression this rule most easily causes: a read-only command has no
-// instance to change, so it must still answer with no --stack and no directory
-// hint, standing in the plain checkout.
 func TestReadOnlyEnvWhichStillWorksWithNoTarget(t *testing.T) {
 	buildStackScenario(t)
 	base, err := workspace.FindByName("navexa")
