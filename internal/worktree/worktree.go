@@ -1,6 +1,3 @@
-// Package worktree manages the git worktree lifecycle for feature stacks: one
-// worktree per repository that holds an overlay service, always created as a
-// sibling of the base checkout.
 package worktree
 
 import (
@@ -16,22 +13,11 @@ import (
 	"github.com/socialviolation/devstack/internal/config"
 )
 
-// Result reports facts about a Create that the CLI layer needs but a library
-// must not print itself.
 type Result struct {
-	// SourceDirty is true when the source repo had uncommitted changes at create
-	// time. The worktree still gets committed state; the caller decides whether
-	// to warn that the working-tree changes were left behind.
-	SourceDirty bool
-
-	// SourceOffRef is true when the source repo's HEAD is not the commit the
-	// worktree was cut from — the checkout is parked on other work, and the
-	// commits it holds beyond that ref are not in the worktree.
+	SourceDirty  bool
 	SourceOffRef bool
 }
 
-// from is a ref or commit-ish, or "" for the repo's current HEAD.
-//
 // An existing branch is attached, keeping the history it already has, so from
 // does not apply to it. A dependent repo (changed == false) detaches instead:
 // git refuses to check out a branch a second time while it is live in another
@@ -81,9 +67,6 @@ func Create(repoPath, worktreePath, branch, from string, changed bool) (Result, 
 	return res, nil
 }
 
-// Remove deletes the worktree at worktreePath. It refuses a worktree with
-// uncommitted changes unless force is set, so uncommitted work is never destroyed
-// silently. A clean Remove also cleans git's admin dir; no separate prune needed.
 func Remove(worktreePath string, force bool) error {
 	if !force {
 		dirty, err := HasUncommittedChanges(worktreePath)
@@ -107,8 +90,6 @@ func Remove(worktreePath string, force bool) error {
 	return nil
 }
 
-// Prune removes admin records for worktrees whose directories were deleted by
-// hand. A clean Remove does not need this; reconciliation of stray worktrees does.
 func Prune(repoPath string) error {
 	cmd := exec.Command("git", "worktree", "prune")
 	cmd.Dir = repoPath
@@ -118,8 +99,6 @@ func Prune(repoPath string) error {
 	return nil
 }
 
-// HasUncommittedChanges reports whether the working tree at path has staged,
-// unstaged, or untracked changes.
 func HasUncommittedChanges(path string) (bool, error) {
 	cmd := exec.Command("git", "status", "--porcelain")
 	cmd.Dir = path
@@ -136,9 +115,6 @@ var configPatterns = []string{
 	".envrc",
 	".env",
 	".env.*",
-	// Every service manifest, which is devstack.service.yaml and any
-	// devstack.<name>.yaml beside it. devstack.workspace.yaml is not one of
-	// these: a worktree gets the generated manifest of its stack instead.
 	"devstack.*.yaml",
 }
 
@@ -169,8 +145,6 @@ func MaterializeIgnoredConfig(baseRepo, worktreePath string) ([]string, error) {
 	return materializeIgnoredConfig(baseRepo, worktreePath, false)
 }
 
-// For a worktree that replicates the base repo rather than one where work
-// happens: the base's config wins every refresh, replacing what is there.
 func MaterializeIgnoredConfigForce(baseRepo, worktreePath string) ([]string, error) {
 	return materializeIgnoredConfig(baseRepo, worktreePath, true)
 }

@@ -100,9 +100,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	return runInitOnboard(cmd, claudeHook)
 }
 
-// applyClaudeHook writes the SessionStart hook into dir when the caller asked
-// for it, and otherwise says the flag exists.
-//
 // It is opt-in on purpose. .claude/settings.json is committed and shared with a
 // team, and a hook runs a command on every session of every person who clones
 // the repo. devstack changes that file only when someone asks for it.
@@ -120,8 +117,6 @@ func applyClaudeHook(dir string, enabled bool) {
 	}
 }
 
-// claudeHookHint tells the reader the hook exists, once per run. A briefing that
-// nobody knows to install is a briefing nobody gets.
 func claudeHookHint(enabled bool) {
 	if enabled {
 		return
@@ -129,8 +124,6 @@ func claudeHookHint(enabled bool) {
 	fmt.Fprintf(os.Stderr, "  To brief each Claude Code session automatically, run: devstack init --all --claude-hook\n")
 }
 
-// runInitRefresh refreshes .mcp.json in the current directory, and removes the
-// instructions an older devstack wrote there.
 func runInitRefresh(cmd *cobra.Command, claudeHook bool) error {
 	defaultService := viper.GetString("default_service")
 	workspacePath := viper.GetString("workspace")
@@ -170,8 +163,6 @@ func runInitRefresh(cmd *cobra.Command, claudeHook bool) error {
 	return nil
 }
 
-// reportChanges prints one line for each file devstack changed, and for each
-// file that needs a human.
 func reportChanges(w io.Writer, changes []fileChange) {
 	for _, c := range changes {
 		mark := "✓"
@@ -182,7 +173,6 @@ func reportChanges(w io.Writer, changes []fileChange) {
 	}
 }
 
-// runInitAll refreshes every service registered in the workspace.
 func runInitAll(claudeHook bool) error {
 	ws, err := resolveWorkspace("")
 	if err != nil {
@@ -231,10 +221,6 @@ func runInitAll(claudeHook bool) error {
 	return nil
 }
 
-// refreshStackServices refreshes the worktree of every feature stack. Those
-// directories live outside the base workspace's service paths, so nothing else
-// reaches them. It returns per-service failure lines rather than aborting, so
-// one broken stack does not stop the rest.
 func refreshStackServices(workspaceName string, claudeHook bool) []string {
 	recs, err := stack.LoadStore(workspaceName)
 	if err != nil {
@@ -270,7 +256,6 @@ func refreshStackServices(workspaceName string, claudeHook bool) []string {
 	return errs
 }
 
-// runInitOnboard registers a new service and wires it up (full onboard).
 func runInitOnboard(cmd *cobra.Command, claudeHook bool) error {
 	wsFlag, _ := cmd.Flags().GetString("workspace")
 	name, _ := cmd.Flags().GetString("name")
@@ -296,20 +281,16 @@ func runInitOnboard(cmd *cobra.Command, claudeHook bool) error {
 		return err
 	}
 
-	// Language detection
 	lang := langFlag
 	if lang == "" {
 		lang = detectLanguage(path)
 		fmt.Fprintf(os.Stderr, "Detected language: %s\n", lang)
 	}
 
-	// This workspace must be manifest-based — init writes manifests, and the
-	// Tiltfile is generated from them.
 	if !config.HasWorkspaceManifest(ws.Path) {
 		return fmt.Errorf("workspace %q has no %s. Run 'devstack workspace add' first", ws.Name, config.WorkspaceManifestFileName)
 	}
 
-	// Language-default runtime env for the service manifest.
 	langEnv := map[string]string{}
 	switch lang {
 	case "dotnet":
@@ -320,7 +301,6 @@ func runInitOnboard(cmd *cobra.Command, claudeHook bool) error {
 		langEnv["NODE_ENV"] = "development"
 	}
 
-	// 1. Write the service manifest — the source of truth for how it runs.
 	manifestPath, declared := initManifestTarget(path, name)
 	if declared && !force {
 		return fmt.Errorf("service %q is declared in %s already. To overwrite it, give --force", name, manifestPath)
@@ -330,7 +310,6 @@ func runInitOnboard(cmd *cobra.Command, claudeHook bool) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ Wrote %s\n", manifestPath)
 
-	// 2. Register the repo in the workspace manifest's repos list.
 	rel := path
 	if r, relErr := filepath.Rel(ws.Path, path); relErr == nil {
 		rel = "./" + filepath.ToSlash(r)
@@ -340,7 +319,6 @@ func runInitOnboard(cmd *cobra.Command, claudeHook bool) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ Registered %s in %s\n", rel, config.WorkspaceManifestFileName)
 
-	// 3. Write .mcp.json for AI agent access.
 	mcpFile := filepath.Join(path, ".mcp.json")
 	if _, err := os.Stat(mcpFile); os.IsNotExist(err) || force {
 		if err := writeMCPJson(mcpFile, name); err != nil {
@@ -351,17 +329,14 @@ func runInitOnboard(cmd *cobra.Command, claudeHook bool) error {
 		fmt.Fprintf(os.Stderr, ".mcp.json exists already, so devstack keeps it. To overwrite it, give --force\n")
 	}
 
-	// 4. Remove the instructions an older devstack wrote here.
 	reportChanges(os.Stderr, stripDir(path))
 
 	applyClaudeHook(path, claudeHook)
 
-	// 5. Regenerate the Tiltfile so the daemon picks up the new service.
 	if _, err := regenerateHostTiltfile(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: can not generate the Tiltfile again: %v\n", err)
 	}
 
-	// Summary
 	fmt.Printf("\n✓ %q registered in workspace %q\n\n", name, ws.Name)
 	fmt.Printf("  manifest:   %s\n", manifestPath)
 	fmt.Printf("  .mcp.json:  %s\n", mcpFile)
@@ -375,11 +350,6 @@ func runInitOnboard(cmd *cobra.Command, claudeHook bool) error {
 	return nil
 }
 
-// writeServiceManifest writes a filled devstack.service.yaml for a service with
-// a known run command (and optional port/env), unlike the placeholder scaffold.
-// initManifestTarget picks the file this service is written to, and reports
-// whether that file already declares it.
-//
 // A directory may declare several services, so the name of the file can not be
 // fixed. The first service in a directory keeps devstack.service.yaml, which is
 // what every repository already has. Each one after it gets a file named after
@@ -441,7 +411,6 @@ func writeServiceManifest(target, name, command string, port int, env map[string
 	return os.WriteFile(target, []byte(sb.String()), 0644)
 }
 
-// detectLanguage inspects a directory and returns a language string.
 func detectLanguage(path string) string {
 	checks := []struct {
 		glob string
@@ -472,7 +441,6 @@ func refreshMCPJson(servicePath, serviceName string) error {
 	return nil
 }
 
-// writeMCPJson creates a .mcp.json file in the service directory.
 func writeMCPJson(mcpFile, serviceName string) error {
 	data, err := mcpJSONContent(filepath.Dir(mcpFile), serviceName)
 	if err != nil {
@@ -481,9 +449,6 @@ func writeMCPJson(mcpFile, serviceName string) error {
 	return os.WriteFile(mcpFile, data, 0644)
 }
 
-// ensureMCPJson writes .mcp.json only where it is absent or different, and
-// reports whether it wrote. A migration that rewrites an identical file reports
-// a change that is not one, and the next run reports it again.
 func ensureMCPJson(serviceDir, serviceName string) (bool, error) {
 	path := filepath.Join(serviceDir, ".mcp.json")
 	data, err := mcpJSONContent(serviceDir, serviceName)
@@ -499,7 +464,6 @@ func ensureMCPJson(serviceDir, serviceName string) (bool, error) {
 	return true, nil
 }
 
-// mcpJSONContent renders the .mcp.json of one service directory.
 func mcpJSONContent(serviceDir, serviceName string) ([]byte, error) {
 	if identity, err := config.ResolveIdentity(serviceDir); err == nil && identity.ServiceName != "" {
 		serviceName = identity.ServiceName
@@ -556,10 +520,6 @@ func looksHotReloading(cmd string) bool {
 	return false
 }
 
-// resolveRunScript expands a `npm run <s>` / `yarn <s>` / `pnpm run <s>` /
-// `bun run <s>` invocation to the underlying script from the service's
-// package.json, so hot-reload detection sees the real command (for example an "start"
-// script that runs `ng serve`). Anything else is returned unchanged.
 func resolveRunScript(cmd, servicePath string) string {
 	fields := strings.Fields(cmd)
 	var script string

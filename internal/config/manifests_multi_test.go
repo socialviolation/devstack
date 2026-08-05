@@ -31,8 +31,6 @@ func itoa(n int) string {
 	return string(b)
 }
 
-// oneRepo writes a workspace whose single repository declares the services named
-// by the files it is given, and returns the workspace root and the repo dir.
 func oneRepo(t *testing.T, files map[string]string) (string, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -51,8 +49,6 @@ workspace:
 	return root, repo
 }
 
-// The point of the change: one directory, several services, no subdirectory
-// invented for each.
 func TestOneDirectoryDeclaresSeveralServices(t *testing.T) {
 	root, repo := oneRepo(t, map[string]string{
 		"devstack.orbit-api.yaml": svcYAML("orbit-api", 5100),
@@ -80,8 +76,6 @@ func TestOneDirectoryDeclaresSeveralServices(t *testing.T) {
 	}
 }
 
-// The original file is one of these, so a repository that declares one service
-// the old way keeps working, and may gain a second without moving the first.
 func TestTheOriginalFileStillResolvesBesideANewOne(t *testing.T) {
 	root, repo := oneRepo(t, map[string]string{
 		ServiceManifestFileName: svcYAML("api", 8080),
@@ -100,9 +94,6 @@ func TestTheOriginalFileStillResolvesBesideANewOne(t *testing.T) {
 	}
 }
 
-// A workspace manifest matches the glob and is not a service manifest. A
-// repository that is also a workspace root must not declare a service called
-// after it.
 func TestTheWorkspaceManifestIsNotAServiceManifest(t *testing.T) {
 	if IsServiceManifestName(WorkspaceManifestFileName) {
 		t.Error("devstack.workspace.yaml must never be read as a service manifest")
@@ -118,8 +109,6 @@ func TestTheWorkspaceManifestIsNotAServiceManifest(t *testing.T) {
 	}
 }
 
-// Two files that name the same service is a mistake devstack has to report, and
-// the report has to name both files rather than the directory they share.
 func TestTwoFilesNamingOneServiceAreRefused(t *testing.T) {
 	root, _ := oneRepo(t, map[string]string{
 		"devstack.a.yaml": svcYAML("same", 1000),
@@ -137,8 +126,6 @@ func TestTwoFilesNamingOneServiceAreRefused(t *testing.T) {
 	}
 }
 
-// A directory holding several services does not say which one a command means,
-// so devstack names none of them rather than picking whichever the map yields.
 func TestIdentityIsUnnamedWhereADirectoryHoldsSeveralServices(t *testing.T) {
 	_, repo := oneRepo(t, map[string]string{
 		"devstack.orbit-api.yaml": svcYAML("orbit-api", 5100),
@@ -154,7 +141,6 @@ func TestIdentityIsUnnamedWhereADirectoryHoldsSeveralServices(t *testing.T) {
 	}
 }
 
-// One service in the directory is unambiguous, and identity must still name it.
 func TestIdentityStillNamesTheOnlyServiceInADirectory(t *testing.T) {
 	_, repo := oneRepo(t, map[string]string{ServiceManifestFileName: svcYAML("api", 8080)})
 

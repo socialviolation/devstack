@@ -18,10 +18,6 @@ const (
 	ServiceManifestFileName   = "devstack.service.yaml"
 )
 
-// WorkspaceManifestVersion is the version of the workspace manifest that this
-// devstack needs. The version lives in the manifest, which is committed, so a
-// clone of a repository carries the answer with it. 'devstack migrate' moves an
-// older manifest to this version.
 const WorkspaceManifestVersion = 2
 
 type RepoDiscoveryMode string
@@ -45,16 +41,10 @@ type WorkspaceManifest struct {
 	Hooks         []Hook                          `yaml:"hooks,omitempty"`
 }
 
-// ResourceDeps returns the effective startup ordering for svc: the deduped,
-// sorted union of the legacy dependencies alias, startsAfter, and calls. A
-// called service must be running before its caller, so calls fold into the
-// ordering set that drives Tilt's resource_deps.
 func (m *WorkspaceManifest) ResourceDeps(svc string) []string {
 	return unionSorted(m.Dependencies[svc], m.StartsAfter[svc], m.Calls[svc])
 }
 
-// WorkspaceManifestEnv holds environment defaults that trickle down to every
-// service in the workspace. A service's own env.values override these.
 type WorkspaceManifestEnv struct {
 	Values map[string]string `yaml:"values,omitempty"`
 	Files  []string          `yaml:"files,omitempty"`
@@ -83,11 +73,6 @@ type WorkspaceManifestInfra struct {
 }
 
 type WorkspaceManifestObservability struct {
-	// Enabled is the master switch for OTEL in this workspace: whether `up`
-	// starts a local collector and whether OTEL export env is pushed down to
-	// services. When nil (unset) it is inferred for backward compatibility from
-	// local.enabled or the presence of a backend. Services are NOT assumed to be
-	// instrumented unless this resolves true.
 	Enabled *bool  `yaml:"enabled,omitempty"`
 	Backend string `yaml:"backend,omitempty"`
 	// Settings holds backend plugin configuration (upstream, protocol,
@@ -98,10 +83,6 @@ type WorkspaceManifestObservability struct {
 	Defaults WorkspaceManifestObservabilityDefaults `yaml:"defaults,omitempty"`
 }
 
-// IsEnabled reports whether observability is turned on for the workspace.
-// An explicit `enabled` wins; otherwise it is inferred from legacy config
-// (local.enabled true, or a non-empty backend) so existing workspaces keep
-// working without editing their manifest.
 func (o WorkspaceManifestObservability) IsEnabled() bool {
 	if o.Enabled != nil {
 		return *o.Enabled
@@ -112,13 +93,8 @@ func (o WorkspaceManifestObservability) IsEnabled() bool {
 	return strings.TrimSpace(o.Backend) != ""
 }
 
-// DefaultObservabilityBackend is the backend a workspace gets when its manifest
-// names none: a single lightweight OpenObserve shared by the whole machine.
 const DefaultObservabilityBackend = "openobserve"
 
-// ResolvedBackend returns the backend plugin to use when observability is
-// enabled: the explicit backend if set, otherwise the default. Returns "" when
-// observability is disabled.
 func (o WorkspaceManifestObservability) ResolvedBackend() string {
 	if !o.IsEnabled() {
 		return ""
@@ -142,12 +118,6 @@ type WorkspaceManifestObservabilityDefaults struct {
 // devstack versions may still carry type/observability keys under an
 // environment; they are ignored.
 type WorkspaceEnvironment struct {
-	// Description says what this environment is for and what makes it
-	// different from the others, in the author's words. A name and a list of
-	// keys say what an environment sets; only this says why you would select
-	// it, or why selecting it is dangerous. devstack never derives it, and it
-	// travels with the definition rather than sitting in a YAML comment that
-	// nothing reads.
 	Description string            `yaml:"description,omitempty"`
 	Values      map[string]string `yaml:"values,omitempty"`
 }
@@ -165,17 +135,11 @@ type ServiceManifest struct {
 	Dev       map[string]any         `yaml:"dev,omitempty"`
 }
 
-// ServiceConfig points at the service's own repo files that already declare its
-// config surface. Sources are read in order, later overriding earlier for a
-// shared key. PortEnv names the env var that carries this service's listen port,
-// the one the stack overlay overrides with the allocated port. Paths are relative
-// to the service repo root.
 type ServiceConfig struct {
 	Sources []string `yaml:"sources,omitempty"`
 	PortEnv string   `yaml:"portEnv,omitempty"`
 }
 
-// ServiceLink is a named URL surfaced in the dev daemon UI for a service.
 type ServiceLink struct {
 	URL   string `yaml:"url"`
 	Label string `yaml:"label,omitempty"`
@@ -193,28 +157,17 @@ type ServiceRuntime struct {
 	Prep        ServicePrep        `yaml:"prep,omitempty"`
 	Restart     ServiceRestart     `yaml:"restart,omitempty"`
 	Healthcheck ServiceHealthcheck `yaml:"healthcheck,omitempty"`
-	// TriggerMode is "manual" (start via devstack) or "auto" (start with the
-	// daemon and re-run on change). Empty defaults to "manual".
-	TriggerMode string `yaml:"triggerMode,omitempty"`
-	// AutoStart starts the service as soon as the daemon comes up. Default false.
-	AutoStart bool `yaml:"autoStart,omitempty"`
-	// Watch lists file/directory paths that re-trigger the service on change.
-	Watch []string `yaml:"watch,omitempty"`
+	TriggerMode string             `yaml:"triggerMode,omitempty"`
+	AutoStart   bool               `yaml:"autoStart,omitempty"`
+	Watch       []string           `yaml:"watch,omitempty"`
 }
 
 type ServiceRun struct {
 	Command string `yaml:"command,omitempty"`
 }
 
-// ServicePrep is a one-shot command run before the long-running service command
-// (e.g. a build step).
 type ServicePrep struct {
 	Command string `yaml:"command,omitempty"`
-	// FreePorts kills whatever still listens on this instance's own ports
-	// before it starts, replacing the hand-written `fuser -k <port>/tcp` every
-	// service used to carry. Empty means off; "all" (or the bool true) means
-	// every port key in the manifest; otherwise it names port keys.
-	//
 	// An instance may only free the ports IT resolved to, never another
 	// instance's — a stack owns its allocated ports from create to delete, and
 	// base owns the ports it pins. That is what makes this safe where a copied
@@ -223,8 +176,6 @@ type ServicePrep struct {
 	FreePorts FreePortsSpec `yaml:"freePorts,omitempty"`
 }
 
-// FreePortsSpec accepts `freePorts: true`, `freePorts: all`, or an explicit list
-// of port keys, so the common case stays a single word.
 type FreePortsSpec struct {
 	All  bool
 	Keys []string
@@ -265,12 +216,8 @@ func (f FreePortsSpec) MarshalYAML() (any, error) {
 	return f.Keys, nil
 }
 
-// Enabled reports whether the service asked for any port freeing.
 func (f FreePortsSpec) Enabled() bool { return f.All || len(f.Keys) > 0 }
 
-// Resolve returns the ports to free for one instance, given the ports that
-// instance actually resolved to. Unknown keys are an error rather than a
-// silently skipped no-op: a typo would look like it worked.
 func (f FreePortsSpec) Resolve(service string, instancePorts map[string]int) ([]int, error) {
 	if !f.Enabled() {
 		return nil, nil
@@ -299,21 +246,16 @@ type ServiceRestart struct {
 }
 
 type ServiceHealthcheck struct {
-	// Type is "http" or "exec". Empty means no healthcheck.
-	Type string `yaml:"type,omitempty"`
-	// URL is used by http checks (full URL). Alternatively Port+Path.
-	URL  string `yaml:"url,omitempty"`
-	Port int    `yaml:"port,omitempty"`
-	Path string `yaml:"path,omitempty"`
-	// Command is the shell command for exec checks (success = healthy).
-	Command string `yaml:"command,omitempty"`
-	// Probe tuning. Zero values fall back to generator defaults.
-	PeriodSecs       int `yaml:"periodSecs,omitempty"`
-	FailureThreshold int `yaml:"failureThreshold,omitempty"`
+	Type             string `yaml:"type,omitempty"`
+	URL              string `yaml:"url,omitempty"`
+	Port             int    `yaml:"port,omitempty"`
+	Path             string `yaml:"path,omitempty"`
+	Command          string `yaml:"command,omitempty"`
+	PeriodSecs       int    `yaml:"periodSecs,omitempty"`
+	FailureThreshold int    `yaml:"failureThreshold,omitempty"`
 }
 
 type ServiceEnv struct {
-	// Values are inline KEY=VALUE pairs for this service (override workspace env).
 	Values   map[string]string `yaml:"values,omitempty"`
 	Files    []string          `yaml:"files,omitempty"`
 	Required []string          `yaml:"required,omitempty"`
@@ -338,11 +280,8 @@ type ResolvedWorkspace struct {
 }
 
 type ResolvedService struct {
-	Name     string
-	RepoPath string
-	// ManifestPath is the file this service was read from. A directory may hold
-	// several, so RepoPath no longer names the file, and anything that writes
-	// back has to be told which one.
+	Name         string
+	RepoPath     string
 	ManifestPath string
 	Manifest     *ServiceManifest
 	Source       string
@@ -363,14 +302,8 @@ func ServiceManifestPath(repoPath string) string {
 	return filepath.Join(repoPath, ServiceManifestFileName)
 }
 
-// serviceManifestGlob matches every file a directory may declare a service in:
-// the original devstack.service.yaml, and devstack.<name>.yaml beside it. A
-// repository that runs several services from one directory declares one file for
-// each, rather than growing a directory for each.
 const serviceManifestGlob = "devstack.*.yaml"
 
-// IsServiceManifestName reports whether base names a service manifest.
-// devstack.workspace.yaml matches the glob and is not one.
 func IsServiceManifestName(base string) bool {
 	if base == WorkspaceManifestFileName {
 		return false
@@ -379,8 +312,6 @@ func IsServiceManifestName(base string) bool {
 	return ok
 }
 
-// ServiceManifestFiles lists every service manifest in dir, sorted, so a
-// workspace resolves its services in the same order on every machine.
 func ServiceManifestFiles(dir string) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -407,9 +338,6 @@ func HasServiceManifest(repoPath string) bool {
 	return err == nil
 }
 
-// ObservabilityEnabled reports whether the workspace at workspacePath should run
-// a local OTEL collector and push OTEL export env down to its services. Returns
-// false when the workspace can't be resolved or has no observability configured.
 func ObservabilityEnabled(workspacePath string) bool {
 	rw, err := ResolveWorkspace(workspacePath)
 	if err != nil || rw.Manifest == nil {
@@ -418,8 +346,6 @@ func ObservabilityEnabled(workspacePath string) bool {
 	return rw.Manifest.Observability.IsEnabled()
 }
 
-// WorkspaceObservability returns the observability block of the workspace
-// manifest at workspacePath, or the zero value when it can't be resolved.
 func WorkspaceObservability(workspacePath string) WorkspaceManifestObservability {
 	if !HasWorkspaceManifest(workspacePath) {
 		return WorkspaceManifestObservability{}
@@ -481,8 +407,6 @@ func LoadServiceManifest(repoPath string) (*ServiceManifest, error) {
 	return LoadServiceManifestFile(ServiceManifestPath(repoPath))
 }
 
-// LoadServiceManifestFile reads one named service manifest. A directory may hold
-// several, so the caller names the file rather than the directory.
 func LoadServiceManifestFile(path string) (*ServiceManifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -565,9 +489,6 @@ func resolveManifestServices(workspacePath string, manifest *WorkspaceManifest) 
 		mode = RepoDiscoveryModeExplicit
 	}
 
-	// A directory declares one service in each devstack.*.yaml it holds, so this
-	// registers every one of them. The original devstack.service.yaml is one such
-	// file, and a directory holding only that one behaves exactly as before.
 	register := func(repoPath string) error {
 		repoPath = filepath.Clean(repoPath)
 		files := ServiceManifestFiles(repoPath)
@@ -713,14 +634,6 @@ func ResolveIdentity(path string) (*ResolvedIdentity, error) {
 		WorkspaceName: resolved.Manifest.Workspace.Name,
 		Source:        source,
 	}
-	// The deepest directory that contains absPath wins, so a service nested
-	// inside another repository's tree beats the outer one. Iterating the map and
-	// taking the first match picked at random between them.
-	//
-	// Where several services share that deepest directory, the directory does not
-	// say which one the caller means, and devstack leaves the service unnamed. A
-	// command then asks for a name instead of acting on whichever service the map
-	// happened to yield.
 	best := -1
 	ambiguous := false
 	for name, service := range resolved.Services {
