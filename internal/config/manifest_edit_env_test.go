@@ -17,7 +17,7 @@ runtime:
     command: go run .
 `)
 
-	if err := SetServiceEnvValue(dir, "NAVEXA_API_URL", "http://localhost:8080"); err != nil {
+	if err := SetServiceEnvValue(ServiceManifestPath(dir), "NAVEXA_API_URL", "http://localhost:8080"); err != nil {
 		t.Fatalf("SetServiceEnvValue: %v", err)
 	}
 
@@ -48,7 +48,7 @@ env:
     OTHER: untouched
 `)
 
-	if err := SetServiceEnvValue(dir, "K", "new"); err != nil {
+	if err := SetServiceEnvValue(ServiceManifestPath(dir), "K", "new"); err != nil {
 		t.Fatalf("SetServiceEnvValue: %v", err)
 	}
 
@@ -84,7 +84,7 @@ runtime:
 env:
 `)
 
-	if err := SetServiceEnvValue(dir, "K", "v"); err != nil {
+	if err := SetServiceEnvValue(ServiceManifestPath(dir), "K", "v"); err != nil {
 		t.Fatalf("SetServiceEnvValue: %v", err)
 	}
 
@@ -98,7 +98,7 @@ env:
 }
 
 func TestSetServiceEnvValueRequiresManifest(t *testing.T) {
-	if err := SetServiceEnvValue(t.TempDir(), "K", "v"); err == nil {
+	if err := SetServiceEnvValue(ServiceManifestPath(t.TempDir()), "K", "v"); err == nil {
 		t.Fatal("expected an error when the service has no manifest")
 	}
 }

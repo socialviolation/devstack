@@ -340,8 +340,12 @@ type ResolvedWorkspace struct {
 type ResolvedService struct {
 	Name     string
 	RepoPath string
-	Manifest *ServiceManifest
-	Source   string
+	// ManifestPath is the file this service was read from. A directory may hold
+	// several, so RepoPath no longer names the file, and anything that writes
+	// back has to be told which one.
+	ManifestPath string
+	Manifest     *ServiceManifest
+	Source       string
 }
 
 type ResolvedIdentity struct {
@@ -357,6 +361,40 @@ func WorkspaceManifestPath(workspacePath string) string {
 
 func ServiceManifestPath(repoPath string) string {
 	return filepath.Join(repoPath, ServiceManifestFileName)
+}
+
+// serviceManifestGlob matches every file a directory may declare a service in:
+// the original devstack.service.yaml, and devstack.<name>.yaml beside it. A
+// repository that runs several services from one directory declares one file for
+// each, rather than growing a directory for each.
+const serviceManifestGlob = "devstack.*.yaml"
+
+// IsServiceManifestName reports whether base names a service manifest.
+// devstack.workspace.yaml matches the glob and is not one.
+func IsServiceManifestName(base string) bool {
+	if base == WorkspaceManifestFileName {
+		return false
+	}
+	ok, _ := filepath.Match(serviceManifestGlob, base)
+	return ok
+}
+
+// ServiceManifestFiles lists every service manifest in dir, sorted, so a
+// workspace resolves its services in the same order on every machine.
+func ServiceManifestFiles(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() || !IsServiceManifestName(e.Name()) {
+			continue
+		}
+		out = append(out, filepath.Join(dir, e.Name()))
+	}
+	sort.Strings(out)
+	return out
 }
 
 func HasWorkspaceManifest(workspacePath string) bool {
@@ -440,7 +478,12 @@ func (m *WorkspaceManifest) Validate() error {
 }
 
 func LoadServiceManifest(repoPath string) (*ServiceManifest, error) {
-	path := ServiceManifestPath(repoPath)
+	return LoadServiceManifestFile(ServiceManifestPath(repoPath))
+}
+
+// LoadServiceManifestFile reads one named service manifest. A directory may hold
+// several, so the caller names the file rather than the directory.
+func LoadServiceManifestFile(path string) (*ServiceManifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("can not read the service manifest %s: %w", path, err)
@@ -522,21 +565,34 @@ func resolveManifestServices(workspacePath string, manifest *WorkspaceManifest) 
 		mode = RepoDiscoveryModeExplicit
 	}
 
+	// A directory declares one service in each devstack.*.yaml it holds, so this
+	// registers every one of them. The original devstack.service.yaml is one such
+	// file, and a directory holding only that one behaves exactly as before.
 	register := func(repoPath string) error {
 		repoPath = filepath.Clean(repoPath)
-		serviceManifest, err := LoadServiceManifest(repoPath)
-		if err != nil {
+		files := ServiceManifestFiles(repoPath)
+		if len(files) == 0 {
+			// Keep the error the single-file loader gives, so a directory with no
+			// manifest at all still says which file it looked for.
+			_, err := LoadServiceManifest(repoPath)
 			return err
 		}
-		name := serviceManifest.Service.Name
-		if existing, ok := services[name]; ok {
-			return fmt.Errorf("the service name %q is in %s and in %s. A service name must be unique", name, existing.RepoPath, repoPath)
-		}
-		services[name] = ResolvedService{
-			Name:     name,
-			RepoPath: repoPath,
-			Manifest: serviceManifest,
-			Source:   ServiceManifestFileName,
+		for _, path := range files {
+			serviceManifest, err := LoadServiceManifestFile(path)
+			if err != nil {
+				return err
+			}
+			name := serviceManifest.Service.Name
+			if existing, ok := services[name]; ok {
+				return fmt.Errorf("the service name %q is in %s and in %s. A service name must be unique", name, existing.ManifestPath, path)
+			}
+			services[name] = ResolvedService{
+				Name:         name,
+				RepoPath:     repoPath,
+				ManifestPath: path,
+				Manifest:     serviceManifest,
+				Source:       ServiceManifestFileName,
+			}
 		}
 		return nil
 	}
@@ -557,6 +613,11 @@ func resolveManifestServices(workspacePath string, manifest *WorkspaceManifest) 
 				continue
 			}
 			absRoot := resolveRelative(workspacePath, root)
+			// register takes a directory and reads every manifest in it, so a
+			// directory holding several must be registered once and not once for
+			// each file — the second pass would report its own services as
+			// duplicates of themselves.
+			seen := map[string]bool{}
 			err := filepath.WalkDir(absRoot, func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
 					return err
@@ -567,10 +628,15 @@ func resolveManifestServices(workspacePath string, manifest *WorkspaceManifest) 
 					}
 					return nil
 				}
-				if d.Name() != ServiceManifestFileName {
+				if !IsServiceManifestName(d.Name()) {
 					return nil
 				}
-				return register(filepath.Dir(path))
+				dir := filepath.Dir(path)
+				if seen[dir] {
+					return nil
+				}
+				seen[dir] = true
+				return register(dir)
 			})
 			if err != nil {
 				return nil, err
@@ -647,11 +713,29 @@ func ResolveIdentity(path string) (*ResolvedIdentity, error) {
 		WorkspaceName: resolved.Manifest.Workspace.Name,
 		Source:        source,
 	}
+	// The deepest directory that contains absPath wins, so a service nested
+	// inside another repository's tree beats the outer one. Iterating the map and
+	// taking the first match picked at random between them.
+	//
+	// Where several services share that deepest directory, the directory does not
+	// say which one the caller means, and devstack leaves the service unnamed. A
+	// command then asks for a name instead of acting on whichever service the map
+	// happened to yield.
+	best := -1
+	ambiguous := false
 	for name, service := range resolved.Services {
-		if absPath == service.RepoPath || strings.HasPrefix(absPath, service.RepoPath+string(filepath.Separator)) {
-			identity.ServiceName = name
-			break
+		if absPath != service.RepoPath && !strings.HasPrefix(absPath, service.RepoPath+string(filepath.Separator)) {
+			continue
 		}
+		switch n := len(service.RepoPath); {
+		case n > best:
+			best, identity.ServiceName, ambiguous = n, name, false
+		case n == best:
+			ambiguous = true
+		}
+	}
+	if ambiguous {
+		identity.ServiceName = ""
 	}
 	return identity, nil
 }

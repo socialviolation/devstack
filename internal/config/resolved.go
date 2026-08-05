@@ -131,7 +131,10 @@ func ResolveServiceConfig(ctx *ResolvedContext, serviceName string) (*ResolvedSe
 	deps := append([]string(nil), ctx.Workspace.Manifest.Dependencies[serviceName]...)
 	sort.Strings(deps)
 
-	manifestPath := filepath.Join(service.RepoPath, ServiceManifestFileName)
+	manifestPath := service.ManifestPath
+	if manifestPath == "" {
+		manifestPath = ServiceManifestPath(service.RepoPath)
+	}
 	pathSource := sourceForResolvedWorkspace(ctx.Workspace)
 	if service.Source == ServiceManifestFileName {
 		pathSource = SourceService
