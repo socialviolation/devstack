@@ -145,7 +145,9 @@ run with.
 
   --stack <name>  the stack's worktree of the service
   --stack base    base's copy, read from the replica that base runs from
-  no --stack      the stack that holds the current directory
+  no --stack      the stack that holds the current directory. This command reads
+                  a stack worktree, so it refuses in a plain checkout. It does
+                  not fall back to base. For base, pass --stack base.
 
 For base, the replica is the truth, and not your checkout: base runs the replica
 worktrees. If devstack has built no replica yet, run 'devstack workspace up'.`,
@@ -203,7 +205,7 @@ func init() {
 	stackAddCmd.Flags().String("from", "", "Ref that devstack cuts the new worktrees from (default: each repo's default branch, origin's copy of it where there is one)")
 	stackNoteCmd.Flags().String("add", "", "Append a dated entry that says where the work got to, instead of replacing the note")
 	stackRemoveCmd.Flags().Bool("force", false, "Remove worktrees even if they have uncommitted changes. This destroys that work. You can not recover it")
-	stackConfigCmd.Flags().String("stack", "", "Which copy to read: a stack name, or \"base\" for base's copy (default: the stack that contains the current directory)")
+	stackConfigCmd.Flags().String("stack", "", "Which copy to read: a stack name, or \"base\" for base's copy. Default: the stack that holds the current directory. In a plain checkout this command refuses, so pass \"base\" there")
 }
 
 func runStackCreate(cmd *cobra.Command, args []string) error {
@@ -513,13 +515,13 @@ var stackNoteCmd = &cobra.Command{
 sentence. devstack never derives this text. A branch says what changed. A note
 says why. A week later, the note is the part that you can not reconstruct.
 
---add appends a dated entry instead of replacing the note. Write where the work
-got to. Then you can pick the work up next week without a read of the diff.
+--add appends a dated entry instead of replacing the purpose. Write where the
+work got to. Then you can pick the work up next week without a read of the diff.
 devstack keeps the last %d entries, each one of %d characters at most. One entry
 for each step pushes out the entry that is worth a read.
 
-With no text, this command prints the note and its entries. Pass an empty string
-to clear both.
+With no text, this command prints the purpose and its entries. Pass an empty
+string to clear both. 'devstack prime' labels these two "purpose" and "latest".
 
 Examples:
   devstack stack note perf "NAV-412 daily value spike"
@@ -828,6 +830,16 @@ func runStackDown(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("✓ Stack %q is now down. devstack keeps its worktrees and its record. Remove them with: devstack stack rm %s\n", rec.Name, rec.Name)
 	return nil
+}
+
+// stackFlagRecord maps a --stack flag to the stack record it names. An absent
+// flag and the literal "base" both name base, which is not a stack and has no
+// record, so both return a nil record and no error.
+func stackFlagRecord(wsName, stackName string) (*stack.Record, error) {
+	if stackName == "" || stackName == "base" {
+		return nil, nil
+	}
+	return stack.Resolve(wsName, stackName)
 }
 
 // resolveStackTarget maps a --stack flag to the daemon and namespace a command

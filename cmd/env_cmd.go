@@ -26,10 +26,12 @@ exist yet. The remove subcommand deletes one. The use subcommand points a scope 
 one. The show and which subcommands read them. devstack status shows the
 environment that each copy points at.
 
-The use subcommand writes, so it must name its scope. There are three scopes, and
+The use subcommand writes, so it acts on one scope. There are three scopes, and
 the most specific one wins. A stack beats a service, and a service beats the
 workspace default. Pass --service <svc>, or --stack <name>, or --stack base for
-the workspace default. There is no default scope.
+the workspace default. With no flag, the working directory decides the scope. A
+stack worktree selects that stack. Every other directory selects the workspace
+default.
 
 The set, show, which and remove subcommands need no scope.`,
 }

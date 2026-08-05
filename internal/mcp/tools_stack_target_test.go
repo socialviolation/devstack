@@ -371,7 +371,10 @@ func TestReadOnlyToolNeedsNoTarget(t *testing.T) {
 }
 
 // The stack parameter means different things on tools that read and tools that
-// act, so the two descriptions have to say so where an agent reads them.
+// act, so the two descriptions have to say so where an agent reads them. A
+// mutating tool no longer refuses an omitted parameter: the working directory
+// decides, and base is the fallback. A description that still promises a refusal
+// makes an agent act on base while it believes the call can not.
 func TestMutatingToolsDocumentThatAbsentIsNotBase(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	s := server.NewMCPServer("test", "0.0.0")
@@ -386,8 +389,14 @@ func TestMutatingToolsDocumentThatAbsentIsNotBase(t *testing.T) {
 	tools := listTools(t, s)
 	for _, name := range []string{"start", "stop", "restart", "env_use"} {
 		desc := tools[name].InputSchema.Properties["stack"].Description
-		if !strings.Contains(desc, "NO implicit default") {
-			t.Errorf("%s's stack parameter must say it has no default: %s", name, desc)
+		if !strings.Contains(desc, "working directory decides") {
+			t.Errorf("%s's stack parameter must say the directory decides: %s", name, desc)
+		}
+		if !strings.Contains(desc, "selects base") && !strings.Contains(desc, "selects the workspace default") {
+			t.Errorf("%s's stack parameter must say base is the fallback: %s", name, desc)
+		}
+		if strings.Contains(desc, "the call fails") || strings.Contains(desc, "NO implicit default") {
+			t.Errorf("%s's stack parameter promises a refusal that ResolveTarget no longer gives: %s", name, desc)
 		}
 		if !strings.Contains(desc, "replica") {
 			t.Errorf("%s's stack parameter must say what base runs from: %s", name, desc)

@@ -35,12 +35,14 @@ devstack init --name=api --path=~/dev/my-workspace/api --cmd="go run ." --port=8
 
 devstack detects the language from `go.mod`, `package.json`, `requirements.txt` or `*.csproj`. To name the language yourself, pass `--language`.
 
+One directory declares as many services as it runs. `devstack init` writes `devstack.service.yaml` for the first service in a directory. It writes `devstack.<name>.yaml` for each service after that. Run `devstack init` once for each service, with the same `--path`.
+
 ## Concepts
 
 | Term | Meaning |
 |------|---------|
 | Workspace | A directory with a `devstack.workspace.yaml` manifest. It groups one or more services. |
-| Service | A process that a `devstack.service.yaml` manifest defines: an API, a worker, an importer. |
+| Service | A process that a service manifest defines: an API, a worker, an importer. The manifest is `devstack.service.yaml`, or `devstack.<name>.yaml` for each service after the first one in that directory. |
 | Group | A named set of services that you start and stop together. |
 | Host daemon | One Tilt daemon (`:10300`) for the whole machine. The services of every workspace run inside it, and so does the overlay of every stack that is up. Each one runs as `<workspace>:<service>[:<stack>]`. There is no daemon for each workspace. |
 | Template | Your own checkout of a service. It holds the git objects, the workspace manifest and the machine-local gitignored configuration. It runs nothing. |
@@ -77,13 +79,13 @@ An edit in your checkout does not reach base on its own. The edit reaches base a
 
 ### Naming the copy
 
-A command that starts, stops or restarts a copy must name the copy. There is no default. Name the copy in one of three ways:
+A command that starts, stops or restarts a service acts on one copy. Name the copy in one of three ways:
 
 - In a shell, pass `--stack <name>` or `--stack base`.
 - Over MCP, pass `stack="<name>"` or `stack="base"`.
-- Run the command from a working directory inside a stack worktree, or inside the replica.
+- Run the command from a working directory inside a stack worktree, or inside the replica. That directory names the copy.
 
-If you pass no flag from a directory that is neither, the command refuses. devstack does not guess. This rule does not apply to a read-only command. A read-only command answers with no flag.
+If you pass no flag from a directory that is neither, the command acts on base. base is the default everywhere else. Each command names the copy it changed, so read that line. A base copy has no `:stack` suffix.
 
 ## Workspaces
 
@@ -116,7 +118,7 @@ Commands are noun first: `devstack <noun> <action> [target]`. A name can be both
 
 `start` resolves dependencies and brings them up first. If the dev daemon is down, `start` also boots it. `restart` acts on the target alone. `status` collapses the groups and stacks that run nothing. To see them, pass `--all`.
 
-Each of `start`, `stop` and `restart` changes what is running, so each one must name the copy. Read [Naming the copy](#naming-the-copy).
+Each of `start`, `stop` and `restart` changes what is running, so each one acts on one copy. Read [Naming the copy](#naming-the-copy).
 
 The states are `running`, `starting`, `building`, `stopped`, `erroring`, `disabled`, `down` and `unknown`. `stopped` means registered but not started. That is not the same as broken. `down` means that the copy is not registered in the daemon, because its stack is down.
 
@@ -184,7 +186,7 @@ To work on a stack, change directory into its worktree. `stack create` and `stac
 
 `create` also takes `--branch` and `--note`. `--branch` defaults to the stack name. If that branch exists, devstack attaches to it. A branch says what changed. A note says why. A week later, the note is the part that you cannot reconstruct.
 
-`--add` appends a dated entry, and does not replace the note. A stack that you left half-done then says where the work got to. devstack keeps the last 5 entries, each of 200 characters at most. If the new entry repeats the last one, devstack changes nothing. A log that records every step buries the line that is worth reading.
+`--add` appends a dated entry, and does not replace the purpose. A stack that you left half-done then says where the work got to. devstack keeps the last 5 entries, each of 200 characters at most. If the new entry repeats the last one, devstack changes nothing. A log that records every step buries the line that is worth reading.
 
 The purpose and the newest entry go into the session briefing. An agent that picks the stack up reads both before it touches anything.
 
@@ -255,7 +257,7 @@ hooks:
 
 devstack allocates the ports of a stack when it creates the stack, so a hook cannot hold a port as a literal. `${self.url}`, `${self.port.http}` and `${<service>.port.<key>}` resolve against the ports that the copy really got. The command also receives `DEVSTACK_*` variables, among them `DEVSTACK_STACK`, `DEVSTACK_SERVICE_URL` and `DEVSTACK_ENV`. The command receives the whole event as JSON on stdin.
 
-`services:` scopes a hook to the services that it names. The hook then runs one time for each service, with that service as `${self}`. If you leave `services:` out, the hook runs one time for the event. A `devstack.service.yaml` file can declare hooks too. Those hooks are scoped to that service, and devstack rejects a `services:` key in them. A feature stack inherits the hooks of the workspace, as it inherits the environments.
+`services:` scopes a hook to the services that it names. The hook then runs one time for each service, with that service as `${self}`. If you leave `services:` out, the hook runs one time for the event. A service manifest can declare hooks too. Those hooks are scoped to that service, and devstack rejects a `services:` key in them. A feature stack inherits the hooks of the workspace, as it inherits the environments.
 
 | Event | Fires |
 |---|---|
@@ -411,7 +413,9 @@ The `stack` parameter scopes the search. An absent `stack` searches base. A name
 | `check` | Audit for placeholders and missing keys |
 | `drift` | Compare what devstack resolves with what the repository says it needs |
 
-Some commands have no tool and need a shell. Among them: `workspace up`, `workspace down`, `workspace doctor`, `workspace generate`, `stack config`, `ports`, `init`, `prime` and `upgrade`. The otel queries need a shell too: `otel traces`, `otel logs`, `otel services` and `otel open`. The `observability` and `investigate` tools cover the rest.
+Some commands have no tool and need a shell. They are: `upgrade`, `init`, `prime`, `serve`, `ports`, `dependencies`, `stack config`, `group add`, `group remove`, `group list`, `env list`, `env show`, `env remove`, `tunnel restart`, `otel start`, `otel stop`, `otel open`, `otel plugins`, and every `workspace` command but `topology`.
+
+The remaining otel commands have a tool. `investigate` covers `otel traces` and `otel logs`. The `observability` tool covers `otel status` with `action="status"`, `otel services` with `action="variants"`, and `otel config` with the three `config_*` actions.
 
 ## Briefing an agent
 
@@ -440,7 +444,9 @@ runs as 5 copies:
   The directory under each copy is the directory that copy RUNS. base runs the replica, not your checkout.
 ```
 
-`prime` also works out which stack a session is probably for. When `prime` cannot tell, it stays quiet. These are two different questions. Where you are comes from the filesystem, and `prime` marks it `▸`. What you are here for is a guess, and `prime` marks it `?`.
+`prime` also names the stack that a session is probably for. That is a different question from where you are. Where you are comes from the filesystem, and `prime` marks it `▸`. What you are here for is a guess, and `prime` marks it `?`.
+
+When `prime` cannot name one stack, it lists the stacks in flight as ranked candidates, each marked `?`. It ranks a stack that is up first, then the newest note entry, then the newest stack. It shows 5 rows at most, and it names the count it left out. A candidate is a guess about intent, and never a fact. Ask the user before you work on one.
 
 To brief a session without a request, wire `prime` into Claude Code:
 
@@ -509,7 +515,7 @@ You cannot configure the port of the daemon. One daemon serves the machine on `:
 | Artifact | Location | Commit? | Why |
 |----------|----------|---------|-----|
 | `devstack.workspace.yaml` | workspace root | Yes | The source of truth: services, groups, dependencies and environments. It is portable and holds no machine paths. |
-| `devstack.service.yaml` | service repo | No | Machine-local: it holds absolute tool paths. Gitignore it. |
+| `devstack.service.yaml`, `devstack.<name>.yaml` | service repo | No | The service manifests of that directory. Machine-local: each one holds absolute tool paths. Gitignore them. |
 | `.mcp.json` | service repo | Yes | Generated, and it does not depend on the machine. |
 | `AGENTS.md` | service repo | Yes | Yours. devstack writes nothing in it. `devstack migrate` removes the block an older devstack wrote. |
 | `CLAUDE.md` / `GEMINI.md` / `.cursorrules` / `.github/copilot-instructions.md` | service repo | Yes | Yours. devstack writes nothing in them, and it creates none of them. |
@@ -521,12 +527,15 @@ You cannot configure the port of the daemon. One daemon serves the machine on `:
 A `.gitignore` for each service repository:
 
 ```
-devstack.service.yaml
+devstack.*.yaml
+!devstack.workspace.yaml
 .devstack.json
 Tiltfile
 ```
 
-`devstack.service.yaml` is machine-local and gitignored, so the worktree of a stack does not inherit one. For that reason `devstack stack create` copies the ignored configuration into each worktree. git does not carry it there. `devstack workspace up` copies the same files into each replica worktree.
+A service manifest is machine-local and gitignored, so the worktree of a stack does not inherit one. For that reason `devstack stack create` copies the ignored configuration into each worktree. It copies every `devstack.*.yaml` beside the service. A directory that declares several services then keeps all of its manifests. git carries none of these files there. `devstack workspace up` copies the same files into each replica worktree.
+
+`devstack stack create` never copies `devstack.workspace.yaml`. A worktree runs from the generated manifest of its stack, and a copied template manifest points the stack back at base.
 
 ### Secrets and `devstack env set`
 

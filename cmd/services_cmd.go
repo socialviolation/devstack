@@ -75,11 +75,12 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return runStatusAll()
 	}
-	if stackName, _ := cmd.Flags().GetString("stack"); stackName != "" {
-		rec, err := stack.Resolve(ws.Name, stackName)
-		if err != nil {
-			return err
-		}
+	stackName, _ := cmd.Flags().GetString("stack")
+	rec, err := stackFlagRecord(ws.Name, stackName)
+	if err != nil {
+		return err
+	}
+	if rec != nil {
 		return runStackStatus(ws, rec)
 	}
 	expand, _ := cmd.Flags().GetBool("all")

@@ -248,12 +248,9 @@ func runEnvWhich(cmd *cobra.Command, args []string) error {
 	}
 
 	stackName, _ := cmd.Flags().GetString("stack")
-	var rec *stack.Record
-	if stackName != "" {
-		rec, err = stack.Resolve(ws.Name, stackName)
-		if err != nil {
-			return err
-		}
+	rec, err := stackFlagRecord(ws.Name, stackName)
+	if err != nil {
+		return err
 	}
 
 	var srw *config.ResolvedWorkspace

@@ -2,18 +2,31 @@ package hooks
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/socialviolation/devstack/internal/config"
 )
 
-// ServiceRef is one in-scope service: where its hooks run, and the hooks its own
-// manifest declares. For a stack event Path is the worktree, not the base
-// checkout, so a service hook runs against the code that instance is running.
+// ServiceRef is one in-scope service: where its hooks run, the file that
+// declares them, and the hooks themselves. For a stack event Path is the
+// worktree, not the base checkout, so a service hook runs against the code that
+// instance is running. ManifestPath is the file the service came from, which is
+// devstack.<name>.yaml where a directory declares more than one service.
 type ServiceRef struct {
-	Path  string
-	Hooks []config.Hook
+	Path         string
+	ManifestPath string
+	Hooks        []config.Hook
+}
+
+// manifestFile is the file name that a hook of this service is reported to come
+// from. A ServiceRef built without a path falls back to the conventional name.
+func (r ServiceRef) manifestFile() string {
+	if r.ManifestPath == "" {
+		return config.ServiceManifestFileName
+	}
+	return filepath.Base(r.ManifestPath)
 }
 
 // Source is everything hook resolution reads: the workspace-level hooks and the
@@ -79,7 +92,7 @@ func BuildSource(baseManifest *config.WorkspaceManifest, baseRoot string, rw *co
 		return src
 	}
 	for name, svc := range rw.Services {
-		ref := ServiceRef{Path: svc.RepoPath}
+		ref := ServiceRef{Path: svc.RepoPath, ManifestPath: svc.ManifestPath}
 		if svc.Manifest != nil {
 			ref.Hooks = svc.Manifest.Hooks
 		}
@@ -138,7 +151,7 @@ func Resolve(ev Event, src Source) []Invocation {
 			}
 			out = append(out, Invocation{
 				Hook:    h,
-				Origin:  name + "/" + config.ServiceManifestFileName,
+				Origin:  name + "/" + ref.manifestFile(),
 				Service: name,
 				Dir:     ref.Path,
 			})

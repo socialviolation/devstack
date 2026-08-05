@@ -533,7 +533,8 @@ func writePrimeCloseOut(b *strings.Builder, branch string) {
 
 func writePrimeSafety(b *strings.Builder) {
 	section(b, "BEFORE YOU COMMIT")
-	b.WriteString("  Never commit `devstack.service.yaml`. It holds absolute paths of this machine. Add it to `.gitignore`.\n")
+	b.WriteString("  Never commit `devstack.service.yaml`, or the `devstack.<name>.yaml` of each service after the first one\n")
+	b.WriteString("  in that directory. Each one holds absolute paths of this machine. Add them to `.gitignore`.\n")
 	b.WriteString("  If it is committed already, keep every real secret out of it, and out of `devstack.workspace.yaml`.\n")
 	b.WriteString("  For a value that must come from the environment, declare the key under `env.required`, and supply the\n")
 	b.WriteString("  value from `.envrc`. devstack then reads the value at run time, and no manifest holds it.\n")

@@ -18,15 +18,16 @@ import (
 const stackParamDesc = "Optional. Name a feature stack to act on instead of base. " + baseTermDesc +
 	"Absent (or the literal \"base\") acts on base's service copies. A stack name acts on that stack's copies. " +
 	"Those copies run in the one host daemon as <workspace>:<service>:<stack> resources. The tool also reads that stack's worktree config. " +
-	"On THIS tool, absent means base. On the tools that start, stop or restart a service, absent does not mean base. There, devstack reads the copy from the working directory, or the call fails."
+	"On THIS tool, absent means base."
 
-// Separate from stackParamDesc because absent no longer means base: base runs
-// from a replica, not from the checkouts, so a call that silently defaulted to
-// base would act on code the caller is not looking at.
+// Separate from stackParamDesc because the working directory decides first on a
+// mutating tool: base runs from a replica, not from the checkouts, so an agent
+// that omits this parameter must know which copy the directory selects.
 const mutatingStackParamDesc = "Which copy to act on: a feature stack's SHORT name (for example 'import-review'), or the literal \"base\". " + baseTermDesc +
-	"This tool changes what runs, so it has NO implicit default. If you omit this parameter, devstack reads the copy from the server's working directory. " +
-	"That directory must be a stack worktree, or base's replica. If the directory is neither, the call fails and lists the stacks available. " +
-	"To act on base, write \"base\". An omitted parameter is never a safe way to mean base."
+	"If you omit this parameter, the server's working directory decides the copy. A stack worktree selects that stack. base's replica selects base. " +
+	"Every other directory selects base, which is the fallback. " +
+	"This tool changes what runs. Every stack and every engineer shares base. If you act on base, you restart or stop the copy they all use. " +
+	"So name the copy: write the stack's short name. If you intend base, write \"base\"."
 
 // resolveStackRecord looks up a feature stack by short name within the bound
 // (base) workspace, returning a clear error that lists the available stack names

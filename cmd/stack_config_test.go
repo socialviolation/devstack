@@ -141,3 +141,62 @@ func TestStackConfigRefusesAnUnknownServiceOnBase(t *testing.T) {
 		t.Errorf("an unknown service must be refused and base's services listed; got %v", err)
 	}
 }
+
+// "base" is how every other command names base, and base has no stack record.
+// status and env which looked the name up in the stack store, so the one word
+// that names base everywhere else failed on these two alone. Both now resolve
+// the flag here, and "base" must resolve the way an absent flag resolves.
+func TestStackFlagRecordReadsBaseAsNoStack(t *testing.T) {
+	rec, _ := buildStackScenario(t)
+
+	for _, name := range []string{"", "base"} {
+		got, err := stackFlagRecord("navexa", name)
+		if err != nil {
+			t.Errorf("stackFlagRecord(%q): %v", name, err)
+		}
+		if got != nil {
+			t.Errorf("stackFlagRecord(%q) = %q, want no stack record: base is not a stack", name, got.Name)
+		}
+	}
+
+	got, err := stackFlagRecord("navexa", rec.Name)
+	if err != nil || got == nil || got.Name != rec.Name {
+		t.Fatalf("stackFlagRecord(%q) = %v, %v; want the stack record", rec.Name, got, err)
+	}
+	if _, err := stackFlagRecord("navexa", "nope"); err == nil {
+		t.Error("a name that is neither base nor a stack must be refused")
+	}
+}
+
+func TestEnvWhichAcceptsBaseAsTheStackName(t *testing.T) {
+	buildStackScenario(t)
+	useWorkspaceKey(t, "navexa")
+
+	envWhichCmdFor := func(stackName string) *cobra.Command {
+		c := &cobra.Command{Use: "which"}
+		c.Flags().String("stack", "", "")
+		c.Flags().String("service", "backend", "")
+		c.Flags().Bool("shadowed", false, "")
+		c.Flags().Bool("reveal", false, "")
+		if stackName != "" {
+			if err := c.Flags().Set("stack", stackName); err != nil {
+				t.Fatalf("set --stack: %v", err)
+			}
+		}
+		return c
+	}
+
+	plain := captureStdout(t, func() {
+		if err := runEnvWhich(envWhichCmdFor(""), nil); err != nil {
+			t.Fatalf("runEnvWhich with no --stack: %v", err)
+		}
+	})
+	named := captureStdout(t, func() {
+		if err := runEnvWhich(envWhichCmdFor("base"), nil); err != nil {
+			t.Fatalf("runEnvWhich --stack base: %v", err)
+		}
+	})
+	if plain != named {
+		t.Errorf("--stack base must report what no --stack reports.\nno flag:\n%s\n--stack base:\n%s", plain, named)
+	}
+}

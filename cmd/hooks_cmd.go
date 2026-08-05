@@ -20,8 +20,9 @@ var hooksCmd = &cobra.Command{
 	Long: `A hook is a shell command that devstack runs when a lifecycle event fires. A
 stack is created, a service starts, a stack is destroyed. You declare hooks in
 devstack.workspace.yaml, which you share with the team and can scope to named
-services. You can also declare them in a service's devstack.service.yaml, which
-covers that service only.
+services. You can also declare them in a service manifest, which covers that
+service only. A service manifest is devstack.service.yaml, or
+devstack.<name>.yaml for each service after the first one in that directory.
 
 devstack allocates a feature stack's ports when it creates the stack, so a hook
 can not know them in advance. A hook names them instead. The references

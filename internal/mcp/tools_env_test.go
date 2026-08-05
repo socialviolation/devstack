@@ -97,6 +97,23 @@ func TestEnvWhichMasksOpaqueSecret(t *testing.T) {
 	}
 }
 
+// Every other tool takes stack="base" for base, and env_which refused it. Its
+// parameter description told agents to omit the word instead, which is the
+// opposite instruction from the rest of the surface.
+func TestEnvWhichTakesBaseAsTheStackName(t *testing.T) {
+	s, _ := newEnvToolWorkspace(t)
+	absent := callTool(t, s, "env_which", map[string]string{"service": "api"})
+	named := callTool(t, s, "env_which", map[string]string{"service": "api", "stack": "base"})
+
+	if named != absent {
+		t.Errorf("stack=\"base\" must report what an absent stack reports.\nabsent:\n%s\nbase:\n%s", absent, named)
+	}
+	desc := listTools(t, s)["env_which"].InputSchema.Properties["stack"].Description
+	if strings.Contains(desc, "do not pass") {
+		t.Errorf("env_which must not tell an agent to avoid the word every other tool takes: %s", desc)
+	}
+}
+
 func TestEnvWhichLeavesNonSecretAlone(t *testing.T) {
 	s, _ := newEnvToolWorkspace(t)
 	out := callTool(t, s, "env_which", map[string]string{"service": "api"})

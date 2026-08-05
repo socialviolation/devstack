@@ -23,7 +23,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		mcp.WithDescription(
 			"Show the active workspace and the available tools. Call this tool first, to learn what you can do and can not do in this context. "+
 				baseTermDesc+
-				"A tool that starts, stops or restarts a service must be told which copy to act on: a stack's short name, or \"base\". The read-only tools default to base. "+
+				"A tool that acts on a service acts on one copy. The stack parameter names that copy: a stack's short name, or \"base\". The read-only tools default to base, and they ignore the working directory. On start, stop, restart and env_use, the working directory decides: a stack worktree selects that stack, and every other directory selects base. So a tool that starts, stops or restarts a service acts on base by default. If you mean a stack, name it. "+
 				"An 'env' here is a CONFIG-PATCH environment. That is a named set of config vars, for example 'staging'. env_use points a workspace, a service or a stack at one of them (CLI: devstack env use). status and env_which show which env each copy points at. "+
 				"devstack is a LOCAL development environment. Its data is local and ephemeral, and it is not production. "+
 				"The tools available depend on this workspace's configuration. The investigate tool appears only where this workspace has observability. The observability tool is always there, and it is the tool that enables observability. The tunnel tool appears only when this machine has an ssh client.",

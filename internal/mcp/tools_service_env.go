@@ -29,13 +29,14 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 				"  diff   compare the resolved environment across several services, or across a group, side by side.\n"+
 				"  set    write one key and value to the manifest of ONE service (env.values) or to its .envrc. It reports a higher rung that overrides your value. To set a config value for every service pointed at a named environment, use env_set instead.\n"+
 				"  check  audit the resolved environment for a placeholder value (empty, or one that holds TODO, CHANGEME, <replace>, your-, or example.com). It also reports a key that some selected services set and the others do not.\n"+
-				"  drift  compare the resolved environment against what the repo of the service declares it needs, in the files its devstack.service.yaml lists under config.sources.\n\n"+
+				"  drift  compare the resolved environment against what the repo of the service declares it needs, in the files its service manifest lists under config.sources.\n\n"+
+				"A service manifest is devstack.service.yaml, or devstack.<name>.yaml for each service after the first one in that directory. One directory declares as many services as it runs. Each service has its own manifest file.\n\n"+
 				"Run drift before you trust a local run of code that reads configuration. A declared key that is unset locally does not raise an error. The code falls back to its own default, so the service runs a different configuration from the one it stands in for.\n\n"+
 				"A rung is one layer of the environment precedence ladder. Lowest first: .envrc, workspace env.files, service env.files, workspace env.values, service env.values, active env (workspace, then service, then stack), devstack-computed. A higher rung overrides every rung below it.\n\n"+
 				"Use get to answer \"what is KEY set to\", because it resolves every rung. For the narrower question of which named config-patch env applies at each scope, and what that patch alone contributes, reach for env_which instead.\n"),
 		mcp.WithString("action",
 			mcp.Required(),
-			mcp.Description("One of: get, diff, check, drift — read only, change nothing. set — writes a file (the service's devstack.service.yaml or its .envrc)."),
+			mcp.Description("One of: get, diff, check, drift — read only, change nothing. set — writes a file (the service's own manifest, or its .envrc)."),
 		),
 		mcp.WithString("service",
 			mcp.Description("Exact service name. For diff, this can be a comma-separated list of two or more services."),
@@ -55,7 +56,7 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 		mcp.WithString("target",
 			mcp.Description(
 				"Where to write (required for set). "+
-					"'manifest' — the service's devstack.service.yaml env.values. devstack treats that file as machine-local and expects it to be gitignored, because it holds absolute tool paths. Each repo decides that for itself. Make sure that the file is ignored: run git check-ignore -v devstack.service.yaml before you trust it. "+
+					"'manifest' — the env.values of the service's own manifest. That file is devstack.service.yaml, or devstack.<name>.yaml for each service after the first one in that directory. devstack writes the file that declares THIS service, and never another service's file. devstack treats it as machine-local and expects your repo to gitignore it, because it holds absolute tool paths. Each repo decides that for itself. Make sure that the file is ignored: run git check-ignore -v on it before you trust it. "+
 					"Use 'manifest' for devstack-managed config: service addresses, ports, URLs of other services, and feature flags. "+
 					"'envrc' — the service's local .envrc. Nobody commits it. "+
 					"Use 'envrc' for secrets and for anything that carries a credential: API keys, tokens, passwords, and DSNs with credentials. "+
@@ -671,7 +672,7 @@ func handleServiceEnvDrift(ws *workspace.Workspace, workspacePath, stackEnv stri
 	}
 
 	if len(undeclared) > 0 {
-		fmt.Fprintf(&sb, "not comparable (no config.sources declared in devstack.service.yaml): %s\n", strings.Join(undeclared, ", "))
+		fmt.Fprintf(&sb, "not comparable (no config.sources declared in the service manifest): %s\n", strings.Join(undeclared, ", "))
 		sb.WriteString("To make it comparable, point config.sources at the service's deployment manifest or at its appsettings file.\n")
 	}
 	if total > 0 {

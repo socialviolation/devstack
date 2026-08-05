@@ -30,7 +30,7 @@ func registerEnvUseTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 		mcp.WithDescription("Point a scope at one of the config-patch environments that the BASE workspace manifest defines, so that its services run with that environment's config vars. This tool mirrors 'devstack env use'.\n"+
 			"devstack defines the environments ONCE, in the base workspace. A feature stack does NOT define its own. A stack inherits the base environments, and 'stack' points a stack at one of them.\n"+
 			"Scope precedence is stack first, then service, then workspace.\n"+
-			"This tool changes what services run with, so it names its scope explicitly: 'service' points one service, stack='<name>' points that feature stack, and stack='base' sets the workspace default. If you omit both, that is not the workspace default. devstack then reads the scope from the server's working directory, and the call fails where that directory is neither a stack nor base's replica.\n"+
+			"This tool changes what services run with, so it names its scope explicitly: 'service' points one service, stack='<name>' points that feature stack, and stack='base' sets the workspace default. If you omit both, the server's working directory decides the scope. A stack worktree selects that stack. Every other directory selects the workspace default. Every stack and every engineer shares that default.\n"+
 			"The env name must be one that the base workspace manifest defines. To see where each copy points, use env_which or status."),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description("Named environment to select. The workspace manifest must define it, for example 'staging'.")),
@@ -151,7 +151,7 @@ func registerEnvWhichTool(mcpServer *server.MCPServer, ws *workspace.Workspace, 
 		}
 
 		stackEnv := ""
-		if stackName := strings.TrimSpace(request.GetString("stack", "")); stackName != "" {
+		if stackName := strings.TrimSpace(request.GetString("stack", "")); stackName != "" && stackName != "base" {
 			rec, err := stack.Resolve(ws.Name, stackName)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil

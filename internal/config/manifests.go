@@ -417,13 +417,17 @@ func LoadServiceManifestFile(path string) (*ServiceManifest, error) {
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
 		return nil, fmt.Errorf("can not parse the service manifest %s: %w", path, err)
 	}
-	if err := manifest.Validate(); err != nil {
+	if err := manifest.validate(filepath.Base(path)); err != nil {
 		return nil, fmt.Errorf("the service manifest %s is not valid: %w", path, err)
 	}
 	return &manifest, nil
 }
 
-func (m *ServiceManifest) Validate() error {
+// validate checks the manifest and names the file it came from in every error.
+// A directory that declares more than one service holds a devstack.<name>.yaml
+// per extra service, so the conventional name would name a file that is not
+// there.
+func (m *ServiceManifest) validate(scope string) error {
 	if m == nil {
 		return errors.New("the service manifest is nil")
 	}
@@ -436,7 +440,7 @@ func (m *ServiceManifest) Validate() error {
 	if strings.TrimSpace(m.Runtime.Run.Command) == "" {
 		return errors.New("runtime.run.command is required")
 	}
-	return validateHooks(m.Hooks, ServiceManifestFileName, false)
+	return validateHooks(m.Hooks, scope, false)
 }
 
 func ResolveWorkspace(workspacePath string) (*ResolvedWorkspace, error) {

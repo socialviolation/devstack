@@ -126,6 +126,29 @@ func TestTwoFilesNamingOneServiceAreRefused(t *testing.T) {
 	}
 }
 
+// A hook error names the file the reader must open. Where a directory declares
+// several services, that file is devstack.<name>.yaml, and the conventional
+// name would send the reader to a file that is not there.
+func TestAHookErrorNamesTheFileTheServiceCameFrom(t *testing.T) {
+	root, _ := oneRepo(t, map[string]string{
+		"devstack.orbit-api.yaml": svcYAML("orbit-api", 5100) + `hooks:
+  - name: seed
+    on: [service.start]
+`,
+	})
+
+	_, err := ResolveWorkspace(root)
+	if err == nil {
+		t.Fatal("a hook with no 'run' command must be refused")
+	}
+	if !strings.Contains(err.Error(), "devstack.orbit-api.yaml: hook") {
+		t.Errorf("the error must scope the hook to devstack.orbit-api.yaml, got: %v", err)
+	}
+	if strings.Contains(err.Error(), ServiceManifestFileName+": hook") {
+		t.Errorf("the error must not name a file the directory does not hold, got: %v", err)
+	}
+}
+
 func TestIdentityIsUnnamedWhereADirectoryHoldsSeveralServices(t *testing.T) {
 	_, repo := oneRepo(t, map[string]string{
 		"devstack.orbit-api.yaml": svcYAML("orbit-api", 5100),

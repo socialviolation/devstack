@@ -148,7 +148,7 @@ func evidenceFor(service string, variants []observability.ServiceVariant) []Vari
 // tell which instance is emitting rather than only whether any of them is.
 func (s ServiceStatus) Summary() string {
 	if len(s.Variants) == 0 {
-		return "no variant reported"
+		return "no copy reported"
 	}
 	parts := make([]string, 0, len(s.Variants))
 	for _, v := range s.Variants {
@@ -193,7 +193,7 @@ func classify(expectedTraces, expectedLogs bool, mode string, backendReached boo
 		return "inconclusive", "There is no backend that devstack can query, so devstack can not check the telemetry."
 	}
 	if traceCount > 0 {
-		return "high", fmt.Sprintf("devstack saw telemetry from %d variants.", len(variants))
+		return "high", fmt.Sprintf("devstack saw telemetry from %d copies.", len(variants))
 	}
 	if logEvidence {
 		return "partial", "devstack saw logs, but it saw no traces in the window."

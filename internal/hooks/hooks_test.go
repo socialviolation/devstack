@@ -122,6 +122,42 @@ func TestBuildSourceTakesWorkspaceHooksFromBaseAndPathsFromResolved(t *testing.T
 	}
 }
 
+// `devstack hooks list` prints Origin so a reader can open the file that
+// declares the hook. A directory that declares several services holds a
+// devstack.<name>.yaml for each one after the first, and the conventional name
+// would send the reader to a file that is not there.
+func TestOriginNamesTheFileTheServiceCameFrom(t *testing.T) {
+	rw := &config.ResolvedWorkspace{Services: map[string]config.ResolvedService{
+		"orbit-api": {
+			Name:         "orbit-api",
+			RepoPath:     "/ws/mono",
+			ManifestPath: "/ws/mono/devstack.orbit-api.yaml",
+			Manifest:     &config.ServiceManifest{Hooks: []config.Hook{{Name: "seed", On: []string{config.EventServiceStart}, Run: "true"}}},
+		},
+	}}
+
+	src := BuildSource(nil, "/ws", rw)
+	got := Resolve(Event{Name: config.EventServiceStart, Services: []string{"orbit-api"}}, src)
+	if len(got) != 1 {
+		t.Fatalf("resolved %d invocations, want 1: %#v", len(got), got)
+	}
+	if want := "orbit-api/devstack.orbit-api.yaml"; got[0].Origin != want {
+		t.Errorf("Origin = %q, want %q", got[0].Origin, want)
+	}
+}
+
+// A ServiceRef built without a manifest path keeps the conventional name, so a
+// caller that knows only the repo directory still reports a usable file.
+func TestOriginFallsBackToTheConventionalName(t *testing.T) {
+	src := Source{Services: map[string]ServiceRef{
+		"api": {Path: "/ws/api", Hooks: []config.Hook{{Name: "seed", On: []string{config.EventServiceStart}, Run: "true"}}},
+	}}
+	got := Resolve(Event{Name: config.EventServiceStart, Services: []string{"api"}}, src)
+	if len(got) != 1 || got[0].Origin != "api/"+config.ServiceManifestFileName {
+		t.Fatalf("Origin = %#v, want api/%s", got, config.ServiceManifestFileName)
+	}
+}
+
 func TestStackLabelSpellsBaseExplicitly(t *testing.T) {
 	if got := (Event{}).StackLabel(); got != "base" {
 		t.Errorf("empty stack label = %q, want base", got)

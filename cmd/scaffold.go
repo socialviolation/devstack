@@ -15,9 +15,9 @@ const workspaceManifestTemplate = `# devstack workspace manifest. This file is t
 # workspace.
 #
 # devstack GENERATES the Tiltfile of the dev daemon from this file, and from the
-# devstack.service.yaml of each service. Never edit the Tiltfile by hand. Edit
-# these manifests, then run 'devstack workspace up' or 'devstack workspace
-# generate' to write the Tiltfile again.
+# manifest of each service. Never edit the Tiltfile by hand. Edit these
+# manifests, then run 'devstack workspace up' or 'devstack workspace generate' to
+# write the Tiltfile again.
 #
 # This directory is the TEMPLATE. Nothing runs here. 'devstack workspace up'
 # builds a REPLICA from it: one git worktree per repository at its default branch
@@ -34,7 +34,9 @@ workspace:
   repoDiscovery:
     # How devstack finds the services:
     #   explicit  list each service repo directory. This mode is deterministic
-    #   scan      give root directories. devstack walks them for devstack.service.yaml
+    #   scan      give root directories. devstack walks them for a service
+    #             manifest: devstack.service.yaml, or devstack.<name>.yaml for
+    #             each service after the first one in that directory
     mode: explicit
     repos: []
       # - ./my-api
@@ -50,8 +52,9 @@ env:
     # DATABASE_PORT: "5432"
 
 # groups BIND services into one unit that you operate together. start and stop
-# must name the copy that they act on: --stack base, or --stack <name> for a
-# feature stack.
+# act on one copy: --stack base, or --stack <name> for a feature stack. With no
+# flag, they act on the stack that holds the current directory. Anywhere else
+# they act on base.
 #   devstack group start <group> --stack base   devstack status
 # The daemon also labels its UI from the groups. A service can belong to many
 # groups.

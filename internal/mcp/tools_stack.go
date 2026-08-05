@@ -32,9 +32,9 @@ const requiredStackNameDesc = stackShortNameDesc +
 	"This parameter is REQUIRED. Name a stack, and do not omit it. This tool takes a stack name only, and it refuses \"base\"."
 
 // optionalStackNameDesc is for a parameter that may be omitted. Omitted means
-// base, and "base" is not the way to write it.
+// base, and the literal "base" means the same thing.
 const optionalStackNameDesc = stackShortNameDesc +
-	"This parameter is OPTIONAL, and it defaults to base. To act on base, omit it, and do not pass \"base\"."
+	"This parameter is OPTIONAL, and it defaults to base. To act on base, omit it, or write the literal \"base\"."
 
 // baseTermDesc is the one definition of "base". It is shared rather than
 // restated because the restatements disagreed: the same word was used for a
@@ -307,7 +307,7 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			"  overlays  the services this stack runs its own copy of.\n"+
 			"  branch    the stack's git branch.\n"+
 			"  env       the config env the stack is pointed at.\n"+
-			"  note      what the stack is for.\n"+
+			"  note      the stack's purpose: what it is for.\n"+
 			"  latest    the newest dated entry of the stack's note log, written by stack_note. It says where the work got to.\n"+
 			"  covers    how much of each group the stack was cut to cover.\n"+
 			"  links     the stack's allocated service links.\n"+
