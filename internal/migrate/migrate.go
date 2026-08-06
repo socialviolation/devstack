@@ -48,6 +48,47 @@ func Workspaces() ([]workspace.Workspace, error) {
 // because a refusal and a failed write need different words.
 var ErrRefused = errors.New("the migration refused to run, and no file changed")
 
+// Repair is work that no version gates.
+//
+// A patch runs once. The version in the manifest records that it ran, and that
+// version travels with the repository, so a clone runs nothing. A repair runs on
+// every sweep, because the state it fixes can come back at any time.
+//
+// The two need different gates. Somebody removes a block on a feature branch and
+// merges that branch with a squash, and the merge keeps the copy that still
+// holds the block. The workspace is at the current version, and it holds the
+// block again. A version gate can never clear that, so the repair asks the disk
+// and not the manifest.
+//
+// A repair writes no version. It is idempotent, and a second run changes
+// nothing.
+type Repair struct {
+	// Title names the work, as the report calls it.
+	Title string
+	// Clean is what the report says about a workspace with no work left.
+	Clean string
+	// Pending reports the work one workspace still has. why is the line the
+	// report prints. detail names each thing the repair acts on, and it is empty
+	// where there is nothing to do. It reads only.
+	//
+	// A workspace this can not read gives an error. The report calls that
+	// workspace blocked, and it reports every other workspace as usual: one
+	// broken manifest must not hide the machine.
+	Pending func(*workspace.Workspace) (why string, detail []string, err error)
+	// Run does the work in one workspace.
+	Run func(*workspace.Workspace) (Result, error)
+	// Next is the instruction the reader gets after Run changed something.
+	Next func([]Result) []string
+	// Preflight names the work Run destroys, over every workspace. A repair that
+	// returns a Block stops, and it changes nothing in any workspace.
+	Preflight func([]workspace.Workspace) []Block
+}
+
+// Repairs is the repair work this devstack knows. The cmd package sets it, the
+// same way it sets Stamp: this package moves a version from one number to the
+// next, and it must not know what a devstack block is.
+var Repairs []Repair
+
 // Sweep writes one migration report. It is the whole of what a caller reads:
 // the patches, what each one did or still has to do, and the next action.
 //
@@ -63,10 +104,10 @@ func Sweep(w io.Writer, patches []Patch, all []workspace.Workspace, run, force b
 		return nil
 	}
 	if !run {
-		WriteList(w, List(patches, all))
+		WriteList(w, append(List(patches, all), ListRepairs(Repairs, all)...))
 		return nil
 	}
-	fmt.Fprintf(w, "devstack runs %s over %s.\n", pluralMigrations(len(patches)), pluralWorkspaces(len(all)))
+	fmt.Fprintf(w, "devstack runs %s%s over %s.\n", pluralMigrations(len(patches)), andRepairs(len(Repairs)), pluralWorkspaces(len(all)))
 	return Apply(w, patches, all, force)
 }
 
@@ -83,9 +124,12 @@ func WriteList(w io.Writer, statuses []Status) {
 			default:
 				fmt.Fprintf(w, "  %-16s nothing to do: %s\n", row.Name, row.Why)
 			}
+			for _, d := range row.Detail {
+				fmt.Fprintf(w, "      %s\n", d)
+			}
 		}
 	}
-	fmt.Fprintln(w, "\ndevstack migrate runs each pending migration. This command changes nothing.")
+	fmt.Fprintln(w, "\ndevstack migrate runs each pending migration, and each repair. This command changes nothing.")
 }
 
 func pluralWorkspaces(n int) string {
@@ -203,8 +247,91 @@ func Apply(w io.Writer, patches []Patch, all []workspace.Workspace, force bool) 
 		note = append(note, p.Next(changed)...)
 	}
 
+	// A refusal stops every repair. The pre-flight check of a patch found work
+	// that the patch destroys, and devstack answered by changing no file in any
+	// workspace. A repair that ran now would destroy the work that refusal saved.
+	if refused == 0 {
+		out := applyRepairs(w, Repairs, all, force)
+		if len(out.Note) > 0 {
+			if len(note) > 0 {
+				note = append(note, "")
+			}
+			note = append(note, out.Note...)
+		}
+		errs = append(errs, out.Errs...)
+		refused += out.Refused
+		incomplete += out.Incomplete
+	}
+
 	writeNote(w, note, len(errs)-refused, incomplete, refused)
 	return errors.Join(errs...)
+}
+
+// repairOutcome is what one pass of the repairs left behind.
+type repairOutcome struct {
+	Note       []string
+	Errs       []error
+	Refused    int
+	Incomplete int
+}
+
+// applyRepairs runs every repair over every workspace.
+//
+// No version gates a repair, so it asks each workspace what it holds now. A
+// workspace that a patch has just cleaned answers with nothing, and the repair
+// reports nothing there.
+//
+// The pre-flight check reads every workspace and not the pending ones, for the
+// same reason: the file a repair destroys can be in a workspace that is at the
+// current version.
+func applyRepairs(w io.Writer, repairs []Repair, all []workspace.Workspace, force bool) repairOutcome {
+	var out repairOutcome
+	for _, r := range repairs {
+		fmt.Fprintf(w, "\nrepair  %s\n", r.Title)
+		if r.Preflight != nil {
+			if blocks := r.Preflight(all); len(blocks) > 0 {
+				writeBlocks(w, blocks, force)
+				if !force {
+					out.Refused++
+					out.Errs = append(out.Errs, fmt.Errorf("repair %q: %w", r.Title, ErrRefused))
+					continue
+				}
+			}
+		}
+
+		var changed []Result
+		for i := range all {
+			ws := &all[i]
+			res, err := r.Run(ws)
+			res.Workspace = ws.Name
+			if err != nil {
+				out.Errs = append(out.Errs, fmt.Errorf("repair %q: %s: %w", r.Title, ws.Name, err))
+			}
+			if res.Incomplete {
+				out.Incomplete++
+			}
+			if len(res.Lines) == 0 {
+				fmt.Fprintf(w, "  %-16s nothing to do: %s\n", ws.Name, r.Clean)
+				continue
+			}
+			fmt.Fprintf(w, "  %s\n", ws.Name)
+			for _, l := range res.Lines {
+				fmt.Fprintln(w, l)
+			}
+			if res.Changed || len(res.Items) > 0 {
+				changed = append(changed, res)
+			}
+		}
+
+		if len(changed) == 0 || r.Next == nil {
+			continue
+		}
+		if len(out.Note) > 0 {
+			out.Note = append(out.Note, "")
+		}
+		out.Note = append(out.Note, r.Next(changed)...)
+	}
+	return out
 }
 
 // preflight asks a patch what stops it, over the workspaces that the patch
@@ -387,7 +514,7 @@ func writeNote(w io.Writer, note []string, failed, incomplete, refused int) {
 		return
 	}
 	if len(note) == 0 {
-		fmt.Fprintln(w, "\ndevstack changed nothing. Every migration is applied. Do nothing.")
+		fmt.Fprintln(w, "\ndevstack changed nothing. Every migration is applied, and every repair is done. Do nothing.")
 		return
 	}
 	fmt.Fprintln(w, "\nNEXT")
@@ -403,6 +530,18 @@ func pluralMigrations(n int) string {
 	return fmt.Sprintf("%d migrations", n)
 }
 
+// andRepairs names the repairs this sweep runs, and it says nothing where there
+// are none. A devstack with no repair must not open its report with "0 repairs".
+func andRepairs(n int) string {
+	switch {
+	case n == 0:
+		return ""
+	case n == 1:
+		return " and 1 repair"
+	}
+	return fmt.Sprintf(" and %d repairs", n)
+}
+
 // WorkspaceStatus is where one workspace stands against one patch.
 type WorkspaceStatus struct {
 	Name    string
@@ -410,6 +549,9 @@ type WorkspaceStatus struct {
 	Pending bool
 	Why     string
 	Err     error
+	// Detail names each thing the work acts on. A count of files with no path
+	// beside it tells a reader nothing they can act on.
+	Detail []string
 }
 
 // Status is one patch across every workspace.
@@ -418,10 +560,38 @@ type Status struct {
 	To    int
 	Title string
 	Rows  []WorkspaceStatus
+	// Repair is true for work that no version gates. It reads the disk, so it
+	// has no version to report.
+	Repair bool
 }
 
 // Name is how a report calls this patch.
-func (s Status) Name() string { return fmt.Sprintf("version %d to %d", s.From, s.To) }
+func (s Status) Name() string {
+	if s.Repair {
+		return "repair"
+	}
+	return fmt.Sprintf("version %d to %d", s.From, s.To)
+}
+
+// ListRepairs reports the work each repair has in each workspace. It reads only:
+// `migrate --list` prints it, and that command may change no file.
+func ListRepairs(repairs []Repair, all []workspace.Workspace) []Status {
+	out := make([]Status, 0, len(repairs))
+	for _, r := range repairs {
+		st := Status{Title: r.Title, Repair: true}
+		for i := range all {
+			ws := &all[i]
+			why, detail, err := r.Pending(ws)
+			row := WorkspaceStatus{Name: ws.Name, Pending: len(detail) > 0, Why: why, Detail: detail, Err: err}
+			if err == nil && !row.Pending {
+				row.Why = r.Clean
+			}
+			st.Rows = append(st.Rows, row)
+		}
+		out = append(out, st)
+	}
+	return out
+}
 
 // Pending reports whether the patch still has work in any workspace.
 func (s Status) Pending() bool {

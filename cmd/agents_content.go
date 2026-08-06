@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/socialviolation/devstack/internal/worktree"
 )
 
 // devstack wrote a block of instructions into the instruction files of each
@@ -236,6 +238,46 @@ func tidyMarkdown(s string) string {
 		return ""
 	}
 	return s + "\n"
+}
+
+// repoRoot is the root of a git repository devstack has to sweep, with the
+// index in dirs of the directory that led devstack to it. The caller keeps the
+// name and the stack of that directory, so the report can say where the root
+// came from.
+type repoRoot struct {
+	Root string
+	From int
+}
+
+// repoRootsOf names the root of the git repository that holds each directory in
+// dirs, and that dirs does not hold already.
+//
+// An older devstack wrote its block at the root of each git repository. devstack
+// sweeps service directories. Where a service sits in a subdirectory of its
+// repository, nothing sweeps the root, and the block stays there.
+//
+// A directory that no git repository holds contributes no root. Two directories
+// of one repository contribute that root once.
+func repoRootsOf(dirs []string) []repoRoot {
+	seen := map[string]bool{}
+	tops := make([]string, len(dirs))
+	for i, dir := range dirs {
+		isRoot, top := worktree.IsRoot(dir)
+		tops[i] = top
+		if isRoot {
+			seen[top] = true
+		}
+	}
+
+	var out []repoRoot
+	for i, top := range tops {
+		if top == "" || seen[top] {
+			continue
+		}
+		seen[top] = true
+		out = append(out, repoRoot{Root: top, From: i})
+	}
+	return out
 }
 
 // residueFile is one file that still holds content devstack wrote.

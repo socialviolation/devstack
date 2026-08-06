@@ -107,8 +107,91 @@ func reportWorkspaceDrift(w io.Writer, wsPath string) int {
 		fmt.Fprintln(w, "  To build it and restart what runs, run: devstack workspace up")
 		fmt.Fprintln(w, "  To build it and restart nothing, run: devstack base sync")
 		fmt.Fprintln(w, "  To read what a replica is, and the other repairs it takes, run: devstack base --help")
+	} else {
+		found += reportReplicaDrift(w, ws)
 	}
 	return found
+}
+
+// reportReplicaDrift compares the replica with the workspace that generated it,
+// and names each difference. It returns how many it found.
+//
+// The replica holds its own generated manifest, and devstack writes that
+// manifest once. The workspace moves on: somebody splits a repository, renames
+// a service or deletes a manifest. Base then runs a service the workspace does
+// not declare, and the CLI can not name it. Every other check still reports the
+// workspace as healthy, so the drift has to be its own report.
+func reportReplicaDrift(w io.Writer, ws *workspace.Workspace) int {
+	template, err := config.ResolveWorkspace(ws.Path)
+	if err != nil {
+		return 0
+	}
+
+	var lines []string
+	for _, dir := range replicaRepoDirs(replica.Root(ws)) {
+		if len(config.ServiceManifestFiles(dir)) == 0 {
+			lines = append(lines, fmt.Sprintf("- [warn] %-24s the replica lists this repository, and it holds no service manifest: %s\n", filepath.Base(dir), dir))
+		}
+	}
+	rw, err := replica.Resolve(ws)
+	if err != nil && len(lines) == 0 {
+		lines = append(lines, fmt.Sprintf("- [warn] %-24s devstack can not read the replica: %v\n", ws.Name, err))
+	}
+	if err == nil {
+		for _, name := range resolvedServiceNames(rw.Services) {
+			if _, ok := template.Services[name]; !ok {
+				lines = append(lines, fmt.Sprintf("- [warn] %-24s the replica declares this service, and the workspace does not: %s\n", name, rw.Services[name].RepoPath))
+			}
+		}
+		for _, name := range resolvedServiceNames(template.Services) {
+			if _, ok := rw.Services[name]; !ok {
+				lines = append(lines, fmt.Sprintf("- [warn] %-24s the workspace declares this service, and the replica does not: %s\n", name, template.Services[name].RepoPath))
+			}
+		}
+	}
+	if len(lines) == 0 {
+		return 0
+	}
+
+	fmt.Fprintf(w, "\nreplica drift: the replica no longer matches this workspace, so base runs the wrong services\n")
+	for _, line := range lines {
+		fmt.Fprint(w, line)
+	}
+	fmt.Fprintln(w, "  To build it again and restart what runs, run: devstack workspace up")
+	fmt.Fprintln(w, "  To build it again and restart nothing, run: devstack base sync")
+	return len(lines)
+}
+
+// replicaRepoDirs reads the directories the replica manifest lists. devstack
+// generates that manifest with absolute paths, and a relative one resolves
+// against the replica root.
+func replicaRepoDirs(root string) []string {
+	manifest, err := config.LoadWorkspaceManifest(root)
+	if err != nil {
+		return nil
+	}
+	var dirs []string
+	for _, repo := range manifest.Workspace.RepoDiscovery.Repos {
+		repo = strings.TrimSpace(repo)
+		if repo == "" {
+			continue
+		}
+		if !filepath.IsAbs(repo) {
+			repo = filepath.Join(root, repo)
+		}
+		dirs = append(dirs, filepath.Clean(repo))
+	}
+	sort.Strings(dirs)
+	return dirs
+}
+
+func resolvedServiceNames(services map[string]config.ResolvedService) []string {
+	names := make([]string, 0, len(services))
+	for name := range services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func holdPhrase(n int) string {

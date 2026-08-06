@@ -318,7 +318,11 @@ func reportAndMigrate(doMigrate bool) step2Result {
 	if err != nil {
 		return step2Result{MigrateErr: err}
 	}
-	writePendingReport(os.Stdout, migrate.List(patches(), all), doMigrate)
+	// A repair is not version-gated, so a workspace at the current version can
+	// still have work. Reporting the patches alone said "nothing to migrate"
+	// while a devstack block sat in a repository, and the migration that follows
+	// would then remove it without warning.
+	writePendingReport(os.Stdout, append(migrate.List(patches(), all), migrate.ListRepairs(repairs(), all)...), doMigrate)
 
 	if !doMigrate {
 		return step2Result{}

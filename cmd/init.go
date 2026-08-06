@@ -214,6 +214,7 @@ func runInitAll(claudeHook bool) error {
 
 	reportChanges(os.Stderr, stripDir(ws.Path))
 	applyClaudeHook(ws.Path, claudeHook)
+	stripRepoRoots(ws.Path, cfg.ServicePaths, services)
 	errs = append(errs, refreshStackServices(ws.Name, claudeHook)...)
 	claudeHookHint(claudeHook)
 
@@ -221,6 +222,24 @@ func runInitAll(claudeHook bool) error {
 		return fmt.Errorf("%d services failed:\n%s", len(errs), strings.Join(errs, "\n"))
 	}
 	return nil
+}
+
+// stripRepoRoots removes the old devstack block from the root of each git
+// repository that holds a service, and that is not a service directory itself.
+//
+// An older devstack wrote that block at the root of the repository. A service
+// that sits in a subdirectory leaves the root unswept, so the block stays there.
+// devstack strips the root, and it writes no .mcp.json and no hook: the root
+// runs no service.
+func stripRepoRoots(workspacePath string, servicePaths map[string]string, services []string) {
+	dirs := make([]string, 0, len(services)+1)
+	dirs = append(dirs, workspacePath)
+	for _, name := range services {
+		dirs = append(dirs, servicePaths[name])
+	}
+	for _, r := range repoRootsOf(dirs) {
+		reportChanges(os.Stderr, stripDir(r.Root))
+	}
 }
 
 func refreshStackServices(workspaceName string, claudeHook bool) []string {
@@ -231,6 +250,7 @@ func refreshStackServices(workspaceName string, claudeHook bool) []string {
 	}
 
 	var errs []string
+	var dirs []string
 	for _, rec := range recs {
 		rw, err := stack.ResolveWorktree(&rec)
 		if err != nil {
@@ -253,7 +273,11 @@ func refreshStackServices(workspaceName string, claudeHook bool) []string {
 			fmt.Fprintf(os.Stderr, "✓ %s (stack %s) (.mcp.json)\n", name, rec.Name)
 			reportChanges(os.Stderr, stripDir(svc.RepoPath))
 			applyClaudeHook(svc.RepoPath, claudeHook)
+			dirs = append(dirs, svc.RepoPath)
 		}
+	}
+	for _, r := range repoRootsOf(dirs) {
+		reportChanges(os.Stderr, stripDir(r.Root))
 	}
 	return errs
 }

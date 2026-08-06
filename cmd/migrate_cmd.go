@@ -22,8 +22,8 @@ import (
 var migrateCmd = &cobra.Command{
 	Use:    "migrate",
 	Hidden: true,
-	Short:  "Run every migration this devstack needs, and print what to do next",
-	Long: `Run each migration that your configuration still needs.
+	Short:  "Run every migration and repair this devstack needs, and print what to do next",
+	Long: `Run each migration that your configuration still needs, and each repair.
 
 A migration moves the workspace configuration from one version to the next. The
 version is the number at the top of devstack.workspace.yaml. A migration runs
@@ -47,6 +47,22 @@ THE MIGRATIONS
                   Claude Code SessionStart hook, so that each session runs
                   'devstack prime'. It acts in the workspace root, in each
                   service repository, and in the worktree of each feature stack.
+                  It removes the block in the root of each git repository as
+                  well, because a service can sit below that root. A root runs
+                  no service, so it gets no .mcp.json and no hook.
+
+THE REPAIRS
+  A repair is not a version step. No version gates it, and it writes none. It
+  reads the disk on every run, and it acts when it finds the state it fixes.
+
+  instruction     It removes a devstack instruction block that came back after
+  block           the migration removed it. A block comes back often. You remove
+                  it, you commit that on a feature branch, and the merge of that
+                  branch keeps the copy that still holds the block. A clone, a
+                  revert and a stack worktree do the same thing. The workspace
+                  stays at the current version the whole time. This repair reads
+                  the files, so it finds the block that the version hides. It
+                  removes the block only, and it writes no .mcp.json and no hook.
 
 WHAT A MIGRATION IS NOT
   A migration does not watch this machine, and it holds no machine state. To find
@@ -68,21 +84,28 @@ BEFORE IT WRITES
 CAUTION: devstack does not own these repositories. Read the diff in each one
 before you commit it.
 
-  devstack migrate          run every pending migration
-  devstack migrate --list   print the version of each workspace, and what is pending
+  devstack migrate          run every pending migration, and every repair
+  devstack migrate --list   print the version of each workspace, the block each
+                            one still holds, and what is pending
   devstack migrate --force  migrate over the refusal above, and lose each
                             uncommitted change in those files
 
-Run this command again at any time. A second run changes nothing.`,
+Run this command again at any time. A second run changes nothing.
+
+A stack worktree is on a feature branch. devstack removes the block there, and it
+stages nothing and commits nothing. Read that change and commit it. If you leave
+it, the branch keeps the block, and a merge returns the block to your base. An
+uncommitted change also stops 'devstack stack rm'.`,
 	SilenceUsage: true,
 	RunE:         runMigrate,
 }
 
 func init() {
 	rootCmd.AddCommand(migrateCmd)
-	migrateCmd.Flags().Bool("list", false, "Print the version of each workspace, and what is pending. Change nothing")
+	migrateCmd.Flags().Bool("list", false, "Print the version of each workspace, the block each one still holds, and what is pending. Change nothing")
 	migrateCmd.Flags().Bool("force", false, "Migrate a file that holds a change nobody committed. devstack removes its block from that file, or deletes the file, and the change is lost")
 	migrate.Stamp = buildStamp()
+	migrate.Repairs = repairs()
 }
 
 // patches is every migration devstack knows, in the order it runs them. To add
@@ -90,6 +113,63 @@ func init() {
 // list.
 func patches() []migrate.Patch {
 	return []migrate.Patch{agentFilesPatch()}
+}
+
+// repairs is every repair devstack knows. A repair is not a version step. It
+// asks the disk what is there, so it runs whenever the state it fixes is back.
+func repairs() []migrate.Repair {
+	return []migrate.Repair{agentFilesRepair()}
+}
+
+// agentFilesRepair removes a devstack block that came back after the migration
+// removed it.
+//
+// The migration is a version step, and the version says it is done. The block
+// still returns. Somebody strips it, commits the strip on a feature branch, and
+// the merge of that branch keeps the copy that still holds the block. A clone, a
+// revert and a stack worktree do the same thing. The workspace is at the current
+// version the whole time, so nothing version-gated can ever clear it.
+//
+// This repair reads the files instead. It removes the same block, from the same
+// directories, under the same refusal, and it writes no version.
+func agentFilesRepair() migrate.Repair {
+	return migrate.Repair{
+		Title:     "Remove a devstack instruction block that came back after the migration",
+		Clean:     "no repository holds a devstack block",
+		Pending:   pendingResidue,
+		Run:       runResidueRepair,
+		Next:      nextAgentFiles,
+		Preflight: preflightAgentFiles,
+	}
+}
+
+// pendingResidue names the files of one workspace that still hold a devstack
+// block. It reads only, so `migrate --list` can say what `devstack migrate`
+// removes before anybody runs it.
+func pendingResidue(ws *workspace.Workspace) (string, []string, error) {
+	files, err := workspaceResidueErr(ws)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(files) == 0 {
+		return "", nil, nil
+	}
+	detail := make([]string, 0, len(files))
+	for _, f := range files {
+		line := f.Path
+		if f.NeedsHuman {
+			line += "  (a marker has no pair, so a human must remove that block)"
+		}
+		detail = append(detail, line)
+	}
+	return residueWhy(len(files)), detail, nil
+}
+
+func residueWhy(n int) string {
+	if n == 1 {
+		return "1 file still holds a devstack block"
+	}
+	return fmt.Sprintf("%d files still hold a devstack block", n)
 }
 
 func runMigrate(cmd *cobra.Command, args []string) error {
@@ -138,12 +218,12 @@ func agentFilesPatch() migrate.Patch {
 // into settings that keep every other key. Both leave a diff a reader can read
 // and revert, so neither one is a reason to stop.
 //
-// It reads the workspace root, each service repository and each stack worktree,
-// because the patch writes in all three.
+// It reads every directory the patch writes in: the workspace root, each service
+// repository, each stack worktree, and the root of each git repository.
 func preflightAgentFiles(all []workspace.Workspace) []migrate.Block {
 	var out []migrate.Block
 	for i := range all {
-		targets, _ := migrateTargets(&all[i])
+		targets, _ := stripTargets(&all[i])
 		for _, t := range targets {
 			for _, rel := range uncommittedStripTargets(t.Dir) {
 				out = append(out, migrate.Block{Label: t.Label, Dir: t.Dir, File: rel})
@@ -217,11 +297,46 @@ func agentFilesPresent(dir string) []string {
 }
 
 func runAgentFiles(ws *workspace.Workspace) (migrate.Result, error) {
-	targets, errs := migrateTargets(ws)
+	return sweepWorkspace(ws, false)
+}
+
+// runResidueRepair removes a devstack block that came back, in a workspace that
+// is at the current version already.
+//
+// It writes no .mcp.json and no hook. The migration connected each repository
+// when it ran, and a repair that wrote those files again would report a change
+// on every run.
+//
+// A workspace devstack can not read is named in the report, and it fails
+// nothing. This repair sweeps every workspace on the machine, on every run. One
+// broken manifest would otherwise make `devstack migrate` exit with an error for
+// ever, and it would say nothing about the workspaces that are healthy. To find
+// the cause, a reader runs `devstack workspace doctor`.
+func runResidueRepair(ws *workspace.Workspace) (migrate.Result, error) {
+	res, err := sweepWorkspace(ws, true)
+	if err != nil {
+		res.Lines = append(res.Lines,
+			"    devstack can not read this workspace, so it repaired nothing here:",
+			"      "+err.Error(),
+			"    To find the cause, run: devstack workspace doctor")
+	}
+	return res, nil
+}
+
+// sweepWorkspace removes the devstack block from every directory of one
+// workspace, and reports what it did.
+//
+// stripOnly is the whole difference between the migration and the repair. Both
+// remove the same block, from the same directories, under the same refusal.
+func sweepWorkspace(ws *workspace.Workspace, stripOnly bool) (migrate.Result, error) {
+	targets, errs := stripTargets(ws)
 
 	var res migrateResult
 	var lines []string
 	for _, t := range targets {
+		if stripOnly {
+			t.StripOnly = true
+		}
 		l, r := migrateOne(t)
 		res.add(r)
 		if len(l) == 0 {
@@ -231,9 +346,47 @@ func runAgentFiles(ws *workspace.Workspace) (migrate.Result, error) {
 		lines = append(lines, l...)
 	}
 	lines = append(lines, agentFilesCounts(res)...)
+	lines = append(lines, stackWorktreeLines(res.Repos)...)
 
 	out := migrate.Result{Changed: res.Changed() > 0, Lines: lines, Items: commitItems(res.Repos), Incomplete: res.NeedsHuman > 0}
 	return out, errors.Join(errs...)
+}
+
+// stackWorktreeLines name each stack worktree this run changed.
+//
+// devstack removes its block in the worktree. devstack stages nothing, and it
+// commits nothing: the worktree is on a feature branch, and that work is the
+// user's to resolve. A reader who does not hear this meets two surprises later.
+// The branch keeps the block until somebody commits the removal. An uncommitted
+// change also stops `devstack stack rm`.
+func stackWorktreeLines(changed []migrateTarget) []string {
+	var out []string
+	for _, t := range changed {
+		if t.Stack == "" {
+			continue
+		}
+		out = append(out,
+			fmt.Sprintf("    stack %-18s %s", t.Stack, t.Dir),
+			fmt.Sprintf("      devstack changed this worktree, and it committed nothing. The branch is %s.", worktreeBranch(t.Dir)))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return append(out,
+		"    Commit each change above, or discard it. devstack does neither for you.",
+		"    Until you commit it, that branch keeps the devstack block, and a merge brings the block back.",
+		"    An uncommitted change also stops `devstack stack rm`.")
+}
+
+// worktreeBranch names the branch a worktree has checked out. A worktree devstack
+// can not read gets a name that says so, because a blank branch reads like a
+// missing word.
+func worktreeBranch(dir string) string {
+	branch, err := worktree.CurrentBranch(dir)
+	if err != nil || branch == "" {
+		return "unknown to devstack"
+	}
+	return branch
 }
 
 // commitItems names each directory this run wrote in. Every one of them holds a
@@ -405,6 +558,14 @@ type migrateTarget struct {
 	// Service is the service this directory holds. It is empty for a workspace
 	// root, which gets no .mcp.json.
 	Service string
+	// Stack is the feature stack whose worktree holds this directory. It is
+	// empty for a directory of the workspace itself. devstack changes a worktree
+	// on the branch of that stack, and the report has to say so.
+	Stack string
+	// StripOnly is true for a directory devstack sweeps for its old block and
+	// for nothing else. The root of a repository is not a service, so devstack
+	// writes no .mcp.json and no hook there.
+	StripOnly bool
 }
 
 // migrateTargets lists every directory of one workspace that can hold devstack
@@ -451,10 +612,57 @@ func migrateTargets(ws *workspace.Workspace) ([]migrateTarget, []error) {
 				Label:   fmt.Sprintf("%s (stack %s)", name, recs[i].Name),
 				Dir:     rw.Services[name].RepoPath,
 				Service: name,
+				Stack:   recs[i].Name,
 			})
 		}
 	}
 	return out, errs
+}
+
+// stripTargets lists every directory of one workspace that devstack sweeps for
+// the block an older devstack wrote. That is each migrate target, and the root
+// of the git repository that holds it.
+//
+// An older devstack wrote its block at the root of each repository. A service
+// that sits in a subdirectory of its repository leaves that root unswept, so the
+// block stays exactly where an agent reads it. A stack worktree is its own
+// working tree, so this reaches the root of a worktree in the same way.
+//
+// A repository root runs no service, so devstack strips the block there and
+// writes no .mcp.json and no hook. `workspace doctor` asks migrateTargets which
+// repositories devstack connects, and a root is not one of them.
+func stripTargets(ws *workspace.Workspace) ([]migrateTarget, []error) {
+	targets, errs := migrateTargets(ws)
+	return withRepoRoots(targets), errs
+}
+
+// withRepoRoots adds the root of the git repository that holds each target, and
+// that is not a target already.
+func withRepoRoots(targets []migrateTarget) []migrateTarget {
+	dirs := make([]string, len(targets))
+	for i, t := range targets {
+		dirs[i] = t.Dir
+	}
+	for _, r := range repoRootsOf(dirs) {
+		from := targets[r.From]
+		targets = append(targets, migrateTarget{
+			Label:     repoRootLabel(r.Root, from.Stack),
+			Dir:       r.Root,
+			Stack:     from.Stack,
+			StripOnly: true,
+		})
+	}
+	return targets
+}
+
+// repoRootLabel names a repository root as the report calls it. A reader knows
+// the directory by name, and "repository" says why devstack sweeps a directory
+// that runs no service.
+func repoRootLabel(root, stackName string) string {
+	if stackName == "" {
+		return filepath.Base(root) + " (repository)"
+	}
+	return fmt.Sprintf("%s (repository, stack %s)", filepath.Base(root), stackName)
 }
 
 // migrateResult counts what one sweep did, and names the repositories it
@@ -495,6 +703,13 @@ func migrateOne(t migrateTarget) ([]string, migrateResult) {
 		default:
 			res.NeedsHuman++
 		}
+	}
+
+	if t.StripOnly {
+		if res.Changed() > 0 {
+			res.Repos = []migrateTarget{t}
+		}
+		return lines, res
 	}
 
 	if t.Service != "" {
@@ -541,10 +756,22 @@ func pluralRepos(n int) string {
 // content. It reads only, so `upgrade` and `workspace doctor` can say what
 // `devstack migrate` will clean before anybody runs it.
 func workspaceResidue(ws *workspace.Workspace) []residueFile {
-	targets, _ := migrateTargets(ws)
+	out, _ := workspaceResidueErr(ws)
+	return out
+}
+
+// workspaceResidueErr is workspaceResidue, and it also reports what it could not
+// read. `migrate --list` calls a workspace it can not read blocked, and it
+// reports every other workspace as usual. A caller that only wants the files it
+// found reads workspaceResidue.
+func workspaceResidueErr(ws *workspace.Workspace) ([]residueFile, error) {
+	targets, errs := stripTargets(ws)
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
 	var out []residueFile
 	for _, t := range targets {
 		out = append(out, scanResidue(t.Dir)...)
 	}
-	return out
+	return out, nil
 }
