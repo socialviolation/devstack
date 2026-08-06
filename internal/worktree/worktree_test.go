@@ -229,6 +229,44 @@ func TestRemove_CleanDirtyAndForce(t *testing.T) {
 	}
 }
 
+func TestRemove_CleanWorktreeHoldingSubmodule(t *testing.T) {
+	root, repo := newRepo(t)
+
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(t, sub, "init", "-b", "main")
+	git(t, sub, "config", "user.email", "t@example.com")
+	git(t, sub, "config", "user.name", "tester")
+	git(t, sub, "config", "commit.gpgsign", "false")
+	write(t, filepath.Join(sub, "f.txt"), "x\n")
+	git(t, sub, "add", ".")
+	git(t, sub, "commit", "-m", "init")
+
+	git(t, repo, "-c", "protocol.file.allow=always", "submodule", "add", sub, "vendor/sub")
+	git(t, repo, "commit", "-m", "add submodule")
+
+	wt := filepath.Join(root, "base-sub")
+	if _, err := Create(repo, wt, "feat-sub", "", true); err != nil {
+		t.Fatal(err)
+	}
+	git(t, wt, "-c", "protocol.file.allow=always", "submodule", "update", "--init")
+	if _, err := os.Stat(filepath.Join(wt, "vendor", "sub", "f.txt")); err != nil {
+		t.Fatalf("submodule was not populated in the worktree: %v", err)
+	}
+
+	if err := Remove(wt, false); err != nil {
+		t.Fatalf("Remove of a clean worktree holding a submodule: %v", err)
+	}
+	if _, err := os.Stat(wt); !os.IsNotExist(err) {
+		t.Errorf("worktree still present after Remove")
+	}
+	if out := git(t, repo, "worktree", "list"); strings.Contains(out, wt) {
+		t.Errorf("worktree still registered after Remove:\n%s", out)
+	}
+}
+
 func TestCreate_TwoWorktreesCoexist(t *testing.T) {
 	root, repo := newRepo(t)
 	wtA := filepath.Join(root, "base-a")
