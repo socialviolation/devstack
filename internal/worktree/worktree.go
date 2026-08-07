@@ -78,16 +78,28 @@ func Remove(worktreePath string, force bool) error {
 		}
 	}
 
-	args := []string{"worktree", "remove", worktreePath}
-	if force {
-		args = []string{"worktree", "remove", "--force", worktreePath}
+	out, err := runRemove(worktreePath, force)
+	if err != nil && !force {
+		// git refuses to remove a working tree that holds a populated
+		// submodule, however clean that tree is. The check above proves the
+		// tree is clean, so --force here discards no work.
+		out, err = runRemove(worktreePath, true)
 	}
-	cmd := exec.Command("git", args...)
-	cmd.Dir = worktreePath
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if err != nil {
 		return fmt.Errorf("git worktree remove %s failed: %w\n%s", worktreePath, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func runRemove(worktreePath string, force bool) ([]byte, error) {
+	args := []string{"worktree", "remove"}
+	if force {
+		args = append(args, "--force")
+	}
+	args = append(args, worktreePath)
+	cmd := exec.Command("git", args...)
+	cmd.Dir = worktreePath
+	return cmd.CombinedOutput()
 }
 
 func Prune(repoPath string) error {
