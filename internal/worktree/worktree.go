@@ -124,6 +124,7 @@ func HasUncommittedChanges(path string) (bool, error) {
 var configPatterns = []string{
 	"appsettings*.json",
 	"*.local.json",
+	"*.local.js",
 	".envrc",
 	".env",
 	".env.*",
