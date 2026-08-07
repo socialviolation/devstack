@@ -5,24 +5,62 @@ import (
 	"sort"
 )
 
-func OverlaySet(g *TopologyGraph, changed []string) ([]string, error) {
-	set := map[string]bool{}
+// Overlay reasons, in the order they win: a service named on the command line is
+// "changed" even if it is also a caller of another named service.
+const (
+	OverlayReasonChanged = "changed"
+	OverlayReasonCaller  = "caller"
+	OverlayReasonNeeded  = "needed"
+)
+
+// OverlaySet returns the services a stack runs its own copy of, and why each one
+// is in the set. It is the named services, the services that call them, and
+// everything those two need: what they start after, and what they call. A stack
+// stands up what it needs, so a copy talks to the stack's own sibling and not to
+// base's.
+//
+// The closure does not walk back up from a need. A member's needs come into the
+// overlay. The other callers of that need do not.
+func OverlaySet(g *TopologyGraph, changed []string) ([]string, map[string]string, error) {
+	reasons := map[string]string{}
 	for _, name := range changed {
 		if _, ok := g.Services[name]; !ok {
-			return nil, fmt.Errorf("the topology does not know the changed service %q", name)
+			return nil, nil, fmt.Errorf("the topology does not know the changed service %q", name)
 		}
-		set[name] = true
+		reasons[name] = OverlayReasonChanged
+	}
+	for _, name := range changed {
 		for _, caller := range g.TransitiveCallers(name) {
-			set[caller] = true
+			if reasons[caller] == "" {
+				reasons[caller] = OverlayReasonCaller
+			}
 		}
 	}
 
-	overlay := make([]string, 0, len(set))
-	for name := range set {
+	seeds := make([]string, 0, len(reasons))
+	for name := range reasons {
+		seeds = append(seeds, name)
+	}
+	for _, name := range seeds {
+		for _, need := range g.TransitiveNeeds(name) {
+			// BuildTopology keeps an edge to a service it can not find, and
+			// reports it as an issue. There is no repository to cut a worktree
+			// from, so the overlay leaves it out.
+			if _, ok := g.Services[need]; !ok {
+				continue
+			}
+			if reasons[need] == "" {
+				reasons[need] = OverlayReasonNeeded
+			}
+		}
+	}
+
+	overlay := make([]string, 0, len(reasons))
+	for name := range reasons {
 		overlay = append(overlay, name)
 	}
 	sort.Strings(overlay)
-	return overlay, nil
+	return overlay, reasons, nil
 }
 
 func GenerateStackManifest(base *ResolvedWorkspace, stackName string, overlay []string, pathFor func(string) string) (*WorkspaceManifest, error) {

@@ -27,9 +27,10 @@ var stackCmd = &cobra.Command{
 	Long: `A feature stack runs some of a base workspace's services from their own git
 worktrees. For every other service the stack uses base's copy.
 
-Only the services that you change get a worktree and an allocated port. The
-services that call them get one too. All the other services resolve to base's
-copies.
+The services that you change get a worktree and an allocated port. The services
+that call them get one too. So does everything those services need: what they
+start after, and what they call. A stack stands up what it needs. All the other
+services resolve to base's copies.
 
 "base" is the workspace that runs with no stack. Base does not run from your
 checkouts. Base runs from a replica that devstack keeps: one git worktree for
@@ -51,8 +52,13 @@ var stackCreateCmd = &cobra.Command{
 	Use:   "create <name> --repos a,b",
 	Short: "Create a feature stack overlaying the base workspace",
 	Long: `Create a feature stack. devstack makes a git worktree and allocates a port for
-each service that you name. It does the same for the services that call them.
-Every other service resolves to base's copy.
+each service that you name. It does the same for the services that call them,
+and for everything those services need to run. Every other service resolves to
+base's copy.
+
+A service needs the services it starts after, and the services it calls. The
+workspace manifest declares both. If a service you name has a need that the
+manifest does not declare, the stack takes that one from base.
 
 A stack starts from what the team shipped. devstack cuts each worktree from that
 repo's default branch. Where the repo has a remote, devstack uses origin's copy
@@ -229,13 +235,9 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Base workspace: %s (%s)\n", res.BaseName, res.BasePath)
-	fmt.Printf("Overlay (the services you changed, and the services that call them):\n")
+	fmt.Printf("Overlay (the services you changed, the services that call them, and what those need):\n")
 	for _, m := range res.Overlay {
-		note := "pulled in (calls a changed service)"
-		if m.Reason == "changed" {
-			note = "changed"
-		}
-		fmt.Printf("  %-16s %s\n", m.Service, note)
+		fmt.Printf("  %-16s %s\n", m.Service, m.Note("changed"))
 	}
 	fmt.Printf("Stack root (sibling of base): %s\n", res.StackRoot)
 	for _, wt := range res.Worktrees {
@@ -288,11 +290,7 @@ func runStackAdd(cmd *cobra.Command, args []string) error {
 	if len(res.Added) > 0 {
 		fmt.Printf("Added to stack %q (branch %s):\n", res.StackName, res.Branch)
 		for _, m := range res.Added {
-			note := "pulled in (calls an added service)"
-			if m.Reason == "changed" {
-				note = "added"
-			}
-			fmt.Printf("  %-16s %s\n", m.Service, note)
+			fmt.Printf("  %-16s %s\n", m.Service, m.Note("added"))
 		}
 	}
 	for _, wt := range res.Worktrees {

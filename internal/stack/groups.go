@@ -7,7 +7,7 @@ import (
 )
 
 // Coverage is how much of a group a stack actually runs. A stack overlays the
-// services it changes plus their callers, so naming a group at create time does
+// services it changes, their callers and what those need, so naming a group at create time does
 // not guarantee the whole group came with it, and the rest keep serving from
 // base.
 type Coverage struct {

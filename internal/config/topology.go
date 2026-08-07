@@ -183,6 +183,40 @@ func (g *TopologyGraph) TransitiveCallers(name string) []string {
 	return callers
 }
 
+// TransitiveNeeds returns the set of services that name directly or transitively
+// needs: the services it starts after, and the services it calls. A stack
+// overlays these so it stands up its own copy of what it needs, instead of
+// reaching into base. The result is sorted and normally excludes name itself; a
+// cycle can include it. Visited-set guarded, so it terminates on a cycle that
+// detectTopologyCycles reports but does not remove.
+func (g *TopologyGraph) TransitiveNeeds(name string) []string {
+	result := map[string]bool{}
+	visited := map[string]bool{}
+
+	var visit func(string)
+	visit = func(n string) {
+		service, ok := g.Services[n]
+		if !ok {
+			return
+		}
+		for _, need := range append(append([]string(nil), service.Dependencies...), service.Calls...) {
+			result[need] = true
+			if !visited[need] {
+				visited[need] = true
+				visit(need)
+			}
+		}
+	}
+	visit(name)
+
+	needs := make([]string, 0, len(result))
+	for need := range result {
+		needs = append(needs, need)
+	}
+	sort.Strings(needs)
+	return needs
+}
+
 func detectTopologyCycles(services map[string]*ServiceTopology) []TopologyIssue {
 	var issues []TopologyIssue
 	visited := map[string]bool{}

@@ -105,11 +105,13 @@ func Add(in AddInput) (*AddResult, error) {
 
 	var adding []string
 	changedSet := stringSet(changed)
+	reasons := map[string]string{}
 	if len(changed) > 0 {
-		pulled, err := config.OverlaySet(topo, changed)
+		pulled, why, err := config.OverlaySet(topo, changed)
 		if err != nil {
 			return nil, err
 		}
+		reasons = why
 		for _, s := range pulled {
 			if !present[s] {
 				adding = append(adding, s)
@@ -130,11 +132,7 @@ func Add(in AddInput) (*AddResult, error) {
 		Ports:          map[string]int{},
 	}
 	for _, s := range adding {
-		reason := "caller"
-		if changedSet[s] {
-			reason = "changed"
-		}
-		res.Added = append(res.Added, OverlayMember{Service: s, Reason: reason})
+		res.Added = append(res.Added, OverlayMember{Service: s, Reason: reasons[s]})
 	}
 
 	worktreePaths := map[string]string{}

@@ -72,7 +72,7 @@ func stackBranchNote(wt stack.WorktreeResult) string {
 
 func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_create",
-		mcp.WithDescription("Create a feature stack that overlays THIS workspace (the base). A stack runs its own copy of only the services it changes, plus the services that call them. Each one runs in its own git worktree, on a port devstack allocates. Every other service resolves to base's copy. Use this tool for the request 'I need a stack to work on X in services A and B'.\n"+
+		mcp.WithDescription("Create a feature stack that overlays THIS workspace (the base). A stack runs its own copy of the services it changes, the services that call them, and everything those services need. A service needs the services it starts after, and the services it calls. Each copy runs in its own git worktree, on a port devstack allocates. Every other service resolves to base's copy. Use this tool for the request 'I need a stack to work on X in services A and B'.\n"+
 			"devstack cuts each worktree from that repo's DEFAULT BRANCH as origin has it, and not from whatever the user's checkout has checked out. So a stack starts from what the team shipped, and half-finished work parked in a checkout is not dragged into it. To override this, use the 'from' parameter.\n"+
 			"Creation does not start the stack. A new stack is down, and stack_up is what runs it. Base does not have to run for you to create one. A base that is down is returned as a warning, and not as an error. A stack does reuse base's copies for every service it does not overlay, so bring base up before you use the stack.\n"+
 			"The tool returns the overlay set with a reason for each member, the worktree paths, the ref each worktree was cut from, the service links, and any warnings. A warning names a checkout that holds work the stack does not have, or a base daemon that does not run.\n"+
@@ -80,7 +80,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description("Short stack name (for example 'import-review'). The full stack identity becomes '<base>--<name>'. Every stack parameter across these tools takes the short name.")),
 		mcp.WithString("repos", mcp.Required(),
-			mcp.Description("Comma-separated exact service OR group names that this stack changes (for example 'frontend,backend' or 'core'). A group expands to its members. devstack pulls the services that call any of them into the overlay. A group reaches only as far as the overlay does. A member that devstack does not pull in keeps serving from base, and stack_list reports the shortfall.")),
+			mcp.Description("Comma-separated exact service OR group names that this stack changes (for example 'frontend,backend' or 'core'). A group expands to its members. devstack pulls the services that call any of them into the overlay, and everything those services need. A group reaches only as far as the overlay does. A member that devstack does not pull in keeps serving from base, and stack_list reports the shortfall.")),
 		mcp.WithString("note",
 			mcp.Description("What this stack is for, in the author's words: a ticket URL, an issue key, or a sentence. devstack never derives this: the branch says what changed, and the note says why. stack_list shows it. It is optional, and you can edit it later with the CLI: devstack stack note <name> \"...\"")),
 		mcp.WithString("branch",
@@ -134,13 +134,9 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		fmt.Fprintf(&sb, "Stack %q created (base %s).\n", res.StackName, res.BaseName)
 		fmt.Fprintf(&sb, "Stack root: %s\n\n", res.StackRoot)
 
-		sb.WriteString("Overlay set (changed ∪ transitive callers):\n")
+		sb.WriteString("Overlay set (changed ∪ transitive callers ∪ what they need):\n")
 		for _, m := range res.Overlay {
-			reason := "calls a changed service"
-			if m.Reason == "changed" {
-				reason = "changed"
-			}
-			fmt.Fprintf(&sb, "  %-16s %s\n", m.Service, reason)
+			fmt.Fprintf(&sb, "  %-16s %s\n", m.Service, m.Note("changed"))
 		}
 
 		sb.WriteString("\nWorktrees:\n")
@@ -233,11 +229,7 @@ func registerStackAddTool(mcpServer *server.MCPServer, ws *workspace.Workspace) 
 			fmt.Fprintf(&sb, "Added %s to stack %q (branch %s).\n", strings.Join(added, ", "), res.StackName, res.Branch)
 		}
 		for _, m := range res.Added {
-			reason := "calls an added service"
-			if m.Reason == "changed" {
-				reason = "added"
-			}
-			fmt.Fprintf(&sb, "  %-16s %s\n", m.Service, reason)
+			fmt.Fprintf(&sb, "  %-16s %s\n", m.Service, m.Note("added"))
 		}
 		sb.WriteString("\nNew worktrees:\n")
 		for _, wt := range res.Worktrees {

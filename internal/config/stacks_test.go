@@ -24,13 +24,45 @@ startsAfter:
 		t.Fatalf("BuildTopology(): %v", err)
 	}
 
-	overlay, err := OverlaySet(graph, []string{"backend"})
+	overlay, reasons, err := OverlaySet(graph, []string{"backend"})
 	if err != nil {
 		t.Fatalf("OverlaySet(): %v", err)
 	}
-	want := []string{"backend", "frontend"}
+	want := []string{"backend", "db", "frontend"}
 	if !reflect.DeepEqual(overlay, want) {
-		t.Fatalf("OverlaySet(backend) = %#v, want %#v (frontend calls backend transitively; db is downstream and reused; logger only starts after)", overlay, want)
+		t.Fatalf("OverlaySet(backend) = %#v, want %#v (frontend calls backend transitively; backend needs db; logger only starts after, so it stays with base)", overlay, want)
+	}
+	wantReasons := map[string]string{
+		"backend":  OverlayReasonChanged,
+		"frontend": OverlayReasonCaller,
+		"db":       OverlayReasonNeeded,
+	}
+	if !reflect.DeepEqual(reasons, wantReasons) {
+		t.Fatalf("OverlaySet(backend) reasons = %#v, want %#v", reasons, wantReasons)
+	}
+}
+
+func TestOverlaySetPullsWhatACallerNeeds(t *testing.T) {
+	dir := writeTopoWorkspace(t, []string{"frontend", "backend", "cache"}, `calls:
+  frontend:
+    - backend
+startsAfter:
+  frontend:
+    - cache
+`)
+
+	graph, err := BuildTopology(dir)
+	if err != nil {
+		t.Fatalf("BuildTopology(): %v", err)
+	}
+
+	overlay, _, err := OverlaySet(graph, []string{"backend"})
+	if err != nil {
+		t.Fatalf("OverlaySet(): %v", err)
+	}
+	want := []string{"backend", "cache", "frontend"}
+	if !reflect.DeepEqual(overlay, want) {
+		t.Fatalf("OverlaySet(backend) = %#v, want %#v (frontend comes in as a caller, and it needs cache to start)", overlay, want)
 	}
 }
 
@@ -45,12 +77,13 @@ func TestOverlaySetNoCallers(t *testing.T) {
 		t.Fatalf("BuildTopology(): %v", err)
 	}
 
-	overlay, err := OverlaySet(graph, []string{"frontend"})
+	overlay, _, err := OverlaySet(graph, []string{"frontend"})
 	if err != nil {
 		t.Fatalf("OverlaySet(): %v", err)
 	}
-	if !reflect.DeepEqual(overlay, []string{"frontend"}) {
-		t.Fatalf("OverlaySet(frontend) = %#v, want [frontend]", overlay)
+	want := []string{"backend", "frontend"}
+	if !reflect.DeepEqual(overlay, want) {
+		t.Fatalf("OverlaySet(frontend) = %#v, want %#v (frontend has no callers, and it calls backend)", overlay, want)
 	}
 }
 
@@ -62,7 +95,7 @@ func TestOverlaySetUnknownService(t *testing.T) {
 		t.Fatalf("BuildTopology(): %v", err)
 	}
 
-	if _, err := OverlaySet(graph, []string{"ghost"}); err == nil {
+	if _, _, err := OverlaySet(graph, []string{"ghost"}); err == nil {
 		t.Fatal("expected an error for an unknown changed service")
 	}
 }

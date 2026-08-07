@@ -36,6 +36,20 @@ type OverlayMember struct {
 	Reason  string
 }
 
+// Note says in words why this service is in the overlay. verb is what the user
+// did to the services they named: "changed" for a new stack, "added" for a stack
+// that grows.
+func (m OverlayMember) Note(verb string) string {
+	switch m.Reason {
+	case config.OverlayReasonCaller:
+		return "calls a " + verb + " service"
+	case config.OverlayReasonNeeded:
+		return "a " + verb + " service needs it"
+	default:
+		return verb
+	}
+}
+
 // WorktreeResult is where one service of a stack lives. The worktree is cut per
 // repository, so Repo and RepoPath name the worktree, and Path names the
 // directory of this service in it. A service at the root of its own repository
@@ -117,7 +131,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 		return nil, err
 	}
 
-	overlay, err := config.OverlaySet(topo, changed)
+	overlay, reasons, err := config.OverlaySet(topo, changed)
 	if err != nil {
 		return nil, err
 	}
@@ -130,11 +144,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 		Ports:    map[string]int{},
 	}
 	for _, s := range overlay {
-		reason := "caller"
-		if changedSet[s] {
-			reason = "changed"
-		}
-		res.Overlay = append(res.Overlay, OverlayMember{Service: s, Reason: reason})
+		res.Overlay = append(res.Overlay, OverlayMember{Service: s, Reason: reasons[s]})
 	}
 
 	// The workspace name is in the path because two workspaces can share a
