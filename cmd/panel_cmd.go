@@ -36,16 +36,23 @@ port. Then press enter to take that address. In the picker, ctrl+o opens an
 address and ctrl+y copies it. 'devstack panel --jump' opens the picker at once.
 When you pick an address, the panel closes.
 
-CHOOSE WHAT ENTER DOES
-enter opens the address in a browser. If you work over ssh, that browser starts
-on the machine the panel runs on, and you never see it. Then make enter copy
-instead:
+WHAT ENTER DOES
+enter decides for itself, and you configure nothing. enter opens the address in
+a browser only where that browser opens on your own screen. Everywhere else it
+copies the address, because a browser window on another machine helps nobody.
 
-  devstack panel --enter copy
+enter copies over ssh, on a machine with no display server, and in a herdr pane.
+A herdr pane holds no answer: the herdr server owns the pane, and its client
+attaches from this machine or from another one, so the pane can not tell where
+you sit.
 
-To keep the choice, put "panel": {"enter": "copy"} in ~/.devstack/config.json,
-or set DEVSTACK_PANEL_ENTER=copy. A copy over ssh goes to the clipboard of your
-own machine, because devstack sends it to your terminal.
+A copy goes to your terminal, and the terminal puts it on the clipboard of the
+machine you sit at. This works over ssh. Your terminal must support OSC 52, and
+tmux needs 'set -g set-clipboard on'.
+
+To decide yourself, pass --enter open or --enter copy. To keep that choice, put
+"panel": {"enter": "copy"} in ~/.devstack/config.json, or set
+DEVSTACK_PANEL_ENTER=copy.
 
 The 'machine' group holds the host daemon and the collector. One of each serves
 every workspace. A 'containers' group holds the docker containers of one
@@ -58,7 +65,7 @@ The panel is the pane of the herdr plugin. It also runs in any terminal.`,
 func init() {
 	rootCmd.AddCommand(panelCmd)
 	panelCmd.Flags().Bool("jump", false, "Open the address picker, and close the panel when you pick an address")
-	panelCmd.Flags().String("enter", "", "What the enter key does with an address: open (default) or copy. Over ssh, choose copy")
+	panelCmd.Flags().String("enter", "", "What the enter key does with an address: auto (default), open or copy. auto copies over ssh, and opens here")
 	_ = viper.BindPFlag("panel.enter", panelCmd.Flags().Lookup("enter"))
 	_ = viper.BindEnv("panel.enter", "DEVSTACK_PANEL_ENTER")
 	panelCmd.Flags().Bool("launch-decision", false, "Read a herdr pane list on stdin, and report where to open the panel")
@@ -70,15 +77,18 @@ func init() {
 }
 
 // panelEnterCopies reads the choice of what the enter key does with an address.
-// An empty value is the default, and the default opens the address.
+// The default decides for itself: it copies where a browser started here would
+// open on a screen the reader does not sit at.
 func panelEnterCopies(setting string) (bool, error) {
 	switch strings.ToLower(strings.TrimSpace(setting)) {
-	case "", "open":
+	case "", "auto":
+		return !panel.BrowserReaches(), nil
+	case "open":
 		return false, nil
 	case "copy":
 		return true, nil
 	default:
-		return false, fmt.Errorf("the enter key takes open or copy, and not %q\nset it for this run:  devstack panel --enter copy\nkeep it:              panel.enter in ~/.devstack/config.json", setting)
+		return false, fmt.Errorf("the enter key takes auto, open or copy, and not %q\nset it for this run:  devstack panel --enter copy\nkeep it:              panel.enter in ~/.devstack/config.json", setting)
 	}
 }
 

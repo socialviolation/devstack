@@ -46,3 +46,42 @@ func TestCopyWithNoTerminalAndNoToolSaysSo(t *testing.T) {
 		t.Fatal("expected an error when there is no clipboard tool and no terminal")
 	}
 }
+
+func TestPlainSequenceWhereThereIsNoTmux(t *testing.T) {
+	t.Setenv("TMUX", "")
+	var out strings.Builder
+
+	if err := osc52(&out, "x"); err != nil {
+		t.Fatalf("osc52(): %v", err)
+	}
+	// herdr and every bare terminal read the sequence as it is. Only tmux needs
+	// the wrapper, and a wrapper sent to the others is rubbish on the screen.
+	if strings.Contains(out.String(), "\x1bPtmux;") {
+		t.Fatalf("osc52() wrapped the sequence for tmux outside tmux: %q", out.String())
+	}
+}
+
+func TestTmuxGetsTheWrapper(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,123,0")
+	var out strings.Builder
+
+	if err := osc52(&out, "x"); err != nil {
+		t.Fatalf("osc52(): %v", err)
+	}
+	if !strings.HasPrefix(out.String(), "\x1bPtmux;") || !strings.HasSuffix(out.String(), "\x1b\\") {
+		t.Fatalf("osc52() in tmux wrote %q, want the passthrough wrapper", out.String())
+	}
+}
+
+func TestBrowserDoesNotReachTheReaderInsideHerdr(t *testing.T) {
+	t.Setenv("SSH_TTY", "")
+	t.Setenv("SSH_CONNECTION", "")
+	t.Setenv("WAYLAND_DISPLAY", "wayland-1")
+	t.Setenv("HERDR_ENV", "1")
+
+	// The herdr client attaches from anywhere, and the pane inherits the
+	// server's environment. A display here proves nothing about the reader.
+	if BrowserReaches() {
+		t.Fatal("BrowserReaches() said yes inside herdr, where the reader can be on another machine")
+	}
+}
