@@ -178,8 +178,16 @@ func takeStacks(ws *workspace.Workspace, view *tilt.TiltView, links urls.Map, gr
 			names[name] = true
 		}
 
-		rw, err := stack.ResolveWorktree(&rec)
-		if err != nil || rw == nil {
+		// The stack's own worktrees are the only source for the directory a
+		// stack copy runs from. Base's resolution answers with base's directory
+		// and base's branch, which is the copy the reader is trying to tell
+		// apart from this one.
+		stackRW, err := stack.ResolveWorktree(&rec)
+		if err != nil {
+			stackRW = nil
+		}
+		rw := stackRW
+		if rw == nil {
 			rw, _ = config.ResolveWorkspace(ws.Path)
 		}
 		envs := activeEnvs(rw, names, rec.Env)
@@ -189,8 +197,8 @@ func takeStacks(ws *workspace.Workspace, view *tilt.TiltView, links urls.Map, gr
 			svc := serviceOf(name, ws.Name, rec.Name, resources[name], links)
 			svc.Group = groups[name]
 			svc.Env = envs[name]
-			if rw != nil {
-				if rs, ok := rw.Services[name]; ok {
+			if stackRW != nil {
+				if rs, ok := stackRW.Services[name]; ok {
 					svc.Dir = rs.RepoPath
 				}
 			}
@@ -253,7 +261,7 @@ func workspaceInfra(ws *workspace.Workspace) []Service {
 
 	out := make([]Service, 0, len(running))
 	for _, name := range running {
-		out = append(out, Service{Name: name, Infra: true, State: "running", Detail: "container"})
+		out = append(out, Service{Name: name, Infra: true, State: "running"})
 	}
 	return out
 }

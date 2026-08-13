@@ -314,11 +314,11 @@ func (m model) viewJump() []string {
 
 	width := min(max(40, m.width-4), 96)
 	if width > m.width {
-		width = m.width
+		width = max(4, m.width)
 	}
 	rows := min(max(3, m.height-8), 12)
 
-	inner := width - 4
+	inner := max(1, width-4)
 	box := []string{
 		m.boxLine("┌", "─", "┐", width, p, p.render(m.style.title, " open ")),
 		m.boxRow(p.render(m.style.faint, "› ")+p.render(m.style.text, truncate(m.query, inner-2))+p.render(m.style.title, "▏"), width, p),
@@ -358,7 +358,7 @@ func (m model) linkRow(l link, selected bool, inner int) string {
 }
 
 func (m model) boxRow(content string, width int, p paint) string {
-	inner := width - 4
+	inner := max(1, width-4)
 	content = truncate(content, inner)
 	return p.render(m.style.faint, "│") + p.fill(1) + content +
 		p.fill(inner-displayWidth(content)) + p.fill(1) + p.render(m.style.faint, "│")
@@ -368,7 +368,7 @@ func (m model) boxLine(left, fill, right string, width int, p paint, label strin
 	room := width - 2 - displayWidth(label)
 	if room < 0 {
 		label = ""
-		room = width - 2
+		room = max(0, width-2)
 	}
 	return p.render(m.style.faint, left) + label +
 		p.render(m.style.faint, strings.Repeat(fill, room)) + p.render(m.style.faint, right)
@@ -397,7 +397,7 @@ func pad(s string, width int) string {
 	if len(s) >= width {
 		return truncate(s, width)
 	}
-	return s + strings.Repeat(" ", width-len(s))
+	return s + strings.Repeat(" ", max(0, width-len(s)))
 }
 
 func truncate(s string, width int) string {

@@ -14,15 +14,18 @@ import (
 
 func registerURLsTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("urls",
-		mcp.WithDescription("Report the address that reaches each running service from another machine on the tailnet.\n"+
-			"A request crosses three hops: the tailnet address, then the local proxy, then the service. devstack reads the map of every hop and joins them. Give the address at the front of the chain to a person: they open it in a browser, on any machine of the tailnet.\n"+
-			"A service with no address is not published. It still runs, and it still answers on its own port on this machine. Pass all=true to list those too.\n"+
-			"Use it after 'stack up', when somebody asks where to see the work.\n"+
-			"The CLI equivalent is `devstack urls`."),
+		mcp.WithDescription("Report the address that reaches each service of this workspace from another machine on the tailnet.\n"+
+			"A request crosses three hops: the tailnet address, then the local proxy, then the service. devstack reads the map of every hop and joins them. Give the address at the front of the chain to a person. That person opens it in a browser, on any machine of the tailnet.\n"+
+			"A service with no address is not published. It still runs, and it still answers on its own port on this machine. Pass all=true to list these services too. To reach a service with no address from one named machine, use the tunnel tool instead.\n"+
+			"With all=true, the tool also lists a service that is stopped or disabled. Read the state of each row before you report it.\n"+
+			"Use this tool after 'stack up', when somebody asks where to see the work.\n"+
+			"The CLI equivalent is `devstack urls`. `devstack panel` shows the same addresses in a terminal, and opens one in a browser."),
 		mcp.WithString("stack",
-			mcp.Description("Report one feature stack's addresses. With no stack, the tool reports base and every stack of this workspace.")),
+			mcp.Description("Report the addresses of one feature stack. With no stack, the tool reports base and every stack of this workspace.")),
+		mcp.WithString("workspace",
+			mcp.Description("Report another workspace of this machine, by name. With no workspace, the tool reports the workspace of this repository. Pass 'all' for every workspace of this machine.")),
 		mcp.WithBoolean("all",
-			mcp.Description("If true, list every service, including the ones with no address. The default is false.")),
+			mcp.Description("If true, list every service, published or not. The default is false.")),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -37,6 +40,13 @@ func registerURLsTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 		wsName := ""
 		if ws != nil {
 			wsName = ws.Name
+		}
+		switch asked := req.GetString("workspace", ""); asked {
+		case "":
+		case "all":
+			wsName = ""
+		default:
+			wsName = asked
 		}
 
 		rows := []map[string]any{}

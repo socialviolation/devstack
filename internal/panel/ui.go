@@ -27,9 +27,12 @@ type model struct {
 	height int
 
 	showAll bool
-	status  string
-	failed  bool
-	busy    string
+	// loaded reports that the first reading of the machine arrived. Before it,
+	// the panel knows nothing, and it must not report the daemon as down.
+	loaded bool
+	status string
+	failed bool
+	busy   string
 
 	overlay      []string
 	overlayTitle string
@@ -78,8 +81,10 @@ func Run(opts Options) error {
 	results := make(chan commandResult, 4)
 
 	go readKeys(scr.in, keys)
-	stopResize := watchResize(scr, sizes)
+	stopResize := watchResize(sizes)
 	defer stopResize()
+	stopping, stopWatching := watchStop()
+	defer stopWatching()
 
 	refresh := func() {
 		go func() { snapshots <- Take(context.Background()) }()
@@ -101,15 +106,19 @@ func Run(opts Options) error {
 			}
 		case <-ticker.C:
 			refresh()
+		case <-stopping:
+			return nil
 		case snap := <-snapshots:
 			selected := m.selectedKey()
 			m.snap = keepWorkspace(snap, m.focus)
+			m.loaded = true
 			m.rebuild(selected)
 			m.refilterLinks()
 		case result := <-results:
 			m.showResult(result)
 			refresh()
 		case <-sizes:
+			scr.readSize()
 			m.width, m.height = scr.width, scr.height
 			m.clampScroll()
 		}
@@ -129,7 +138,7 @@ func (m *model) showResult(result commandResult) {
 		m.setStatus(fmt.Sprintf("%s: %v", result.title, result.err), true)
 		return
 	}
-	m.setStatus(result.title+" finished", false)
+	m.setStatus(result.title+" is complete", false)
 }
 
 func (m *model) run(title string, args []string, results chan<- commandResult) {
@@ -186,8 +195,10 @@ func (m *model) handleKey(key string, results chan<- commandResult) bool {
 	}
 
 	switch key {
-	case "q", "ctrl+c", "escape":
+	case "q", "ctrl+c":
 		return true
+	case "escape":
+		m.setStatus("", false)
 	case "up", "k":
 		m.move(-1)
 	case "down", "j":
@@ -208,9 +219,9 @@ func (m *model) handleKey(key string, results chan<- commandResult) bool {
 		m.showAll = !m.showAll
 		m.rebuild(m.selectedKey())
 		if m.showAll {
-			m.setStatus("showing every service", false)
+			m.setStatus("the panel shows every service", false)
 		} else {
-			m.setStatus("showing what is up", false)
+			m.setStatus("the panel shows what is up", false)
 		}
 	case "?":
 		m.overlayTitle = "keys"
@@ -235,7 +246,7 @@ func (m *model) act(key string, results chan<- commandResult) {
 	}
 
 	if r.service.Infra || (r.kind == rowGroup && r.infra) {
-		m.setStatus("the panel does not start or stop infrastructure", true)
+		m.setStatus("the panel does not start or stop the machine and containers rows", true)
 		return
 	}
 
@@ -328,7 +339,7 @@ const (
 
 func (m *model) useLink(action linkAction) bool {
 	if m.linkIndex >= len(m.links) {
-		m.setStatus("no link matches", true)
+		m.setStatus("no address matches", true)
 		return false
 	}
 	picked := m.links[m.linkIndex]
@@ -354,11 +365,25 @@ func (m *model) useLink(action linkAction) bool {
 	return false
 }
 
+// refilterLinks rebuilds the list under the picker, and keeps the cursor on the
+// address it was on. A service that finishes starting reorders the list, and a
+// cursor that holds its position by number opens whatever moved under it.
 func (m *model) refilterLinks() {
 	if !m.jump {
 		return
 	}
+	picked := ""
+	if m.linkIndex < len(m.links) {
+		picked = m.links[m.linkIndex].URL
+	}
+
 	m.links = filterLinks(collectLinks(m.snap), m.query)
+	for i, l := range m.links {
+		if l.URL == picked {
+			m.linkIndex = i
+			return
+		}
+	}
 	if m.linkIndex >= len(m.links) {
 		m.linkIndex = max(0, len(m.links)-1)
 	}
@@ -507,6 +532,8 @@ func helpLines() []string {
 		"  q            quit",
 		"",
 		"  A row with no address is not published on the tailnet.",
+		"  The panel shows the workspace of the directory it opens in.",
+		"  The panel does not start or stop the machine and containers rows.",
 		"  The panel reads the machine again every few seconds.",
 	}
 }

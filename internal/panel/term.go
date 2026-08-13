@@ -79,12 +79,13 @@ func (s *screen) draw(lines []string) {
 	_, _ = s.out.WriteString(b.String())
 }
 
-func watchResize(s *screen, sizes chan<- struct{}) func() {
+// watchResize tells the loop that the terminal changed size. It reads no size
+// itself: the screen belongs to the loop, and a second writer is a data race.
+func watchResize(sizes chan<- struct{}) func() {
 	winch := make(chan os.Signal, 1)
 	signal.Notify(winch, syscall.SIGWINCH)
 	go func() {
 		for range winch {
-			s.readSize()
 			select {
 			case sizes <- struct{}{}:
 			default:
@@ -92,6 +93,15 @@ func watchResize(s *screen, sizes chan<- struct{}) func() {
 		}
 	}()
 	return func() { signal.Stop(winch); close(winch) }
+}
+
+// watchStop reports a signal that ends the panel. Raw mode and the alternate
+// screen belong to the process, so a panel killed without this leaves the
+// terminal with no echo and no line editing.
+func watchStop() (<-chan os.Signal, func()) {
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
+	return stop, func() { signal.Stop(stop) }
 }
 
 func readKeys(in *os.File, keys chan<- string) {
@@ -113,9 +123,11 @@ func parseKeys(data []byte) []string {
 	for i := 0; i < len(data); {
 		b := data[i]
 		switch {
-		case b == 0x1b && i+2 < len(data) && data[i+1] == '[':
+		case b == 0x1b && i+1 < len(data) && (data[i+1] == '[' || data[i+1] == 'O'):
 			key, size := parseEscape(data[i:])
-			out = append(out, key)
+			if key != "" {
+				out = append(out, key)
+			}
 			i += size
 		case b == 0x1b:
 			out = append(out, "escape")
@@ -141,7 +153,17 @@ func parseKeys(data []byte) []string {
 	return out
 }
 
+// parseEscape reads one escape sequence. A terminal in application-cursor mode
+// sends the arrow keys as SS3 (ESC O A) instead of CSI (ESC [ A), and a reader
+// whose Up key quits the panel is reading SS3 as three separate keys.
 func parseEscape(data []byte) (string, int) {
+	if data[1] == 'O' {
+		if len(data) < 3 {
+			return "", len(data)
+		}
+		return arrowKey(data[2]), 3
+	}
+
 	end := 2
 	for end < len(data) && (data[end] < 0x40 || data[end] > 0x7e) {
 		end++
@@ -154,14 +176,8 @@ func parseEscape(data []byte) (string, int) {
 	size := end + 1
 
 	switch final {
-	case 'A':
-		return "up", size
-	case 'B':
-		return "down", size
-	case 'C':
-		return "right", size
-	case 'D':
-		return "left", size
+	case 'A', 'B', 'C', 'D':
+		return arrowKey(final), size
 	case 'H':
 		return "home", size
 	case 'F':
@@ -179,6 +195,20 @@ func parseEscape(data []byte) (string, int) {
 		}
 	}
 	return "", size
+}
+
+func arrowKey(final byte) string {
+	switch final {
+	case 'A':
+		return "up"
+	case 'B':
+		return "down"
+	case 'C':
+		return "right"
+	case 'D':
+		return "left"
+	}
+	return ""
 }
 
 func decodeRune(data []byte) (rune, int) {
