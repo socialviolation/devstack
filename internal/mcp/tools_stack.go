@@ -47,7 +47,8 @@ const baseTermDesc = "\"base\" is this workspace with no stack. base does not ru
 // serviceLinksDesc defines the "service links" these tools return: one
 // http://localhost:<port> URL per port the stack allocated.
 const serviceLinksDesc = "A service link is 'service/portKey=http://localhost:<port>'. It is the localhost URL of one port that this stack allocated for one of its overlay services. " +
-	"The portKey is a key from the manifest ports of that service, for example 'http'. These ports belong to the stack. Reach its copies here, not on the ports of base."
+	"The portKey is a key from the manifest ports of that service, for example 'http'. These ports belong to the stack. Reach its copies here, not on the ports of base. " +
+	"A service link is a localhost URL, so it works on this machine only. If a person on another machine needs an address for the same copy, call the urls tool."
 
 func registerStackTools(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	registerStackCreateTool(mcpServer, ws)

@@ -382,13 +382,91 @@ devstack tunnel push my-box.ts.net --as-base agent
 
 CAUTION: `--reclaim` kills what already holds those ports on the far host. What it kills can belong to a colleague, or to another stack. `--reclaim` touches only the ports that devstack forwards, so `--service` narrows the blast radius. Before you pass it, run `devstack tunnel check <host>` to see who holds those ports.
 
+## Addresses
+
+A service of this machine often answers on the tailnet too. The request crosses three hops: the tailnet address, then the local proxy, then the service. devstack reads the map of every hop, joins them, and prints the address at the front of the chain. Give that address to a person, or open it on your phone.
+
+```bash
+devstack urls                     # the addresses of this workspace
+devstack urls --stack orbit       # one feature stack
+devstack urls --all               # every service, published or not
+devstack urls --json              # the same list, for a script or an agent
+```
+
+devstack reads the tailnet map from `tailscale serve status`, and the proxy map from the caddy admin API on `:2019`. If a machine has no tailnet map or no proxy map, devstack prints fewer addresses. It reports no error. A service with no address still runs, and it still answers on its own port on this machine.
+
+The `urls` MCP tool reports the same list, so an agent can tell you where to see its work. To reach a service that has no address, forward its port with [a tunnel](#tunnels) instead.
+
+## The panel
+
+`devstack panel` watches the machine, and acts on one service. It lists what the workspace runs. For each copy it gives the state, the group, the branch, the port and the address. It reads the machine again every few seconds.
+
+```bash
+devstack panel                    # the workspace of the working directory
+devstack panel --workspace navexa # one named workspace
+devstack panel --jump             # open the address picker at once
+```
+
+| Key | What it does |
+| --- | --- |
+| `↑` `↓`, or `j` `k` | move |
+| `enter` | open the address in the browser |
+| `y` | copy the address |
+| `O` | find an address by name, then open it |
+| `s` `r` `x` | start, restart, stop the service. On a stack line, `s` brings the stack up and `x` takes it down |
+| `l` | read the process log |
+| `a` | show every service, and not only what is up |
+| `?` | the keys |
+| `q` | quit |
+
+The panel shows the workspace of the directory it opens in. From a directory outside every workspace, the panel shows all the workspaces.
+
+The `machine` group at the top holds the host daemon and the collector. One of each serves every workspace, so the panel does not start or stop them. A `containers` group holds the docker containers of one workspace. The panel does not start or stop these containers either.
+
+### The herdr plugin
+
+[herdr](https://herdr.dev) opens the panel in a pane beside your work. The plugin is a launcher: it runs the `devstack` binary on your `$PATH`. As a result, the panel and the CLI stay the same version, and `devstack upgrade` updates both.
+
+Install it from your checkout, or from GitHub:
+
+```bash
+herdr plugin link ~/dev/devstack/herdr                 # the checkout you work in
+herdr plugin install socialviolation/devstack/herdr    # the published manifest
+```
+
+Then bind the two actions in `~/.config/herdr/config.toml`:
+
+```toml
+[[keys.command]]
+key = "prefix+l"
+type = "plugin_action"
+command = "devstack.open-panel"
+description = "open the devstack panel in split"
+
+[[keys.command]]
+key = "prefix+shift+l"
+type = "plugin_action"
+command = "devstack.open-links"
+description = "open a service address in the browser"
+```
+
+Run `herdr server reload-config` to apply it. The plugin gives three actions:
+
+| Action | What it does |
+| --- | --- |
+| `devstack.open-panel` | Open the panel beside the current work. The same key focuses it, then closes it |
+| `devstack.open-panel-tab` | Open the panel in its own tab, or switch to the tab that holds it |
+| `devstack.open-links` | Open the address picker over the current work. Type, then press enter |
+
+The panel shows the workspace of the pane where you press the key. From a directory outside every workspace, the panel shows all the workspaces. The panel draws with the palette of your herdr theme, and it follows `[theme]` and `[theme.custom]` in the herdr configuration.
+
 ## MCP
 
 `devstack serve` is the MCP server. `.mcp.json` starts it over stdio. You do not run it yourself.
 
 ```
-environment  status  topology  start  stop  restart  process_logs  service_env
-configure    observability     investigate    tunnel      hooks       base
+environment  status  urls    topology  start  stop  restart  process_logs
+service_env  configure         observability  investigate  tunnel  hooks  base
 migrate      stack_create      stack_add   stack_up    stack_down
 stack_list   stack_rm  stack_note   stack_config
 env_use      env_which env_set
@@ -416,7 +494,7 @@ The `stack` parameter scopes the search. An absent `stack` searches base. A name
 | `check` | Audit for placeholders and missing keys |
 | `drift` | Compare what devstack resolves with what the repository says it needs |
 
-Some commands have no tool and need a shell. They are: `upgrade`, `init`, `prime`, `serve`, `ports`, `dependencies`, `group add`, `group remove`, `group list`, `env list`, `env show`, `env remove`, `otel start`, `otel stop`, `otel open`, `otel plugins`, and every `workspace` command but `topology`.
+Some commands have no tool and need a shell. They are: `upgrade`, `init`, `prime`, `serve`, `panel`, `ports`, `dependencies`, `group add`, `group remove`, `group list`, `env list`, `env show`, `env remove`, `otel start`, `otel stop`, `otel open`, `otel plugins`, and every `workspace` command but `topology`.
 
 The remaining otel commands have a tool. `investigate` covers `otel traces` and `otel logs`. The `observability` tool covers `otel status` with `action="status"`, `otel services` with `action="variants"`, and `otel config` with the three `config_*` actions.
 

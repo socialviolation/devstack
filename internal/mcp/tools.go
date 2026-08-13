@@ -70,6 +70,7 @@ func RegisterTools(
 	serviceDirs := cfg.ServicePaths
 	registerStatusTool(mcpServer, tiltClient, serviceDirs, cfg, ws)
 	registerTopologyTool(mcpServer, workspacePath)
+	registerURLsTool(mcpServer, ws)
 	registerStartTool(mcpServer, tiltClient, defaultService, cfg, ws)
 	registerRestartTool(mcpServer, tiltClient, defaultService, cfg, ws)
 	registerStopTool(mcpServer, tiltClient, defaultService, cfg, ws)
@@ -1642,7 +1643,8 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 			"  restart stop the forwards of this workspace, then bring them back. It repeats the last push or pull.\n\n"+
 			"This tool needs key-based SSH access to the remote. Passwords do not work. If the keys are absent, the result tells you to run ssh-copy-id.\n"+
 			"It forwards only the ports that serve traffic now, and it skips a service that is idle or dead.\n"+
-			"Any host that you can reach over ssh works, and a plain ssh-config alias is one. A tailnet address is one such host, and not a requirement.\n\n"+
+			"Any host that you can reach over ssh works, and a plain ssh-config alias is one. A tailnet address is one such host, and not a requirement.\n"+
+			"This tool builds a new route to one named machine. If a service already answers on the tailnet, no tunnel is necessary: the urls tool reports the address that already reaches it.\n\n"+
 			"status and stop read the forwards that run, and not what discovery covers now. So they report and tear down the observability UI and the forwards of a stack, whether or not this call asked for them.\n"+
 			"After the first push or pull, devstack remembers the remote, the direction and the stack mapping. action=restart then repeats that same run.\n"+
 			"A parameter that you pass to restart wins over the saved one. devstack never restores reclaim, because it kills what holds the port on the far host.\n"),

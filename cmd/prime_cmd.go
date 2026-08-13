@@ -204,7 +204,7 @@ func buildPrime() (string, error) {
 	writePrimeSafety(&b)
 
 	section(&b, "REFERENCE")
-	b.WriteString("devstack status · devstack <command> --help · devstack stack list · devstack hooks list\n")
+	b.WriteString("devstack status · devstack urls · devstack <command> --help · devstack stack list · devstack hooks list\n")
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
@@ -607,8 +607,10 @@ func writePrimeWhatThisIs(b *strings.Builder) {
 	b.WriteString("devstack is a CLI and an MCP server. The tools share the names of the commands. This briefing already\n")
 	b.WriteString("says where you are and what runs. Call the `environment` tool for the list of tools this workspace\n")
 	b.WriteString("has, or later, when this briefing is old. Among the commands with no tool: upgrade, init,\n")
-	b.WriteString("ports, dependencies, group add and remove, env list, show and remove, and every\n")
+	b.WriteString("panel, ports, dependencies, group add and remove, env list, show and remove, and every\n")
 	b.WriteString("workspace command but topology. Run those in the shell.\n")
+	b.WriteString("To tell the user where to see a copy, call the `urls` tool, or run `devstack urls`.\n")
+	b.WriteString("It reports the address that reaches each service from another machine.\n")
 }
 
 func writePrimeTerms(b *strings.Builder) {

@@ -133,35 +133,12 @@ func orderGroupServices(members []string, deps map[string][]string) []string {
 	return out
 }
 
-// splitHostResource decomposes a host-daemon resource name under prefix
-// (<workspace>:) into its bare service and stack namespace. ok is false when the
-// name belongs to a different workspace. A base-workspace resource yields an
-// empty stack namespace.
 func splitHostResource(name, prefix string) (svc, stackNS string, ok bool) {
-	if !strings.HasPrefix(name, prefix) {
-		return "", "", false
-	}
-	rest := name[len(prefix):]
-	if i := strings.IndexByte(rest, ':'); i >= 0 {
-		return rest[:i], rest[i+1:], true
-	}
-	return rest, "", true
+	return tilt.SplitResourceName(name, prefix)
 }
 
-// hostResourceMap indexes a host-daemon view by bare service name, keeping only
-// the resources of one namespace: the base workspace when stackName is "", or a
-// feature stack's <ws>:<svc>:<stack> resources otherwise.
 func hostResourceMap(resources []tilt.UIResource, wsName, stackName string) map[string]tilt.UIResource {
-	prefix := wsName + ":"
-	out := make(map[string]tilt.UIResource, len(resources))
-	for _, r := range resources {
-		svc, ns, ok := splitHostResource(r.Metadata.Name, prefix)
-		if !ok || ns != stackName {
-			continue
-		}
-		out[svc] = r
-	}
-	return out
+	return tilt.ResourceMap(resources, wsName, stackName)
 }
 
 // stackInstancesRunning reports what the base count leaves out: how many of the
@@ -651,26 +628,8 @@ func runStatusAll() error {
 	return nil
 }
 
-// serviceStatus derives a human-readable status from Tilt resource state.
 func serviceStatus(r tilt.UIResource) string {
-	if r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
-		return "disabled"
-	}
-	switch r.Status.RuntimeStatus {
-	case "ok":
-		return "running"
-	case "pending":
-		return "starting"
-	case "error":
-		return "erroring"
-	}
-	if r.Status.UpdateStatus == "running" {
-		return "building"
-	}
-	if r.Status.UpdateStatus == "error" {
-		return "erroring"
-	}
-	return "stopped"
+	return tilt.ServiceStatus(r)
 }
 
 // extractPorts turns endpoint URLs into compact ":PORT" strings.
