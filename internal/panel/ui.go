@@ -557,10 +557,13 @@ func (m model) bodyHeight() int {
 
 func helpLines(enterCopies bool) []string {
 	enter := "  enter        open the address in the browser"
+	why := "  enter opens here. Over ssh, and in a herdr pane, it copies, because"
 	if enterCopies {
 		enter = "  enter        copy the address"
+		why = "  enter copies here, because a browser opened here would open on a"
 	}
 	return []string{
+		"  IN THE PANEL",
 		"  ↑ ↓ / j k    move",
 		enter,
 		"  o            open the address in the browser",
@@ -574,12 +577,17 @@ func helpLines(enterCopies bool) []string {
 		"  ?            these keys",
 		"  q            quit",
 		"",
+		"  IN THE ADDRESS PICKER",
+		"  A letter types into the search, so the two actions take a modifier.",
+		"  enter        take the address",
+		"  ctrl+o       open the address in the browser",
+		"  ctrl+y       copy the address",
+		"  esc          close the picker",
 		"",
-		"  In the address picker: enter takes the address, ctrl+o opens it,",
-		"  ctrl+y copies it.",
-		"  enter decides for itself: it opens here, and it copies over ssh,",
-		"  because a browser started over ssh opens where you do not sit.",
-		"  To decide yourself: devstack panel --enter open|copy.",
+		"  WHAT ENTER DOES",
+		why,
+		"  screen you do not sit at. To decide yourself, start the panel with",
+		"  --enter open, or --enter copy.",
 		"",
 		"  A row with no address is not published on the tailnet.",
 		"  The panel shows the workspace of the directory it opens in.",
