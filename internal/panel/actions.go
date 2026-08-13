@@ -1,7 +1,9 @@
 package panel
 
 import (
+	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -44,7 +46,29 @@ var clipboardTools = [][]string{
 	{"xsel", "--clipboard", "--input"},
 }
 
-func copyToClipboard(text string) error {
+// osc52 asks the terminal that draws this pane to set the clipboard. Over ssh
+// it is the only mechanism that reaches the reader: wl-copy and xclip run on
+// the machine the panel runs on, and they set the clipboard of that machine,
+// which nobody looks at. The sequence travels back through the ssh session to
+// the terminal, so the address lands on the reader's own machine.
+//
+// A terminal that does not support the sequence ignores it in silence, and the
+// write still succeeds. So this reports success where it can not prove it.
+func osc52(out io.Writer, text string) error {
+	if out == nil {
+		return fmt.Errorf("the panel has no terminal to copy through")
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte(text))
+	_, err := fmt.Fprintf(out, "\x1b]52;c;%s\a", encoded)
+	return err
+}
+
+// overSSH reports whether this panel draws on a terminal somewhere else.
+func overSSH() bool {
+	return os.Getenv("SSH_TTY") != "" || os.Getenv("SSH_CONNECTION") != ""
+}
+
+func copyWithTool(text string) error {
 	for _, tool := range clipboardTools {
 		if _, err := exec.LookPath(tool[0]); err != nil {
 			continue
@@ -57,6 +81,21 @@ func copyToClipboard(text string) error {
 		return nil
 	}
 	return fmt.Errorf("this machine has no clipboard command (wl-copy, pbcopy, xclip or xsel)")
+}
+
+// copyToClipboard puts text on the clipboard the reader can paste from. Over
+// ssh that is the terminal's clipboard, and on this machine it is the local
+// one. Each mechanism is the fallback of the other.
+func copyToClipboard(out io.Writer, text string) error {
+	if overSSH() {
+		if err := osc52(out, text); err == nil {
+			return nil
+		}
+	}
+	if err := copyWithTool(text); err == nil {
+		return nil
+	}
+	return osc52(out, text)
 }
 
 func runDevstack(args ...string) (string, error) {

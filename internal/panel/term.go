@@ -35,6 +35,7 @@ type screen struct {
 	restore *term.State
 	width   int
 	height  int
+	closed  bool
 }
 
 func newScreen() (*screen, error) {
@@ -51,7 +52,14 @@ func newScreen() (*screen, error) {
 	return s, nil
 }
 
+// close gives the terminal back. It runs more than once: the panel closes the
+// screen early when it has a message to print on the terminal it came from, and
+// the deferred close still follows.
 func (s *screen) close() {
+	if s.closed {
+		return
+	}
+	s.closed = true
 	_, _ = s.out.WriteString(altScreenOff + cursorShow + sgrReset)
 	if s.restore != nil {
 		_ = term.Restore(int(s.in.Fd()), s.restore)
