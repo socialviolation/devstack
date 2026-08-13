@@ -6,7 +6,10 @@
 id = "devstack"
 name = "devstack"
 version = "0.1.0"
-min_herdr_version = "0.7.0"
+# 0.8.0 is the version this plugin was tested against. It uses the overlay
+# placement, and --cwd and --env on `plugin pane open`. An older herdr installs
+# the plugin, and then the pane fails where the reason is hard to read.
+min_herdr_version = "0.8.0"
 description = "Watch every devstack service, and open or copy the tailnet address of one."
 platforms = ["linux", "macos"]
 
