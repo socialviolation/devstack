@@ -1,0 +1,53 @@
+# The devstack panel, as a herdr plugin.
+#
+# The plugin is a launcher, and nothing more. The panel itself is the `devstack
+# panel` command of the devstack binary on PATH, so the panel and the CLI are
+# always the same version, and `devstack upgrade` updates both.
+id = "devstack"
+name = "devstack"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Watch every devstack service, and open or copy the tailnet address of one."
+platforms = ["linux", "macos"]
+
+# The panel needs the devstack binary. Fail the install here, where the reason
+# is readable, and not later in a pane that closes.
+[[build]]
+command = ["bash", "scripts/check-devstack.sh"]
+
+# The panel pane. herdr places it, and `devstack panel` draws it with the
+# palette of the herdr theme, so it looks like the session that holds it.
+[[panes]]
+id = "panel"
+title = "devstack"
+placement = "split"
+command = ["devstack", "panel"]
+
+# The link picker, over the work rather than beside it. It closes itself as soon
+# as the reader picks an address, so it needs no toggle.
+[[panes]]
+id = "links"
+title = "devstack links"
+placement = "overlay"
+command = ["devstack", "panel", "--jump"]
+
+[[actions]]
+id = "open-panel"
+title = "devstack: panel"
+description = "Open the devstack panel beside the current work. Press it again to close it."
+contexts = ["workspace", "global"]
+command = ["bash", "scripts/open-panel.sh"]
+
+[[actions]]
+id = "open-panel-tab"
+title = "devstack: panel (tab)"
+description = "Open the devstack panel in its own tab, or switch to the tab that holds it."
+contexts = ["workspace", "global"]
+command = ["bash", "scripts/open-panel-tab.sh"]
+
+[[actions]]
+id = "open-links"
+title = "devstack: open a link"
+description = "Find a service address by name, and open it in the browser."
+contexts = ["workspace", "global"]
+command = ["bash", "scripts/open-links.sh"]

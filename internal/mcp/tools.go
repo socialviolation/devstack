@@ -70,6 +70,7 @@ func RegisterTools(
 	serviceDirs := cfg.ServicePaths
 	registerStatusTool(mcpServer, tiltClient, serviceDirs, cfg, ws)
 	registerTopologyTool(mcpServer, workspacePath)
+	registerURLsTool(mcpServer, ws)
 	registerStartTool(mcpServer, tiltClient, defaultService, cfg, ws)
 	registerRestartTool(mcpServer, tiltClient, defaultService, cfg, ws)
 	registerStopTool(mcpServer, tiltClient, defaultService, cfg, ws)
