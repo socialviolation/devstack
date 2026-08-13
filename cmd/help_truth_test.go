@@ -20,7 +20,7 @@ func walkCommands(root *cobra.Command, visit func(*cobra.Command)) {
 	}
 }
 
-// .devstack.json is the retired project store; the README tells you to delete
+// .devstack.json is the retired project store; the reference tells you to delete
 // it. Help that still names it sends you to edit a file devstack no longer
 // reads. The code that migrates the legacy file is a separate thing and is
 // meant to keep mentioning it.
@@ -50,11 +50,11 @@ func TestDocumentedEnvVarsAreBound(t *testing.T) {
 	// goes through.
 	initConfig()
 
-	readme, err := os.ReadFile(filepath.Join("..", "README.md"))
+	reference, err := os.ReadFile(filepath.Join("..", "REFERENCE.md"))
 	if err != nil {
-		t.Skipf("no README to check: %v", err)
+		t.Skipf("no reference to check: %v", err)
 	}
-	rows := regexp.MustCompile("(?m)^\\| `([A-Z][A-Z0-9_]+)` \\|").FindAllStringSubmatch(string(readme), -1)
+	rows := regexp.MustCompile("(?m)^\\| `([A-Z][A-Z0-9_]+)` \\|").FindAllStringSubmatch(string(reference), -1)
 	if len(rows) < 3 {
 		t.Fatalf("found %d documented variables, so this guard proves nothing", len(rows))
 	}
