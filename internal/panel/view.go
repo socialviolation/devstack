@@ -143,7 +143,13 @@ func (m model) footer() string {
 		}
 		return m.bar(p.render(st, m.status), p.render(m.style.faint, "? keys"))
 	}
-	hint := "enter open · O find · y copy · s start · r restart · x stop · l logs · a all · ? keys · q quit"
+	// enter doubles the key of whichever action it takes, and o and y still name
+	// both. So the bar leads with what enter does, and drops the key it repeats.
+	hint := "enter open · O find · y copy"
+	if m.enterCopies {
+		hint = "enter copy · O find · o open"
+	}
+	hint += " · s start · r restart · x stop · l logs · a all · ? keys · q quit"
 	return m.bar(p.render(m.style.faint, hint), "")
 }
 
@@ -320,7 +326,7 @@ func (m model) viewJump() []string {
 
 	inner := max(1, width-4)
 	box := []string{
-		m.boxLine("┌", "─", "┐", width, p, p.render(m.style.title, " open ")),
+		m.boxLine("┌", "─", "┐", width, p, p.render(m.style.title, " "+m.jumpTitle()+" ")),
 		m.boxRow(p.render(m.style.faint, "› ")+p.render(m.style.text, truncate(m.query, inner-2))+p.render(m.style.title, "▏"), width, p),
 		m.boxLine("├", "─", "┤", width, p, ""),
 	}
@@ -333,9 +339,27 @@ func (m model) viewJump() []string {
 		box = append(box, m.boxRow(m.linkRow(m.links[i], i == m.linkIndex, inner), width, p))
 	}
 	box = append(box, m.boxLine("└", "─", "┘", width, p,
-		p.render(m.style.faint, " enter opens · ctrl+y copies · esc closes ")))
+		p.render(m.style.faint, " "+m.jumpHint()+" ")))
 
 	return m.centre(box)
+}
+
+// jumpTitle names the picker after what enter does with the address, because
+// the reader reads the title before they press anything.
+func (m model) jumpTitle() string {
+	if m.enterCopies {
+		return "copy"
+	}
+	return "open"
+}
+
+// jumpHint names the key of each action. The key that enter doubles goes first,
+// and the other one keeps its own key beside it.
+func (m model) jumpHint() string {
+	if m.enterCopies {
+		return "enter copies · ctrl+o opens · esc closes"
+	}
+	return "enter opens · ctrl+y copies · esc closes"
 }
 
 func (m model) linkRow(l link, selected bool, inner int) string {

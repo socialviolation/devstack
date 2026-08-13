@@ -3,6 +3,8 @@ package panel
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 )
@@ -12,6 +14,10 @@ const refreshInterval = 3 * time.Second
 type Options struct {
 	Workspace string
 	Jump      bool
+	// EnterCopies makes the enter key copy an address instead of opening it in
+	// a browser. A reader who works over ssh sets it: a browser started here
+	// opens on the machine the panel runs on, where nobody sees it.
+	EnterCopies bool
 }
 
 type model struct {
@@ -44,6 +50,15 @@ type model struct {
 	query     string
 	links     []link
 	linkIndex int
+
+	enterCopies bool
+	// out is the terminal the panel draws on. A copy over ssh writes an escape
+	// sequence to it, so the address reaches the reader's own clipboard.
+	out io.Writer
+	// parting is what the panel prints after it gives the terminal back. The
+	// picker closes the moment it copies an address, and a message drawn on the
+	// alternate screen goes with it.
+	parting string
 }
 
 type confirmation struct {
@@ -66,14 +81,22 @@ func Run(opts Options) error {
 	defer scr.close()
 
 	m := &model{
-		theme:    LoadTheme(),
-		focus:    opts.Workspace,
-		width:    scr.width,
-		height:   scr.height,
-		jump:     opts.Jump,
-		jumpOnly: opts.Jump,
+		theme:       LoadTheme(),
+		focus:       opts.Workspace,
+		width:       scr.width,
+		height:      scr.height,
+		jump:        opts.Jump,
+		jumpOnly:    opts.Jump,
+		enterCopies: opts.EnterCopies,
+		out:         scr.out,
 	}
 	m.style = newStyles(m.theme)
+	defer func() {
+		if m.parting != "" {
+			scr.close()
+			fmt.Fprintln(os.Stdout, m.parting)
+		}
+	}()
 
 	keys := make(chan string, 16)
 	sizes := make(chan struct{}, 1)
@@ -225,9 +248,15 @@ func (m *model) handleKey(key string, results chan<- commandResult) bool {
 		}
 	case "?":
 		m.overlayTitle = "keys"
-		m.overlay = helpLines()
+		m.overlay = helpLines(m.enterCopies)
 		m.overlayTop = 0
-	case "enter", "o":
+	case "enter":
+		if m.enterCopies {
+			m.copySelected()
+		} else {
+			m.openSelected()
+		}
+	case "o":
 		m.openSelected()
 	case "O":
 		m.openJump()
@@ -309,6 +338,11 @@ func (m *model) handleJumpKey(key string) bool {
 		m.jump = false
 		return false
 	case "enter":
+		if m.enterCopies {
+			return m.useLink(copyLink)
+		}
+		return m.useLink(openLink)
+	case "ctrl+o":
 		return m.useLink(openLink)
 	case "ctrl+y":
 		return m.useLink(copyLink)
@@ -348,7 +382,7 @@ func (m *model) useLink(action linkAction) bool {
 	verb := "opened "
 	if action == copyLink {
 		verb = "copied "
-		err = copyToClipboard(picked.URL)
+		err = copyToClipboard(m.out, picked.URL)
 	} else {
 		err = openURL(picked.URL)
 	}
@@ -359,6 +393,10 @@ func (m *model) useLink(action linkAction) bool {
 
 	m.setStatus(verb+picked.URL, false)
 	if m.jumpOnly {
+		// The picker closes here, and the status bar goes with it. The reader
+		// needs to see which address they took, so it goes to the terminal
+		// underneath instead.
+		m.parting = verb + picked.URL
 		return true
 	}
 	m.jump = false
@@ -416,7 +454,7 @@ func (m *model) copySelected() {
 		m.setStatus("this row has no address", true)
 		return
 	}
-	if err := copyToClipboard(url); err != nil {
+	if err := copyToClipboard(m.out, url); err != nil {
 		m.setStatus(err.Error(), true)
 		return
 	}
@@ -517,11 +555,19 @@ func (m model) bodyHeight() int {
 	return max(1, m.height-2)
 }
 
-func helpLines() []string {
+func helpLines(enterCopies bool) []string {
+	enter := "  enter        open the address in the browser"
+	why := "  enter opens here. Over ssh, and in a herdr pane, it copies, because"
+	if enterCopies {
+		enter = "  enter        copy the address"
+		why = "  enter copies here, because a browser opened here would open on a"
+	}
 	return []string{
+		"  IN THE PANEL",
 		"  ↑ ↓ / j k    move",
-		"  enter        open the address in the browser",
-		"  O            find an address by name, and open it",
+		enter,
+		"  o            open the address in the browser",
+		"  O            find an address by name",
 		"  y            copy the address",
 		"  s            start the service, or bring the stack up",
 		"  r            restart the service",
@@ -530,6 +576,18 @@ func helpLines() []string {
 		"  a            show every service, or only what is up",
 		"  ?            these keys",
 		"  q            quit",
+		"",
+		"  IN THE ADDRESS PICKER",
+		"  A letter types into the search, so the two actions take a modifier.",
+		"  enter        take the address",
+		"  ctrl+o       open the address in the browser",
+		"  ctrl+y       copy the address",
+		"  esc          close the picker",
+		"",
+		"  WHAT ENTER DOES",
+		why,
+		"  screen you do not sit at. To decide yourself, start the panel with",
+		"  --enter open, or --enter copy.",
 		"",
 		"  A row with no address is not published on the tailnet.",
 		"  The panel shows the workspace of the directory it opens in.",
