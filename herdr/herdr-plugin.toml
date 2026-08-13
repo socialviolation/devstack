@@ -23,18 +23,18 @@ title = "devstack"
 placement = "split"
 command = ["devstack", "panel"]
 
-# The link picker, over the work rather than beside it. It closes itself as soon
+# The address picker, over the work rather than beside it. It closes itself as soon
 # as the reader picks an address, so it needs no toggle.
 [[panes]]
 id = "links"
-title = "devstack links"
+title = "devstack addresses"
 placement = "overlay"
 command = ["devstack", "panel", "--jump"]
 
 [[actions]]
 id = "open-panel"
 title = "devstack: panel"
-description = "Open the devstack panel beside the current work. Press it again to close it."
+description = "Open the devstack panel beside the current work. The same key focuses it, then closes it."
 contexts = ["workspace", "global"]
 command = ["bash", "scripts/open-panel.sh"]
 
@@ -47,7 +47,7 @@ command = ["bash", "scripts/open-panel-tab.sh"]
 
 [[actions]]
 id = "open-links"
-title = "devstack: open a link"
+title = "devstack: open an address"
 description = "Find a service address by name, and open it in the browser."
 contexts = ["workspace", "global"]
 command = ["bash", "scripts/open-links.sh"]

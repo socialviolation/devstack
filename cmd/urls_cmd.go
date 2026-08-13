@@ -20,8 +20,8 @@ var urlsCmd = &cobra.Command{
 
 A request crosses three hops: the tailnet address, then the local proxy, then
 the service. devstack reads the map of every hop, and prints the address at the
-front of the chain. Open it on your phone, or give it to somebody else on the
-tailnet.
+front of the chain. Open that address on your phone, or give it to another
+person on the tailnet.
 
 A service with no address is not published. It still runs, and it still answers
 on its own port on this machine.
@@ -35,8 +35,8 @@ on its own port on this machine.
 
 func init() {
 	rootCmd.AddCommand(urlsCmd)
-	urlsCmd.Flags().String("stack", "", "Show one feature stack's addresses")
-	urlsCmd.Flags().Bool("all", false, "List every service, including the ones with no address")
+	urlsCmd.Flags().String("stack", "", "Show the addresses of one feature stack")
+	urlsCmd.Flags().Bool("all", false, "List every service, published or not")
 	urlsCmd.Flags().Bool("json", false, "Write the list as JSON")
 }
 

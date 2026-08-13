@@ -29,6 +29,7 @@ not normally run this command by hand.
 TOOLS EXPOSED TO AI AGENTS
   environment     which workspace, which copies, which tools (start here)
   status          live state of every copy: state, port, path, branch, env
+  urls            the tailnet address that reaches each copy from another machine
   topology        the declared service graph: groups, deps, callers
   start           start a service or a group, dependencies first
   restart         rebuild and restart a service or a group

@@ -28,6 +28,8 @@ var helpGroups = []helpGroup{
 		{"devstack stack create <name> --repos <svc|group>", "cut a stack for the feature"},
 		{"devstack stack up <name>", "run it"},
 		{"devstack status", "what runs, and where"},
+		{"devstack urls", "the address that reaches it from another machine"},
+		{"devstack panel", "watch every service, and act on one"},
 		{"devstack service restart <svc> --stack <name>", "restart one copy"},
 		{"devstack stack note <name> --add \"...\"", "where the work got to"},
 		{"devstack stack rm <name>", "tear it down"},
