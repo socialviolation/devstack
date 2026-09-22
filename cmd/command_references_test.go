@@ -138,7 +138,7 @@ func TestEveryReferencedCommandExists(t *testing.T) {
 		// modals, adverbs and connectives
 		"also": true, "can": true, "never": true, "then": true, "will": true,
 		// simple-past and past-participle forms
-		"cut": true, "deleted": true, "did": true, "found": true, "regenerated": true,
+		"cut": true, "deleted": true, "did": true, "found": true, "kept": true, "regenerated": true,
 		"removed": true, "resolved": true, "restarted": true, "saw": true, "skipped": true,
 		"stored": true, "turned": true, "wired": true, "wrote": true,
 		// third-person present verbs

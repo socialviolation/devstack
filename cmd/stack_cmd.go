@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/svcconfig"
@@ -341,10 +342,10 @@ func runStackAdd(cmd *cobra.Command, args []string) error {
 	// The stack stays up: regenerating the Tiltfile adds the new resources and
 	// leaves the blocks of the copies already running untouched, so nothing that
 	// is serving is stopped or restarted here.
-	if _, err := regenerateHostTiltfile(); err != nil {
+	if _, err := regenerateHostTiltfileScope(hostdaemon.ScopeStack(base.Name, res.Namespace)); err != nil {
 		return fmt.Errorf("can not generate the host Tiltfile again: %w", err)
 	}
-	syncHostTiltfile(tilt.NewClient("localhost", workspace.HostTiltPort))
+	syncHostTiltfile(tilt.NewClient("localhost", workspace.HostTiltPort), hostdaemon.ScopeStack(base.Name, res.Namespace))
 	fmt.Printf("  ✓ host Tiltfile now carries %s (not started)\n", strings.Join(added, ", "))
 
 	if err := fireHooks(base, args[0], config.EventStackUp, added); err != nil {
@@ -398,7 +399,7 @@ func runStackRemove(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if isTiltReachable(fmt.Sprintf("http://localhost:%d/api/view", workspace.HostTiltPort)) {
-		if _, gerr := regenerateHostTiltfile(); gerr != nil {
+		if _, gerr := regenerateHostTiltfileScope(hostdaemon.ScopeStack(base.Name, args[0])); gerr != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to regenerate host Tiltfile: %v\n", gerr)
 		}
 	}
@@ -758,7 +759,7 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if _, err := regenerateHostTiltfile(); err != nil {
+	if _, err := regenerateHostTiltfileScope(hostdaemon.ScopeStack(base.Name, rec.Name)); err != nil {
 		return fmt.Errorf("can not generate the host Tiltfile again: %w", err)
 	}
 	if err := ensureHostDaemon(); err != nil {
@@ -766,7 +767,7 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 	}
 
 	tiltClient := tilt.NewClient("localhost", workspace.HostTiltPort)
-	syncHostTiltfile(tiltClient)
+	syncHostTiltfile(tiltClient, hostdaemon.ScopeStack(base.Name, rec.Name))
 
 	started, err := stack.StartServices(tiltClient, base.Name, rec)
 	if err != nil {
@@ -823,7 +824,7 @@ func runStackDown(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if _, err := regenerateHostTiltfile(); err != nil {
+	if _, err := regenerateHostTiltfileScope(hostdaemon.ScopeStack(base.Name, rec.Name)); err != nil {
 		return fmt.Errorf("can not generate the host Tiltfile again: %w", err)
 	}
 	fmt.Printf("✓ Regenerated the host Tiltfile. The host daemon will drop the resources of stack %q.\n", rec.Name)

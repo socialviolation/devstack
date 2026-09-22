@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 )
@@ -70,8 +71,13 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Target: %s (:%d)\n", label, tiltPort)
 	}
 
+	targets := make([]string, 0, len(toTrigger))
+	for _, svc := range toTrigger {
+		targets = append(targets, resourceName(ws.Name, svc, namespace))
+	}
+
 	tiltClient := tilt.NewClient("localhost", tiltPort)
-	syncHostTiltfile(tiltClient)
+	syncHostTiltfile(tiltClient, hostdaemon.ScopeNames(targets...))
 
 	view, err := tiltClient.GetView()
 	if err != nil {

@@ -11,8 +11,8 @@ import (
 // the running daemon to load it, and prints what changed — so restarting or
 // starting a service applies manifest edits without a separate
 // 'devstack workspace generate'.
-func syncHostTiltfile(client *tilt.Client) {
-	for _, note := range hostdaemon.SyncAndReload(client) {
+func syncHostTiltfile(client *tilt.Client, scope hostdaemon.Scope) {
+	for _, note := range hostdaemon.SyncAndReload(client, scope) {
 		fmt.Println(note)
 	}
 }

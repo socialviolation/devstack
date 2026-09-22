@@ -51,7 +51,7 @@ func transformRunningState(w io.Writer, wsName string, skip []string) error {
 	fmt.Fprintln(w, "This step is slow. Each replica worktree is a new checkout, and a service can need its")
 	fmt.Fprintln(w, "own dependency install before it serves again.")
 
-	for _, note := range hostdaemon.SyncAndReload(client) {
+	for _, note := range hostdaemon.SyncAndReload(client, hostdaemon.ScopeAll()) {
 		fmt.Fprintln(w, note)
 	}
 
