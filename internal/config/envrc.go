@@ -46,7 +46,7 @@ func ResolveEnvFile(dir, name string) (map[string]string, error) {
 		return nil, fmt.Errorf("can not read the file information of %s: %w", path, err)
 	}
 
-	baseline := os.Environ()
+	baseline := minimalEnv()
 
 	// `|| exit $?` is load-bearing: bash's `.` returns non-zero on a syntax error
 	// but does not abort the shell, so without it a broken .envrc yields partial
@@ -90,6 +90,17 @@ func ResolveEnvFile(dir, name string) (map[string]string, error) {
 		out[k] = v
 	}
 	return out, nil
+}
+
+func minimalEnv() []string {
+	out := make([]string, 0, 3)
+	// PATH comes from the caller, so a file that derives a value from it stays caller-dependent.
+	for _, k := range []string{"HOME", "PATH", "USER"} {
+		if v, ok := os.LookupEnv(k); ok {
+			out = append(out, k+"="+v)
+		}
+	}
+	return out
 }
 
 // stripXtrace drops lines prefixed by an unmodified $PS4 ("+ ", nested "++ ").

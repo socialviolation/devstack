@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -44,15 +45,9 @@ func TestResolveEnvrc(t *testing.T) {
 			want:   map[string]string{"DEVSTACK_INHERITED": "overridden"},
 		},
 		{
-			name:   "conditional takes the dev branch",
+			name:   "conditional ignores the caller env",
 			envrc:  `if [ "$DEVSTACK_STAGE" = "dev" ]; then export DB=dev_url; else export DB=prod_url; fi` + "\n",
 			parent: map[string]string{"DEVSTACK_STAGE": "dev"},
-			want:   map[string]string{"DB": "dev_url"},
-		},
-		{
-			name:   "conditional takes the prod branch",
-			envrc:  `if [ "$DEVSTACK_STAGE" = "dev" ]; then export DB=dev_url; else export DB=prod_url; fi` + "\n",
-			parent: map[string]string{"DEVSTACK_STAGE": "live"},
 			want:   map[string]string{"DB": "prod_url"},
 		},
 		{
@@ -61,10 +56,10 @@ func TestResolveEnvrc(t *testing.T) {
 			want:  map[string]string{"E": "fallback"},
 		},
 		{
-			name:   "interpolation of a present var",
+			name:   "interpolation falls back when only the caller sets the var",
 			envrc:  `export E="${DEVSTACK_HOST:-fallback}/api"` + "\n",
 			parent: map[string]string{"DEVSTACK_HOST": "http://real"},
-			want:   map[string]string{"E": "http://real/api"},
+			want:   map[string]string{"E": "fallback/api"},
 		},
 		{
 			name:  "non-export assignment then conditional on it",
@@ -183,6 +178,69 @@ func TestResolveEnvrcErrorOmitsXtracedValues(t *testing.T) {
 			t.Fatalf("error must carry sh's diagnostic, got %q", err.Error())
 		}
 	})
+}
+
+func TestResolveEnvrcIsIndependentOfTheCallerEnv(t *testing.T) {
+	const body = "export OPENROUTER_API_KEY=from-file\n"
+
+	tests := []struct {
+		name   string
+		parent map[string]string
+	}{
+		{name: "caller does not set the key"},
+		{name: "caller sets the same value", parent: map[string]string{"OPENROUTER_API_KEY": "from-file"}},
+		{name: "caller sets a different value", parent: map[string]string{"OPENROUTER_API_KEY": "from-shell"}},
+	}
+
+	var first map[string]string
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for k, v := range tt.parent {
+				t.Setenv(k, v)
+			}
+
+			got, err := ResolveEnvrc(writeEnvrc(t, body))
+			if err != nil {
+				t.Fatalf("ResolveEnvrc: %v", err)
+			}
+			if got["OPENROUTER_API_KEY"] != "from-file" {
+				t.Errorf("OPENROUTER_API_KEY = %q, want %q", got["OPENROUTER_API_KEY"], "from-file")
+			}
+			if first == nil {
+				first = got
+				return
+			}
+			if !reflect.DeepEqual(got, first) {
+				t.Errorf("resolved env differs between callers: %v, want %v", got, first)
+			}
+		})
+	}
+}
+
+func TestResolveEnvrcOmitsCallerVarsTheFileDoesNotMention(t *testing.T) {
+	t.Setenv("DEVSTACK_CALLER_ONLY", "from-shell")
+	dir := writeEnvrc(t, "export FROM_FILE=yes\n")
+
+	got, err := ResolveEnvrc(dir)
+	if err != nil {
+		t.Fatalf("ResolveEnvrc: %v", err)
+	}
+	if !reflect.DeepEqual(got, map[string]string{"FROM_FILE": "yes"}) {
+		t.Fatalf("got %v, want only FROM_FILE", got)
+	}
+}
+
+func TestResolveEnvrcKeepsHomeInTheBaseline(t *testing.T) {
+	dir := writeEnvrc(t, `export CACHE_DIR="$HOME/.cache/devstack"`+"\n")
+
+	got, err := ResolveEnvrc(dir)
+	if err != nil {
+		t.Fatalf("ResolveEnvrc: %v", err)
+	}
+	want := os.Getenv("HOME") + "/.cache/devstack"
+	if got["CACHE_DIR"] != want {
+		t.Fatalf("CACHE_DIR = %q, want %q", got["CACHE_DIR"], want)
+	}
 }
 
 func keysOf(m map[string]string) []string {
