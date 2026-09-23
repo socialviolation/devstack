@@ -25,7 +25,9 @@ type AddInput struct {
 }
 
 type AddResult struct {
-	StackName      string
+	StackName string
+	// Namespace is the stack's short name, which is the last segment of each of its resource names.
+	Namespace      string
 	StackRoot      string
 	BaseName       string
 	Branch         string
@@ -121,6 +123,7 @@ func Add(in AddInput) (*AddResult, error) {
 
 	res := &AddResult{
 		StackName:      rec.FullName(),
+		Namespace:      rec.Name,
 		StackRoot:      rec.Root,
 		BaseName:       rec.Base,
 		Branch:         rec.Branch,

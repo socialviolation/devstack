@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 )
@@ -49,8 +50,13 @@ func runRestart(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Target: %s (:%d)\n", label, tiltPort)
 	}
 
+	targets := make([]string, 0, len(services))
+	for _, svc := range services {
+		targets = append(targets, resourceName(ws.Name, svc, namespace))
+	}
+
 	tiltClient := tilt.NewClient("localhost", tiltPort)
-	syncHostTiltfile(tiltClient)
+	syncHostTiltfile(tiltClient, hostdaemon.ScopeNames(targets...))
 
 	view, err := tiltClient.GetView()
 	if err != nil {

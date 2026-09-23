@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/hostdaemon"
 )
 
 var depsCmd = &cobra.Command{
@@ -108,7 +109,7 @@ func runDepsAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("✓ %s now depends on %s\n", service, dep)
-	if _, err := regenerateHostTiltfile(); err != nil {
+	if _, _, err := regenerateHostTiltfileScope(hostdaemon.ScopeWorkspace(ws.Name)); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: can not regenerate the host configuration: %v\n", err)
 	} else {
 		fmt.Println("Regenerated the host configuration.")
@@ -158,7 +159,7 @@ func runDepsRemove(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("✓ Removed %s from %s dependencies\n", dep, service)
-	if _, err := regenerateHostTiltfile(); err != nil {
+	if _, _, err := regenerateHostTiltfileScope(hostdaemon.ScopeWorkspace(ws.Name)); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: can not regenerate the host configuration: %v\n", err)
 	} else {
 		fmt.Println("Regenerated the host configuration.")

@@ -280,14 +280,14 @@ func registerStackAddTool(mcpServer *server.MCPServer, ws *workspace.Workspace) 
 		// The stack stays up: regenerating adds the new resources and leaves the
 		// blocks of the copies already running untouched, so nothing serving is
 		// stopped or restarted here.
-		_, genWarnings, err := hostdaemon.Regenerate()
+		_, genWarnings, _, err := hostdaemon.RegenerateScope(hostdaemon.ScopeStack(ws.Name, res.Namespace))
 		if err != nil {
 			return mcp.NewToolResultError(sb.String() + fmt.Sprintf("\nfailed to regenerate host Tiltfile: %v", err)), nil
 		}
 		for _, w := range genWarnings {
 			fmt.Fprintf(&sb, "WARNING: %s\n", w)
 		}
-		for _, note := range hostdaemon.SyncAndReload(tilt.NewClient("localhost", workspace.HostTiltPort)) {
+		for _, note := range hostdaemon.SyncAndReload(tilt.NewClient("localhost", workspace.HostTiltPort), hostdaemon.ScopeStack(ws.Name, res.Namespace)) {
 			fmt.Fprintf(&sb, "%s\n", note)
 		}
 
@@ -558,7 +558,7 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 		if err := stack.SetActive(ws.Name, rec.Name, true); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		_, genWarnings, err := hostdaemon.Regenerate()
+		_, genWarnings, _, err := hostdaemon.RegenerateScope(hostdaemon.ScopeStack(ws.Name, rec.Name))
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("can not generate the host Tiltfile again: %v", err)), nil
 		}
@@ -572,7 +572,7 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 		}
 
 		tiltClient := tilt.NewClient("localhost", workspace.HostTiltPort)
-		for _, note := range hostdaemon.SyncAndReload(tiltClient) {
+		for _, note := range hostdaemon.SyncAndReload(tiltClient, hostdaemon.ScopeStack(ws.Name, rec.Name)) {
 			daemonMsg += "\n" + note
 		}
 		started, err := stack.StartServices(tiltClient, ws.Name, rec)
@@ -636,7 +636,7 @@ func registerStackDownTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 		if err := stack.SetActive(ws.Name, rec.Name, false); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		_, genWarnings, err := hostdaemon.Regenerate()
+		_, genWarnings, kept, err := hostdaemon.RegenerateScope(hostdaemon.ScopeStack(ws.Name, rec.Name))
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("can not generate the host Tiltfile again: %v", err)), nil
 		}
@@ -644,6 +644,9 @@ func registerStackDownTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 		var sb strings.Builder
 		for _, w := range genWarnings {
 			fmt.Fprintf(&sb, "WARNING: %s\n", w)
+		}
+		if note := hostdaemon.KeptNote(kept); note != "" {
+			fmt.Fprintf(&sb, "%s\n", note)
 		}
 		appendHookOutput(&sb, config.EventStackDown, hookOut.String(), hookErr)
 		return mcp.NewToolResultText(sb.String() + fmt.Sprintf(

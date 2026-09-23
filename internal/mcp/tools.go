@@ -675,8 +675,29 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 		}
 		tiltClient, defaultService := t.client, t.defaultSvc
 
+		var members []string
+		var groupNote string
+		if groupName != "" {
+			members, groupNote, err = targetGroupMembers(ws, t, groupName)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+		} else {
+			if name == "" {
+				name = defaultService
+			}
+			if name == "" {
+				return mcp.NewToolResultError("no service specified, and this repo has no default service"), nil
+			}
+			members = []string{name}
+		}
+		targets := make([]string, 0, len(members))
+		for _, svc := range members {
+			targets = append(targets, resourceName(ws.Name, svc, t.namespace))
+		}
+
 		// Regenerate first so an edit to a manifest is what gets restarted.
-		syncNotes := strings.Join(hostdaemon.SyncAndReload(tiltClient), "\n")
+		syncNotes := strings.Join(hostdaemon.SyncAndReload(tiltClient, hostdaemon.ScopeNames(targets...)), "\n")
 		if syncNotes != "" {
 			syncNotes += "\n"
 		}
@@ -689,11 +710,6 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 
 		// Group restart.
 		if groupName != "" {
-			members, groupNote, err := targetGroupMembers(ws, t, groupName)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-
 			type restartResult struct {
 				svc string
 				out string
@@ -741,13 +757,6 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 		}
 
 		// Single service restart.
-		if name == "" {
-			name = defaultService
-		}
-		if name == "" {
-			return mcp.NewToolResultError("no service specified, and this repo has no default service"), nil
-		}
-
 		resolved, err := tilt.ResolveService(resourceName(ws.Name, name, t.namespace), view)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -849,8 +858,13 @@ func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, def
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		targets := make([]string, 0, len(ordered))
+		for _, svc := range ordered {
+			targets = append(targets, resourceName(ws.Name, svc, t.namespace))
+		}
+
 		// Regenerate first so an edit to a manifest is what gets started.
-		syncNotes := strings.Join(hostdaemon.SyncAndReload(tiltClient), "\n")
+		syncNotes := strings.Join(hostdaemon.SyncAndReload(tiltClient, hostdaemon.ScopeNames(targets...)), "\n")
 		if syncNotes != "" {
 			syncNotes += "\n"
 		}

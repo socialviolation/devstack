@@ -28,8 +28,23 @@ import (
 // header-only Tiltfile so a running daemon drains to empty. Returns the path and
 // any warnings generation raised.
 func Regenerate() (string, []string, error) {
-	res, err := Sync()
-	return res.Path, res.Warnings, err
+	path, warnings, _, err := RegenerateScope(ScopeAll())
+	return path, warnings, err
+}
+
+// RegenerateScope regenerates the host Tiltfile, and reports the blocks it kept at the definition on disk.
+func RegenerateScope(scope Scope) (string, []string, []string, error) {
+	res, err := SyncScope(scope)
+	return res.Path, res.Warnings, res.Kept, err
+}
+
+// KeptNote tells the reader which resources devstack held at the definition on disk. It is empty when devstack held none.
+func KeptNote(kept []string) string {
+	if len(kept) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("devstack kept %d resource(s) at the definition on disk, because this command does not target them: %s. To apply the new definition, run devstack workspace generate",
+		len(kept), strings.Join(kept, ", "))
 }
 
 // SyncResult reports what Sync did. Wrote is false when the rendered Tiltfile
@@ -38,16 +53,20 @@ type SyncResult struct {
 	Path    string
 	Wrote   bool
 	Changed []string
+	// Kept names the resources devstack left at the block on disk, because the scope does not cover them.
+	Kept []string
 	// Warnings are the generation problems that did not stop the render, such as
 	// a freePorts reclaim devstack dropped because it would kill another resource.
 	Warnings []string
 }
 
-// Sync renders the host Tiltfile from the manifests and writes it only when it
-// differs from the file on disk, reporting which resources changed. Commands
-// that act on a running service call this first so a manifest edit takes effect
-// without a separate 'devstack workspace generate'.
+// Sync renders the host Tiltfile from the manifests and writes every changed block.
 func Sync() (SyncResult, error) {
+	return SyncScope(ScopeAll())
+}
+
+// SyncScope writes the host Tiltfile when it differs from disk, but keeps every block the scope does not cover.
+func SyncScope(scope Scope) (SyncResult, error) {
 	out, warnings, err := render()
 	if err != nil {
 		return SyncResult{Warnings: warnings}, err
@@ -60,14 +79,112 @@ func Sync() (SyncResult, error) {
 	path := filepath.Join(dir, "Tiltfile")
 
 	existing, readErr := os.ReadFile(path)
+	var kept []string
+	if readErr == nil {
+		out, kept = keepUnscoped(string(existing), out, scope, warnings)
+	}
 	if readErr == nil && string(existing) == out {
-		return SyncResult{Path: path, Warnings: warnings}, nil
+		return SyncResult{Path: path, Kept: kept, Warnings: warnings}, nil
 	}
 
 	if err := os.WriteFile(path, []byte(out), 0644); err != nil {
 		return SyncResult{Warnings: warnings}, fmt.Errorf("can not write the host Tiltfile: %w", err)
 	}
-	return SyncResult{Path: path, Wrote: true, Changed: changedResources(string(existing), out), Warnings: warnings}, nil
+	return SyncResult{Path: path, Wrote: true, Changed: changedResources(string(existing), out), Kept: kept, Warnings: warnings}, nil
+}
+
+// keepUnscoped restores the on-disk block of each changed resource the scope does not cover, and names them.
+func keepUnscoped(existing, rendered string, scope Scope, warnings []string) (string, []string) {
+	if scope.All {
+		return rendered, nil
+	}
+	old := resourceBlocks(existing)
+	fresh := resourceBlocks(rendered)
+	warned := warnedResources(warnings)
+	keep := map[string]string{}
+	var kept []string
+	for name, block := range fresh {
+		oldBlock, ok := old[name]
+		if !ok || oldBlock == block || scope.Covers(name) || warned[name] {
+			continue
+		}
+		if !depsResolve(oldBlock, fresh) {
+			continue
+		}
+		keep[name] = oldBlock
+		kept = append(kept, name)
+	}
+	if len(keep) == 0 {
+		return rendered, nil
+	}
+	sort.Strings(kept)
+	return spliceBlocks(rendered, keep), kept
+}
+
+// warnedResources names the resources a render warning is about, which the generator writes first in the warning.
+func warnedResources(warnings []string) map[string]bool {
+	out := map[string]bool{}
+	for _, w := range warnings {
+		if first, _, _ := strings.Cut(strings.TrimSpace(w), " "); first != "" {
+			out[first] = true
+		}
+	}
+	return out
+}
+
+// depsResolve reports whether every resource_deps entry of a block still exists in the new render.
+func depsResolve(block string, fresh map[string]string) bool {
+	for _, line := range strings.Split(block, "\n") {
+		rest, found := strings.CutPrefix(strings.TrimSpace(line), "resource_deps=[")
+		if !found {
+			continue
+		}
+		rest = strings.TrimSuffix(strings.TrimSuffix(rest, ","), "]")
+		for _, dep := range strings.Split(rest, ",") {
+			dep = strings.Trim(strings.TrimSpace(dep), `"`)
+			if dep == "" {
+				continue
+			}
+			if _, ok := fresh[dep]; !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// spliceBlocks replaces the body of each named resource block, and leaves every other line as it is.
+func spliceBlocks(content string, replace map[string]string) string {
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, len(lines))
+	name := ""
+	var body []string
+	flush := func() {
+		if name == "" {
+			return
+		}
+		if repl, ok := replace[name]; ok {
+			out = append(out, strings.Split(repl, "\n")...)
+		} else {
+			out = append(out, body...)
+		}
+		name, body = "", nil
+	}
+	for i, line := range lines {
+		if strings.HasPrefix(line, "# ") && i+1 < len(lines) && lines[i+1] == "local_resource(" {
+			flush()
+			name = strings.TrimSpace(strings.TrimPrefix(line, "# "))
+			out = append(out, line)
+			continue
+		}
+		if name != "" {
+			body = append(body, line)
+			continue
+		}
+		out = append(out, line)
+	}
+	flush()
+	return strings.Join(out, "\n")
 }
 
 func render() (string, []string, error) {
@@ -130,19 +247,28 @@ const TiltfileReloadTimeout = 20 * time.Second
 // stdout. It never fails the caller: a generation error leaves the daemon on its
 // last good Tiltfile, which is still worth acting against, and is reported as a
 // note instead.
-func SyncAndReload(client *tilt.Client) []string {
+func SyncAndReload(client *tilt.Client, scope Scope) []string {
 	since := time.Now()
-	res, err := Sync()
+	res, err := SyncScope(scope)
 	if err != nil {
 		return []string{fmt.Sprintf("⚠ devstack can not regenerate the Tiltfile. The daemon still runs the Tiltfile from the last generation, so it does NOT apply the manifest edits: %v", err)}
 	}
-	if !res.Wrote {
-		return nil
-	}
 
-	notes := []string{fmt.Sprintf("↻ The manifests changed, so devstack regenerated %s", res.Path)}
-	if len(res.Changed) > 0 {
-		notes = append(notes, "  affected: "+strings.Join(res.Changed, ", "))
+	var notes []string
+	if res.Wrote {
+		notes = append(notes, fmt.Sprintf("↻ The manifests changed, so devstack regenerated %s", res.Path))
+		if len(res.Changed) > 0 {
+			notes = append(notes, "  affected: "+strings.Join(res.Changed, ", "))
+		}
+	}
+	if note := KeptNote(res.Kept); note != "" {
+		if res.Wrote {
+			note = "  " + note
+		}
+		notes = append(notes, note)
+	}
+	if !res.Wrote {
+		return notes
 	}
 
 	// A daemon that isn't up has nothing to reload; the caller reports that.

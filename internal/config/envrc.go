@@ -21,6 +21,26 @@ var envrcNoise = map[string]bool{
 	"SHLVL":  true,
 }
 
+// envrcSession are caller-session variables a credential helper needs, such as an agent socket. devstack passes them to the child, and never reports them as a contributed value.
+var envrcSession = []string{
+	"GPG_TTY",
+	"LANG",
+	"LOGNAME",
+	"SSH_AUTH_SOCK",
+	"TMPDIR",
+	"XDG_CONFIG_HOME",
+	"XDG_RUNTIME_DIR",
+}
+
+func isSessionVar(k string) bool {
+	for _, s := range envrcSession {
+		if s == k {
+			return true
+		}
+	}
+	return false
+}
+
 // ResolveEnvrc evaluates dir's .envrc in a shell and returns only the variables
 // it contributes. A missing .envrc yields an empty map and a nil error.
 //
@@ -46,7 +66,7 @@ func ResolveEnvFile(dir, name string) (map[string]string, error) {
 		return nil, fmt.Errorf("can not read the file information of %s: %w", path, err)
 	}
 
-	baseline := os.Environ()
+	baseline := minimalEnv()
 
 	// `|| exit $?` is load-bearing: bash's `.` returns non-zero on a syntax error
 	// but does not abort the shell, so without it a broken .envrc yields partial
@@ -81,7 +101,7 @@ func ResolveEnvFile(dir, name string) (map[string]string, error) {
 	base := parseEnvEntries(baseline)
 	out := map[string]string{}
 	for k, v := range parseEnvEntries(splitNUL(stdout.Bytes())) {
-		if envrcNoise[k] {
+		if envrcNoise[k] || isSessionVar(k) {
 			continue
 		}
 		if old, ok := base[k]; ok && old == v {
@@ -90,6 +110,18 @@ func ResolveEnvFile(dir, name string) (map[string]string, error) {
 		out[k] = v
 	}
 	return out, nil
+}
+
+func minimalEnv() []string {
+	keys := append([]string{"HOME", "PATH", "USER"}, envrcSession...)
+	out := make([]string, 0, len(keys))
+	// PATH comes from the caller, so a file that derives a value from it stays caller-dependent.
+	for _, k := range keys {
+		if v, ok := os.LookupEnv(k); ok {
+			out = append(out, k+"="+v)
+		}
+	}
+	return out
 }
 
 // stripXtrace drops lines prefixed by an unmodified $PS4 ("+ ", nested "++ ").
