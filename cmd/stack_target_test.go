@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -94,5 +95,32 @@ func TestResourceNameHostScheme(t *testing.T) {
 	}
 	if got := resourceName("navexa", "api", "perf"); got != "navexa:api:perf" {
 		t.Errorf("resourceName(navexa, api, perf) = %q, want %q", got, "navexa:api:perf")
+	}
+}
+
+// The stack store matches a name with EqualFold, and resource names carry the
+// record's own spelling. A scope built from the raw argument matches nothing,
+// so 'devstack stack rm FEAT' would rewrite every other stack's block.
+func TestStackScopeComesFromTheRecordName(t *testing.T) {
+	rec, _ := buildStackScenario(t)
+	base, err := workspace.FindByName("navexa")
+	if err != nil {
+		t.Fatalf("find base: %v", err)
+	}
+
+	resolved, err := stack.Resolve(base.Name, strings.ToUpper(rec.Name))
+	if err != nil {
+		t.Fatalf("Resolve with an upper-case argument: %v", err)
+	}
+	if resolved.Name != rec.Name {
+		t.Fatalf("resolved name = %q, want the record's own spelling %q", resolved.Name, rec.Name)
+	}
+
+	resource := resourceName(base.Name, "backend", rec.Name)
+	if hostdaemon.ScopeStack(base.Name, strings.ToUpper(rec.Name)).Covers(resource) {
+		t.Errorf("a scope from the raw argument covers %q; the test would prove nothing", resource)
+	}
+	if !hostdaemon.ScopeStack(base.Name, resolved.Name).Covers(resource) {
+		t.Errorf("a scope from the record name does not cover %q", resource)
 	}
 }

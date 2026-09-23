@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/hostdaemon"
 )
 
 var groupsListCmd = &cobra.Command{
@@ -210,7 +211,7 @@ func runGroupsAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("✓ Group %q: %s\n", group, strings.Join(cfg.Groups[group], ", "))
-	if _, err := regenerateHostTiltfile(); err != nil {
+	if _, _, err := regenerateHostTiltfileScope(hostdaemon.ScopeWorkspace(ws.Name)); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: can not regenerate the host configuration: %v\n", err)
 	} else {
 		fmt.Println("Regenerated the host configuration.")
@@ -261,7 +262,7 @@ func runGroupsRemove(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Printf("✓ Group %q: %s\n", group, strings.Join(remaining, ", "))
 	}
-	if _, err := regenerateHostTiltfile(); err != nil {
+	if _, _, err := regenerateHostTiltfileScope(hostdaemon.ScopeWorkspace(ws.Name)); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: can not regenerate the host configuration: %v\n", err)
 	} else {
 		fmt.Println("Regenerated the host configuration.")

@@ -5,9 +5,10 @@ import "strings"
 // Scope names the resources a write may change, so a command that acts on some
 // services leaves every other resource at the block already on disk.
 type Scope struct {
-	All    bool
-	Names  map[string]bool
-	Stacks map[string]bool
+	All        bool
+	Names      map[string]bool
+	Workspaces map[string]bool
+	Stacks     map[string]bool
 }
 
 // ScopeAll covers every resource.
@@ -22,6 +23,15 @@ func ScopeNames(names ...string) Scope {
 		set[n] = true
 	}
 	return Scope{Names: set}
+}
+
+// ScopeWorkspace covers every resource of the given workspaces, base and stacks alike.
+func ScopeWorkspace(names ...string) Scope {
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		set[n] = true
+	}
+	return Scope{Workspaces: set}
 }
 
 // ScopeStack covers every resource of one stack in one workspace. An empty
@@ -41,6 +51,9 @@ func (s Scope) Covers(resource string) bool {
 	parts := strings.Split(resource, ":")
 	if len(parts) < 2 {
 		return false
+	}
+	if s.Workspaces[parts[0]] {
+		return true
 	}
 	ns := parts[0] + ":"
 	if len(parts) > 2 {

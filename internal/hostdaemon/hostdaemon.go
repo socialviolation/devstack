@@ -28,13 +28,23 @@ import (
 // header-only Tiltfile so a running daemon drains to empty. Returns the path and
 // any warnings generation raised.
 func Regenerate() (string, []string, error) {
-	return RegenerateScope(ScopeAll())
+	path, warnings, _, err := RegenerateScope(ScopeAll())
+	return path, warnings, err
 }
 
-// RegenerateScope regenerates the host Tiltfile, and keeps every block the scope does not cover at the definition on disk.
-func RegenerateScope(scope Scope) (string, []string, error) {
+// RegenerateScope regenerates the host Tiltfile, and reports the blocks it kept at the definition on disk.
+func RegenerateScope(scope Scope) (string, []string, []string, error) {
 	res, err := SyncScope(scope)
-	return res.Path, res.Warnings, err
+	return res.Path, res.Warnings, res.Kept, err
+}
+
+// KeptNote tells the reader which resources devstack held at the definition on disk. It is empty when devstack held none.
+func KeptNote(kept []string) string {
+	if len(kept) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("devstack kept %d resource(s) at the definition on disk, because this command does not target them: %s. To apply the new definition, run devstack workspace generate",
+		len(kept), strings.Join(kept, ", "))
 }
 
 // SyncResult reports what Sync did. Wrote is false when the rendered Tiltfile
@@ -71,7 +81,7 @@ func SyncScope(scope Scope) (SyncResult, error) {
 	existing, readErr := os.ReadFile(path)
 	var kept []string
 	if readErr == nil {
-		out, kept = keepUnscoped(string(existing), out, scope)
+		out, kept = keepUnscoped(string(existing), out, scope, warnings)
 	}
 	if readErr == nil && string(existing) == out {
 		return SyncResult{Path: path, Kept: kept, Warnings: warnings}, nil
@@ -84,16 +94,21 @@ func SyncScope(scope Scope) (SyncResult, error) {
 }
 
 // keepUnscoped restores the on-disk block of each changed resource the scope does not cover, and names them.
-func keepUnscoped(existing, rendered string, scope Scope) (string, []string) {
+func keepUnscoped(existing, rendered string, scope Scope, warnings []string) (string, []string) {
 	if scope.All {
 		return rendered, nil
 	}
 	old := resourceBlocks(existing)
+	fresh := resourceBlocks(rendered)
+	warned := warnedResources(warnings)
 	keep := map[string]string{}
 	var kept []string
-	for name, block := range resourceBlocks(rendered) {
+	for name, block := range fresh {
 		oldBlock, ok := old[name]
-		if !ok || oldBlock == block || scope.Covers(name) {
+		if !ok || oldBlock == block || scope.Covers(name) || warned[name] {
+			continue
+		}
+		if !depsResolve(oldBlock, fresh) {
 			continue
 		}
 		keep[name] = oldBlock
@@ -104,6 +119,38 @@ func keepUnscoped(existing, rendered string, scope Scope) (string, []string) {
 	}
 	sort.Strings(kept)
 	return spliceBlocks(rendered, keep), kept
+}
+
+// warnedResources names the resources a render warning is about, which the generator writes first in the warning.
+func warnedResources(warnings []string) map[string]bool {
+	out := map[string]bool{}
+	for _, w := range warnings {
+		if first, _, _ := strings.Cut(strings.TrimSpace(w), " "); first != "" {
+			out[first] = true
+		}
+	}
+	return out
+}
+
+// depsResolve reports whether every resource_deps entry of a block still exists in the new render.
+func depsResolve(block string, fresh map[string]string) bool {
+	for _, line := range strings.Split(block, "\n") {
+		rest, found := strings.CutPrefix(strings.TrimSpace(line), "resource_deps=[")
+		if !found {
+			continue
+		}
+		rest = strings.TrimSuffix(strings.TrimSuffix(rest, ","), "]")
+		for _, dep := range strings.Split(rest, ",") {
+			dep = strings.Trim(strings.TrimSpace(dep), `"`)
+			if dep == "" {
+				continue
+			}
+			if _, ok := fresh[dep]; !ok {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // spliceBlocks replaces the body of each named resource block, and leaves every other line as it is.
@@ -214,8 +261,7 @@ func SyncAndReload(client *tilt.Client, scope Scope) []string {
 			notes = append(notes, "  affected: "+strings.Join(res.Changed, ", "))
 		}
 	}
-	if len(res.Kept) > 0 {
-		note := fmt.Sprintf("devstack kept %d resource(s) at the definition on disk, because this command does not target them: %s. To apply the new definition, run devstack workspace generate", len(res.Kept), strings.Join(res.Kept, ", "))
+	if note := KeptNote(res.Kept); note != "" {
 		if res.Wrote {
 			note = "  " + note
 		}

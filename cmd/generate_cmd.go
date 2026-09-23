@@ -43,14 +43,15 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 // alias for the many cmd call sites. Generation warnings go to stderr here, so
 // every one of those sites reports them without repeating the code.
 func regenerateHostTiltfile() (string, error) {
-	return regenerateHostTiltfileScope(hostdaemon.ScopeAll())
+	path, _, err := regenerateHostTiltfileScope(hostdaemon.ScopeAll())
+	return path, err
 }
 
-// regenerateHostTiltfileScope regenerates, and keeps every block the scope does not cover at the definition on disk.
-func regenerateHostTiltfileScope(scope hostdaemon.Scope) (string, error) {
-	path, warnings, err := hostdaemon.RegenerateScope(scope)
+// regenerateHostTiltfileScope regenerates, and returns the blocks it kept at the definition on disk.
+func regenerateHostTiltfileScope(scope hostdaemon.Scope) (string, []string, error) {
+	path, warnings, kept, err := hostdaemon.RegenerateScope(scope)
 	for _, w := range warnings {
 		fmt.Fprintf(os.Stderr, "WARNING: %s\n", w)
 	}
-	return path, err
+	return path, kept, err
 }

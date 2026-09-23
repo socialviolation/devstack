@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/svcconfig"
 	"github.com/socialviolation/devstack/internal/tiltgen"
@@ -97,7 +98,7 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("set %s.%s = %s\n", name, key, mask(key, value, false))
 	}
-	if _, err := regenerateHostTiltfile(); err != nil {
+	if _, _, err := regenerateHostTiltfileScope(hostdaemon.ScopeWorkspace(ws.Name)); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: devstack can not regenerate the host configuration: %v\n", err)
 	} else {
 		fmt.Println("devstack regenerated the host configuration. To apply it, restart the service: devstack service restart <service> --stack base (or --stack <name> for a stack's copy)")
@@ -159,7 +160,7 @@ func runEnvUse(cmd *cobra.Command, args []string) error {
 		fmt.Printf("workspace %q now uses environment %q\n", ws.Name, name)
 		restartHint = "devstack service restart <service> --stack base"
 	}
-	if _, err := regenerateHostTiltfile(); err != nil {
+	if _, _, err := regenerateHostTiltfileScope(hostdaemon.ScopeWorkspace(ws.Name)); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: devstack can not regenerate the host configuration: %v\n", err)
 	} else {
 		fmt.Printf("devstack regenerated the host configuration. To apply it, run: %s\n", restartHint)

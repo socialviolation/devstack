@@ -114,6 +114,46 @@ func TestResolveEnvrc(t *testing.T) {
 	}
 }
 
+// A credential helper needs the caller's session variables, and their per-caller
+// values must never reach serve_env.
+func TestResolveEnvrcSessionVars(t *testing.T) {
+	t.Run("a helper-style file reads a session variable", func(t *testing.T) {
+		runtimeDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(runtimeDir, "token"), []byte("sk-from-helper"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+		dir := writeEnvrc(t, "export TOKEN=$(cat \"$XDG_RUNTIME_DIR/token\")\n")
+
+		got, err := ResolveEnvrc(dir)
+		if err != nil {
+			t.Fatalf("ResolveEnvrc: %v", err)
+		}
+		if got["TOKEN"] != "sk-from-helper" {
+			t.Errorf("TOKEN = %q, want the value the helper read", got["TOKEN"])
+		}
+	})
+
+	t.Run("a re-exported session variable is not a contributed value", func(t *testing.T) {
+		t.Setenv("LANG", "en_AU.UTF-8")
+		t.Setenv("SSH_AUTH_SOCK", "/run/user/1000/keyring/ssh")
+		dir := writeEnvrc(t, "export LANG=C\nexport SSH_AUTH_SOCK=/tmp/other\nexport REAL=yes\n")
+
+		got, err := ResolveEnvrc(dir)
+		if err != nil {
+			t.Fatalf("ResolveEnvrc: %v", err)
+		}
+		if got["REAL"] != "yes" {
+			t.Errorf("REAL = %q, want yes", got["REAL"])
+		}
+		for _, k := range []string{"LANG", "SSH_AUTH_SOCK"} {
+			if v, ok := got[k]; ok {
+				t.Errorf("%s = %q, want it absent from the result", k, v)
+			}
+		}
+	})
+}
+
 func TestResolveEnvrcMissingFile(t *testing.T) {
 	got, err := ResolveEnvrc(t.TempDir())
 	if err != nil {

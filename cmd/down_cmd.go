@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/infra"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
@@ -61,7 +62,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 	if err := workspace.SetWorkspaceActive(ws.Name, false); err != nil {
 		return fmt.Errorf("can not mark the workspace inactive: %w", err)
 	}
-	if _, err := regenerateHostTiltfile(); err != nil {
+	if _, _, err := regenerateHostTiltfileScope(hostdaemon.ScopeWorkspace(ws.Name)); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: devstack can not generate the host Tiltfile again: %v\n", err)
 	}
 
@@ -172,7 +173,9 @@ func runDownAll() error {
 		return err
 	}
 
+	downed := make([]string, 0, len(workspaces))
 	for i := range workspaces {
+		downed = append(downed, workspaces[i].Name)
 		if deactivated, err := stack.DeactivateAll(workspaces[i].Name); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to deactivate stacks for %s: %v\n", workspaces[i].Name, err)
 		} else if len(deactivated) > 0 {
@@ -182,7 +185,7 @@ func runDownAll() error {
 			fmt.Fprintf(os.Stderr, "warning: failed to mark %s inactive: %v\n", workspaces[i].Name, err)
 		}
 	}
-	if _, err := regenerateHostTiltfile(); err != nil {
+	if _, _, err := regenerateHostTiltfileScope(hostdaemon.ScopeWorkspace(downed...)); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to regenerate host Tiltfile: %v\n", err)
 	}
 
