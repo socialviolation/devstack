@@ -24,6 +24,15 @@ go install github.com/socialviolation/devstack@main
 
 devstack needs Go 1.25+ and [Tilt](https://docs.tilt.dev/install.html) on `$PATH`. If you turn on local observability, devstack also needs Docker.
 
+### Host support
+
+devstack uses a systemd user session when the host has one. Without one, it falls back: Tilt runs as a plain background process, the logs go to `~/.local/share/devstack/_devstack-host/tilt.log`, and the services have no memory or CPU limits.
+
+- **Linux with systemd.** Tilt runs as its own user unit, `devstack-tilt`. The logs go to journald. Each service runs in its own scope, with the limits in [`runtime.limits`](REFERENCE.md#services). To check, run `systemctl --user status devstack-tilt`.
+- **Linux without a user session** (SSH login, server). To get the systemd path, run `loginctl enable-linger $USER`, then log in again. If you do not, the fallback runs.
+- **macOS.** The fallback runs.
+- **WSL.** Set `systemd=true` under `[boot]` in `/etc/wsl.conf`, then run `wsl --shutdown`. If you do not, the fallback runs.
+
 ## Quick start
 
 devstack configures itself. Give this section to a coding agent, or do the steps yourself.

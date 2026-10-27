@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/socialviolation/devstack/internal/infra"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
+	"github.com/socialviolation/devstack/internal/tiltgen"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -104,13 +106,30 @@ func runDown(cmd *cobra.Command, args []string) error {
 	return hostErr
 }
 
-// stopHostDaemon gracefully shuts down the one host Tilt daemon: it disables every
-// resource, kills the tracked PID, removes the PID file, and closes the host
-// session. It is a no-op (not an error) when the daemon is already stopped.
+var systemctlUser = func(args ...string) ([]byte, error) {
+	return exec.Command("systemctl", append([]string{"--user"}, args...)...).CombinedOutput()
+}
+
+func stopTiltUnit() {
+	for _, unit := range []string{hostdaemon.TiltUnit, tiltgen.SystemdSlice} {
+		if out, err := systemctlUser("stop", unit); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: can not stop the unit %s: %v: %s\n", unit, err, strings.TrimSpace(string(out)))
+		}
+	}
+}
+
 func stopHostDaemon() error {
 	pidFile := workspace.HostPIDFile()
+	mode := hostdaemon.DaemonMode()
 	pidData, pidErr := os.ReadFile(pidFile)
 	if pidErr != nil {
+		if _, err := systemctlUser("is-active", "--quiet", hostdaemon.TiltUnit); err == nil {
+			fmt.Printf("Stopping the host daemon unit %s...\n", hostdaemon.TiltUnit)
+			stopTiltUnit()
+			os.Remove(workspace.HostModeFile())
+			fmt.Printf("  ✓ Host daemon stopped\n")
+			return nil
+		}
 		apiURL := fmt.Sprintf("http://localhost:%d/api/view", workspace.HostTiltPort)
 		if !isTiltReachable(apiURL) {
 			fmt.Printf("  Host daemon is not running\n")
@@ -138,8 +157,9 @@ func stopHostDaemon() error {
 		fmt.Printf("  ✓ Services stopped\n")
 	}
 
-	proc, err := os.FindProcess(pid)
-	if err != nil {
+	if mode == hostdaemon.ModeSystemd {
+		stopTiltUnit()
+	} else if proc, err := os.FindProcess(pid); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: can not find process %d: %v\n", pid, err)
 	} else if killErr := proc.Kill(); killErr != nil && isProcessAlive(pid) {
 		fmt.Fprintf(os.Stderr, "Warning: can not kill process %d: %v\n", pid, killErr)
@@ -148,6 +168,7 @@ func stopHostDaemon() error {
 	if err := os.Remove(pidFile); err != nil && !os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "Warning: can not remove the host PID file: %v\n", err)
 	}
+	os.Remove(workspace.HostModeFile())
 
 	time.Sleep(500 * time.Millisecond)
 	ports := []int{workspace.HostTiltPort}

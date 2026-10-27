@@ -7,9 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -87,8 +90,11 @@ func SyncScope(scope Scope) (SyncResult, error) {
 		return SyncResult{Path: path, Kept: kept, Warnings: warnings}, nil
 	}
 
-	if err := os.WriteFile(path, []byte(out), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(out), 0600); err != nil {
 		return SyncResult{Warnings: warnings}, fmt.Errorf("can not write the host Tiltfile: %w", err)
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		return SyncResult{Warnings: warnings}, fmt.Errorf("can not restrict the host Tiltfile: %w", err)
 	}
 	return SyncResult{Path: path, Wrote: true, Changed: changedResources(string(existing), out), Kept: kept, Warnings: warnings}, nil
 }
@@ -195,6 +201,7 @@ func render() (string, []string, error) {
 
 	var warnings []string
 	var gens []tiltgen.WorkspaceGen
+	scopes := renderScopes()
 	for i := range active {
 		ws := active[i]
 		// One Tiltfile serves every workspace, so a workspace nobody has built a
@@ -224,10 +231,13 @@ func render() (string, []string, error) {
 		if err != nil {
 			return "", warnings, err
 		}
+		for i := range stackGens {
+			stackGens[i].Options.SystemdScopes = scopes
+		}
 		gens = append(gens, tiltgen.WorkspaceGen{
 			Name:     ws.Name,
 			Base:     rw,
-			BaseOpts: tiltgen.Options{ManagedEnv: workspace.ManagedEnv(&ws, names, workspace.ActiveEnvNames(rw, ""))},
+			BaseOpts: tiltgen.Options{ManagedEnv: workspace.ManagedEnv(&ws, names, workspace.ActiveEnvNames(rw, "")), SystemdScopes: scopes},
 			Stacks:   stackGens,
 		})
 	}
@@ -367,12 +377,6 @@ func ActiveStackGens(ws *workspace.Workspace) ([]tiltgen.StackGen, error) {
 	return gens, nil
 }
 
-// EnsureDaemon starts the one host Tilt daemon if it is not already running and
-// returns a human-readable status line describing what it did. If the daemon is
-// reachable or its PID is alive it is left as-is. Otherwise it starts `tilt up`
-// in the host Tilt dir on the fixed host port, tracks its PID and session, and
-// polls until reachable. It never writes to stdout, so it is safe to call from
-// the MCP server whose stdout carries the protocol stream.
 func EnsureDaemon() (string, error) {
 	apiURL := fmt.Sprintf("http://localhost:%d/api/view", workspace.HostTiltPort)
 	if TiltReachable(apiURL) {
@@ -385,6 +389,7 @@ func EnsureDaemon() (string, error) {
 			return fmt.Sprintf("The host daemon already runs (pid %d, port %d).", pid, workspace.HostTiltPort), nil
 		}
 		os.Remove(pidFile)
+		os.Remove(workspace.HostModeFile())
 	}
 
 	dir := workspace.HostTiltDir()
@@ -392,26 +397,22 @@ func EnsureDaemon() (string, error) {
 		return "", fmt.Errorf("can not create the host data directory %s: %w", dir, err)
 	}
 
-	logFile := workspace.HostLogFile()
-	lf, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	start, mode := startDirectTilt, ModeDirect
+	if systemdUserSession() {
+		start, mode = startTiltUnit, ModeSystemd
+	}
+	pid, logs, stop, err := start(dir)
 	if err != nil {
-		return "", fmt.Errorf("can not open the host log file %s: %w", logFile, err)
+		return "", err
 	}
-	defer lf.Close()
-
-	tiltCmd := exec.Command("tilt", "up", "--host", "0.0.0.0", "--port", strconv.Itoa(workspace.HostTiltPort))
-	tiltCmd.Dir = dir
-	tiltCmd.Stdout = lf
-	tiltCmd.Stderr = lf
-	tiltCmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := tiltCmd.Start(); err != nil {
-		return "", fmt.Errorf("can not start the host daemon: %w", err)
-	}
-
-	pid := tiltCmd.Process.Pid
 	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
-		tiltCmd.Process.Kill()
+		stop()
 		return "", fmt.Errorf("can not write the host PID file: %w", err)
+	}
+	if err := writeMode(mode); err != nil {
+		stop()
+		os.Remove(pidFile)
+		return "", fmt.Errorf("can not write the host daemon mode file: %w", err)
 	}
 	_, _ = workspace.OpenSession(workspace.HostWorkspace(), pid, []int{workspace.HostTiltPort})
 
@@ -426,9 +427,146 @@ func EnsureDaemon() (string, error) {
 	}
 
 	if reached {
-		return fmt.Sprintf("The host daemon started (pid %d, port %d, logs: %s)", pid, workspace.HostTiltPort, logFile), nil
+		return fmt.Sprintf("The host daemon started (pid %d, port %d, logs: %s)", pid, workspace.HostTiltPort, logs), nil
 	}
-	return fmt.Sprintf("The host daemon started, but devstack can not reach it yet. Logs: %s", logFile), nil
+	return fmt.Sprintf("The host daemon started, but devstack can not reach it yet. Logs: %s", logs), nil
+}
+
+const (
+	ModeSystemd = "systemd"
+	ModeDirect  = "direct"
+)
+
+var systemdUserSession = sync.OnceValue(SystemdUserSession)
+
+func writeMode(mode string) error {
+	return os.WriteFile(workspace.HostModeFile(), []byte(mode), 0644)
+}
+
+func DaemonMode() string {
+	pidData, err := os.ReadFile(workspace.HostPIDFile())
+	if err != nil {
+		return ""
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
+	if err != nil || !ProcessAlive(pid) {
+		return ""
+	}
+	if data, err := os.ReadFile(workspace.HostModeFile()); err == nil {
+		if mode := strings.TrimSpace(string(data)); mode == ModeSystemd || mode == ModeDirect {
+			return mode
+		}
+	}
+	cgroup, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+	if strings.Contains(string(cgroup), "/"+TiltUnit+".service") {
+		return ModeSystemd
+	}
+	return ModeDirect
+}
+
+func renderScopes() bool {
+	switch DaemonMode() {
+	case ModeSystemd:
+		return true
+	case ModeDirect:
+		return false
+	}
+	return systemdUserSession()
+}
+
+func SystemdUserSession() bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	if _, err := exec.LookPath("systemd-run"); err != nil {
+		return false
+	}
+	return exec.Command("systemctl", "--user", "show-environment").Run() == nil
+}
+
+func startTiltUnit(dir string) (int, string, func(), error) {
+	_ = exec.Command("systemctl", "--user", "reset-failed", TiltUnit).Run()
+	args := TiltRunArgs(dir, os.Environ(), workspace.HostTiltPort)
+	if out, err := exec.Command("systemd-run", args...).CombinedOutput(); err != nil {
+		return 0, "", nil, fmt.Errorf("can not start the host daemon: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	stop := func() { _ = exec.Command("systemctl", "--user", "stop", TiltUnit).Run() }
+	pidOut, err := exec.Command("systemctl", "--user", "show", "-p", "MainPID", "--value", TiltUnit).Output()
+	if err != nil {
+		return 0, "", nil, fmt.Errorf("can not read the host daemon PID: %w", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidOut)))
+	if err != nil || pid == 0 {
+		return 0, "", nil, fmt.Errorf("the host daemon unit %s has no main PID", TiltUnit)
+	}
+	return pid, tiltLogsCommand, stop, nil
+}
+
+const maxTiltLogSize = 100 << 20
+
+func startDirectTilt(dir string) (int, string, func(), error) {
+	logFile := workspace.HostLogFile()
+	if err := rotateLog(logFile, maxTiltLogSize); err != nil {
+		return 0, "", nil, fmt.Errorf("can not rotate the host log file %s: %w", logFile, err)
+	}
+	lf, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return 0, "", nil, fmt.Errorf("can not open the host log file %s: %w", logFile, err)
+	}
+	defer lf.Close()
+
+	tiltCmd := exec.Command("tilt", "up", "--host", "0.0.0.0", "--port", strconv.Itoa(workspace.HostTiltPort))
+	tiltCmd.Dir = dir
+	tiltCmd.Stdout = lf
+	tiltCmd.Stderr = lf
+	tiltCmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := tiltCmd.Start(); err != nil {
+		return 0, "", nil, fmt.Errorf("can not start the host daemon: %w", err)
+	}
+	return tiltCmd.Process.Pid, logFile, func() { _ = tiltCmd.Process.Kill() }, nil
+}
+
+func rotateLog(path string, max int64) error {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Size() <= max {
+		return nil
+	}
+	return os.Rename(path, path+".1")
+}
+
+const TiltUnit = "devstack-tilt"
+
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+var unitEnv = map[string]bool{
+	"NOTIFY_SOCKET":    true,
+	"LISTEN_PID":       true,
+	"LISTEN_FDS":       true,
+	"LISTEN_FDNAMES":   true,
+	"INVOCATION_ID":    true,
+	"JOURNAL_STREAM":   true,
+	"SYSTEMD_EXEC_PID": true,
+	"MANAGERPID":       true,
+}
+
+const tiltLogsCommand = "journalctl --user -u " + TiltUnit
+
+func TiltRunArgs(dir string, env []string, port int) []string {
+	args := []string{"--user", "--unit=" + TiltUnit, "--collect", "--working-directory=" + dir}
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if !envName.MatchString(name) || unitEnv[name] {
+			continue
+		}
+		args = append(args, "-E", kv)
+	}
+	return append(args, "--", "tilt", "up", "--host", "0.0.0.0", "--port", strconv.Itoa(port))
 }
 
 // TiltReachable reports whether the Tilt API is responding at the given URL.
@@ -447,4 +585,18 @@ func ProcessAlive(pid int) bool {
 	statusPath := fmt.Sprintf("/proc/%d/status", pid)
 	_, err := os.Stat(statusPath)
 	return err == nil
+}
+
+func NoServicesReason(c *tilt.Client, stackName string) string {
+	host := filepath.Join(workspace.HostTiltDir(), "Tiltfile")
+	if loaded, err := c.LoadedTiltfile(); err == nil && loaded != "" && loaded != host {
+		return fmt.Sprintf("stack %q has no services in the host daemon. The daemon runs %s, not %s. Restart the host daemon: devstack workspace down --all, then devstack workspace up",
+			stackName, loaded, host)
+	}
+	logs := tiltLogsCommand
+	if DaemonMode() == ModeDirect {
+		logs = workspace.HostLogFile()
+	}
+	return fmt.Sprintf("stack %q has no services in the host daemon. The daemon runs %s, but it did not load them. Read why: %s",
+		stackName, host, logs)
 }

@@ -156,3 +156,42 @@ hooks:
     run: touch ` + hookMarker + `
 `
 }
+
+func TestStackRemoveFiresDestroyForOnlyTheRemovedServicesAndSurvivesItsFailure(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "destroy-services")
+	base, _ := stackWithWorkspaceManifest(t, `version: 1
+workspace:
+  name: navexa
+  repoDiscovery:
+    mode: explicit
+    repos:
+      - ./backend
+      - ./frontend
+calls:
+  frontend:
+    - backend
+hooks:
+  - name: deprovision
+    on: [stack.destroy]
+    onError: abort
+    run: printf %s "$DEVSTACK_SERVICES" > `+marker+`; exit 1
+`)
+	if err := runStackDrop(&cobra.Command{Use: "remove"}, []string{"feat", "frontend"}); err != nil {
+		t.Fatalf("runStackDrop() = %v, want the removal to proceed past the failed hook", err)
+	}
+
+	got, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("the stack.destroy hook did not run: %v", err)
+	}
+	if string(got) != "frontend" {
+		t.Errorf("hook services = %q, want only frontend", got)
+	}
+	rec, err := stack.Resolve(base.Name, "feat")
+	if err != nil {
+		t.Fatalf("resolve stack: %v", err)
+	}
+	if len(rec.Overlay) != 1 || rec.Overlay[0] != "backend" {
+		t.Errorf("Overlay = %v, want [backend]", rec.Overlay)
+	}
+}

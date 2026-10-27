@@ -88,6 +88,28 @@ func ReleasePorts(stackName string) error {
 	return nil
 }
 
+func ReleasePortKeys(stackName string, keys []string) (map[string]int, error) {
+	var result map[string]int
+	err := withPortAllocLock(func() error {
+		held, err := LoadPorts(stackName)
+		if err != nil {
+			return err
+		}
+		for _, k := range keys {
+			delete(held, k)
+		}
+		if err := savePorts(stackName, held); err != nil {
+			return err
+		}
+		result = held
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // allocatedPorts returns every port held by any stack's record under DataRoot,
 // so an allocation skips ports owned by other stacks. It reads the data root
 // rather than the registry because ownership lives in the per-stack records.

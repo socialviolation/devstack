@@ -334,6 +334,7 @@ type serviceSection struct {
 	running   int
 	tag       string
 	isStack   bool
+	all       []tilt.UIResource
 }
 
 // statusRow is one rendered line of the single status table.
@@ -344,6 +345,7 @@ type statusRow struct {
 	ports      string
 	env        string
 	dir        string
+	reason     string
 	rowColor   *color.Color
 	stateColor *color.Color
 }
@@ -399,6 +401,7 @@ func assembleRows(sections []serviceSection) []statusRow {
 				ports:      svcPortsRaw(svc, s.resources),
 				env:        s.envs[svc],
 				dir:        s.dirs[svc],
+				reason:     svcReason(svc, s.resources, s.all),
 				rowColor:   s.color,
 				stateColor: stateClr,
 			})
@@ -464,6 +467,9 @@ func renderStatusTable(rows []statusRow, showDirs bool) {
 		}
 		fmt.Println()
 
+		if r.reason != "" {
+			faint.Printf("%s  %s\n", statusIndent, r.reason)
+		}
 		if showDirs && r.dir != "" {
 			faint.Printf("%s  %s\n", statusIndent, shortDir(r.dir))
 		}
@@ -626,6 +632,14 @@ func runStatusAll() error {
 	}
 
 	return nil
+}
+
+func svcReason(svc string, resources map[string]tilt.UIResource, all []tilt.UIResource) string {
+	r, ok := resources[svc]
+	if !ok {
+		return ""
+	}
+	return tilt.StateReason(r, all)
 }
 
 func serviceStatus(r tilt.UIResource) string {

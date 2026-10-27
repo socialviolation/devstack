@@ -53,6 +53,7 @@ const serviceLinksDesc = "A service link is 'service/portKey=http://localhost:<p
 func registerStackTools(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	registerStackCreateTool(mcpServer, ws)
 	registerStackAddTool(mcpServer, ws)
+	registerStackDropTool(mcpServer, ws)
 	registerStackListTool(mcpServer, ws)
 	registerStackConfigTool(mcpServer, ws)
 	registerStackNoteTool(mcpServer, ws)
@@ -299,6 +300,88 @@ func registerStackAddTool(mcpServer *server.MCPServer, ws *workspace.Workspace) 
 		}
 
 		fmt.Fprintf(&sb, "\nThe stack was already up, and it still is. devstack stopped and restarted nothing that it ran. The added copies are registered, and they are NOT started. Start each one with the start tool (stack=%q), or leave them stopped.\n", name)
+		return mcp.NewToolResultText(sb.String()), nil
+	})
+}
+
+func registerStackDropTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
+	tool := mcp.NewTool("stack_remove",
+		mcp.WithDescription("Take services out of a feature stack of THIS workspace, and keep the rest of the stack as it is. Use this tool for 'the stack does not need service C any more'. To delete the whole stack, use stack_rm instead. This tool mirrors 'devstack stack remove'.\n"+
+			"devstack removes the named services from the stack record and the stack manifest, and releases only their ports. The other copies keep their worktrees, their branches and their ports. If the stack is up, the host daemon drops the removed copies.\n"+
+			"It refuses to remove a service that another service of the stack still depends on, and it names that service. Remove both together, or keep it.\n"+
+			"devstack keeps the worktrees of the removed services on disk, and the result gives the git command that deletes each one. Never edit stacks.json, ports.json or a stack manifest by hand; use stack_add and stack_remove."),
+		mcp.WithString("name", mcp.Required(),
+			mcp.Description(requiredStackNameDesc)),
+		mcp.WithString("services", mcp.Required(),
+			mcp.Description("Comma-separated exact service names to take out of the stack (for example 'billing'). Each one must be in the stack.")),
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(false),
+		mcp.WithOpenWorldHintAnnotation(false),
+	)
+
+	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if ws == nil {
+			return mcp.NewToolResultError("no base workspace resolved for stacks"), nil
+		}
+		name := strings.TrimSpace(request.GetString("name", ""))
+		if name == "" {
+			return mcp.NewToolResultError("name must not be empty"), nil
+		}
+		var services []string
+		for _, s := range strings.Split(request.GetString("services", ""), ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				services = append(services, s)
+			}
+		}
+		if len(services) == 0 {
+			return mcp.NewToolResultError("services must name at least one service to remove"), nil
+		}
+
+		var hookOut strings.Builder
+		var hookErr error
+		res, err := stack.Drop(stack.DropInput{Base: ws, Name: name, Services: services, Teardown: func(removed []string) {
+			hookErr = hooks.Fire(ws, name, config.EventStackDestroy, removed, &hookOut)
+		}})
+
+		var sb strings.Builder
+		appendHookOutput(&sb, config.EventStackDestroy, hookOut.String(), hookErr)
+		if err != nil {
+			if sb.Len() > 0 {
+				return mcp.NewToolResultError(sb.String() + "\n" + err.Error()), nil
+			}
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		fmt.Fprintf(&sb, "Removed %s from stack %q.\n", strings.Join(res.Removed, ", "), res.StackName)
+		if len(res.ReleasedPorts) > 0 {
+			fmt.Fprintf(&sb, "Released ports: %s\n", strings.Join(res.ReleasedPorts, ", "))
+		}
+		fmt.Fprintf(&sb, "Overlay is now: %s\n", strings.Join(res.Overlay, ", "))
+		sb.WriteString("\ndevstack kept these worktrees on disk:\n")
+		for _, k := range res.Kept {
+			fmt.Fprintf(&sb, "  %-16s %s\n", k.Service, k.Path)
+			if k.RemoveCommand != "" {
+				fmt.Fprintf(&sb, "                   to delete it: %s\n", k.RemoveCommand)
+			} else {
+				sb.WriteString("                   a service still in the stack shares this worktree\n")
+			}
+		}
+
+		if !res.Active {
+			fmt.Fprintf(&sb, "\nStack %q is down, and this call did not change that.\n", res.StackName)
+			return mcp.NewToolResultText(sb.String()), nil
+		}
+		_, genWarnings, _, err := hostdaemon.RegenerateScope(hostdaemon.ScopeStack(ws.Name, res.Namespace))
+		if err != nil {
+			return mcp.NewToolResultError(sb.String() + fmt.Sprintf("\nfailed to regenerate host Tiltfile: %v", err)), nil
+		}
+		for _, w := range genWarnings {
+			fmt.Fprintf(&sb, "WARNING: %s\n", w)
+		}
+		for _, note := range hostdaemon.SyncAndReload(tilt.NewClient("localhost", workspace.HostTiltPort), hostdaemon.ScopeStack(ws.Name, res.Namespace)) {
+			fmt.Fprintf(&sb, "%s\n", note)
+		}
+		fmt.Fprintf(&sb, "\nThe stack is still up. The host daemon dropped %s, and it left the other copies running.\n", strings.Join(res.Removed, ", "))
 		return mcp.NewToolResultText(sb.String()), nil
 	})
 }
@@ -580,7 +663,7 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		if len(started) == 0 {
-			return mcp.NewToolResultError(fmt.Sprintf("stack %q has no services in the host daemon, so nothing was started — recreate it with stack_rm then stack_create", rec.Name)), nil
+			return mcp.NewToolResultError(hostdaemon.NoServicesReason(tiltClient, rec.Name) + ". Nothing was started"), nil
 		}
 
 		var hookOut strings.Builder

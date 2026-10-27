@@ -110,6 +110,17 @@ devstack ports check 4200      # what holds a port, IPv4 or IPv6
 devstack ports free 4200       # kill it (it refuses any port less than 1024)
 ```
 
+On Linux with a systemd user session, each service runs in its own systemd scope, with its own memory limit. When a service passes its limit, the kernel kills that service alone. The terminal and the other services keep running. To set the limits, use `runtime.limits`:
+
+```yaml
+runtime:
+  limits:
+    memory: 6G     # MemoryMax. The default is 4G
+    cpu: 200%      # CPUQuota. 100% is one core. With no value, there is no CPU limit
+```
+
+Write `memory` as a systemd size, such as `512M`, `4G` or `infinity`, and `cpu` as a percentage, such as `200%`. devstack refuses any other value when it loads the manifest. Swap is fixed at 1G for each service. Every scope is in `devstack.slice`, and `devstack workspace down` stops the slice with the daemon. To list the scopes, run `systemctl --user status devstack.slice`. On a host without a systemd user session (macOS, WSL without systemd, a container), the services run without scopes, and devstack ignores `runtime.limits` with one warning.
+
 Dependencies and groups:
 
 ```bash
@@ -165,6 +176,16 @@ devstack stack add <name> <service|group> [service|group...]
 ```
 
 `stack add` stops nothing and starts nothing. The stack stays exactly as up or as down as it was. If the stack is up, the added copies become resources in the host daemon, but devstack does not start them. Start each one with `devstack service start <service> --stack <name>`.
+
+`devstack stack remove` takes a service out of a stack, and keeps the rest of the stack as it is:
+
+```bash
+devstack stack remove <name> <service> [service...]
+```
+
+`stack remove` removes the services from the stack record and the stack manifest, and releases only their ports. It refuses to remove a service that another service of the stack depends on, and names that service. It keeps the worktrees on disk, and prints the `git worktree remove` command for each one. If the stack is up, the host daemon drops the removed copies. Never edit `stacks.json`, `ports.json` or a stack manifest by hand; use `stack add` and `stack remove`.
+
+`stack remove` fires the `stack.destroy` hooks for the removed services first, while their ports and record still exist; a hook failure does not stop the removal.
 
 To work on a stack, change directory into its worktree. `stack create` and `stack list` print the path. That worktree is already on the branch of the stack, so you never run `git checkout`. To reload that one copy, run `service restart --stack <name>`. That command leaves base and every other stack untouched.
 
@@ -446,12 +467,12 @@ The panel shows the workspace of the pane where you press the key. From a direct
 ```
 environment  status  urls    topology  start  stop  restart  process_logs
 service_env  configure         observability  investigate  tunnel  hooks  base
-migrate      stack_create      stack_add   stack_up    stack_down
-stack_list   stack_rm  stack_note   stack_config
+migrate      stack_create      stack_add   stack_remove  stack_up
+stack_down   stack_list  stack_rm  stack_note   stack_config
 env_use      env_which env_set
 ```
 
-`base` reads the path of the replica with `action="path"`, and builds the replica and moves base to the default branch tip with `action="sync"`. `stack_add` adds services to a stack that already exists. `migrate` lists the migrations of this machine with `action="list"`, and runs the pending ones with `action="run"`. A run writes and deletes files in the service repositories, so read the git diff it makes and commit it yourself.
+`base` reads the path of the replica with `action="path"`, and builds the replica and moves base to the default branch tip with `action="sync"`. `stack_add` adds services to a stack that already exists, and `stack_remove` takes them out. `migrate` lists the migrations of this machine with `action="list"`, and runs the pending ones with `action="run"`. A run writes and deletes files in the service repositories, so read the git diff it makes and commit it yourself.
 
 The set of tools adapts to the workspace. `investigate` appears only when observability is on. `tunnel` appears only when the machine has an ssh client. Call `environment` first. It reports the observability state of the workspace, the stacks in flight, and the tools that exist here.
 
@@ -582,7 +603,7 @@ You cannot configure the port of the daemon. One daemon serves the machine on `:
 | `.devstack.json` | workspace root | No | Retired. The otel plugin configuration now lives under `observability` in the workspace manifest. Delete this file after `devstack otel status` shows what you expect. |
 | `Tiltfile` | anywhere | No | A generated build artifact. Never edit it by hand. |
 | `~/.config/devstack/workspaces.json` | home | n/a | Machine-local registry of workspaces and their ports. |
-| `~/.local/share/devstack/**` | home | n/a | Host daemon state: pids, logs, `stacks.json` and the generated host Tiltfile. |
+| `~/.local/share/devstack/**` | home | n/a | Host daemon state: pids, `stacks.json` and the generated host Tiltfile. Without systemd, also `tilt.log` and `tilt.log.1`. |
 
 A `.gitignore` for each service repository:
 

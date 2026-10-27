@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -420,5 +421,35 @@ func mustWriteFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("WriteFile(%s): %v", path, err)
+	}
+}
+
+func TestServiceManifestLimitsValidation(t *testing.T) {
+	for _, tc := range []struct {
+		limits string
+		bad    string
+	}{
+		{"{ memory: 512M, cpu: 200% }", ""},
+		{"{ memory: 1.5G }", ""},
+		{"{ memory: 4096 }", ""},
+		{"{ memory: infinity }", ""},
+		{"{ memory: 4GB }", `runtime.limits.memory "4GB"`},
+		{"{ memory: 4g }", `runtime.limits.memory "4g"`},
+		{`{ memory: "4G -p Foo=1" }`, `runtime.limits.memory "4G -p Foo=1"`},
+		{"{ cpu: 2 }", `runtime.limits.cpu "2"`},
+		{`{ cpu: "50%;x" }`, `runtime.limits.cpu "50%;x"`},
+	} {
+		path := filepath.Join(t.TempDir(), ServiceManifestFileName)
+		mustWriteFile(t, path, "version: 1\nservice:\n  name: api\nruntime:\n  run: { command: go run . }\n  limits: "+tc.limits+"\n")
+		_, err := LoadServiceManifestFile(path)
+		if tc.bad == "" {
+			if err != nil {
+				t.Errorf("limits %s: %v", tc.limits, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), `service "api"`) || !strings.Contains(err.Error(), tc.bad) {
+			t.Errorf("limits %s: err = %v, want one naming service \"api\" and %s", tc.limits, err, tc.bad)
+		}
 	}
 }

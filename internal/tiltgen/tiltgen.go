@@ -36,6 +36,8 @@ type Options struct {
 	// resource, so the collision costs one service its reclaim instead of costing
 	// every workspace on the machine its Tiltfile.
 	SkipFreePorts map[string][]int
+
+	SystemdScopes bool
 }
 
 // skipping returns a copy of the options with one more suppressed reclaim.
@@ -127,7 +129,35 @@ func GenerateHost(workspaces []WorkspaceGen) (string, []string, error) {
 		}
 	}
 
+	if limitsIgnored(workspaces) {
+		warnings = append(warnings, "runtime.limits needs a systemd user session. This host has none, so devstack ignores the limits")
+	}
 	return b.String(), warnings, nil
+}
+
+func limitsIgnored(workspaces []WorkspaceGen) bool {
+	ignored := func(rw *config.ResolvedWorkspace, opts Options) bool {
+		if opts.SystemdScopes {
+			return false
+		}
+		for _, svc := range rw.Services {
+			if svc.Manifest.Runtime.Limits != (config.ServiceLimits{}) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, w := range workspaces {
+		if ignored(w.Base, w.BaseOpts) {
+			return true
+		}
+		for _, s := range w.Stacks {
+			if ignored(s.Workspace, s.Options) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // renderWorkspace writes every service block for one workspace into b. A non-empty
@@ -213,6 +243,9 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 		fmt.Fprintf(&b, "    cmd=%s,\n", starStr(prep))
 	}
 
+	if opts.SystemdScopes {
+		runCmd = scopedCommand(runCmd, scopeDescription(prefix, svc.Name, namespace), m.Runtime.Limits)
+	}
 	fmt.Fprintf(&b, "    serve_cmd=%s,\n", starStr(runCmd))
 	fmt.Fprintf(&b, "    serve_dir=%s,\n", starStr(serveDir))
 
@@ -284,17 +317,18 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	return b.String(), nil
 }
 
-// ResolveLayerRefs resolves ${service.field} references in the workspace/service
-// env.values layers against the port book, in place — the same resolution the
-// generated serve_env receives, so callers can preview it.
 func ResolveLayerRefs(layers []config.EnvLayer, self string, book config.PortBook) error {
 	for i := range layers {
-		if layers[i].Rung != config.RungWorkspaceValues && layers[i].Rung != config.RungServiceValues {
+		rung := layers[i].Rung
+		if rung != config.RungWorkspaceValues && rung != config.RungServiceValues && rung != config.RungActiveEnv {
 			continue
 		}
 		resolved := make(map[string]string, len(layers[i].Values))
 		for k, v := range layers[i].Values {
 			rv, err := config.ResolveRefs(v, self, book)
+			if err != nil && rung == config.RungActiveEnv {
+				return fmt.Errorf("the env %q sets %s to %q, and devstack can not resolve it for service %q: %w", layers[i].Source, k, v, self, err)
+			}
 			if err != nil {
 				return err
 			}
@@ -416,6 +450,40 @@ func pyBool(b bool) string {
 		return "True"
 	}
 	return "False"
+}
+
+const defaultMemoryMax = "4G"
+
+const SystemdSlice = "devstack.slice"
+
+func scopeDescription(prefix, name, namespace string) string {
+	d := hostName("", name, namespace)
+	if prefix != "" {
+		d = prefix + "/" + d
+	}
+	return "devstack " + d
+}
+
+func scopedCommand(cmd, description string, limits config.ServiceLimits) string {
+	memory := limits.Memory
+	if memory == "" {
+		memory = defaultMemoryMax
+	}
+	parts := []string{
+		"systemd-run --user --scope --quiet --collect --slice=" + SystemdSlice,
+		"--description=" + shQuote(description),
+		"-p MemoryMax=" + memory,
+		"-p MemorySwapMax=1G",
+	}
+	if limits.CPU != "" {
+		parts = append(parts, "-p CPUQuota="+limits.CPU)
+	}
+	parts = append(parts, "-- sh -c "+shQuote(cmd))
+	return strings.Join(parts, " ")
+}
+
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // starStr renders a Go string as a Starlark/Python double-quoted literal.
