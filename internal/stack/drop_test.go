@@ -93,3 +93,44 @@ func TestDropRefusesAServiceTheStackDoesNotRun(t *testing.T) {
 		t.Fatalf("Drop() error = %v, want a refusal", err)
 	}
 }
+
+func TestDropRunsTheTeardownForTheRemovedServicesBeforeReleasingTheirPorts(t *testing.T) {
+	base := newAddBase(t)
+	newStack(t, base, "api")
+	if _, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"billing"}}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	var got []string
+	var recorded, allocated bool
+	_, err := Drop(DropInput{Base: base, Name: "feat", Services: []string{"billing"}, Teardown: func(removed []string) {
+		got = removed
+		rec, _ := FindStack(base.Name, "feat")
+		_, recorded = rec.Ports["billing/http"]
+		ports, _ := workspace.LoadPorts(rec.RuntimeKey())
+		_, allocated = ports["billing/http"]
+	}})
+	if err != nil {
+		t.Fatalf("Drop: %v", err)
+	}
+	if !reflect.DeepEqual(got, []string{"billing"}) {
+		t.Errorf("Teardown got %v, want [billing]", got)
+	}
+	if !recorded || !allocated {
+		t.Errorf("at teardown billing/http recorded=%v allocated=%v, want both still held", recorded, allocated)
+	}
+}
+
+func TestDropRunsNoTeardownForARefusal(t *testing.T) {
+	base := newAddBase(t)
+	newStack(t, base, "api")
+
+	ran := false
+	_, err := Drop(DropInput{Base: base, Name: "feat", Services: []string{"api"}, Teardown: func([]string) { ran = true }})
+	if err == nil {
+		t.Fatal("Drop() = nil, want a refusal")
+	}
+	if ran {
+		t.Error("the teardown ran for a removal that refused")
+	}
+}

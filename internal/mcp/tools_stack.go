@@ -338,12 +338,20 @@ func registerStackDropTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			return mcp.NewToolResultError("services must name at least one service to remove"), nil
 		}
 
-		res, err := stack.Drop(stack.DropInput{Base: ws, Name: name, Services: services})
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
+		var hookOut strings.Builder
+		var hookErr error
+		res, err := stack.Drop(stack.DropInput{Base: ws, Name: name, Services: services, Teardown: func(removed []string) {
+			hookErr = hooks.Fire(ws, name, config.EventStackDestroy, removed, &hookOut)
+		}})
 
 		var sb strings.Builder
+		appendHookOutput(&sb, config.EventStackDestroy, hookOut.String(), hookErr)
+		if err != nil {
+			if sb.Len() > 0 {
+				return mcp.NewToolResultError(sb.String() + "\n" + err.Error()), nil
+			}
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		fmt.Fprintf(&sb, "Removed %s from stack %q.\n", strings.Join(res.Removed, ", "), res.StackName)
 		if len(res.ReleasedPorts) > 0 {
 			fmt.Fprintf(&sb, "Released ports: %s\n", strings.Join(res.ReleasedPorts, ", "))

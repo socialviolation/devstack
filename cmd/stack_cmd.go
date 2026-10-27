@@ -109,6 +109,8 @@ The worktrees of the removed services stay on disk. The command prints the git
 command that deletes each one. If the stack is up, the host daemon drops
 the removed copies.
 
+stack.destroy hooks run first for the removed services only, as in 'stack rm'.
+
 To delete the whole stack, use 'devstack stack rm'.`,
 	Args:         cobra.MinimumNArgs(2),
 	SilenceUsage: true,
@@ -384,7 +386,9 @@ func runStackDrop(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	res, err := stack.Drop(stack.DropInput{Base: base, Name: args[0], Services: args[1:]})
+	res, err := stack.Drop(stack.DropInput{Base: base, Name: args[0], Services: args[1:], Teardown: func(removed []string) {
+		fireTeardownHooks(base, args[0], config.EventStackDestroy, removed)
+	}})
 	if err != nil {
 		return err
 	}

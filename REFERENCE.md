@@ -185,6 +185,8 @@ devstack stack remove <name> <service> [service...]
 
 `stack remove` removes the services from the stack record and the stack manifest, and releases only their ports. It refuses to remove a service that another service of the stack depends on, and names that service. It keeps the worktrees on disk, and prints the `git worktree remove` command for each one. If the stack is up, the host daemon drops the removed copies. Never edit `stacks.json`, `ports.json` or a stack manifest by hand; use `stack add` and `stack remove`.
 
+`stack remove` fires the `stack.destroy` hooks for the removed services first, while their ports and record still exist; a hook failure does not stop the removal.
+
 To work on a stack, change directory into its worktree. `stack create` and `stack list` print the path. That worktree is already on the branch of the stack, so you never run `git checkout`. To reload that one copy, run `service restart --stack <name>`. That command leaves base and every other stack untouched.
 
 `create` also takes `--branch` and `--note`. `--branch` defaults to the stack name. If that branch exists, devstack attaches to it. A branch says what changed. A note says why. A week later, the note is the part that you cannot reconstruct.

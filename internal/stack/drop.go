@@ -17,6 +17,7 @@ type DropInput struct {
 	Base     *workspace.Workspace
 	Name     string
 	Services []string
+	Teardown func(removed []string)
 }
 
 type KeptWorktree struct {
@@ -86,6 +87,9 @@ func Drop(in DropInput) (*DropResult, error) {
 	if len(blocked) > 0 {
 		return nil, fmt.Errorf("devstack can not remove %s from stack %q: %s. Remove the dependents too, or keep it",
 			strings.Join(removed, ", "), rec.Name, strings.Join(blocked, "; "))
+	}
+	if in.Teardown != nil {
+		in.Teardown(removed)
 	}
 
 	worktreePaths := map[string]string{}
