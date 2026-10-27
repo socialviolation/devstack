@@ -586,3 +586,17 @@ func ProcessAlive(pid int) bool {
 	_, err := os.Stat(statusPath)
 	return err == nil
 }
+
+func NoServicesReason(c *tilt.Client, stackName string) string {
+	host := filepath.Join(workspace.HostTiltDir(), "Tiltfile")
+	if loaded, err := c.LoadedTiltfile(); err == nil && loaded != "" && loaded != host {
+		return fmt.Sprintf("stack %q has no services in the host daemon. The daemon runs %s, not %s. Restart the host daemon: devstack workspace down --all, then devstack workspace up",
+			stackName, loaded, host)
+	}
+	logs := tiltLogsCommand
+	if DaemonMode() == ModeDirect {
+		logs = workspace.HostLogFile()
+	}
+	return fmt.Sprintf("stack %q has no services in the host daemon. The daemon runs %s, but it did not load them. Read why: %s",
+		stackName, host, logs)
+}

@@ -44,7 +44,9 @@ else.
 
 The telemetry queries are the exception. 'devstack otel traces' with no --stack
 searches base alone. Pass --stack <name> for one stack, or --stack all for base
-and every stack together.`,
+and every stack together.
+
+Never edit stacks.json, ports.json or a stack manifest by hand; use stack add/remove.`,
 	RunE: runStackList,
 }
 
@@ -93,10 +95,29 @@ them. Start each one with 'devstack service start <service> --stack <name>'.`,
 	RunE:         runStackAdd,
 }
 
+var stackDropCmd = &cobra.Command{
+	Use:   "remove <name> <service> [service...]",
+	Short: "Take services out of a stack, and keep the rest of it as it is",
+	Long: `Take services out of a stack. devstack removes them from the stack record and
+the stack manifest, and releases their ports. The other copies keep their
+worktrees, their branches and their ports.
+
+The command refuses to remove a service that another service of the stack
+still depends on, and names that service.
+
+The worktrees of the removed services stay on disk. The command prints the git
+command that deletes each one. If the stack is up, the host daemon drops
+the removed copies.
+
+To delete the whole stack, use 'devstack stack rm'.`,
+	Args:         cobra.MinimumNArgs(2),
+	SilenceUsage: true,
+	RunE:         runStackDrop,
+}
+
 var stackRemoveCmd = &cobra.Command{
-	Use:     "rm <name>",
-	Aliases: []string{"remove"},
-	Short:   "Stop a stack, remove its worktrees, release its ports, and delete its record",
+	Use:   "rm <name>",
+	Short: "Stop a stack, remove its worktrees, release its ports, and delete its record",
 	Long: `Tear a feature stack down. devstack stops its services, deletes its worktrees,
 releases its ports, and deletes its record and its stack root.
 
@@ -191,6 +212,7 @@ func init() {
 	rootCmd.AddCommand(stackCmd)
 	stackCmd.AddCommand(stackCreateCmd)
 	stackCmd.AddCommand(stackAddCmd)
+	stackCmd.AddCommand(stackDropCmd)
 	stackCmd.AddCommand(stackRemoveCmd)
 	stackCmd.AddCommand(stackListCmd)
 	stackCmd.AddCommand(stackNoteCmd)
@@ -354,6 +376,43 @@ func runStackAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("\nStart the added service(s): %s\n", strings.Join(startCommands(added, args[0]), "  ·  "))
+	return nil
+}
+
+func runStackDrop(cmd *cobra.Command, args []string) error {
+	base, err := resolveWorkspace(viper.GetString("workspace"))
+	if err != nil {
+		return err
+	}
+	res, err := stack.Drop(stack.DropInput{Base: base, Name: args[0], Services: args[1:]})
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Removed from stack %q: %s\n", res.StackName, strings.Join(res.Removed, ", "))
+	if len(res.ReleasedPorts) > 0 {
+		fmt.Printf("  ✓ released ports %s\n", strings.Join(res.ReleasedPorts, ", "))
+	}
+	fmt.Printf("  ✓ regenerated %s\n", res.ManifestPath)
+	fmt.Printf("Overlay is now: %s\n", strings.Join(res.Overlay, ", "))
+	fmt.Println("devstack kept the worktrees on disk:")
+	for _, k := range res.Kept {
+		fmt.Printf("  %-16s %s\n", k.Service, k.Path)
+		if k.RemoveCommand != "" {
+			fmt.Printf("    ↳ to delete it: %s\n", k.RemoveCommand)
+		} else {
+			fmt.Printf("    ↳ a service still in the stack shares this worktree\n")
+		}
+	}
+
+	if !res.Active {
+		return nil
+	}
+	if _, _, err := regenerateHostTiltfileScope(hostdaemon.ScopeStack(base.Name, res.Namespace)); err != nil {
+		return fmt.Errorf("can not generate the host Tiltfile again: %w", err)
+	}
+	syncHostTiltfile(tilt.NewClient("localhost", workspace.HostTiltPort), hostdaemon.ScopeStack(base.Name, res.Namespace))
+	fmt.Printf("  ✓ host Tiltfile no longer carries %s\n", strings.Join(res.Removed, ", "))
 	return nil
 }
 
@@ -782,7 +841,7 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if len(started) == 0 {
-		return fmt.Errorf("stack %q has no services in the host daemon. Create it again: devstack stack rm %s && devstack stack create %s --repos <svc>", rec.Name, rec.Name, rec.Name)
+		return errors.New(hostdaemon.NoServicesReason(tiltClient, rec.Name))
 	}
 
 	fmt.Printf("✓ Stack %q started: %s\n", rec.Name, strings.Join(started, ", "))

@@ -625,6 +625,7 @@ func writePrimeTerms(b *strings.Builder) {
 	b.WriteString("A command that starts, stops or restarts a copy names it with `--stack <name>`, or `--stack base` for base.\n")
 	b.WriteString("With no flag it acts on the stack or replica your directory is in, and the default is base anywhere else.\n")
 	b.WriteString("Each command names the copy it changed. A base copy has no :stack suffix, so read that line to confirm it.\n")
+	b.WriteString("Never edit stacks.json, ports.json or a stack manifest by hand; use stack add/remove.\n")
 	writePrimeStates(b)
 }
 
@@ -634,6 +635,7 @@ func writePrimeStates(b *strings.Builder) {
 	b.WriteString("  starting   devstack started it and it is not ready yet\n")
 	b.WriteString("  building   its build step runs now\n")
 	b.WriteString("  erroring   it failed. Read its logs. If its memory limit killed it, raise `runtime.limits.memory`\n")
+	b.WriteString("             If it failed because a dependency was not up yet, restart this copy\n")
 	b.WriteString("  stopped    it is registered but not started. This is not a fault\n")
 	b.WriteString("  disabled   somebody stopped it on purpose\n")
 	b.WriteString("  down       the copy is not registered in the daemon. Usually its stack is down: run `devstack stack up <name>`\n")

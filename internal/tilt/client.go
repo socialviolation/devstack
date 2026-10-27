@@ -42,6 +42,23 @@ func (c *Client) currentPort() int {
 // TiltView represents the top-level response from /api/view.
 type TiltView struct {
 	UiResources []UIResource `json:"uiResources"`
+	UISession   *UISession   `json:"uiSession"`
+}
+
+type UISession struct {
+	Status struct {
+		TiltfileKey string `json:"tiltfileKey"`
+	} `json:"status"`
+}
+
+type Waiting struct {
+	Reason string      `json:"reason"`
+	On     []WaitingOn `json:"on"`
+}
+
+type WaitingOn struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
 }
 
 // UIResource represents a single resource managed by Tilt.
@@ -71,6 +88,7 @@ type UIResourceStatus struct {
 	EndpointLinks  []EndpointLink `json:"endpointLinks"`
 	LastDeployTime *string        `json:"lastDeployTime"`
 	DisableStatus  *DisableStatus `json:"disableStatus"`
+	Waiting        *Waiting       `json:"waiting"`
 }
 
 // BuildRecord represents a single build attempt.
@@ -165,6 +183,17 @@ func (c *Client) WaitForTiltfileReload(since time.Time, timeout time.Duration) e
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
+}
+
+func (c *Client) LoadedTiltfile() (string, error) {
+	view, err := c.rawView()
+	if err != nil {
+		return "", err
+	}
+	if view.UISession == nil {
+		return "", nil
+	}
+	return view.UISession.Status.TiltfileKey, nil
 }
 
 // RunCLI runs a tilt CLI command with a 30-second timeout.

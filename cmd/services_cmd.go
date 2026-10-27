@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/fatih/color"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/gitinfo"
+	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/infra"
 	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/replica"
@@ -87,15 +89,13 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	return runWorkspaceStatus(ws, expand)
 }
 
-// runStackStatus shows a feature stack's services as they run in the one host
-// daemon: it reads the host view and filters to the stack's
-// <base>:<service>:<stack> resources, printing them de-namespaced. A stack is up
-// only when the host daemon runs and the stack is active — otherwise it
-// prints the same "not up" guidance the other --stack commands give, without
-// dialing a dead port.
 func runStackStatus(base *workspace.Workspace, rec *stack.Record) error {
 	port := workspace.HostTiltPort
-	if !isTiltReachable(fmt.Sprintf("http://localhost:%d/api/view", port)) || !rec.Active {
+	if !isTiltReachable(fmt.Sprintf("http://localhost:%d/api/view", port)) {
+		fmt.Println(hostDaemonDown())
+		return nil
+	}
+	if !rec.Active {
 		fmt.Printf("stack %q is not up. Run: devstack stack up %s\n", rec.Name, rec.Name)
 		return nil
 	}
@@ -156,8 +156,50 @@ func runStackStatus(base *workspace.Workspace, rec *stack.Record) error {
 		printPorts(svcPortsRaw(name, resourceMap), 14)
 		printEnv(svc, envs)
 		fmt.Println()
+		if reason := tilt.StateReason(resourceMap[name], view.UiResources); reason != "" {
+			color.New(color.Faint).Printf("    %s\n", reason)
+		}
 	}
 	return nil
+}
+
+// hostDaemonDown says why the host daemon does not answer. The mode file stays
+// behind only when the daemon did not stop through devstack.
+func hostDaemonDown() string {
+	data, _ := os.ReadFile(workspace.HostModeFile())
+	switch strings.TrimSpace(string(data)) {
+	case hostdaemon.ModeSystemd:
+		logs := "journalctl --user -u " + hostdaemon.TiltUnit
+		out, err := systemctlUser("show", hostdaemon.TiltUnit, "-p", "ActiveState,Result,ExecMainStatus,InactiveEnterTimestamp")
+		if err != nil {
+			return fmt.Sprintf("The host daemon is down. devstack can not read the unit %s. Logs: %s. Start it: devstack workspace up", hostdaemon.TiltUnit, logs)
+		}
+		props := map[string]string{}
+		for _, line := range strings.Split(string(out), "\n") {
+			if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+				props[k] = v
+			}
+		}
+		if props["ActiveState"] == "active" {
+			return fmt.Sprintf("The host daemon unit %s is active, but it does not answer on :%d. Logs: %s", hostdaemon.TiltUnit, workspace.HostTiltPort, logs)
+		}
+		state := "Result=" + props["Result"]
+		if st := props["ExecMainStatus"]; st != "" && st != "0" {
+			state += " ExecMainStatus=" + st
+		}
+		if ts := props["InactiveEnterTimestamp"]; ts != "" {
+			state += " at " + ts
+		}
+		return fmt.Sprintf("The host daemon is down: %s. Logs: %s. Start it: devstack workspace up", state, logs)
+	case hostdaemon.ModeDirect:
+		pidData, _ := os.ReadFile(workspace.HostPIDFile())
+		pid := strings.TrimSpace(string(pidData))
+		if n, err := strconv.Atoi(pid); err == nil && hostdaemon.ProcessAlive(n) {
+			return fmt.Sprintf("The host daemon (pid %d) runs, but it does not answer on :%d. Logs: %s", n, workspace.HostTiltPort, workspace.HostLogFile())
+		}
+		return fmt.Sprintf("The host daemon is down: its pid %s is gone. Logs: %s. Start it: devstack workspace up", pid, workspace.HostLogFile())
+	}
+	return "The host daemon is down. Start it: devstack workspace up"
 }
 
 // baseServiceDirs is where base's copies actually run: the replica worktrees,
@@ -275,7 +317,7 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 		if isTiltReachable(apiURL) {
 			fmt.Println("  The dev daemon starts. Run 'devstack status' again in a moment.")
 		} else {
-			fmt.Println("  Run: devstack workspace up")
+			fmt.Println("  " + hostDaemonDown())
 		}
 		return nil
 	}
@@ -324,6 +366,7 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 			color:     groupPalette[i%len(groupPalette)],
 			running:   groupRunning,
 			tag:       fmt.Sprintf("[%d/%d]", groupRunning, len(members)),
+			all:       view.UiResources,
 		})
 	}
 
@@ -346,6 +389,7 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 			color:     color.New(color.Faint, color.Bold),
 			running:   ungroupedRunning,
 			tag:       fmt.Sprintf("[%d/%d]", ungroupedRunning, len(ungrouped)),
+			all:       view.UiResources,
 		})
 	}
 	sections = append(sections, stackSections(ws, view, cfg.Deps, len(groupNames))...)
@@ -384,8 +428,10 @@ func stackSections(ws *workspace.Workspace, view *tilt.TiltView, baseDeps map[st
 	out := make([]serviceSection, 0, len(recs))
 	for _, rec := range recs {
 		resourceMap := map[string]tilt.UIResource{}
+		var all []tilt.UIResource
 		if view != nil {
 			resourceMap = hostResourceMap(view.UiResources, ws.Name, rec.Name)
+			all = view.UiResources
 		}
 
 		services := map[string]bool{}
@@ -444,6 +490,7 @@ func stackSections(ws *workspace.Workspace, view *tilt.TiltView, baseDeps map[st
 			running:   stackRunning,
 			tag:       tag,
 			isStack:   true,
+			all:       all,
 		})
 	}
 	return out

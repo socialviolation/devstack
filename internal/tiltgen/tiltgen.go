@@ -317,17 +317,18 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	return b.String(), nil
 }
 
-// ResolveLayerRefs resolves ${service.field} references in the workspace/service
-// env.values layers against the port book, in place — the same resolution the
-// generated serve_env receives, so callers can preview it.
 func ResolveLayerRefs(layers []config.EnvLayer, self string, book config.PortBook) error {
 	for i := range layers {
-		if layers[i].Rung != config.RungWorkspaceValues && layers[i].Rung != config.RungServiceValues {
+		rung := layers[i].Rung
+		if rung != config.RungWorkspaceValues && rung != config.RungServiceValues && rung != config.RungActiveEnv {
 			continue
 		}
 		resolved := make(map[string]string, len(layers[i].Values))
 		for k, v := range layers[i].Values {
 			rv, err := config.ResolveRefs(v, self, book)
+			if err != nil && rung == config.RungActiveEnv {
+				return fmt.Errorf("the env %q sets %s to %q, and devstack can not resolve it for service %q: %w", layers[i].Source, k, v, self, err)
+			}
 			if err != nil {
 				return err
 			}

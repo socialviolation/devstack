@@ -256,7 +256,7 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 		checkouts := gitinfo.ReadAll(serviceDirs)
 
 		rows := [][]string{{"SERVICE", "STATUS", "PORT(S)", "PATH", "BRANCH", "GROUP", "ENV", "RELOAD", "ERROR"}}
-		var failures []string
+		var failures, waits []string
 		prefix := ws.Name + ":"
 		for _, r := range view.UiResources {
 			svc, stackNS, ok := splitHostResource(r.Metadata.Name, prefix)
@@ -278,6 +278,8 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 				if reason := t.client.FailureReason(r); len(reason) > 0 {
 					failures = append(failures, fmt.Sprintf("%s\n  %s", name, strings.Join(reason, "\n  ")))
 				}
+			} else if reason := tilt.StateReason(r, view.UiResources); reason != "" {
+				waits = append(waits, fmt.Sprintf("%s (%s)\n  %s", name, status, reason))
 			}
 			path := shortenPath(serviceDirs[svc])
 			group := serviceGroup(name, cfg)
@@ -315,7 +317,13 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			}
 		}
 
-		// Groups summary section.
+		if len(waits) > 0 {
+			sb.WriteString("\nwhy these copies do not run yet:\n")
+			for _, w := range waits {
+				sb.WriteString(w + "\n")
+			}
+		}
+
 		if len(cfg.Groups) > 0 {
 			sb.WriteString("\ngroups:\n")
 			for _, groupName := range sortedGroupKeys(cfg.Groups) {

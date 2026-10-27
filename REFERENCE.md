@@ -177,6 +177,14 @@ devstack stack add <name> <service|group> [service|group...]
 
 `stack add` stops nothing and starts nothing. The stack stays exactly as up or as down as it was. If the stack is up, the added copies become resources in the host daemon, but devstack does not start them. Start each one with `devstack service start <service> --stack <name>`.
 
+`devstack stack remove` takes a service out of a stack, and keeps the rest of the stack as it is:
+
+```bash
+devstack stack remove <name> <service> [service...]
+```
+
+`stack remove` removes the services from the stack record and the stack manifest, and releases only their ports. It refuses to remove a service that another service of the stack depends on, and names that service. It keeps the worktrees on disk, and prints the `git worktree remove` command for each one. If the stack is up, the host daemon drops the removed copies. Never edit `stacks.json`, `ports.json` or a stack manifest by hand; use `stack add` and `stack remove`.
+
 To work on a stack, change directory into its worktree. `stack create` and `stack list` print the path. That worktree is already on the branch of the stack, so you never run `git checkout`. To reload that one copy, run `service restart --stack <name>`. That command leaves base and every other stack untouched.
 
 `create` also takes `--branch` and `--note`. `--branch` defaults to the stack name. If that branch exists, devstack attaches to it. A branch says what changed. A note says why. A week later, the note is the part that you cannot reconstruct.
@@ -457,12 +465,12 @@ The panel shows the workspace of the pane where you press the key. From a direct
 ```
 environment  status  urls    topology  start  stop  restart  process_logs
 service_env  configure         observability  investigate  tunnel  hooks  base
-migrate      stack_create      stack_add   stack_up    stack_down
-stack_list   stack_rm  stack_note   stack_config
+migrate      stack_create      stack_add   stack_remove  stack_up
+stack_down   stack_list  stack_rm  stack_note   stack_config
 env_use      env_which env_set
 ```
 
-`base` reads the path of the replica with `action="path"`, and builds the replica and moves base to the default branch tip with `action="sync"`. `stack_add` adds services to a stack that already exists. `migrate` lists the migrations of this machine with `action="list"`, and runs the pending ones with `action="run"`. A run writes and deletes files in the service repositories, so read the git diff it makes and commit it yourself.
+`base` reads the path of the replica with `action="path"`, and builds the replica and moves base to the default branch tip with `action="sync"`. `stack_add` adds services to a stack that already exists, and `stack_remove` takes them out. `migrate` lists the migrations of this machine with `action="list"`, and runs the pending ones with `action="run"`. A run writes and deletes files in the service repositories, so read the git diff it makes and commit it yourself.
 
 The set of tools adapts to the workspace. `investigate` appears only when observability is on. `tunnel` appears only when the machine has an ssh client. Call `environment` first. It reports the observability state of the workspace, the stacks in flight, and the tools that exist here.
 
