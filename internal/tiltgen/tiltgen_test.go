@@ -508,6 +508,11 @@ calls:
 // body and optional workspace env block, then generates it.
 func generateOne(t *testing.T, svcBody, wsEnv string) (string, error) {
 	t.Helper()
+	return generateOneWith(t, svcBody, wsEnv, Options{})
+}
+
+func generateOneWith(t *testing.T, svcBody, wsEnv string, opts Options) (string, error) {
+	t.Helper()
 	dir := t.TempDir()
 	svcDir := filepath.Join(dir, "repos", "svc")
 	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
@@ -522,7 +527,7 @@ workspace:
 	if err != nil {
 		t.Fatalf("ResolveWorkspace: %v", err)
 	}
-	return generate(rw, Options{})
+	return generate(rw, opts)
 }
 
 // TestSelfPortResolves: a service reads its own listen port via ${self.port.http}.

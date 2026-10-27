@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -195,6 +197,7 @@ func render() (string, []string, error) {
 
 	var warnings []string
 	var gens []tiltgen.WorkspaceGen
+	scopes := SystemdUserSession()
 	for i := range active {
 		ws := active[i]
 		// One Tiltfile serves every workspace, so a workspace nobody has built a
@@ -224,10 +227,13 @@ func render() (string, []string, error) {
 		if err != nil {
 			return "", warnings, err
 		}
+		for i := range stackGens {
+			stackGens[i].Options.SystemdScopes = scopes
+		}
 		gens = append(gens, tiltgen.WorkspaceGen{
 			Name:     ws.Name,
 			Base:     rw,
-			BaseOpts: tiltgen.Options{ManagedEnv: workspace.ManagedEnv(&ws, names, workspace.ActiveEnvNames(rw, ""))},
+			BaseOpts: tiltgen.Options{ManagedEnv: workspace.ManagedEnv(&ws, names, workspace.ActiveEnvNames(rw, "")), SystemdScopes: scopes},
 			Stacks:   stackGens,
 		})
 	}
@@ -367,12 +373,6 @@ func ActiveStackGens(ws *workspace.Workspace) ([]tiltgen.StackGen, error) {
 	return gens, nil
 }
 
-// EnsureDaemon starts the one host Tilt daemon if it is not already running and
-// returns a human-readable status line describing what it did. If the daemon is
-// reachable or its PID is alive it is left as-is. Otherwise it starts `tilt up`
-// in the host Tilt dir on the fixed host port, tracks its PID and session, and
-// polls until reachable. It never writes to stdout, so it is safe to call from
-// the MCP server whose stdout carries the protocol stream.
 func EnsureDaemon() (string, error) {
 	apiURL := fmt.Sprintf("http://localhost:%d/api/view", workspace.HostTiltPort)
 	if TiltReachable(apiURL) {
@@ -392,25 +392,16 @@ func EnsureDaemon() (string, error) {
 		return "", fmt.Errorf("can not create the host data directory %s: %w", dir, err)
 	}
 
-	logFile := workspace.HostLogFile()
-	lf, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	start := startDirectTilt
+	if SystemdUserSession() {
+		start = startTiltUnit
+	}
+	pid, logs, stop, err := start(dir)
 	if err != nil {
-		return "", fmt.Errorf("can not open the host log file %s: %w", logFile, err)
+		return "", err
 	}
-	defer lf.Close()
-
-	tiltCmd := exec.Command("tilt", "up", "--host", "0.0.0.0", "--port", strconv.Itoa(workspace.HostTiltPort))
-	tiltCmd.Dir = dir
-	tiltCmd.Stdout = lf
-	tiltCmd.Stderr = lf
-	tiltCmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := tiltCmd.Start(); err != nil {
-		return "", fmt.Errorf("can not start the host daemon: %w", err)
-	}
-
-	pid := tiltCmd.Process.Pid
 	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
-		tiltCmd.Process.Kill()
+		stop()
 		return "", fmt.Errorf("can not write the host PID file: %w", err)
 	}
 	_, _ = workspace.OpenSession(workspace.HostWorkspace(), pid, []int{workspace.HostTiltPort})
@@ -426,9 +417,93 @@ func EnsureDaemon() (string, error) {
 	}
 
 	if reached {
-		return fmt.Sprintf("The host daemon started (pid %d, port %d, logs: %s)", pid, workspace.HostTiltPort, logFile), nil
+		return fmt.Sprintf("The host daemon started (pid %d, port %d, logs: %s)", pid, workspace.HostTiltPort, logs), nil
 	}
-	return fmt.Sprintf("The host daemon started, but devstack can not reach it yet. Logs: %s", logFile), nil
+	return fmt.Sprintf("The host daemon started, but devstack can not reach it yet. Logs: %s", logs), nil
+}
+
+func SystemdUserSession() bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	if _, err := exec.LookPath("systemd-run"); err != nil {
+		return false
+	}
+	return exec.Command("systemctl", "--user", "show-environment").Run() == nil
+}
+
+func startTiltUnit(dir string) (int, string, func(), error) {
+	_ = exec.Command("systemctl", "--user", "reset-failed", TiltUnit).Run()
+	args := TiltRunArgs(dir, os.Environ(), workspace.HostTiltPort)
+	if out, err := exec.Command("systemd-run", args...).CombinedOutput(); err != nil {
+		return 0, "", nil, fmt.Errorf("can not start the host daemon: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	stop := func() { _ = exec.Command("systemctl", "--user", "stop", TiltUnit).Run() }
+	pidOut, err := exec.Command("systemctl", "--user", "show", "-p", "MainPID", "--value", TiltUnit).Output()
+	if err != nil {
+		return 0, "", nil, fmt.Errorf("can not read the host daemon PID: %w", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidOut)))
+	if err != nil || pid == 0 {
+		return 0, "", nil, fmt.Errorf("the host daemon unit %s has no main PID", TiltUnit)
+	}
+	return pid, tiltLogsCommand, stop, nil
+}
+
+const maxTiltLogSize = 100 << 20
+
+func startDirectTilt(dir string) (int, string, func(), error) {
+	logFile := workspace.HostLogFile()
+	if err := rotateLog(logFile, maxTiltLogSize); err != nil {
+		return 0, "", nil, fmt.Errorf("can not rotate the host log file %s: %w", logFile, err)
+	}
+	lf, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return 0, "", nil, fmt.Errorf("can not open the host log file %s: %w", logFile, err)
+	}
+	defer lf.Close()
+
+	tiltCmd := exec.Command("tilt", "up", "--host", "0.0.0.0", "--port", strconv.Itoa(workspace.HostTiltPort))
+	tiltCmd.Dir = dir
+	tiltCmd.Stdout = lf
+	tiltCmd.Stderr = lf
+	tiltCmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := tiltCmd.Start(); err != nil {
+		return 0, "", nil, fmt.Errorf("can not start the host daemon: %w", err)
+	}
+	return tiltCmd.Process.Pid, logFile, func() { _ = tiltCmd.Process.Kill() }, nil
+}
+
+func rotateLog(path string, max int64) error {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Size() <= max {
+		return nil
+	}
+	return os.Rename(path, path+".1")
+}
+
+const TiltUnit = "devstack-tilt"
+
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+const tiltLogsCommand = "journalctl --user -u " + TiltUnit
+
+func TiltRunArgs(dir string, env []string, port int) []string {
+	args := []string{"--user", "--unit=" + TiltUnit, "--collect", "--working-directory=" + dir}
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if !envName.MatchString(name) {
+			continue
+		}
+		args = append(args, "-E", name)
+	}
+	return append(args, "--", "tilt", "up", "--host", "0.0.0.0", "--port", strconv.Itoa(port))
 }
 
 // TiltReachable reports whether the Tilt API is responding at the given URL.

@@ -160,6 +160,12 @@ type ServiceRuntime struct {
 	TriggerMode string             `yaml:"triggerMode,omitempty"`
 	AutoStart   bool               `yaml:"autoStart,omitempty"`
 	Watch       []string           `yaml:"watch,omitempty"`
+	Limits      ServiceLimits      `yaml:"limits,omitempty"`
+}
+
+type ServiceLimits struct {
+	Memory string `yaml:"memory,omitempty"`
+	CPU    string `yaml:"cpu,omitempty"`
 }
 
 type ServiceRun struct {

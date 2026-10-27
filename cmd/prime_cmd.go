@@ -633,7 +633,7 @@ func writePrimeStates(b *strings.Builder) {
 	b.WriteString("  running    the process is up and healthy\n")
 	b.WriteString("  starting   devstack started it and it is not ready yet\n")
 	b.WriteString("  building   its build step runs now\n")
-	b.WriteString("  erroring   it failed. Read its logs\n")
+	b.WriteString("  erroring   it failed. Read its logs. If its memory limit killed it, raise `runtime.limits.memory`\n")
 	b.WriteString("  stopped    it is registered but not started. This is not a fault\n")
 	b.WriteString("  disabled   somebody stopped it on purpose\n")
 	b.WriteString("  down       the copy is not registered in the daemon. Usually its stack is down: run `devstack stack up <name>`\n")

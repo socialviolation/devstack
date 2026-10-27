@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -104,9 +105,6 @@ func runDown(cmd *cobra.Command, args []string) error {
 	return hostErr
 }
 
-// stopHostDaemon gracefully shuts down the one host Tilt daemon: it disables every
-// resource, kills the tracked PID, removes the PID file, and closes the host
-// session. It is a no-op (not an error) when the daemon is already stopped.
 func stopHostDaemon() error {
 	pidFile := workspace.HostPIDFile()
 	pidData, pidErr := os.ReadFile(pidFile)
@@ -138,8 +136,11 @@ func stopHostDaemon() error {
 		fmt.Printf("  ✓ Services stopped\n")
 	}
 
-	proc, err := os.FindProcess(pid)
-	if err != nil {
+	if hostdaemon.SystemdUserSession() {
+		if out, err := exec.Command("systemctl", "--user", "stop", hostdaemon.TiltUnit).CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: can not stop the unit %s: %v: %s\n", hostdaemon.TiltUnit, err, strings.TrimSpace(string(out)))
+		}
+	} else if proc, err := os.FindProcess(pid); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: can not find process %d: %v\n", pid, err)
 	} else if killErr := proc.Kill(); killErr != nil && isProcessAlive(pid) {
 		fmt.Fprintf(os.Stderr, "Warning: can not kill process %d: %v\n", pid, killErr)

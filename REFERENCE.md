@@ -110,6 +110,17 @@ devstack ports check 4200      # what holds a port, IPv4 or IPv6
 devstack ports free 4200       # kill it (it refuses any port less than 1024)
 ```
 
+On Linux with a systemd user session, each service runs in its own systemd scope, with its own memory limit. When a service passes its limit, the kernel kills that service alone. The terminal and the other services keep running. To set the limits, use `runtime.limits`:
+
+```yaml
+runtime:
+  limits:
+    memory: 6G     # MemoryMax. The default is 4G
+    cpu: 200%      # CPUQuota. 100% is one core. With no value, there is no CPU limit
+```
+
+Write each value as systemd writes it. Swap is fixed at 1G for each service. To list the scopes, run `systemctl --user list-units 'run-*.scope'`. On a host without a systemd user session (macOS, WSL without systemd, a container), the services run without scopes, and devstack ignores `runtime.limits` with one warning.
+
 Dependencies and groups:
 
 ```bash
@@ -582,7 +593,7 @@ You cannot configure the port of the daemon. One daemon serves the machine on `:
 | `.devstack.json` | workspace root | No | Retired. The otel plugin configuration now lives under `observability` in the workspace manifest. Delete this file after `devstack otel status` shows what you expect. |
 | `Tiltfile` | anywhere | No | A generated build artifact. Never edit it by hand. |
 | `~/.config/devstack/workspaces.json` | home | n/a | Machine-local registry of workspaces and their ports. |
-| `~/.local/share/devstack/**` | home | n/a | Host daemon state: pids, logs, `stacks.json` and the generated host Tiltfile. |
+| `~/.local/share/devstack/**` | home | n/a | Host daemon state: pids, `stacks.json` and the generated host Tiltfile. Without systemd, also `tilt.log` and `tilt.log.1`. |
 
 A `.gitignore` for each service repository:
 

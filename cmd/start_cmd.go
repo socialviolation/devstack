@@ -19,7 +19,9 @@ var upCmd = &cobra.Command{
 	Use:   "up",
 	Short: "Move base to the current default branch, and run it in the dev daemon",
 	Long: `Fold this workspace's services into the dev daemon. If the daemon is not up
-already, devstack starts it as a detached background process.
+already, devstack starts it. On Linux with a systemd user session, the daemon
+is the systemd user service devstack-tilt. On other hosts (macOS, WSL without
+systemd, containers), it is a detached background process.
 
 This command also makes base current, in three steps.
 
@@ -47,7 +49,16 @@ rarely need this command first.
 devstack also starts the shared collector, so the services can send traces and
 logs immediately.
 
-devstack writes the logs to ~/.local/share/devstack/<workspace-name>/tilt.log.`,
+With systemd, to read the daemon's logs, run 'journalctl --user -u devstack-tilt'.
+To see the daemon and the scope of each service, run
+'systemctl --user status devstack-tilt' and 'systemd-cgls --user'.
+If this command fails with 'Unit devstack-tilt.service was already loaded',
+the unit is active but Tilt does not answer. Run
+'systemctl --user stop devstack-tilt', then run this command again.
+
+Without systemd, devstack writes the logs to
+~/.local/share/devstack/_devstack-host/tilt.log. When the file is over 100 MB,
+the next start moves it to tilt.log.1.`,
 	RunE: runStart,
 }
 
@@ -147,10 +158,10 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 	return ws, nil
 }
 
-// ensureHostDaemon starts the one host Tilt daemon if it is not already running,
-// printing the status line hostdaemon.EnsureDaemon reports.
+var ensureDaemon = hostdaemon.EnsureDaemon
+
 func ensureHostDaemon() error {
-	msg, err := hostdaemon.EnsureDaemon()
+	msg, err := ensureDaemon()
 	if err != nil {
 		return err
 	}

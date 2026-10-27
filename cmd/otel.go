@@ -37,10 +37,7 @@ func activePlugin(ws *workspace.Workspace) otel.Plugin {
 	return otel.For(ws)
 }
 
-// startOtelStack brings up the workspace's companion infrastructure and folds it
-// into the one host collector, which is regenerated from every observability-
-// enabled workspace so starting one never drops another's telemetry.
-func startOtelStack(ws *workspace.Workspace, plugin otel.Plugin) error {
+var startOtelStack = func(ws *workspace.Workspace, plugin otel.Plugin) error {
 	if plugin == nil {
 		return nil
 	}
