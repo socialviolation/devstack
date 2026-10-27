@@ -8,11 +8,15 @@ import (
 )
 
 func TestTiltRunArgs(t *testing.T) {
-	env := []string{"PATH=/usr/bin:/bin", "SECRET=a=b", "EMPTY=", "BASH_FUNC_f%%=() { :; }", "=C:"}
+	env := []string{
+		"PATH=/usr/bin:/bin", "SECRET=a=b", "EMPTY=", "QUOTED=it's \"$x\" \\n", "BASH_FUNC_f%%=() { :; }", "=C:",
+		"NOTIFY_SOCKET=/run/n", "LISTEN_PID=1", "LISTEN_FDS=1", "LISTEN_FDNAMES=a", "INVOCATION_ID=x",
+		"JOURNAL_STREAM=8:9", "SYSTEMD_EXEC_PID=2", "MANAGERPID=3",
+	}
 	got := TiltRunArgs("/data/_devstack-host/", env, 10300)
 	want := []string{
 		"--user", "--unit=devstack-tilt", "--collect", "--working-directory=/data/_devstack-host/",
-		"-E", "PATH", "-E", "SECRET", "-E", "EMPTY",
+		"-E", "PATH=/usr/bin:/bin", "-E", "SECRET=a=b", "-E", "EMPTY=", "-E", "QUOTED=it's \"$x\" \\n",
 		"--", "tilt", "up", "--host", "0.0.0.0", "--port", "10300",
 	}
 	if !reflect.DeepEqual(got, want) {

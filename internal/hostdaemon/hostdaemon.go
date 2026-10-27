@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -89,8 +90,11 @@ func SyncScope(scope Scope) (SyncResult, error) {
 		return SyncResult{Path: path, Kept: kept, Warnings: warnings}, nil
 	}
 
-	if err := os.WriteFile(path, []byte(out), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(out), 0600); err != nil {
 		return SyncResult{Warnings: warnings}, fmt.Errorf("can not write the host Tiltfile: %w", err)
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		return SyncResult{Warnings: warnings}, fmt.Errorf("can not restrict the host Tiltfile: %w", err)
 	}
 	return SyncResult{Path: path, Wrote: true, Changed: changedResources(string(existing), out), Kept: kept, Warnings: warnings}, nil
 }
@@ -197,7 +201,7 @@ func render() (string, []string, error) {
 
 	var warnings []string
 	var gens []tiltgen.WorkspaceGen
-	scopes := SystemdUserSession()
+	scopes := renderScopes()
 	for i := range active {
 		ws := active[i]
 		// One Tiltfile serves every workspace, so a workspace nobody has built a
@@ -385,6 +389,7 @@ func EnsureDaemon() (string, error) {
 			return fmt.Sprintf("The host daemon already runs (pid %d, port %d).", pid, workspace.HostTiltPort), nil
 		}
 		os.Remove(pidFile)
+		os.Remove(workspace.HostModeFile())
 	}
 
 	dir := workspace.HostTiltDir()
@@ -392,9 +397,9 @@ func EnsureDaemon() (string, error) {
 		return "", fmt.Errorf("can not create the host data directory %s: %w", dir, err)
 	}
 
-	start := startDirectTilt
-	if SystemdUserSession() {
-		start = startTiltUnit
+	start, mode := startDirectTilt, ModeDirect
+	if systemdUserSession() {
+		start, mode = startTiltUnit, ModeSystemd
 	}
 	pid, logs, stop, err := start(dir)
 	if err != nil {
@@ -403,6 +408,11 @@ func EnsureDaemon() (string, error) {
 	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
 		stop()
 		return "", fmt.Errorf("can not write the host PID file: %w", err)
+	}
+	if err := writeMode(mode); err != nil {
+		stop()
+		os.Remove(pidFile)
+		return "", fmt.Errorf("can not write the host daemon mode file: %w", err)
 	}
 	_, _ = workspace.OpenSession(workspace.HostWorkspace(), pid, []int{workspace.HostTiltPort})
 
@@ -420,6 +430,48 @@ func EnsureDaemon() (string, error) {
 		return fmt.Sprintf("The host daemon started (pid %d, port %d, logs: %s)", pid, workspace.HostTiltPort, logs), nil
 	}
 	return fmt.Sprintf("The host daemon started, but devstack can not reach it yet. Logs: %s", logs), nil
+}
+
+const (
+	ModeSystemd = "systemd"
+	ModeDirect  = "direct"
+)
+
+var systemdUserSession = sync.OnceValue(SystemdUserSession)
+
+func writeMode(mode string) error {
+	return os.WriteFile(workspace.HostModeFile(), []byte(mode), 0644)
+}
+
+func DaemonMode() string {
+	pidData, err := os.ReadFile(workspace.HostPIDFile())
+	if err != nil {
+		return ""
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
+	if err != nil || !ProcessAlive(pid) {
+		return ""
+	}
+	if data, err := os.ReadFile(workspace.HostModeFile()); err == nil {
+		if mode := strings.TrimSpace(string(data)); mode == ModeSystemd || mode == ModeDirect {
+			return mode
+		}
+	}
+	cgroup, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+	if strings.Contains(string(cgroup), "/"+TiltUnit+".service") {
+		return ModeSystemd
+	}
+	return ModeDirect
+}
+
+func renderScopes() bool {
+	switch DaemonMode() {
+	case ModeSystemd:
+		return true
+	case ModeDirect:
+		return false
+	}
+	return systemdUserSession()
 }
 
 func SystemdUserSession() bool {
@@ -492,16 +544,27 @@ const TiltUnit = "devstack-tilt"
 
 var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
+var unitEnv = map[string]bool{
+	"NOTIFY_SOCKET":    true,
+	"LISTEN_PID":       true,
+	"LISTEN_FDS":       true,
+	"LISTEN_FDNAMES":   true,
+	"INVOCATION_ID":    true,
+	"JOURNAL_STREAM":   true,
+	"SYSTEMD_EXEC_PID": true,
+	"MANAGERPID":       true,
+}
+
 const tiltLogsCommand = "journalctl --user -u " + TiltUnit
 
 func TiltRunArgs(dir string, env []string, port int) []string {
 	args := []string{"--user", "--unit=" + TiltUnit, "--collect", "--working-directory=" + dir}
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
-		if !envName.MatchString(name) {
+		if !envName.MatchString(name) || unitEnv[name] {
 			continue
 		}
-		args = append(args, "-E", name)
+		args = append(args, "-E", kv)
 	}
 	return append(args, "--", "tilt", "up", "--host", "0.0.0.0", "--port", strconv.Itoa(port))
 }

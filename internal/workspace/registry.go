@@ -185,6 +185,8 @@ var HostTiltPort = 10300
 // HostPIDFile returns the PID file path for the host Tilt daemon.
 func HostPIDFile() string { return PIDFile(hostKey) }
 
+func HostModeFile() string { return filepath.Join(DataDir(hostKey), "daemon.mode") }
+
 // HostLogFile returns the log file path for the host Tilt daemon.
 func HostLogFile() string { return LogFile(hostKey) }
 

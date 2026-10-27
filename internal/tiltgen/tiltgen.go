@@ -453,6 +453,8 @@ func pyBool(b bool) string {
 
 const defaultMemoryMax = "4G"
 
+const SystemdSlice = "devstack.slice"
+
 func scopeDescription(prefix, name, namespace string) string {
 	d := hostName("", name, namespace)
 	if prefix != "" {
@@ -467,7 +469,7 @@ func scopedCommand(cmd, description string, limits config.ServiceLimits) string 
 		memory = defaultMemoryMax
 	}
 	parts := []string{
-		"systemd-run --user --scope --quiet --collect",
+		"systemd-run --user --scope --quiet --collect --slice=" + SystemdSlice,
 		"--description=" + shQuote(description),
 		"-p MemoryMax=" + memory,
 		"-p MemorySwapMax=1G",

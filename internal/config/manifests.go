@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -446,8 +447,19 @@ func (m *ServiceManifest) validate(scope string) error {
 	if strings.TrimSpace(m.Runtime.Run.Command) == "" {
 		return errors.New("runtime.run.command is required")
 	}
+	if l := m.Runtime.Limits.Memory; l != "" && l != "infinity" && !memoryLimit.MatchString(l) {
+		return fmt.Errorf("service %q: runtime.limits.memory %q is not a systemd size, such as 512M, 4G or infinity", m.Service.Name, l)
+	}
+	if l := m.Runtime.Limits.CPU; l != "" && !cpuLimit.MatchString(l) {
+		return fmt.Errorf("service %q: runtime.limits.cpu %q is not a percentage, such as 200%%", m.Service.Name, l)
+	}
 	return validateHooks(m.Hooks, scope, false)
 }
+
+var (
+	memoryLimit = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?[KMGT]?$`)
+	cpuLimit    = regexp.MustCompile(`^[0-9]+%$`)
+)
 
 func ResolveWorkspace(workspacePath string) (*ResolvedWorkspace, error) {
 	workspacePath = filepath.Clean(workspacePath)

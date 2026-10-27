@@ -20,7 +20,7 @@ runtime:
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	want := `serve_cmd="systemd-run --user --scope --quiet --collect --description='devstack svc' -p MemoryMax=4G -p MemorySwapMax=1G -- sh -c './bin/svc'"`
+	want := `serve_cmd="systemd-run --user --scope --quiet --collect --slice=devstack.slice --description='devstack svc' -p MemoryMax=4G -p MemorySwapMax=1G -- sh -c './bin/svc'"`
 	if !strings.Contains(out, want) {
 		t.Errorf("want substring:\n%s\ngot:\n%s", want, out)
 	}
@@ -100,7 +100,7 @@ runtime:
 
 func TestServeCmdMemoryOnlyHasNoCPUQuota(t *testing.T) {
 	got := scopedCommand("x", "devstack svc", config.ServiceLimits{Memory: "2G"})
-	want := "systemd-run --user --scope --quiet --collect --description='devstack svc' -p MemoryMax=2G -p MemorySwapMax=1G -- sh -c 'x'"
+	want := "systemd-run --user --scope --quiet --collect --slice=devstack.slice --description='devstack svc' -p MemoryMax=2G -p MemorySwapMax=1G -- sh -c 'x'"
 	if got != want {
 		t.Errorf("scopedCommand() =\n%s\nwant\n%s", got, want)
 	}

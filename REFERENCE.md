@@ -119,7 +119,7 @@ runtime:
     cpu: 200%      # CPUQuota. 100% is one core. With no value, there is no CPU limit
 ```
 
-Write each value as systemd writes it. Swap is fixed at 1G for each service. To list the scopes, run `systemctl --user list-units 'run-*.scope'`. On a host without a systemd user session (macOS, WSL without systemd, a container), the services run without scopes, and devstack ignores `runtime.limits` with one warning.
+Write `memory` as a systemd size, such as `512M`, `4G` or `infinity`, and `cpu` as a percentage, such as `200%`. devstack refuses any other value when it loads the manifest. Swap is fixed at 1G for each service. Every scope is in `devstack.slice`, and `devstack workspace down` stops the slice with the daemon. To list the scopes, run `systemctl --user status devstack.slice`. On a host without a systemd user session (macOS, WSL without systemd, a container), the services run without scopes, and devstack ignores `runtime.limits` with one warning.
 
 Dependencies and groups:
 
