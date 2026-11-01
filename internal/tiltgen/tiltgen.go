@@ -31,6 +31,10 @@ type Options struct {
 	// layers into the env ladder above the manifests' static values.
 	StackEnv string
 
+	// Stack names the stack and the services it runs its own copy of, for
+	// ${stack.suffix:...}. Base generation leaves it empty.
+	Stack config.StackScope
+
 	// SkipFreePorts names ports a service must not reclaim, keyed by service name.
 	// GenerateHost fills it for a reclaim that would kill another supervised
 	// resource, so the collision costs one service its reclaim instead of costing
@@ -253,7 +257,7 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	if err != nil {
 		return "", err
 	}
-	if err := ResolveLayerRefs(layers, svc.Name, book); err != nil {
+	if err := ResolveLayerRefs(layers, svc.Name, book, opts.Stack); err != nil {
 		return "", err
 	}
 	if err := checkRequiredEnv(layers, m.Env.Required, svc.Name); err != nil {
@@ -317,7 +321,7 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	return b.String(), nil
 }
 
-func ResolveLayerRefs(layers []config.EnvLayer, self string, book config.PortBook) error {
+func ResolveLayerRefs(layers []config.EnvLayer, self string, book config.PortBook, stack config.StackScope) error {
 	for i := range layers {
 		rung := layers[i].Rung
 		if rung != config.RungWorkspaceValues && rung != config.RungServiceValues && rung != config.RungActiveEnv {
@@ -325,7 +329,7 @@ func ResolveLayerRefs(layers []config.EnvLayer, self string, book config.PortBoo
 		}
 		resolved := make(map[string]string, len(layers[i].Values))
 		for k, v := range layers[i].Values {
-			rv, err := config.ResolveRefs(v, self, book)
+			rv, err := config.ResolveStackRefs(v, self, book, stack)
 			if err != nil && rung == config.RungActiveEnv {
 				return fmt.Errorf("the env %q sets %s to %q, and devstack can not resolve it for service %q: %w", layers[i].Source, k, v, self, err)
 			}

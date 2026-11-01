@@ -159,3 +159,53 @@ func TestBuildPortBook(t *testing.T) {
 		t.Error("a service with no manifest must not appear in the book")
 	}
 }
+
+func TestResolveStackSuffix(t *testing.T) {
+	both := StackScope{Name: "agent-prod", Services: []string{"api", "worker", "web"}}
+	missing := StackScope{Name: "agent-prod", Services: []string{"api", "web"}}
+	cases := []struct {
+		name  string
+		in    string
+		stack StackScope
+		want  string
+	}{
+		{"base", "queue${stack.suffix:api,worker}", StackScope{}, "queue"},
+		{"stack runs both", "queue${stack.suffix:api,worker}", both, "queue-agent-prod"},
+		{"stack misses one", "queue${stack.suffix:api,worker}", missing, "queue"},
+		{"one service", "bus${stack.suffix:web}", missing, "bus-agent-prod"},
+		{"spaces around names", "queue${stack.suffix: api , worker }", both, "queue-agent-prod"},
+		{"with port ref", "${api.port.http}${stack.suffix:api}", both, "8080-agent-prod"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolveStackRefs(tc.in, "web", testBook(), tc.stack)
+			if err != nil {
+				t.Fatalf("ResolveStackRefs(%q): %v", tc.in, err)
+			}
+			if got != tc.want {
+				t.Errorf("ResolveStackRefs(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolveRefsStackSuffixIsBase(t *testing.T) {
+	got, err := ResolveRefs("queue${stack.suffix:api,worker}", "web", testBook())
+	if err != nil {
+		t.Fatalf("ResolveRefs: %v", err)
+	}
+	if got != "queue" {
+		t.Errorf("ResolveRefs = %q, want %q", got, "queue")
+	}
+}
+
+func TestResolveStackSuffixErrors(t *testing.T) {
+	stack := StackScope{Name: "agent-prod", Services: []string{"api"}}
+	for _, in := range []string{"${stack.suffix}", "${stack.suffix:}", "${stack.suffix:api,}", "${stack.suffix:,api}"} {
+		t.Run(in, func(t *testing.T) {
+			if got, err := ResolveStackRefs(in, "web", testBook(), stack); err == nil {
+				t.Fatalf("ResolveStackRefs(%q) = %q, want error", in, got)
+			}
+		})
+	}
+}

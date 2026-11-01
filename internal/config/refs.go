@@ -60,6 +60,15 @@ func copyPorts(ports map[string]int) map[string]int {
 
 var refPattern = regexp.MustCompile(`\$\{([^}]*)\}`)
 
+// StackScope names the stack a reference resolves for and the services that
+// stack runs its own copy of. The zero value is base.
+type StackScope struct {
+	Name     string
+	Services []string
+}
+
+const stackSuffixPrefix = "stack.suffix:"
+
 // ResolveRefs replaces every ${service.field} reference in s with its value from
 // book, leaving literal text untouched. self names the current service, so a
 // reference to "self" resolves against it. field is one of host, port.<key>, or
@@ -69,12 +78,19 @@ var refPattern = regexp.MustCompile(`\$\{([^}]*)\}`)
 // url for a service with no http port, or a malformed ${...} — is a hard error
 // naming the reference. An unresolved reference is never returned in the string.
 func ResolveRefs(s, self string, book PortBook) (string, error) {
+	return ResolveStackRefs(s, self, book, StackScope{})
+}
+
+// ResolveStackRefs is ResolveRefs for a service in stack. It also resolves
+// ${stack.suffix:<svcA>,<svcB>,...} to "-<stack>" when stack runs its own copy
+// of every listed service, and to "" otherwise. On base it is always "".
+func ResolveStackRefs(s, self string, book PortBook, stack StackScope) (string, error) {
 	var resolveErr error
 	out := refPattern.ReplaceAllStringFunc(s, func(match string) string {
 		if resolveErr != nil {
 			return match
 		}
-		v, err := resolveRef(match[2:len(match)-1], self, book)
+		v, err := resolveRef(match[2:len(match)-1], self, book, stack)
 		if err != nil {
 			resolveErr = err
 			return match
@@ -90,7 +106,10 @@ func ResolveRefs(s, self string, book PortBook) (string, error) {
 	return out, nil
 }
 
-func resolveRef(inner, self string, book PortBook) (string, error) {
+func resolveRef(inner, self string, book PortBook, stack StackScope) (string, error) {
+	if list, ok := strings.CutPrefix(inner, stackSuffixPrefix); ok {
+		return stackSuffix(inner, list, stack)
+	}
 	parts := strings.Split(inner, ".")
 	if len(parts) < 2 {
 		return "", fmt.Errorf("devstack can not read the reference ${%s}", inner)
@@ -133,4 +152,25 @@ func lookupPort(inner, service, key string, book PortBook) (int, error) {
 		return 0, fmt.Errorf("reference ${%s}: the service %q has no port %q", inner, service, key)
 	}
 	return port, nil
+}
+
+func stackSuffix(inner, list string, stack StackScope) (string, error) {
+	runs := make(map[string]bool, len(stack.Services))
+	for _, name := range stack.Services {
+		runs[name] = true
+	}
+	own := stack.Name != ""
+	for _, name := range strings.Split(list, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return "", fmt.Errorf("reference ${%s}: the service list has an empty name", inner)
+		}
+		if !runs[name] {
+			own = false
+		}
+	}
+	if !own {
+		return "", nil
+	}
+	return "-" + stack.Name, nil
 }

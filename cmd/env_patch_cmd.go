@@ -333,12 +333,14 @@ func resolvedEnvLadder(ws *workspace.Workspace, rw *config.ResolvedWorkspace, sv
 
 	var managed map[string]string
 	var book config.PortBook
+	var scope config.StackScope
 	stackEnv := ""
 	if rec != nil {
 		stackEnv = rec.Env
 		if opts, err := stack.GenerateOptions(rec, names); err == nil {
 			managed = opts.ManagedEnv[svc.Name]
 			book = opts.Book
+			scope = opts.Stack
 		}
 	} else {
 		managed = workspace.ManagedEnv(ws, names, workspace.ActiveEnvNames(rw, stackEnv))[svc.Name]
@@ -350,7 +352,7 @@ func resolvedEnvLadder(ws *workspace.Workspace, rw *config.ResolvedWorkspace, sv
 		return nil, err
 	}
 	if book != nil {
-		if err := tiltgen.ResolveLayerRefs(layers, svc.Name, book); err != nil {
+		if err := tiltgen.ResolveLayerRefs(layers, svc.Name, book, scope); err != nil {
 			return nil, err
 		}
 	}

@@ -138,12 +138,14 @@ func stackConfigLadder(sb *strings.Builder, ws *workspace.Workspace, rw *config.
 	names := sortedServiceNames(rw)
 	var managed map[string]string
 	var book config.PortBook
+	var scope config.StackScope
 	stackEnv := ""
 	if rec != nil {
 		stackEnv = rec.Env
 		if opts, err := stack.GenerateOptions(rec, names); err == nil {
 			managed = opts.ManagedEnv[svc.Name]
 			book = opts.Book
+			scope = opts.Stack
 		}
 	} else {
 		managed = workspace.ManagedEnv(ws, names, workspace.ActiveEnvNames(rw, stackEnv))[svc.Name]
@@ -156,7 +158,7 @@ func stackConfigLadder(sb *strings.Builder, ws *workspace.Workspace, rw *config.
 		return
 	}
 	if book != nil {
-		if err := tiltgen.ResolveLayerRefs(layers, svc.Name, book); err != nil {
+		if err := tiltgen.ResolveLayerRefs(layers, svc.Name, book, scope); err != nil {
 			fmt.Fprintf(sb, "\nEnvironment (serve_env ladder): unavailable: %v\n", err)
 			return
 		}

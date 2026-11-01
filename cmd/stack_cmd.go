@@ -719,7 +719,7 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	if oerr == nil {
-		if rerr := tiltgen.ResolveLayerRefs(layers, svc.Name, opts.Book); rerr != nil {
+		if rerr := tiltgen.ResolveLayerRefs(layers, svc.Name, opts.Book, opts.Stack); rerr != nil {
 			fmt.Printf("\nEnvironment (serve_env ladder): unavailable: %v\n", rerr)
 			return nil
 		}
