@@ -8,6 +8,7 @@ import (
 )
 
 func TestTiltRunArgs(t *testing.T) {
+	t.Setenv("DEVSTACK_DAEMON_BIND", "")
 	env := []string{
 		"PATH=/usr/bin:/bin", "SECRET=a=b", "EMPTY=", "QUOTED=it's \"$x\" \\n", "BASH_FUNC_f%%=() { :; }", "=C:",
 		"NOTIFY_SOCKET=/run/n", "LISTEN_PID=1", "LISTEN_FDS=1", "LISTEN_FDNAMES=a", "INVOCATION_ID=x",
@@ -17,10 +18,19 @@ func TestTiltRunArgs(t *testing.T) {
 	want := []string{
 		"--user", "--unit=devstack-tilt", "--collect", "--working-directory=/data/_devstack-host/",
 		"-E", "PATH=/usr/bin:/bin", "-E", "SECRET=a=b", "-E", "EMPTY=", "-E", "QUOTED=it's \"$x\" \\n",
-		"--", "tilt", "up", "--host", "0.0.0.0", "--port", "10300",
+		"--", "tilt", "up", "--host", "127.0.0.1", "--port", "10300",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("TiltRunArgs() =\n%q\nwant\n%q", got, want)
+	}
+}
+
+func TestTiltRunArgsBindOverride(t *testing.T) {
+	t.Setenv("DEVSTACK_DAEMON_BIND", "100.64.0.7")
+	got := TiltRunArgs("/d", nil, 10300)
+	want := []string{"--", "tilt", "up", "--host", "100.64.0.7", "--port", "10300"}
+	if tail := got[len(got)-len(want):]; !reflect.DeepEqual(tail, want) {
+		t.Errorf("TiltRunArgs() tail = %q, want %q", tail, want)
 	}
 }
 

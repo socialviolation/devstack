@@ -515,7 +515,7 @@ func startDirectTilt(dir string) (int, string, func(), error) {
 	}
 	defer lf.Close()
 
-	tiltCmd := exec.Command("tilt", "up", "--host", "0.0.0.0", "--port", strconv.Itoa(workspace.HostTiltPort))
+	tiltCmd := exec.Command("tilt", "up", "--host", tiltBindHost(), "--port", strconv.Itoa(workspace.HostTiltPort))
 	tiltCmd.Dir = dir
 	tiltCmd.Stdout = lf
 	tiltCmd.Stderr = lf
@@ -566,7 +566,14 @@ func TiltRunArgs(dir string, env []string, port int) []string {
 		}
 		args = append(args, "-E", kv)
 	}
-	return append(args, "--", "tilt", "up", "--host", "0.0.0.0", "--port", strconv.Itoa(port))
+	return append(args, "--", "tilt", "up", "--host", tiltBindHost(), "--port", strconv.Itoa(port))
+}
+
+func tiltBindHost() string {
+	if h := os.Getenv("DEVSTACK_DAEMON_BIND"); h != "" {
+		return h
+	}
+	return "127.0.0.1"
 }
 
 // TiltReachable reports whether the Tilt API is responding at the given URL.
