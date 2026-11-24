@@ -55,6 +55,7 @@ var agentPolicies = map[string]toolPolicy{
 	"status":        {Default: allow},
 	"urls":          {Default: allow},
 	"topology":      {Default: allow},
+	"wiring":        {StackArg: "stack", Default: ownStack},
 	"process_logs":  {StackArg: "stack", Default: ownStack},
 	"investigate":   {Default: deny},
 	"stack_list":    {Default: allow},
