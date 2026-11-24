@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -69,6 +70,7 @@ var agentPolicies = map[string]toolPolicy{
 	"stack_up":      {StackArg: "name", Default: ownStack},
 	"stack_down":    {StackArg: "name", Default: ownStack},
 	"stack_rm":      {StackArg: "name", Default: ownStack},
+	"stack_extend":  {StackArg: "name", Default: ownStack},
 	"configure":     {Default: deny},
 	"tunnel":        {Default: deny},
 	"env_set":       {Default: deny},
@@ -84,13 +86,30 @@ var agentPolicies = map[string]toolPolicy{
 
 var mutating sync.Mutex
 
+type AgentLimits struct {
+	MaxStacks int
+	TTL       time.Duration
+}
+
+var DefaultAgentLimits = AgentLimits{MaxStacks: 2, TTL: 24 * time.Hour}
+
+type limitsKey struct{}
+
+func agentLimitsFrom(ctx context.Context) AgentLimits {
+	if l, ok := ctx.Value(limitsKey{}).(AgentLimits); ok {
+		return l
+	}
+	return DefaultAgentLimits
+}
+
 type guard struct {
 	ws     *workspace.Workspace
+	limits AgentLimits
 	server *server.MCPServer
 }
 
-func GuardOptions(ws *workspace.Workspace) []server.ServerOption {
-	g := &guard{ws: ws}
+func GuardOptions(ws *workspace.Workspace, limits AgentLimits) []server.ServerOption {
+	g := &guard{ws: ws, limits: limits}
 	return []server.ServerOption{
 		func(s *server.MCPServer) { g.server = s },
 		server.WithToolHandlerMiddleware(g.middleware),
@@ -109,7 +128,7 @@ func (g *guard) middleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 				return mcp.NewToolResultError(reason), nil
 			}
 		}
-		return next(ctx, req)
+		return next(context.WithValue(ctx, limitsKey{}, g.limits), req)
 	}
 }
 

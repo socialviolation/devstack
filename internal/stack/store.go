@@ -35,6 +35,7 @@ type Record struct {
 	DaemonPort int               `json:"daemon_port,omitempty"` // legacy per-stack daemon port; unused, kept so old records still parse
 	CreatedAt  time.Time         `json:"created_at"`
 	Owner      string            `json:"owner,omitempty"`
+	ExpiresAt  time.Time         `json:"expires_at,omitzero"`
 }
 
 type NoteEntry struct {
@@ -321,6 +322,58 @@ func SetEnv(base, name, envName string) error {
 		}
 		return fmt.Errorf("stack %q not found in workspace %q", name, base)
 	})
+}
+
+const MaxLifetime = 72 * time.Hour
+
+func Expired(workspaceName string, now time.Time) ([]Record, error) {
+	recs, err := LoadStore(workspaceName)
+	if err != nil {
+		return nil, err
+	}
+	var out []Record
+	for _, r := range recs {
+		if !r.ExpiresAt.IsZero() && !now.Before(r.ExpiresAt) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+func Extend(base, name string, by time.Duration, now time.Time) (time.Time, error) {
+	if by <= 0 {
+		return time.Time{}, fmt.Errorf("extend by a positive duration")
+	}
+	var expires time.Time
+	err := withStoreLock(base, func() error {
+		recs, err := LoadStore(base)
+		if err != nil {
+			return err
+		}
+		for i := range recs {
+			if !strings.EqualFold(recs[i].Name, name) {
+				continue
+			}
+			if recs[i].ExpiresAt.IsZero() {
+				return fmt.Errorf("stack %q has no expiry. It lives until somebody removes it", recs[i].Name)
+			}
+			from := recs[i].ExpiresAt
+			if now.After(from) {
+				from = now
+			}
+			expires = from.Add(by)
+			if limit := recs[i].CreatedAt.Add(MaxLifetime); expires.After(limit) {
+				expires = limit
+			}
+			recs[i].ExpiresAt = expires
+			return saveStore(base, recs)
+		}
+		return fmt.Errorf("stack %q not found in workspace %q", name, base)
+	})
+	if err != nil {
+		return time.Time{}, err
+	}
+	return expires, nil
 }
 
 // upsertStack inserts or replaces a record in its base workspace's store.

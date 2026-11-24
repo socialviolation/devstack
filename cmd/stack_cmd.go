@@ -14,6 +14,7 @@ import (
 
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
+	nvxmcp "github.com/socialviolation/devstack/internal/mcp"
 	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/svcconfig"
@@ -210,8 +211,37 @@ var stackDownCmd = &cobra.Command{
 	RunE:         runStackDown,
 }
 
+var stackGCCmd = &cobra.Command{
+	Use:   "gc",
+	Short: "Remove the stacks whose expiry has passed",
+	Long: `Remove every stack of this workspace whose expiry has passed. Only a stack
+that an agent created over MCP has an expiry. A stack that you create has
+none, and gc never removes it.
+
+gc brings an expired stack down if it is up, then removes it the same way the
+stack_rm tool does. stack.destroy hooks fire first. A worktree with
+uncommitted changes makes gc refuse that stack and keep it.
+
+The HTTP MCP server runs gc every 10 minutes on its own.
+
+  --dry-run  print the stacks gc would remove, and remove none.`,
+	Args:         cobra.NoArgs,
+	SilenceUsage: true,
+	RunE:         runStackGC,
+}
+
+func runStackGC(cmd *cobra.Command, args []string) error {
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	base, err := resolveWorkspace(viper.GetString("workspace"))
+	if err != nil {
+		return err
+	}
+	return nvxmcp.CollectExpired(base, time.Now(), dryRun, os.Stdout)
+}
+
 func init() {
 	rootCmd.AddCommand(stackCmd)
+	stackCmd.AddCommand(stackGCCmd)
 	stackCmd.AddCommand(stackCreateCmd)
 	stackCmd.AddCommand(stackAddCmd)
 	stackCmd.AddCommand(stackDropCmd)
@@ -229,6 +259,7 @@ func init() {
 	stackCreateCmd.Flags().String("note", "", "What this stack is for: a ticket URL, an issue key, or a sentence. 'devstack stack list' shows it")
 	stackAddCmd.Flags().String("from", "", "Ref that devstack cuts the new worktrees from (default: each repo's default branch, origin's copy of it where there is one)")
 	stackNoteCmd.Flags().String("add", "", "Append a dated entry that says where the work got to, instead of replacing the note")
+	stackGCCmd.Flags().Bool("dry-run", false, "Print the expired stacks, and remove none")
 	stackRemoveCmd.Flags().Bool("force", false, "Remove worktrees even if they have uncommitted changes. This destroys that work. You can not recover it")
 	stackConfigCmd.Flags().String("stack", "", "Which copy to read: a stack name, or \"base\" for base's copy. Default: the stack that holds the current directory. In a plain checkout this command refuses, so pass \"base\" there")
 }

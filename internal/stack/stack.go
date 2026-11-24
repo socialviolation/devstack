@@ -27,8 +27,10 @@ type CreateInput struct {
 	Branch string
 	// From is the ref every worktree is cut from. Empty resolves each service
 	// repo's default branch instead, origin's copy of it when there is one.
-	From string
-	Note string
+	From  string
+	Note  string
+	Owner string
+	TTL   time.Duration
 }
 
 type OverlayMember struct {
@@ -89,6 +91,8 @@ type StackInfo struct {
 	Log      []NoteEntry
 	Groups   []string
 	Created  time.Time
+	Owner    string
+	Expires  time.Time
 }
 
 func Create(in CreateInput) (*CreateResult, error) {
@@ -278,6 +282,11 @@ func Create(in CreateInput) (*CreateResult, error) {
 	}
 	overlayNames := make([]string, len(overlay))
 	copy(overlayNames, overlay)
+	now := time.Now()
+	var expires time.Time
+	if in.TTL > 0 {
+		expires = now.Add(in.TTL)
+	}
 	if err := upsertStack(Record{
 		Name:      in.Name,
 		Base:      base.Name,
@@ -288,7 +297,9 @@ func Create(in CreateInput) (*CreateResult, error) {
 		Overlay:   overlayNames,
 		Worktrees: worktrees,
 		Ports:     res.Ports,
-		CreatedAt: time.Now(),
+		CreatedAt: now,
+		Owner:     in.Owner,
+		ExpiresAt: expires,
 	}); err != nil {
 		unwind()
 		return nil, fmt.Errorf("can not record the stack: %w", err)
@@ -534,6 +545,8 @@ func List(workspaceName string) ([]StackInfo, error) {
 			Log:      rec.Log,
 			Groups:   rec.Groups,
 			Created:  rec.CreatedAt,
+			Owner:    rec.Owner,
+			Expires:  rec.ExpiresAt,
 		})
 	}
 	return stacks, nil

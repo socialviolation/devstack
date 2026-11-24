@@ -91,6 +91,8 @@ func initConfig() {
 	viper.BindEnv("tilt.host", "DEVSTACK_DAEMON_HOST", "TILT_HOST")
 	viper.BindEnv("default_service", "DEVSTACK_DEFAULT_SERVICE")
 	viper.BindEnv("workspace", "DEVSTACK_WORKSPACE")
+	viper.BindEnv("agents.max_stacks", "DEVSTACK_AGENT_MAX_STACKS")
+	viper.BindEnv("agents.ttl", "DEVSTACK_AGENT_TTL")
 
 	viper.AutomaticEnv()
 

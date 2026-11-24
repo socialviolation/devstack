@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -13,6 +14,7 @@ import (
 	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/hooks"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
+	"github.com/socialviolation/devstack/internal/mcp/auth"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -60,6 +62,7 @@ func registerStackTools(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	registerStackRemoveTool(mcpServer, ws)
 	registerStackUpTool(mcpServer, ws)
 	registerStackDownTool(mcpServer, ws)
+	registerStackExtendTool(mcpServer, ws)
 }
 
 func stackBranchNote(wt stack.WorktreeResult) string {
@@ -113,14 +116,23 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			return mcp.NewToolResultError("repos must name at least one service this stack changes"), nil
 		}
 
-		res, err := stack.Create(stack.CreateInput{
+		in := stack.CreateInput{
 			Note:   request.GetString("note", ""),
 			Base:   ws,
 			Name:   name,
 			Repos:  repos,
 			Branch: strings.TrimSpace(request.GetString("branch", "")),
 			From:   strings.TrimSpace(request.GetString("from", "")),
-		})
+		}
+		if caller := auth.CallerFrom(ctx); caller.Scope != auth.ScopeOwner {
+			limits := agentLimitsFrom(ctx)
+			if err := agentQuota(ws.Name, limits.MaxStacks); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			in.Owner = caller.Name
+			in.TTL = limits.TTL
+		}
+		res, err := stack.Create(in)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -435,6 +447,12 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			if s.Env != "" {
 				fmt.Fprintf(&sb, "  env:      %s\n", s.Env)
 			}
+			if s.Owner != "" {
+				fmt.Fprintf(&sb, "  owner:    %s\n", s.Owner)
+			}
+			if !s.Expires.IsZero() {
+				fmt.Fprintf(&sb, "  expires:  %s\n", s.Expires.Local().Format(time.RFC3339))
+			}
 			if s.Note != "" {
 				fmt.Fprintf(&sb, "  note:     %s\n", s.Note)
 			}
@@ -559,52 +577,48 @@ func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		if name == "" {
 			return mcp.NewToolResultError("name must not be empty"), nil
 		}
-		force := request.GetBool("force", false)
-
-		// A refusal must come before the hooks, not after. A removal that
-		// de-provisions external state and then refuses leaves the stack alive
-		// and already de-provisioned, and the next attempt fires the hooks again.
-		if err := stack.CheckRemovable(ws, name, force); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		// Before anything is taken away, while the record, worktrees and ports
-		// are all still readable — a teardown hook de-provisions what create
-		// provisioned, and cannot do that once the allocation is gone.
-		var hookOut strings.Builder
-		hookErr := hooks.Fire(ws, name, config.EventStackDestroy, nil, &hookOut)
-
-		res, err := stack.Remove(ws, name, force)
-
-		var sb strings.Builder
-		appendHookOutput(&sb, config.EventStackDestroy, hookOut.String(), hookErr)
-		if res != nil {
-			fmt.Fprintf(&sb, "Removing stack %q (base %s)\n", res.Name, res.BaseName)
-			for _, p := range res.RemovedWorktrees {
-				fmt.Fprintf(&sb, "  removed worktree %s\n", p)
-			}
-			if res.PortsReleased {
-				sb.WriteString("  released allocated ports\n")
-			}
-			if res.Deregistered {
-				fmt.Fprintf(&sb, "  removed record for %q\n", res.Name)
-			}
-			if res.RootRemoved {
-				fmt.Fprintf(&sb, "  removed stack root %s\n", res.StackRoot)
-			}
-			for _, w := range res.Warnings {
-				fmt.Fprintf(&sb, "  warning: %s\n", w)
-			}
-		}
-		if err != nil {
-			if sb.Len() > 0 {
-				return mcp.NewToolResultError(sb.String() + "\n" + err.Error()), nil
-			}
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		fmt.Fprintf(&sb, "Stack %q removed.", res.Name)
-		return mcp.NewToolResultText(sb.String()), nil
+		return removeStack(ws, name, request.GetBool("force", false)), nil
 	})
+}
+
+func removeStack(ws *workspace.Workspace, name string, force bool) *mcp.CallToolResult {
+	if err := stack.CheckRemovable(ws, name, force); err != nil {
+		return mcp.NewToolResultError(err.Error())
+	}
+
+	var hookOut strings.Builder
+	hookErr := hooks.Fire(ws, name, config.EventStackDestroy, nil, &hookOut)
+
+	res, err := stack.Remove(ws, name, force)
+
+	var sb strings.Builder
+	appendHookOutput(&sb, config.EventStackDestroy, hookOut.String(), hookErr)
+	if res != nil {
+		fmt.Fprintf(&sb, "Removing stack %q (base %s)\n", res.Name, res.BaseName)
+		for _, p := range res.RemovedWorktrees {
+			fmt.Fprintf(&sb, "  removed worktree %s\n", p)
+		}
+		if res.PortsReleased {
+			sb.WriteString("  released allocated ports\n")
+		}
+		if res.Deregistered {
+			fmt.Fprintf(&sb, "  removed record for %q\n", res.Name)
+		}
+		if res.RootRemoved {
+			fmt.Fprintf(&sb, "  removed stack root %s\n", res.StackRoot)
+		}
+		for _, w := range res.Warnings {
+			fmt.Fprintf(&sb, "  warning: %s\n", w)
+		}
+	}
+	if err != nil {
+		if sb.Len() > 0 {
+			return mcp.NewToolResultError(sb.String() + "\n" + err.Error())
+		}
+		return mcp.NewToolResultError(err.Error())
+	}
+	fmt.Fprintf(&sb, "Stack %q removed.", res.Name)
+	return mcp.NewToolResultText(sb.String())
 }
 
 func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
@@ -708,36 +722,40 @@ func registerStackDownTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 		if name == "" {
 			return mcp.NewToolResultError("name must not be empty"), nil
 		}
-		rec, err := stack.Resolve(ws.Name, name)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-
-		var hookOut strings.Builder
-		hookErr := hooks.Fire(ws, rec.Name, config.EventStackDown, nil, &hookOut)
-
-		if err := stack.SetActive(ws.Name, rec.Name, false); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		_, genWarnings, kept, err := hostdaemon.RegenerateScope(hostdaemon.ScopeStack(ws.Name, rec.Name))
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("can not generate the host Tiltfile again: %v", err)), nil
-		}
-
-		var sb strings.Builder
-		for _, w := range genWarnings {
-			fmt.Fprintf(&sb, "WARNING: %s\n", w)
-		}
-		if note := hostdaemon.KeptNote(kept); note != "" {
-			fmt.Fprintf(&sb, "%s\n", note)
-		}
-		appendHookOutput(&sb, config.EventStackDown, hookOut.String(), hookErr)
-		return mcp.NewToolResultText(sb.String() + fmt.Sprintf(
-			"Stack %q is now down. The host daemon will drop its resources. devstack keeps the worktrees and the record (remove them with stack_rm %s).\n"+
-				"While it is down, status, process_logs, restart, stop and configure against it error \"not up\" instead of falling through to base. "+
-				"service_env still reads and writes its worktree config. investigate returns only what the stack emitted while it was up.",
-			rec.Name, rec.Name)), nil
+		return stackDown(ws, name), nil
 	})
+}
+
+func stackDown(ws *workspace.Workspace, name string) *mcp.CallToolResult {
+	rec, err := stack.Resolve(ws.Name, name)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error())
+	}
+
+	var hookOut strings.Builder
+	hookErr := hooks.Fire(ws, rec.Name, config.EventStackDown, nil, &hookOut)
+
+	if err := stack.SetActive(ws.Name, rec.Name, false); err != nil {
+		return mcp.NewToolResultError(err.Error())
+	}
+	_, genWarnings, kept, err := hostdaemon.RegenerateScope(hostdaemon.ScopeStack(ws.Name, rec.Name))
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("can not generate the host Tiltfile again: %v", err))
+	}
+
+	var sb strings.Builder
+	for _, w := range genWarnings {
+		fmt.Fprintf(&sb, "WARNING: %s\n", w)
+	}
+	if note := hostdaemon.KeptNote(kept); note != "" {
+		fmt.Fprintf(&sb, "%s\n", note)
+	}
+	appendHookOutput(&sb, config.EventStackDown, hookOut.String(), hookErr)
+	return mcp.NewToolResultText(sb.String() + fmt.Sprintf(
+		"Stack %q is now down. The host daemon will drop its resources. devstack keeps the worktrees and the record (remove them with stack_rm %s).\n"+
+			"While it is down, status, process_logs, restart, stop and configure against it error \"not up\" instead of falling through to base. "+
+			"service_env still reads and writes its worktree config. investigate returns only what the stack emitted while it was up.",
+		rec.Name, rec.Name))
 }
 
 func sortedPortKeys(m map[string]int) []string {

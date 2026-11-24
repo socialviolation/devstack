@@ -58,6 +58,7 @@ TOOLS EXPOSED TO AI AGENTS
   stack_up        start a stack in the host daemon
   stack_down      stop a stack's copies, and keep its worktrees
   stack_rm        tear a stack down: worktrees, ports and record
+  stack_extend    push back the expiry of a stack an agent created
   env_use         point a scope at a named env
   env_which       the env a service resolves to, rung by rung
   env_set         set a variable on a named env
@@ -86,7 +87,14 @@ HTTP AUTHENTICATION
                             # comments and blank lines skipped
   DEVSTACK_MCP_TOKENS       scope:name:token,scope:name:token
   A scope is owner or agent. Hash a token for the file with:
-    printf %s "$TOKEN" | sha256sum`,
+    printf %s "$TOKEN" | sha256sum
+
+AGENT LIMITS
+  An agent caller acts only on its own agent-* stacks. Each one expires.
+  DEVSTACK_AGENT_MAX_STACKS  agent stacks allowed in all (default 2)
+  DEVSTACK_AGENT_TTL         lifetime of a new agent stack (default 24h)
+  ~/.devstack/config.json takes agents.max_stacks and agents.ttl too.
+  The HTTP server removes expired stacks every 10 minutes.`,
 	RunE: runServe,
 }
 
@@ -95,6 +103,8 @@ func init() {
 	serveCmd.Flags().String("transport", "stdio", "Transport mode: 'http' or 'stdio' (default: stdio)")
 	serveCmd.Flags().String("addr", defaultServeAddr, "HTTP listen address, host:port")
 	serveCmd.Flags().Bool("tailnet", false, "HTTP: listen on the tailnet IPv4 address, with the port of --addr")
+	viper.SetDefault("agents.max_stacks", nvxmcp.DefaultAgentLimits.MaxStacks)
+	viper.SetDefault("agents.ttl", nvxmcp.DefaultAgentLimits.TTL)
 }
 
 const defaultServeAddr = "127.0.0.1:8765"
@@ -135,7 +145,7 @@ func buildMCPServer(ws *workspace.Workspace) *server.MCPServer {
 	mcpServer := server.NewMCPServer(
 		"devstack",
 		"1.0.0",
-		append([]server.ServerOption{server.WithToolCapabilities(true)}, nvxmcp.GuardOptions(ws)...)...,
+		append([]server.ServerOption{server.WithToolCapabilities(true)}, nvxmcp.GuardOptions(ws, agentLimits())...)...,
 	)
 
 	host := viper.GetString("tilt.host")
@@ -165,6 +175,28 @@ func buildMCPServer(ws *workspace.Workspace) *server.MCPServer {
 		patches(),
 	)
 	return mcpServer
+}
+
+func agentLimits() nvxmcp.AgentLimits {
+	return nvxmcp.AgentLimits{
+		MaxStacks: viper.GetInt("agents.max_stacks"),
+		TTL:       viper.GetDuration("agents.ttl"),
+	}
+}
+
+func collectExpiredEvery(ctx context.Context, ws *workspace.Workspace, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			if err := nvxmcp.CollectExpired(ws, now, false, log.Writer()); err != nil {
+				log.Printf("stack gc: %v", err)
+			}
+		}
+	}
 }
 
 var tailnetIPv4 = func() (string, error) {
@@ -224,6 +256,7 @@ func serveHTTP(addr string, tailnet bool) error {
 
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
+	go collectExpiredEvery(ctx, ws, 10*time.Minute)
 	log.Printf("Starting devstack MCP server on http://%s/mcp (workspace: %s, tilt-port: %d)", listenAddr, ws.Name, workspace.HostTiltPort)
 
 	select {
