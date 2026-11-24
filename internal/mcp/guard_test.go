@@ -78,7 +78,10 @@ func TestAgentCalls(t *testing.T) {
 	}{
 		{"status", nil, ""},
 		{"stack_list", nil, ""},
-		{"process_logs", map[string]any{"stack": "base"}, ""},
+		{"process_logs", map[string]any{"stack": "base"}, "pass stack=agent-<name>"},
+		{"process_logs", nil, "pass stack=agent-<name>"},
+		{"process_logs", map[string]any{"stack": "agent-mine"}, ""},
+		{"investigate", map[string]any{"stack": "agent-mine"}, "may not call investigate"},
 		{"start", map[string]any{"stack": "agent-mine"}, ""},
 		{"start", map[string]any{"stack": "AGENT-MINE"}, ""},
 		{"start", nil, "pass stack=agent-<name>"},
@@ -86,8 +89,11 @@ func TestAgentCalls(t *testing.T) {
 		{"restart", map[string]any{"stack": "base"}, "pass stack=agent-<name>"},
 		{"stop", map[string]any{"stack": "perf"}, `"perf" is not an agent-* stack`},
 		{"stop", map[string]any{"stack": "agent-theirs"}, "belongs to bob"},
-		{"stop", map[string]any{"stack": "agent-legacy"}, ""},
+		{"stop", map[string]any{"stack": "agent-legacy"}, "belongs to the owner"},
+		{"stop", map[string]any{"stack": "agent-gone"}, `stack "agent-gone" does not exist`},
 		{"stack_create", map[string]any{"name": "agent-new"}, ""},
+		{"stack_create", map[string]any{"name": "agent-theirs"}, "belongs to bob"},
+		{"stack_create", map[string]any{"name": "agent-legacy"}, "belongs to the owner"},
 		{"stack_create", map[string]any{"name": "feature"}, `"feature" is not an agent-* stack`},
 		{"stack_rm", map[string]any{"name": "agent-theirs"}, "belongs to bob"},
 		{"stack_rm", nil, "pass name=agent-<name>"},
@@ -210,5 +216,36 @@ func TestAgentToolsListHidesDeniedTools(t *testing.T) {
 
 	if got, want := len(listToolNames(t, s, owner)), len(s.ListTools()); got != want {
 		t.Errorf("owner tools/list shows %d tools, want all %d", got, want)
+	}
+}
+
+func TestEnvironmentListsOnlyToolsTheAgentMaySee(t *testing.T) {
+	ws := guardStore(t)
+	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws, DefaultAgentLimits)...)
+	registerEnvironmentTool(s, "http://localhost:5080", ws.Name, ws.Path, "", ws)
+
+	toolsLine := func(c auth.Caller) string {
+		out := callAs(t, s, c, "environment", `{}`)
+		i := strings.Index(out, "tools: ")
+		if i < 0 {
+			t.Fatalf("environment output has no tools line: %s", out)
+		}
+		line := out[i:]
+		return "," + strings.ReplaceAll(line[len("tools: "):strings.Index(line, `\n`)], " ", "") + ","
+	}
+
+	agent := toolsLine(alice)
+	for _, hidden := range []string{"configure", "env_set", "env_use", "migrate"} {
+		if strings.Contains(agent, ","+hidden+",") {
+			t.Errorf("agent environment lists %q: %s", hidden, agent)
+		}
+	}
+	for _, shown := range []string{"status", "start", "process_logs", "stack_create"} {
+		if !strings.Contains(agent, ","+shown+",") {
+			t.Errorf("agent environment omits %q: %s", shown, agent)
+		}
+	}
+	if own := toolsLine(owner); !strings.Contains(own, ",configure,") || !strings.Contains(own, ",env_set,") {
+		t.Errorf("owner environment omits owner tools: %s", own)
 	}
 }

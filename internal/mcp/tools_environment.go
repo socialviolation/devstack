@@ -67,7 +67,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		if tunnelsOn {
 			tools = append(tools, "tunnel")
 		}
-		fmt.Fprintf(&sb, "tools: %s\n", strings.Join(tools, ", "))
+		fmt.Fprintf(&sb, "tools: %s\n", strings.Join(visibleTools(ctx, tools), ", "))
 		if otelOn {
 			fmt.Fprintf(&sb, "recommended order: environment -> status -> observability -> process_logs/investigate\n")
 			fmt.Fprintf(&sb, "query scope: telemetry results stay inside this workspace. investigate's recent-executions mode defaults to base and to this repo's service. To widen it, pass a stack's short name, or 'all'. Its attribute search has no default service. A trace_id/span_id lookup ignores service and stack entirely.\n")

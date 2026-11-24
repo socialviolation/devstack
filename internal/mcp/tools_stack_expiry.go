@@ -95,7 +95,7 @@ func CollectExpired(ws *workspace.Workspace, now time.Time, dryRun bool, w io.Wr
 				continue
 			}
 		}
-		res := removeStack(ws, rec.Name, false)
+		res := removeStack(ws, rec.Name, rec.Owner != "")
 		fmt.Fprintln(w, toolResultText(res))
 		if res.IsError {
 			failed = append(failed, rec.Name)

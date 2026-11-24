@@ -3,6 +3,8 @@ package mcp
 import (
 	"bytes"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -100,5 +102,49 @@ func TestStackExtendIsOwnStackOnly(t *testing.T) {
 	}
 	if !rec.ExpiresAt.Equal(created.Add(stack.MaxLifetime)) {
 		t.Errorf("expiry = %v, want the %v cap from creation", rec.ExpiresAt, stack.MaxLifetime)
+	}
+}
+
+func TestCollectExpiredForcesOutADirtyAgentWorktree(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "devstack.service.yaml"), []byte("version: 1\nservice:\n  name: api\nruntime:\n  run:\n    command: go run .\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-b", "main"},
+		{"add", "-f", "."},
+		{"-c", "user.email=t@example.com", "-c", "user.name=tester", "commit", "-m", "init"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	root := t.TempDir()
+	wt := filepath.Join(root, "api")
+	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "-b", "agent-old", wt).CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "wip.txt"), []byte("wip\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "devstack.workspace.yaml"), []byte("version: 1\nworkspace:\n  name: agent-old\n  repoDiscovery:\n    mode: explicit\n    repos:\n      - ./api\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ws := guardStore(t, stack.Record{
+		Name: "agent-old", Base: "navexa", Owner: "alice", Root: root,
+		Worktrees: map[string]string{"api": wt},
+		ExpiresAt: time.Now().Add(-time.Hour),
+	})
+
+	var out bytes.Buffer
+	if err := CollectExpired(ws, time.Now(), false, &out); err != nil {
+		t.Fatalf("CollectExpired: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "removed worktree "+wt) {
+		t.Errorf("gc did not remove the dirty worktree %s:\n%s", wt, out.String())
+	}
+	if _, err := stack.FindStack("navexa", "agent-old"); err == nil {
+		t.Errorf("the expired agent stack still has a record")
 	}
 }

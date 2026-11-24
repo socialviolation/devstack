@@ -55,8 +55,8 @@ var agentPolicies = map[string]toolPolicy{
 	"status":        {Default: allow},
 	"urls":          {Default: allow},
 	"topology":      {Default: allow},
-	"process_logs":  {Default: allow},
-	"investigate":   {Default: allow},
+	"process_logs":  {StackArg: "stack", Default: ownStack},
+	"investigate":   {Default: deny},
 	"stack_list":    {Default: allow},
 	"start":         {StackArg: "stack", Default: ownStack},
 	"restart":       {StackArg: "stack", Default: ownStack},
@@ -138,7 +138,25 @@ func (g *guard) filter(ctx context.Context, tools []mcp.Tool) []mcp.Tool {
 	}
 	out := make([]mcp.Tool, 0, len(tools))
 	for _, t := range tools {
-		if p, ok := agentPolicies[t.Name]; ok && p.visible() {
+		if agentMaySee(t.Name) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func agentMaySee(tool string) bool {
+	p, ok := agentPolicies[tool]
+	return ok && p.visible()
+}
+
+func visibleTools(ctx context.Context, tools []string) []string {
+	if auth.CallerFrom(ctx).Scope == auth.ScopeOwner {
+		return tools
+	}
+	var out []string
+	for _, t := range tools {
+		if agentMaySee(t) {
 			out = append(out, t)
 		}
 	}
@@ -167,7 +185,7 @@ func (g *guard) check(caller auth.Caller, req mcp.CallToolRequest) string {
 	case allow:
 		return ""
 	case ownStack:
-		return g.checkOwnStack(caller, p.StackArg, strings.TrimSpace(req.GetString(p.StackArg, "")))
+		return g.checkOwnStack(caller, name, p.StackArg, strings.TrimSpace(req.GetString(p.StackArg, "")))
 	}
 	if action != "" {
 		return fmt.Sprintf("agents may not call %s with action=%q", name, action)
@@ -175,7 +193,7 @@ func (g *guard) check(caller auth.Caller, req mcp.CallToolRequest) string {
 	return fmt.Sprintf("agents may not call %s", name)
 }
 
-func (g *guard) checkOwnStack(caller auth.Caller, arg, name string) string {
+func (g *guard) checkOwnStack(caller auth.Caller, tool, arg, name string) string {
 	hint := fmt.Sprintf("agents may only act on their own agent-* stacks; pass %s=agent-<name>", arg)
 	if name == "" || strings.EqualFold(name, "base") {
 		return hint
@@ -191,9 +209,19 @@ func (g *guard) checkOwnStack(caller auth.Caller, arg, name string) string {
 		return fmt.Sprintf("devstack can not read the stacks store, so it can not check who owns the stack: %v", err)
 	}
 	for _, r := range recs {
-		if strings.EqualFold(r.Name, name) && r.Owner != "" && r.Owner != caller.Name {
-			return fmt.Sprintf("stack %q belongs to %s. %s", r.Name, r.Owner, hint)
+		if !strings.EqualFold(r.Name, name) {
+			continue
 		}
+		switch r.Owner {
+		case caller.Name:
+			return ""
+		case "":
+			return fmt.Sprintf("stack %q belongs to the owner, not to an agent. %s", r.Name, hint)
+		}
+		return fmt.Sprintf("stack %q belongs to %s. %s", r.Name, r.Owner, hint)
 	}
-	return ""
+	if tool == "stack_create" {
+		return ""
+	}
+	return fmt.Sprintf("stack %q does not exist. Create it with stack_create first", name)
 }
