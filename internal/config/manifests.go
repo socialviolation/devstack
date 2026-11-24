@@ -133,6 +133,7 @@ type ServiceManifest struct {
 	Links     []ServiceLink          `yaml:"links,omitempty"`
 	Telemetry ServiceTelemetry       `yaml:"telemetry,omitempty"`
 	Hooks     []Hook                 `yaml:"hooks,omitempty"`
+	Tasks     map[string]ServiceTask `yaml:"tasks,omitempty"`
 	Dev       map[string]any         `yaml:"dev,omitempty"`
 }
 

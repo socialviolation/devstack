@@ -64,6 +64,7 @@ func registerStackTools(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	registerStackDownTool(mcpServer, ws)
 	registerStackExtendTool(mcpServer, ws)
 	registerStackResyncTool(mcpServer, ws)
+	registerTaskRunTool(mcpServer, ws)
 }
 
 func stackBranchNote(wt stack.WorktreeResult) string {
