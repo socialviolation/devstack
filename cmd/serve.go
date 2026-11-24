@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/viper"
 
 	nvxmcp "github.com/socialviolation/devstack/internal/mcp"
+	"github.com/socialviolation/devstack/internal/mcp/auth"
 	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -76,7 +77,16 @@ TRANSPORT
   http              streamable HTTP at /mcp, health check at /healthz
                     --addr sets the listen address (default 127.0.0.1:8765)
                     --tailnet listens on this machine's tailnet IPv4 address
-                    it refuses to listen on all interfaces`,
+                    it refuses to listen on all interfaces
+
+HTTP AUTHENTICATION
+  Every /mcp request needs 'Authorization: Bearer <token>'. /healthz needs none.
+  The server refuses to start with no tokens. Give them in one or both of:
+  DEVSTACK_MCP_TOKENS_FILE  one '<scope> <name> <sha256-hex>' per line,
+                            # comments and blank lines skipped
+  DEVSTACK_MCP_TOKENS       scope:name:token,scope:name:token
+  A scope is owner or agent. Hash a token for the file with:
+    printf %s "$TOKEN" | sha256sum`,
 	RunE: runServe,
 }
 
@@ -185,9 +195,9 @@ func resolveServeAddr(addr string, tailnet bool) (string, error) {
 	return net.JoinHostPort(host, port), nil
 }
 
-func newHTTPHandler(mcpServer *server.MCPServer) http.Handler {
+func newHTTPHandler(mcpServer *server.MCPServer, tokens []auth.Token) http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", server.NewStreamableHTTPServer(mcpServer, server.WithEndpointPath("/mcp")))
+	mux.Handle("/mcp", auth.Middleware(tokens, server.NewStreamableHTTPServer(mcpServer, server.WithEndpointPath("/mcp"))))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -199,8 +209,15 @@ func serveHTTP(addr string, tailnet bool) error {
 	if err != nil {
 		return err
 	}
+	tokens, err := auth.LoadTokens()
+	if err != nil {
+		return err
+	}
+	if len(tokens) == 0 {
+		return fmt.Errorf("the HTTP transport needs at least one token. Set %s or %s", auth.TokensFileEnv, auth.TokensEnv)
+	}
 	ws := resolveServeWorkspace(viper.GetString("workspace"))
-	srv := &http.Server{Addr: listenAddr, Handler: newHTTPHandler(buildMCPServer(ws))}
+	srv := &http.Server{Addr: listenAddr, Handler: newHTTPHandler(buildMCPServer(ws), tokens)}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

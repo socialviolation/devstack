@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/socialviolation/devstack/internal/mcp/auth"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -52,6 +53,7 @@ func mcpPost(t *testing.T, client *http.Client, url, session, body string) (*htt
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer secret")
 	if session != "" {
 		req.Header.Set("Mcp-Session-Id", session)
 	}
@@ -70,7 +72,13 @@ func mcpPost(t *testing.T, client *http.Client, url, session, body string) (*htt
 func TestServeHTTPListsTools(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	ws := &workspace.Workspace{Name: "t", Path: t.TempDir()}
-	ts := httptest.NewServer(newHTTPHandler(buildMCPServer(ws)))
+	t.Setenv(auth.TokensFileEnv, "")
+	t.Setenv(auth.TokensEnv, "agent:ci:secret")
+	tokens, err := auth.LoadTokens()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(newHTTPHandler(buildMCPServer(ws), tokens))
 	defer ts.Close()
 
 	health, err := http.Get(ts.URL + "/healthz")
@@ -111,5 +119,14 @@ func TestServeHTTPListsTools(t *testing.T) {
 		if !names[want] {
 			t.Errorf("tools/list lacks %q; got %v", want, names)
 		}
+	}
+}
+
+func TestServeHTTPRefusesToStartWithNoTokens(t *testing.T) {
+	t.Setenv(auth.TokensFileEnv, "")
+	t.Setenv(auth.TokensEnv, "")
+	err := serveHTTP(defaultServeAddr, false)
+	if err == nil || !strings.Contains(err.Error(), auth.TokensFileEnv) || !strings.Contains(err.Error(), auth.TokensEnv) {
+		t.Errorf("serveHTTP with no tokens err = %v, want one that names both env vars", err)
 	}
 }
