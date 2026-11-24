@@ -1,10 +1,18 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"os"
+	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
@@ -65,14 +73,21 @@ remove, and every workspace command but topology. Run those in the shell.
 
 TRANSPORT
   stdio (default)   Claude Code and most AI tooling use this
-  http              for a custom integration`,
+  http              streamable HTTP at /mcp, health check at /healthz
+                    --addr sets the listen address (default 127.0.0.1:8765)
+                    --tailnet listens on this machine's tailnet IPv4 address
+                    it refuses to listen on all interfaces`,
 	RunE: runServe,
 }
 
 func init() {
 	rootCmd.AddCommand(serveCmd)
 	serveCmd.Flags().String("transport", "stdio", "Transport mode: 'http' or 'stdio' (default: stdio)")
+	serveCmd.Flags().String("addr", defaultServeAddr, "HTTP listen address, host:port")
+	serveCmd.Flags().Bool("tailnet", false, "HTTP: listen on the tailnet IPv4 address, with the port of --addr")
 }
+
+const defaultServeAddr = "127.0.0.1:8765"
 
 func runServe(cmd *cobra.Command, args []string) error {
 	// Get transport mode
@@ -92,21 +107,30 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return serveStdio()
 	}
 
-	return serveHTTP()
+	addr, _ := cmd.Flags().GetString("addr")
+	tailnet, _ := cmd.Flags().GetBool("tailnet")
+	return serveHTTP(addr, tailnet)
 }
 
 func serveStdio() error {
+	ws := resolveServeWorkspace(viper.GetString("workspace"))
+	mcpServer := buildMCPServer(ws)
+
+	log.Printf("Starting devstack MCP server (workspace: %s, tilt-port: %d)", ws.Name, workspace.HostTiltPort)
+
+	return server.ServeStdio(mcpServer)
+}
+
+func buildMCPServer(ws *workspace.Workspace) *server.MCPServer {
 	mcpServer := server.NewMCPServer(
 		"devstack",
 		"1.0.0",
 		server.WithToolCapabilities(true),
 	)
 
-	wsName := viper.GetString("workspace")
 	host := viper.GetString("tilt.host")
 
 	defaultService := viper.GetString("default_service")
-	ws := resolveServeWorkspace(wsName)
 
 	// Resolved from the workspace's configured plugin — no backend name, URL or
 	// credential is ever asked of the caller. A workspace whose telemetry lives
@@ -130,15 +154,72 @@ func serveStdio() error {
 		ws,
 		patches(),
 	)
-
-	log.Printf("Starting devstack MCP server (workspace: %s, tilt-port: %d)", ws.Name, workspace.HostTiltPort)
-
-	return server.ServeStdio(mcpServer)
+	return mcpServer
 }
 
-func serveHTTP() error {
-	log.Printf("the HTTP transport is not implemented yet")
-	return fmt.Errorf("the HTTP transport is not implemented yet")
+var tailnetIPv4 = func() (string, error) {
+	out, err := exec.Command("tailscale", "ip", "-4").Output()
+	if err != nil {
+		return "", fmt.Errorf("can not read the tailnet address from 'tailscale ip -4': %w", err)
+	}
+	ip, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	if ip == "" {
+		return "", fmt.Errorf("'tailscale ip -4' printed no address")
+	}
+	return ip, nil
+}
+
+func resolveServeAddr(addr string, tailnet bool) (string, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", fmt.Errorf("invalid --addr %q: %w", addr, err)
+	}
+	if tailnet {
+		if host, err = tailnetIPv4(); err != nil {
+			return "", err
+		}
+	}
+	if host == "" || net.ParseIP(host).IsUnspecified() {
+		return "", fmt.Errorf("refusing to listen on %q: an empty or unspecified host listens on every interface. Use 127.0.0.1, a specific address, or --tailnet", net.JoinHostPort(host, port))
+	}
+	return net.JoinHostPort(host, port), nil
+}
+
+func newHTTPHandler(mcpServer *server.MCPServer) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", server.NewStreamableHTTPServer(mcpServer, server.WithEndpointPath("/mcp")))
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	return mux
+}
+
+func serveHTTP(addr string, tailnet bool) error {
+	listenAddr, err := resolveServeAddr(addr, tailnet)
+	if err != nil {
+		return err
+	}
+	ws := resolveServeWorkspace(viper.GetString("workspace"))
+	srv := &http.Server{Addr: listenAddr, Handler: newHTTPHandler(buildMCPServer(ws))}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	errc := make(chan error, 1)
+	go func() { errc <- srv.ListenAndServe() }()
+	log.Printf("Starting devstack MCP server on http://%s/mcp (workspace: %s, tilt-port: %d)", listenAddr, ws.Name, workspace.HostTiltPort)
+
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
 
 // resolveServeWorkspace returns the Workspace for a given name/path string.
