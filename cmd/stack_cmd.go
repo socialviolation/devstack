@@ -239,9 +239,38 @@ func runStackGC(cmd *cobra.Command, args []string) error {
 	return nvxmcp.CollectExpired(base, time.Now(), dryRun, os.Stdout)
 }
 
+var stackResyncCmd = &cobra.Command{
+	Use:   "resync <name>",
+	Short: "Fast-forward a stack's worktrees to origin, and restart what moved",
+	Long: `Move a feature stack to what was pushed. For each repo of the stack that is
+on the stack's branch, devstack fetches origin/<branch> and fast-forwards the
+worktree to it.
+
+It refuses a repo whose worktree has uncommitted changes, and names the files.
+It refuses a repo whose worktree and origin diverged, and names both commits.
+It never merges or rebases. A detached caller repo stays where it is.
+
+If the stack is up, devstack restarts the services of each repo that moved,
+and every service of the stack that depends on them.`,
+	Args:         cobra.ExactArgs(1),
+	SilenceUsage: true,
+	RunE:         runStackResync,
+}
+
+func runStackResync(cmd *cobra.Command, args []string) error {
+	base, err := resolveWorkspace(viper.GetString("workspace"))
+	if err != nil {
+		return err
+	}
+	out, err := nvxmcp.ResyncStack(base, args[0])
+	fmt.Print(out)
+	return err
+}
+
 func init() {
 	rootCmd.AddCommand(stackCmd)
 	stackCmd.AddCommand(stackGCCmd)
+	stackCmd.AddCommand(stackResyncCmd)
 	stackCmd.AddCommand(stackCreateCmd)
 	stackCmd.AddCommand(stackAddCmd)
 	stackCmd.AddCommand(stackDropCmd)

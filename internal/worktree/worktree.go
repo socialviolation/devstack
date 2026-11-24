@@ -275,3 +275,52 @@ func branchExists(repoPath, branch string) (bool, error) {
 	}
 	return false, fmt.Errorf("git show-ref for branch %s failed: %w", branch, err)
 }
+
+func UncommittedFiles(path string) ([]string, error) {
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = path
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git status in %s failed: %w\n%s", path, err, strings.TrimSpace(string(out)))
+	}
+	var files []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if len(line) > 3 {
+			files = append(files, line[3:])
+		}
+	}
+	return files, nil
+}
+
+func RevParse(path, ref string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	cmd.Dir = path
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse %s in %s failed: %w\n%s", ref, path, err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func IsAncestor(path, a, b string) (bool, error) {
+	cmd := exec.Command("git", "merge-base", "--is-ancestor", a, b)
+	cmd.Dir = path
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("git merge-base --is-ancestor %s %s in %s failed: %w", a, b, path, err)
+}
+
+func FastForward(path, ref string) error {
+	cmd := exec.Command("git", "merge", "--ff-only", "--quiet", ref)
+	cmd.Dir = path
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git merge --ff-only %s in %s failed: %w\n%s", ref, path, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
