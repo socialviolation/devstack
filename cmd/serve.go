@@ -135,7 +135,7 @@ func buildMCPServer(ws *workspace.Workspace) *server.MCPServer {
 	mcpServer := server.NewMCPServer(
 		"devstack",
 		"1.0.0",
-		server.WithToolCapabilities(true),
+		append([]server.ServerOption{server.WithToolCapabilities(true)}, nvxmcp.GuardOptions(ws)...)...,
 	)
 
 	host := viper.GetString("tilt.host")

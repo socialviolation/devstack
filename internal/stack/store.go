@@ -34,6 +34,7 @@ type Record struct {
 	Active     bool              `json:"active,omitempty"`      // folded into the base Tiltfile as namespaced resources
 	DaemonPort int               `json:"daemon_port,omitempty"` // legacy per-stack daemon port; unused, kept so old records still parse
 	CreatedAt  time.Time         `json:"created_at"`
+	Owner      string            `json:"owner,omitempty"`
 }
 
 type NoteEntry struct {
