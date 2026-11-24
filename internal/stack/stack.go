@@ -95,6 +95,10 @@ type StackInfo struct {
 	Expires  time.Time
 }
 
+func StacksRoot(base *workspace.Workspace) string {
+	return filepath.Join(filepath.Dir(base.Path), stacksDirName, base.Name)
+}
+
 func Create(in CreateInput) (*CreateResult, error) {
 	base := in.Base
 	if base == nil {
@@ -144,8 +148,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 	// The workspace name is in the path because two workspaces can share a
 	// parent directory. Without it, a stack name taken in one workspace blocks
 	// the same name in the other.
-	parent := filepath.Dir(base.Path)
-	stackRoot := filepath.Join(parent, stacksDirName, base.Name, in.Name)
+	stackRoot := filepath.Join(StacksRoot(base), in.Name)
 	if stackRoot == base.Path || strings.HasPrefix(stackRoot, base.Path+string(os.PathSeparator)) {
 		return nil, fmt.Errorf("devstack can not use the stack root %s. The root is under base %s, and a nested root breaks workspace detection", stackRoot, base.Path)
 	}

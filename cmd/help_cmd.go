@@ -57,6 +57,8 @@ var moreCommands = []helpRow{
 	{"hooks", "run an action when a stack or a service changes state"},
 	{"group", "act on a named set of services at one time"},
 	{"base", "the replica that base runs from: print its path, or build it again"},
+	{"doctor", "find what is broken, and the command that fixes it"},
+	{"cleanup", "remove orphaned ports, worktrees and stack records"},
 }
 
 var helpCmd = &cobra.Command{

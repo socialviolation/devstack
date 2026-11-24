@@ -21,6 +21,7 @@ const (
 	deny rule = iota
 	allow
 	ownStack
+	ownStackIfGiven
 )
 
 const agentStackPrefix = "agent-"
@@ -74,6 +75,8 @@ var agentPolicies = map[string]toolPolicy{
 	"stack_extend":  {StackArg: "name", Default: ownStack},
 	"stack_resync":  {StackArg: "name", Default: ownStack},
 	"task_run":      {StackArg: "stack", Default: ownStack},
+	"doctor":        {StackArg: "stack", Default: ownStackIfGiven},
+	"cleanup":       {Default: deny},
 	"configure":     {Default: deny},
 	"tunnel":        {Default: deny},
 	"env_set":       {Default: deny},
@@ -189,6 +192,11 @@ func (g *guard) check(caller auth.Caller, req mcp.CallToolRequest) string {
 		return ""
 	case ownStack:
 		return g.checkOwnStack(caller, name, p.StackArg, strings.TrimSpace(req.GetString(p.StackArg, "")))
+	case ownStackIfGiven:
+		if given := strings.TrimSpace(req.GetString(p.StackArg, "")); given != "" {
+			return g.checkOwnStack(caller, name, p.StackArg, given)
+		}
+		return ""
 	}
 	if action != "" {
 		return fmt.Sprintf("agents may not call %s with action=%q", name, action)

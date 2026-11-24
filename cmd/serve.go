@@ -59,6 +59,8 @@ TOOLS EXPOSED TO AI AGENTS
   stack_down      stop a stack's copies, and keep its worktrees
   stack_rm        tear a stack down: worktrees, ports and record
   stack_extend    push back the expiry of a stack an agent created
+  doctor          what is broken, and the fix for each problem
+  cleanup         remove orphaned ports, worktrees and stack records
   env_use         point a scope at a named env
   env_which       the env a service resolves to, rung by rung
   env_set         set a variable on a named env

@@ -101,6 +101,7 @@ func RegisterTools(
 
 	// Feature stacks overlay this workspace as their base.
 	registerStackTools(mcpServer, ws)
+	registerDoctorTools(mcpServer, ws)
 
 	// Lifecycle hooks: discovery and manual re-run. The lifecycle tools above
 	// fire their own events; this is how an agent sees what is wired up.

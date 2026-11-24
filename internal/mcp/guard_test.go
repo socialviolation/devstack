@@ -123,6 +123,13 @@ func TestAgentCalls(t *testing.T) {
 		{"tunnel", nil, "may not call tunnel"},
 		{"env_set", nil, "may not call env_set"},
 		{"env_use", map[string]any{"stack": "agent-mine"}, "may not call env_use"},
+		{"doctor", nil, ""},
+		{"doctor", map[string]any{"stack": "  "}, ""},
+		{"doctor", map[string]any{"stack": "agent-mine"}, ""},
+		{"doctor", map[string]any{"stack": "agent-theirs"}, "belongs to bob"},
+		{"doctor", map[string]any{"stack": "base"}, "pass stack=agent-<name>"},
+		{"doctor", map[string]any{"stack": "perf"}, `"perf" is not an agent-* stack`},
+		{"cleanup", map[string]any{"dry_run": true}, "may not call cleanup"},
 		{"no_such_tool", nil, "may not call no_such_tool"},
 	}
 	for _, c := range cases {
@@ -209,12 +216,12 @@ func TestAgentToolsListHidesDeniedTools(t *testing.T) {
 	s := allToolsServer(t, ws)
 
 	agentSees := strings.Join(listToolNames(t, s, alice), ",")
-	for _, hidden := range []string{"configure", "tunnel", "env_set", "env_use", "migrate"} {
+	for _, hidden := range []string{"configure", "tunnel", "env_set", "env_use", "migrate", "cleanup"} {
 		if strings.Contains(","+agentSees+",", ","+hidden+",") {
 			t.Errorf("agent tools/list shows %q: %s", hidden, agentSees)
 		}
 	}
-	for _, shown := range []string{"status", "start", "stack_create", "service_env", "base", "observability", "hooks"} {
+	for _, shown := range []string{"status", "start", "stack_create", "service_env", "base", "observability", "hooks", "doctor"} {
 		if !strings.Contains(","+agentSees+",", ","+shown+",") {
 			t.Errorf("agent tools/list hides %q: %s", shown, agentSees)
 		}

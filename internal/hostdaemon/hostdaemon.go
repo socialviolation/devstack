@@ -515,7 +515,7 @@ func startDirectTilt(dir string) (int, string, func(), error) {
 	}
 	defer lf.Close()
 
-	tiltCmd := exec.Command("tilt", "up", "--host", tiltBindHost(), "--port", strconv.Itoa(workspace.HostTiltPort))
+	tiltCmd := exec.Command("tilt", "up", "--host", BindHost(), "--port", strconv.Itoa(workspace.HostTiltPort))
 	tiltCmd.Dir = dir
 	tiltCmd.Stdout = lf
 	tiltCmd.Stderr = lf
@@ -566,10 +566,10 @@ func TiltRunArgs(dir string, env []string, port int) []string {
 		}
 		args = append(args, "-E", kv)
 	}
-	return append(args, "--", "tilt", "up", "--host", tiltBindHost(), "--port", strconv.Itoa(port))
+	return append(args, "--", "tilt", "up", "--host", BindHost(), "--port", strconv.Itoa(port))
 }
 
-func tiltBindHost() string {
+func BindHost() string {
 	if h := os.Getenv("DEVSTACK_DAEMON_BIND"); h != "" {
 		return h
 	}
