@@ -48,10 +48,20 @@ func Create(repoPath, worktreePath, branch, from string, changed bool) (Result, 
 		if err != nil {
 			return res, err
 		}
-		if exists {
+		pushed := false
+		if !exists {
+			if pushed, err = FetchBranch(repoPath, branch); err != nil {
+				return res, err
+			}
+		}
+		switch {
+		case exists:
 			args = []string{"worktree", "add", worktreePath, branch}
 			cutFrom = ""
-		} else {
+		case pushed:
+			args = []string{"worktree", "add", "--track", "-b", branch, worktreePath, "origin/" + branch}
+			cutFrom = ""
+		default:
 			args = []string{"worktree", "add", "-b", branch, worktreePath}
 		}
 	}
@@ -232,6 +242,24 @@ func headOffRef(repoPath, ref string) (bool, error) {
 		return false, fmt.Errorf("git rev-parse %s in %s returned %d revisions, and devstack needs 2", ref, repoPath, len(lines))
 	}
 	return lines[0] != lines[1], nil
+}
+
+// FetchBranch updates origin/<branch> from origin, and reports whether origin
+// has the branch. A repo with no origin remote has no pushed branch.
+func FetchBranch(repoPath, branch string) (bool, error) {
+	if err := exec.Command("git", "-C", repoPath, "remote", "get-url", "origin").Run(); err != nil {
+		return false, nil
+	}
+	cmd := exec.Command("git", "fetch", "--quiet", "origin", "refs/heads/"+branch+":refs/remotes/origin/"+branch)
+	cmd.Dir = repoPath
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return true, nil
+	}
+	if strings.Contains(string(out), "couldn't find remote ref") {
+		return false, nil
+	}
+	return false, fmt.Errorf("git fetch origin %s in %s failed: %w\n%s", branch, repoPath, err, strings.TrimSpace(string(out)))
 }
 
 func branchExists(repoPath, branch string) (bool, error) {

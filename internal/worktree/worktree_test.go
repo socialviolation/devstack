@@ -364,3 +364,86 @@ func TestPrune_ReclaimsHandDeletedWorktree(t *testing.T) {
 		t.Errorf("stale worktree still listed after prune:\n%s", after)
 	}
 }
+
+func withOrigin(t *testing.T, root, repo string) (origin string) {
+	t.Helper()
+	origin = filepath.Join(root, "origin.git")
+	git(t, root, "init", "--bare", "-b", "main", origin)
+	git(t, repo, "remote", "add", "origin", origin)
+	git(t, repo, "push", "-q", "origin", "main")
+	return origin
+}
+
+func pushBranch(t *testing.T, root, origin, branch string) (tip string) {
+	t.Helper()
+	pod := filepath.Join(root, "pod")
+	git(t, root, "clone", "-q", origin, pod)
+	git(t, pod, "config", "user.email", "t@example.com")
+	git(t, pod, "config", "user.name", "tester")
+	git(t, pod, "config", "commit.gpgsign", "false")
+	git(t, pod, "checkout", "-q", "-b", branch)
+	write(t, filepath.Join(pod, "pushed.txt"), "from the pod\n")
+	git(t, pod, "add", ".")
+	git(t, pod, "commit", "-q", "-m", "pushed")
+	git(t, pod, "push", "-q", "origin", branch)
+	return git(t, pod, "rev-parse", "HEAD")
+}
+
+func TestCreate_AttachesABranchOnlyOriginHas(t *testing.T) {
+	root, repo := newRepo(t)
+	origin := withOrigin(t, root, repo)
+	tip := pushBranch(t, root, origin, "agent/x")
+	wt := filepath.Join(root, "base-feat")
+
+	if _, err := Create(repo, wt, "agent/x", "", true); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := git(t, wt, "rev-parse", "HEAD"); got != tip {
+		t.Errorf("worktree HEAD = %s, want the pushed tip %s", got, tip)
+	}
+	if got := git(t, wt, "rev-parse", "--abbrev-ref", "HEAD"); got != "agent/x" {
+		t.Errorf("worktree branch = %q, want agent/x", got)
+	}
+	if got := git(t, wt, "rev-parse", "--abbrev-ref", "@{upstream}"); got != "origin/agent/x" {
+		t.Errorf("upstream = %q, want origin/agent/x", got)
+	}
+}
+
+func TestCreate_BranchMissingOnOriginCutsFresh(t *testing.T) {
+	root, repo := newRepo(t)
+	withOrigin(t, root, repo)
+	wt := filepath.Join(root, "base-feat")
+
+	if _, err := Create(repo, wt, "agent/x", "", true); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got, want := git(t, wt, "rev-parse", "HEAD"), git(t, repo, "rev-parse", "main"); got != want {
+		t.Errorf("worktree HEAD = %s, want main %s", got, want)
+	}
+}
+
+func TestCreate_LocalBranchWinsOverOrigin(t *testing.T) {
+	root, repo := newRepo(t)
+	origin := withOrigin(t, root, repo)
+	pushBranch(t, root, origin, "agent/x")
+	git(t, repo, "branch", "agent/x")
+	local := git(t, repo, "rev-parse", "agent/x")
+	wt := filepath.Join(root, "base-feat")
+
+	if _, err := Create(repo, wt, "agent/x", "", true); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := git(t, wt, "rev-parse", "HEAD"); got != local {
+		t.Errorf("worktree HEAD = %s, want the local branch %s", got, local)
+	}
+}
+
+func TestCreate_FetchFailureNamesRepoAndBranch(t *testing.T) {
+	root, repo := newRepo(t)
+	git(t, repo, "remote", "add", "origin", filepath.Join(root, "no-such-origin.git"))
+
+	_, err := Create(repo, filepath.Join(root, "base-feat"), "agent/x", "", true)
+	if err == nil || !strings.Contains(err.Error(), "git fetch origin agent/x in "+repo) {
+		t.Fatalf("Create error = %v, want a fetch failure naming the repo and branch", err)
+	}
+}
