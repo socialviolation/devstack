@@ -93,6 +93,8 @@ type StackInfo struct {
 	Created  time.Time
 	Owner    string
 	Expires  time.Time
+
+	AdoptedFrom string
 }
 
 func StacksRoot(base *workspace.Workspace) string {
@@ -550,6 +552,8 @@ func List(workspaceName string) ([]StackInfo, error) {
 			Created:  rec.CreatedAt,
 			Owner:    rec.Owner,
 			Expires:  rec.ExpiresAt,
+
+			AdoptedFrom: rec.AdoptedFrom,
 		})
 	}
 	return stacks, nil

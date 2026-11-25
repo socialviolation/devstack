@@ -267,10 +267,38 @@ func runStackResync(cmd *cobra.Command, args []string) error {
 	return err
 }
 
+var stackAdoptCmd = &cobra.Command{
+	Use:   "adopt <name>",
+	Short: "Take over an agent's stack: gc never removes it, and agents lose access",
+	Long: `Hand an agent's feature stack to you. devstack clears the stack's owner and
+expiry, so gc never removes it and no agent may act on it. The record keeps
+the agent's name as adopted-from.
+
+devstack prints the stack's worktrees, the branch of each, whether it is up,
+and its tailnet addresses. A stack that is already yours is left as it is.`,
+	Args:         cobra.ExactArgs(1),
+	SilenceUsage: true,
+	RunE:         runStackAdopt,
+}
+
+func runStackAdopt(cmd *cobra.Command, args []string) error {
+	base, err := resolveWorkspace(viper.GetString("workspace"))
+	if err != nil {
+		return err
+	}
+	out, err := nvxmcp.AdoptStack(cmd.Context(), base, args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Print(out)
+	return nil
+}
+
 func init() {
 	rootCmd.AddCommand(stackCmd)
 	stackCmd.AddCommand(stackGCCmd)
 	stackCmd.AddCommand(stackResyncCmd)
+	stackCmd.AddCommand(stackAdoptCmd)
 	stackCmd.AddCommand(stackCreateCmd)
 	stackCmd.AddCommand(stackAddCmd)
 	stackCmd.AddCommand(stackDropCmd)
@@ -587,6 +615,9 @@ func runStackList(cmd *cobra.Command, args []string) error {
 			truncateCell(s.Branch, 30), stackAge(s.Created))
 		if s.Note != "" {
 			color.New(color.Faint).Printf("  %s\n", s.Note)
+		}
+		if s.AdoptedFrom != "" {
+			color.New(color.Faint).Printf("  adopted from %s\n", s.AdoptedFrom)
 		}
 		for _, cov := range stack.CoverageOf(s.Groups, s.Services, baseGroups) {
 			color.New(color.Faint).Printf("  %s\n", cov.Sentence())

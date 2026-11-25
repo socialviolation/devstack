@@ -64,6 +64,7 @@ func registerStackTools(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	registerStackDownTool(mcpServer, ws)
 	registerStackExtendTool(mcpServer, ws)
 	registerStackResyncTool(mcpServer, ws)
+	registerStackAdoptTool(mcpServer, ws)
 	registerTaskRunTool(mcpServer, ws)
 }
 
@@ -454,6 +455,9 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			}
 			if !s.Expires.IsZero() {
 				fmt.Fprintf(&sb, "  expires:  %s\n", s.Expires.Local().Format(time.RFC3339))
+			}
+			if s.AdoptedFrom != "" {
+				fmt.Fprintf(&sb, "  adopted:  from %s\n", s.AdoptedFrom)
 			}
 			if s.Note != "" {
 				fmt.Fprintf(&sb, "  note:     %s\n", s.Note)

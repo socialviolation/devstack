@@ -74,6 +74,7 @@ var agentPolicies = map[string]toolPolicy{
 	"stack_rm":      {StackArg: "name", Default: ownStack},
 	"stack_extend":  {StackArg: "name", Default: ownStack},
 	"stack_resync":  {StackArg: "name", Default: ownStack},
+	"stack_adopt":   {Default: deny},
 	"task_run":      {StackArg: "stack", Default: ownStack},
 	"doctor":        {StackArg: "stack", Default: ownStackIfGiven},
 	"cleanup":       {Default: deny},

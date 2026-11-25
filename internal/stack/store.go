@@ -36,6 +36,9 @@ type Record struct {
 	CreatedAt  time.Time         `json:"created_at"`
 	Owner      string            `json:"owner,omitempty"`
 	ExpiresAt  time.Time         `json:"expires_at,omitzero"`
+
+	AdoptedFrom string    `json:"adopted_from,omitempty"`
+	AdoptedAt   time.Time `json:"adopted_at,omitzero"`
 }
 
 type NoteEntry struct {
@@ -374,6 +377,40 @@ func Extend(base, name string, by time.Duration, now time.Time) (time.Time, erro
 		return time.Time{}, err
 	}
 	return expires, nil
+}
+
+func Adopt(base, name string, now time.Time) (rec Record, adopted bool, err error) {
+	err = withStoreLock(base, func() error {
+		recs, err := LoadStore(base)
+		if err != nil {
+			return err
+		}
+		var agents []string
+		for i := range recs {
+			if recs[i].Owner != "" {
+				agents = append(agents, fmt.Sprintf("%s (owner %s)", recs[i].Name, recs[i].Owner))
+			}
+			if !strings.EqualFold(recs[i].Name, name) {
+				continue
+			}
+			if recs[i].Owner == "" {
+				rec = recs[i]
+				return nil
+			}
+			recs[i].AdoptedFrom = recs[i].Owner
+			recs[i].AdoptedAt = now
+			recs[i].Owner = ""
+			recs[i].ExpiresAt = time.Time{}
+			rec = recs[i]
+			adopted = true
+			return saveStore(base, recs)
+		}
+		if len(agents) == 0 {
+			return fmt.Errorf("stack %q not found in workspace %q, and the workspace has no agent stacks", name, base)
+		}
+		return fmt.Errorf("stack %q not found in workspace %q. Agent stacks: %s", name, base, strings.Join(agents, ", "))
+	})
+	return rec, adopted, err
 }
 
 // upsertStack inserts or replaces a record in its base workspace's store.
