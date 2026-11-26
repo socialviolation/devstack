@@ -146,6 +146,50 @@ func TestAgentCalls(t *testing.T) {
 	}
 }
 
+func TestAgentSharedServiceCalls(t *testing.T) {
+	ws := guardStore(t, stack.Record{Name: "agent-mine", Base: "navexa", Owner: "alice"})
+	writeFile(t, ws.Path+"/devstack.workspace.yaml", `version: 1
+workspace:
+  name: navexa
+  repoDiscovery:
+    mode: explicit
+    repos:
+      - ./db
+shared: [db]
+`)
+	g := &guard{ws: ws}
+
+	cases := []struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		{"status", map[string]any{"service": "db"}, ""},
+		{"process_logs", map[string]any{"service": "db"}, ""},
+		{"process_logs", map[string]any{"service": "api"}, "pass stack=agent-<name>"},
+		{"process_logs", map[string]any{"group": "data"}, "pass stack=agent-<name>"},
+		{"process_logs", map[string]any{"service": "db", "stack": "perf"}, `"perf" is not an agent-* stack`},
+		{"start", map[string]any{"service": "db"}, `may not call start on shared service "db"`},
+		{"stop", map[string]any{"service": "db"}, `may not call stop on shared service "db"`},
+		{"restart", map[string]any{"service": "db"}, `may not call restart on shared service "db"`},
+		{"restart", map[string]any{"service": "api"}, "pass stack=agent-<name>"},
+		{"restart", map[string]any{"service": "api", "stack": "agent-mine"}, ""},
+		{"stack_config", map[string]any{"service": "db"}, "pass stack=agent-<name>"},
+	}
+	for _, c := range cases {
+		req := mcp.CallToolRequest{}
+		req.Params.Name = c.tool
+		req.Params.Arguments = c.args
+		got := g.check(alice, req)
+		if c.want == "" && got != "" {
+			t.Errorf("%s %v: denied (%s), want allowed", c.tool, c.args, got)
+		}
+		if c.want != "" && !strings.Contains(got, c.want) {
+			t.Errorf("%s %v: got %q, want a denial containing %q", c.tool, c.args, got, c.want)
+		}
+	}
+}
+
 func callAs(t *testing.T, s *server.MCPServer, c auth.Caller, tool, args string) string {
 	t.Helper()
 	resp := s.HandleMessage(auth.WithCaller(context.Background(), c), json.RawMessage(

@@ -9,6 +9,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/mcp/auth"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -21,6 +22,8 @@ const (
 	allow
 	ownStack
 	ownStackIfGiven
+	ownStackOrSharedRead
+	ownStackNotShared
 )
 
 const agentStackPrefix = "agent-"
@@ -56,12 +59,12 @@ var agentPolicies = map[string]toolPolicy{
 	"urls":          {Default: allow},
 	"topology":      {Default: allow},
 	"wiring":        {StackArg: "stack", Default: ownStack},
-	"process_logs":  {StackArg: "stack", Default: ownStack},
+	"process_logs":  {StackArg: "stack", Default: ownStackOrSharedRead},
 	"investigate":   {Default: deny},
 	"stack_list":    {Default: allow},
-	"start":         {StackArg: "stack", Default: ownStack},
-	"restart":       {StackArg: "stack", Default: ownStack},
-	"stop":          {StackArg: "stack", Default: ownStack},
+	"start":         {StackArg: "stack", Default: ownStackNotShared},
+	"restart":       {StackArg: "stack", Default: ownStackNotShared},
+	"stop":          {StackArg: "stack", Default: ownStackNotShared},
 	"stack_config":  {StackArg: "stack", Default: ownStack},
 	"env_which":     {StackArg: "stack", Default: ownStack},
 	"stack_create":  {StackArg: "name", Default: ownStack},
@@ -180,11 +183,31 @@ func (g *guard) check(caller auth.Caller, req mcp.CallToolRequest) string {
 			return g.checkOwnStack(caller, name, p.StackArg, given)
 		}
 		return ""
+	case ownStackOrSharedRead:
+		given := strings.TrimSpace(req.GetString(p.StackArg, ""))
+		if given == "" && g.isShared(strings.TrimSpace(req.GetString("service", ""))) {
+			return ""
+		}
+		return g.checkOwnStack(caller, name, p.StackArg, given)
+	case ownStackNotShared:
+		given := strings.TrimSpace(req.GetString(p.StackArg, ""))
+		if svc := strings.TrimSpace(req.GetString("service", "")); given == "" && g.isShared(svc) {
+			return fmt.Sprintf("agents may not call %s on shared service %q. Every stack uses it. Ask the owner", name, svc)
+		}
+		return g.checkOwnStack(caller, name, p.StackArg, given)
 	}
 	if action != "" {
 		return fmt.Sprintf("agents may not call %s with action=%q", name, action)
 	}
 	return fmt.Sprintf("agents may not call %s", name)
+}
+
+func (g *guard) isShared(svc string) bool {
+	if svc == "" || g.ws == nil {
+		return false
+	}
+	m, err := config.LoadWorkspaceManifest(g.ws.Path)
+	return err == nil && m.IsShared(svc)
 }
 
 func (g *guard) checkOwnStack(caller auth.Caller, tool, arg, name string) string {
