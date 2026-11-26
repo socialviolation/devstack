@@ -284,7 +284,7 @@ func runStackResync(cmd *cobra.Command, args []string) error {
 	}
 	herdr.Bind(base.Name, args[0])
 	defer herdr.Notify()
-	out, err := nvxmcp.ResyncStack(base, args[0])
+	out, err := nvxmcp.ResyncStack(base, args[0], true)
 	fmt.Print(out)
 	return err
 }
@@ -980,7 +980,7 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 	for _, k := range sortedKeys(rec.Ports) {
 		fmt.Printf("  %-24s http://localhost:%d\n", stackPortLabel(k), rec.Ports[k])
 	}
-	behind, notes := stack.BehindWarnings(rec)
+	behind, notes := stack.BehindWarnings(rec, fmt.Sprintf("Run `devstack stack resync %s`.", rec.Name))
 	for _, w := range behind {
 		fmt.Fprintf(os.Stderr, "WARNING: %s\n", w)
 	}

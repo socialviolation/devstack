@@ -241,7 +241,7 @@ func TestBehindWarningsNamesTheBranchAndTheDetachedRepo(t *testing.T) {
 	webOrigin := addOrigin(t, filepath.Join(base.Path, "web"))
 	git(t, rec.Worktrees["web"], "push", "-q", "origin", "feat")
 
-	if w, n := BehindWarnings(rec); len(w) != 0 || len(n) != 0 {
+	if w, n := BehindWarnings(rec, "Run `stack_resync`."); len(w) != 0 || len(n) != 0 {
 		t.Fatalf("warnings = %v, notes = %v, want none before a push", w, n)
 	}
 
@@ -249,13 +249,16 @@ func TestBehindWarningsNamesTheBranchAndTheDetachedRepo(t *testing.T) {
 	pushTo(t, webOrigin, "feat", map[string]string{"b.txt": "2\n"})
 	pushTo(t, apiOrigin, "main", map[string]string{"c.txt": "3\n"})
 
-	w, n := BehindWarnings(rec)
+	w, n := BehindWarnings(rec, "Run `stack_resync`.")
 	want := []string{
 		"api (detached, against the default branch main) is behind origin by 1 commit. Run `stack_resync`.",
 		"web (on branch feat) is behind origin by 2 commits. Run `stack_resync`.",
 	}
 	if !reflect.DeepEqual(w, want) || len(n) != 0 {
 		t.Errorf("warnings = %q, notes = %v, want %q", w, n, want)
+	}
+	if w, _ := BehindWarnings(rec, "Run `devstack stack resync feat`."); len(w) != 2 || !strings.HasSuffix(w[1], "by 2 commits. Run `devstack stack resync feat`.") {
+		t.Errorf("CLI warnings = %q, want the CLI command", w)
 	}
 }
 
@@ -267,7 +270,7 @@ func TestBehindWarningsNotesAFailingOrigin(t *testing.T) {
 	}
 	git(t, filepath.Join(base.Path, "web"), "remote", "add", "origin", filepath.Join(t.TempDir(), "gone.git"))
 
-	w, n := BehindWarnings(rec)
+	w, n := BehindWarnings(rec, "Run `stack_resync`.")
 	if len(w) != 0 || len(n) != 1 || !strings.Contains(n[0], "web") {
 		t.Errorf("warnings = %v, notes = %v, want one note on web", w, n)
 	}

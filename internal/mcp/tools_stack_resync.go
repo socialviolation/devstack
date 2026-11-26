@@ -43,7 +43,7 @@ func registerStackResyncTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		}
 		bindPane(ctx, ws, name)
 		defer herdr.Notify()
-		out, err := ResyncStack(ws, name)
+		out, err := ResyncStack(ws, name, false)
 		if err != nil {
 			return mcp.NewToolResultError(out + err.Error()), nil
 		}
@@ -51,19 +51,23 @@ func registerStackResyncTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 	})
 }
 
-func ResyncStack(ws *workspace.Workspace, name string) (string, error) {
-	return resyncStack(ws, name, restartStackServices(ws))
+func ResyncStack(ws *workspace.Workspace, name string, cli bool) (string, error) {
+	return resyncStack(ws, name, restartStackServices(ws), cli)
 }
 
-func resyncStack(ws *workspace.Workspace, name string, restart stack.Restarter) (string, error) {
+func resyncStack(ws *workspace.Workspace, name string, restart stack.Restarter, cli bool) (string, error) {
 	res, err := stack.Resync(ws, name, restart)
 	if res == nil {
 		return "", err
 	}
-	return formatResync(res, err)
+	return formatResync(res, err, cli)
 }
 
-func formatResync(res *stack.ResyncResult, err error) (string, error) {
+func formatResync(res *stack.ResyncResult, err error, cli bool) (string, error) {
+	migrateFix := "Run the service's migration task with `task_run` when you are ready."
+	if cli {
+		migrateFix = "Run the service's migration task when you are ready."
+	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Stack %q resync:\n", res.Name)
 	for _, r := range res.Repos {
@@ -85,7 +89,7 @@ func formatResync(res *stack.ResyncResult, err error) (string, error) {
 		fmt.Fprintf(&sb, "%s. This stack does not run %s. Run `stack add %s`.\n", strings.Join(m.Chain, " needs "), m.Service, m.Service)
 	}
 	for _, svc := range res.Migrations {
-		fmt.Fprintf(&sb, "The new commits change migrations in %s. A migration changes the shared database for every stack. Run `migrate` when you are ready.\n", svc)
+		fmt.Fprintf(&sb, "The new commits change migrations in %s. A migration changes the shared database for every stack. %s\n", svc, migrateFix)
 	}
 	for _, n := range res.Notes {
 		fmt.Fprintf(&sb, "note: %s\n", n)

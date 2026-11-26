@@ -707,7 +707,7 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 		for _, k := range sortedPortKeys(rec.Ports) {
 			fmt.Fprintf(&sb, "  %-24s http://localhost:%d\n", k, rec.Ports[k])
 		}
-		behind, notes := stack.BehindWarnings(rec)
+		behind, notes := stack.BehindWarnings(rec, "Run `stack_resync`.")
 		for _, w := range behind {
 			fmt.Fprintf(&sb, "WARNING: %s\n", w)
 		}

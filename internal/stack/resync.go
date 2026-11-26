@@ -367,7 +367,7 @@ func outsideRepos(baseRW *config.ResolvedWorkspace, root string, rec *Record) ([
 	return outside, notes
 }
 
-func BehindWarnings(rec *Record) (warnings, notes []string) {
+func BehindWarnings(rec *Record, fix string) (warnings, notes []string) {
 	repos, err := reposOf(rec)
 	if err != nil {
 		return nil, []string{err.Error()}
@@ -382,7 +382,7 @@ func BehindWarnings(rec *Record) (warnings, notes []string) {
 		wg.Add(1)
 		go func(r stackRepo) {
 			defer wg.Done()
-			line, note := behindLine(ctx, r, rec.Branch)
+			line, note := behindLine(ctx, r, rec.Branch, fix)
 			mu.Lock()
 			defer mu.Unlock()
 			if line != "" {
@@ -399,7 +399,7 @@ func BehindWarnings(rec *Record) (warnings, notes []string) {
 	return warnings, notes
 }
 
-func behindLine(ctx context.Context, r stackRepo, stackBranch string) (line, note string) {
+func behindLine(ctx context.Context, r stackRepo, stackBranch, fix string) (line, note string) {
 	branch, err := worktree.CurrentBranch(r.top)
 	if err != nil {
 		return "", err.Error()
@@ -428,5 +428,5 @@ func behindLine(ctx context.Context, r stackRepo, stackBranch string) (line, not
 	case st.Commits > 1:
 		by = fmt.Sprintf(" by %d commits", st.Commits)
 	}
-	return fmt.Sprintf("%s (%s %s) is behind origin%s. Run `stack_resync`.", r.name, kind, branch, by), ""
+	return fmt.Sprintf("%s (%s %s) is behind origin%s. %s", r.name, kind, branch, by, fix), ""
 }
