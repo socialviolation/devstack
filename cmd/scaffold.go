@@ -125,6 +125,23 @@ needs: []
 calls: []
   # - service: my-worker
   #   via: queue
+
+# migrations: the directory of this service's database migrations, relative to
+# this service's directory. If a stack resync changes files in it, devstack says
+# so. devstack runs no migration itself.
+# migrations: db/migrations
+
+# tasks: named commands that 'devstack task run' and the task_run tool run in a
+# stack's worktree of this service. run is required. workDir, timeout (default
+# 10m) and env are optional. run and env take references such as ${self.url}.
+# tasks:
+#   test:
+#     run: go test ./...
+#   seed:
+#     run: ./scripts/seed.sh
+#     timeout: 5m
+#     env:
+#       API_URL: ${self.url}
 `
 
 // scaffoldWorkspaceManifest writes an educational devstack.workspace.yaml at path

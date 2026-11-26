@@ -56,6 +56,9 @@ func TestScaffoldServiceManifestDeclaresNeedsAndCalls(t *testing.T) {
 	filled := strings.Replace(string(data), `command: ""                 # REQUIRED: the long command that serves this service`, `command: "go run ."`, 1)
 	filled = strings.Replace(filled, "needs: []\n  # - my-db\n  # - service: my-api\n  #   via: http", "needs:\n  - my-db\n  - service: my-api\n    via: http", 1)
 	filled = strings.Replace(filled, "calls: []\n  # - service: my-worker\n  #   via: queue", "calls:\n  - service: my-worker\n    via: queue", 1)
+	filled = strings.Replace(filled, "# migrations: db/migrations", "migrations: db/migrations", 1)
+	filled = strings.Replace(filled, "# tasks:\n#   test:\n#     run: go test ./...\n#   seed:\n#     run: ./scripts/seed.sh\n#     timeout: 5m\n#     env:\n#       API_URL: ${self.url}",
+		"tasks:\n  test:\n    run: go test ./...\n  seed:\n    run: ./scripts/seed.sh\n    timeout: 5m\n    env:\n      API_URL: ${self.url}", 1)
 	target := filepath.Join(dir, "filled.yaml")
 	if err := os.WriteFile(target, []byte(filled), 0o644); err != nil {
 		t.Fatal(err)
@@ -69,5 +72,11 @@ func TestScaffoldServiceManifestDeclaresNeedsAndCalls(t *testing.T) {
 	}
 	if len(m.Calls) != 1 || m.Calls[0].Service != "my-worker" || m.Calls[0].Via != "queue" {
 		t.Errorf("calls = %+v, want my-worker via queue", m.Calls)
+	}
+	if m.Migrations != "db/migrations" {
+		t.Errorf("migrations = %q, want db/migrations", m.Migrations)
+	}
+	if m.Tasks["test"].Run != "go test ./..." || m.Tasks["seed"].Timeout != "5m" || m.Tasks["seed"].Env["API_URL"] != "${self.url}" {
+		t.Errorf("tasks = %+v, want test and seed as the scaffold shows them", m.Tasks)
 	}
 }
