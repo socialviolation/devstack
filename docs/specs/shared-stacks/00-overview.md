@@ -1,6 +1,6 @@
 # Small stacks, no base — overview
 
-Status: DRAFT, for owner review. Date: 2026-11-26.
+Status: IMPLEMENTED (pending live cutover). Date: 2026-11-26.
 
 ## Problem
 
@@ -98,12 +98,12 @@ tests today); tests with real git repos; live on `devstack_test`:
 `workspace up` runs only the shared set, and a stack serves with no base.
 
 **3. Addressing (01, 06).** Remove `--stack base` and the `base` tool.
-Add `scope: workspace` to env tools. New guard rule for shared reads.
+Add `scope: workspace` to env tools, and `--workspace-default` to `env use`. New guard rule for shared reads.
 Trace and fix `investigate`, `tunnel`, `urls` and the panel defaults.
 → verify: tests for each mutating tool; guard tests for agents.
 
 **4. Lifecycle (03).** `StopAt`, `StoppedBy`, host-wide `stack sweep`, the
-systemd timer and its fallback, hourly `shared sync` from the same timer, `stack.down` on `workspace down`. Remove
+systemd timer and its fallback, hourly shared sync from the same timer (the timer runs `devstack tick`), `stack.down` on `workspace down`. Remove
 destroy on expiry and the agent quota.
 → verify: fake-clock tests; live with `DEVSTACK_STOP_AFTER=2m`, then run
 `stack sweep` by hand (the timer runs every 10 min); push a commit to a
@@ -118,7 +118,7 @@ report repos and needs the stack does not run, and a stack behind origin.
 hook and action.
 → verify: live in herdr. The owner signs off the sidebar look.
 
-**7. Migration (01).** `devstack migrate` converts the navexa manifest and
+**7. Migration (01).** `devstack migrate shared-stacks` converts the navexa manifest and
 existing stacks. Cut navexa over.
 → verify: live on navexa; every migrated stack serves.
 

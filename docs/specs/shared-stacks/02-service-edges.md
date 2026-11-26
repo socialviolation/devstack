@@ -23,8 +23,8 @@ nxAlmanac lacks: the split between critical and soft.
 
 ## Change
 
-A service definition (`devstack.service.yaml`, or an inline `services:`
-entry in the workspace manifest) accepts two lists:
+A service definition (`devstack.service.yaml`) accepts two lists. Edges
+live there only; the workspace manifest has no inline service entries:
 
 ```yaml
 needs:                 # critical: cannot work without it
@@ -39,8 +39,9 @@ calls:                 # soft: talks to it, works without it
 
 - An entry is a service name, or a map with `service`, optional `via`,
   optional `entities`.
-- `via` uses nxAlmanac's values. devstack only displays `via` and
-  `entities` (in `wiring` and `topology`). It does not act on them.
+- `via` uses nxAlmanac's values. `wiring` and `topology` display `via`.
+  devstack reads `entities` but displays it nowhere yet. It acts on
+  neither.
 
 ### Meaning
 
@@ -84,9 +85,8 @@ members = named ∪ needs-closure(named) − shared
   the other. Loading them as `needs` would pull large chains into every
   stack. The owner promotes the few real ones to `needs`.
 - Each old field prints a deprecation warning once per load.
-- `devstack migrate` moves workspace edges onto each service. A service
-  with a `devstack.service.yaml` gets them there. A service declared inline
-  gets them inline.
+- `devstack migrate shared-stacks` moves workspace edges onto each
+  service's `devstack.service.yaml`. `--needs svc=dep` promotes an edge.
 
 ## Navexa after migration
 

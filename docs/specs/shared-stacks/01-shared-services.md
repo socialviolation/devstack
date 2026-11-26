@@ -45,7 +45,8 @@ shared:
 - A shared service runs from the replica: a worktree detached at the
   latest default branch tip. Never from the checkout.
 - devstack refreshes the replica on a timer. The sweep timer (03) runs
-  `devstack shared sync` every hour. It fetches, moves each replica
+  `devstack tick` every 10 min. Once an hour, the tick runs the same refresh
+  as `devstack shared sync`. It fetches, moves each replica
   worktree to the default tip, and restarts only the shared services whose
   repository moved.
 - If the fetch fails, devstack keeps the current tip and logs it. It never
@@ -63,7 +64,7 @@ shared:
   `<ws>:<svc>:<stack>`.
 - A stack service never runs outside a stack. To run the default branch,
   create a stack with services and no branch:
-  `devstack stack create main --repos navexa-frontend`. Every worktree is
+  `devstack stack create main --repos navexa-frontend --detach`. Every worktree is
   detached at the default tip. Code change: today `stack.go:112-115` and
   `worktree.go:44-45` refuse this.
 - The replica stays, scoped to the repositories that hold shared services.
@@ -102,7 +103,8 @@ shared:
   `${stack.suffix:...}` and the `stack.create`/`stack.destroy` hooks
   (both exist today).
 - Risk: a migration that one stack runs changes the database for every
-  stack. `migrate` must say so before it runs on a shared service.
+  stack. When resync moves commits that change a service's `migrations:`
+  directory, it says so and names `task_run` (05).
 
 ### Addressing
 
@@ -112,7 +114,8 @@ shared:
 - `--stack base` and `stack="base"` are removed. The guard keeps refusing
   the name `base` for a new stack, so old scripts fail loudly.
 - `env_use` and `env set` used `stack="base"` to set the workspace default
-  (`tools_env.go:33,40`, `env_cmd.go:31`). They get `scope: workspace`.
+  (`tools_env.go:33,40`, `env_cmd.go:31`). They get `scope: workspace`, and the CLI
+  gets `env use --workspace-default`.
 - The `base` tool and `devstack base` become `shared` (`status`, `path`,
   `sync`). `path` returns the replica path of a shared service.
 - Agents may `status` and `process_logs` a shared service. Agents may not
@@ -121,12 +124,12 @@ shared:
   (`guard.go:210-211`).
 - Defaults that point at base change behaviour, not only text:
   `investigate` scope defaults to base (`observability/backend.go:26,35`)
-  and becomes "all stacks and shared". `tunnel` (`as_base`), `urls` and
+  and becomes "all stacks and shared". `tunnel` (`as_base`, now `as_declared_ports`), `urls` and
   the panel read base ports or rows. Plan step 3 traces each one.
 
 ## Migration (plan step 7)
 
-`devstack migrate` does this, with a dry run first:
+`devstack migrate shared-stacks` does this, with a dry run first:
 
 **1.** Writes `shared:` from a list the owner confirms.
 **2.** Converts the workspace edge maps to per-service edges (02).
@@ -137,7 +140,8 @@ services. A stack that relied on base for a service now warns at
 records. A stack that ran its own `agent-psql` (the `roi` group) now uses
 the shared one.
 
-Cutover on navexa: `workspace down`, install, `migrate --apply`,
+Cutover on navexa: `workspace down`, install, `migrate shared-stacks --apply --shared
+navexa-sql,lake-clickhouse,azurite,agent-psql`,
 `workspace up`, then `stack up` each stack. Today's cutover notes say an
 old teardown can orphan a stack process on its port. Check with `doctor`
 after `workspace down`.

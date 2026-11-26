@@ -3,7 +3,7 @@
 Every command, flag and file that devstack reads or writes. To learn what
 devstack is, and how to install it, read the [README](README.md).
 
-- [Base and the replica](#base-and-the-replica)
+- [The shared set and the replica](#the-shared-set-and-the-replica)
 - [Workspaces](#workspaces)
 - [Services](#services)
 - [Feature stacks](#feature-stacks)
@@ -21,38 +21,58 @@ devstack is, and how to install it, read the [README](README.md).
 - [Files, and what to commit](#files-and-what-to-commit)
 - [Updating devstack](#updating-devstack)
 
-## Base and the replica
+## The shared set and the replica
 
-`devstack workspace up` builds one git worktree for each service, under `<parent>/.devstack-base/<workspace>/<service>`. devstack detaches each worktree at the default branch tip of its repository. The daemon runs those worktrees. Together they are the replica.
+A shared service is a service in the `shared:` list of the workspace manifest. It runs once for the workspace, and never in a stack. Every stack uses it. Databases and stores are shared, because they are too heavy to run once for each stack. All the shared services of one workspace are the shared set.
+
+```yaml
+shared:
+  - navexa-sql
+  - azurite
+```
+
+Each name in `shared:` must be a declared service, or devstack refuses to load the manifest. A shared service keeps the ports that its manifest declares. devstack allocates no port for it. A shared service can not `need` a service that is not shared.
+
+Every other service is a stack service. A stack service runs only inside a [feature stack](#feature-stacks). To run the default branch of a stack service, create a stack with `--detach`.
+
+The shared set runs from the replica. The replica is one git worktree for each repository that holds a shared service, under `<parent>/.devstack-base/<workspace>/`. devstack detaches each worktree at the default branch tip of its repository.
 
 Your checkout is the template. It holds the git objects, the workspace manifest and the machine-local gitignored configuration. The template runs nothing.
 
-You maintain nothing here. `devstack workspace up` does three things, in this order:
+You maintain nothing here. `devstack workspace up` does four things, in this order:
 
 1. It builds the replica, if the replica is absent.
 2. It moves each worktree to the current default branch tip.
-3. It restarts each copy of that workspace that runs now, so that copy serves the code of step 2.
+3. It restarts each shared service that runs now and that step 2 moved.
+4. It starts each shared service that does not run.
 
-CAUTION: Step 3 restarts services that serve right now. devstack restarts only the copies that were already running. It starts no copy that is stopped, and it touches no copy of a feature stack.
+CAUTION: Step 3 restarts services that serve right now. Every stack uses them.
+
+The shared set stays up until `devstack workspace down`. Once an hour, the `devstack-sweep` timer runs the same refresh as `devstack shared sync` for each active workspace. If a fetch fails, devstack keeps the current commit and writes a warning. A failed fetch never stops a shared service.
 
 ```bash
-devstack workspace up         # move base to the default branch tip, and run it
+devstack workspace up         # start the daemon and the shared set
+devstack shared status        # each shared service and its replica commit
+devstack shared sync          # move the replica to the default branch tip now
+devstack shared path [svc]    # the replica root, or one shared service's worktree
 devstack status --all         # the DIR column: the directory each copy runs from
 ```
 
-The MCP `base` tool gives an agent the same two answers. Pass `action="path"` to read a path, or `action="sync"` to build the replica and move base to the default branch tip.
+The MCP `shared` tool gives an agent the same three actions: `action="status"`, `action="path"` and `action="sync"`. `devstack base` is a hidden old name for `devstack shared`. It prints a warning.
 
-An edit in your checkout does not reach base on its own. The edit reaches base after two things happen. First, the edit is on the default branch. Second, you run `devstack workspace up`. To see a change run at once, put the change in a stack.
+Every stack reads and writes the same shared data. A migration that one stack runs changes the database for every stack.
 
 ### Naming the copy
 
-A command that starts, stops or restarts a service acts on one copy. Name the copy in one of three ways:
+A shared service has one copy. A stack service has one copy in each stack that runs it. A command that starts, stops or restarts a stack service acts on one copy. Name the copy in one of three ways:
 
-- In a shell, pass `--stack <name>` or `--stack base`.
-- Over MCP, pass `stack="<name>"` or `stack="base"`.
-- Run the command from a working directory inside a stack worktree, or inside the replica. That directory names the copy.
+- In a shell, pass `--stack <name>`.
+- Over MCP, pass `stack="<name>"`.
+- Run the command from a working directory inside a stack worktree. That directory names the copy.
 
-If you pass no flag from a directory that is neither, the command acts on base. base is the default everywhere else. Each command names the copy it changed, so read that line. A base copy has no `:stack` suffix.
+A shared service needs no stack. Name it with no `--stack`. An agent can read the status and the logs of a shared service. An agent can not start, stop or restart one, because every stack depends on it.
+
+No stack can carry the name `base`. Each command names the copy it changed, so read that line. A shared copy has no `:stack` suffix.
 
 ## Workspaces
 
@@ -60,8 +80,8 @@ If you pass no flag from a directory that is neither, the command acts on base. 
 devstack workspace            # list registered workspaces
 devstack workspace add [path]
 devstack workspace remove <name>
-devstack workspace up         # move base to the default branch tip, and run it
-devstack workspace down       # stop the daemon and the collector
+devstack workspace up         # start the daemon and the shared set
+devstack workspace down       # stop the shared set and every stack; the daemon stops if nothing else needs it
 devstack workspace doctor     # check manifests and topology integrity
 devstack workspace topology   # the service graph: groups, dependencies, dependents
 devstack workspace generate   # rebuild the daemon's Tiltfile from the manifests
@@ -73,7 +93,7 @@ devstack workspace open       # dev daemon dashboard
 ## Services
 
 ```bash
-devstack service start   [name] --stack <name>     # and its dependencies
+devstack service start   [name] --stack <name>     # and its old-map dependencies
 devstack service restart [name] --stack <name>     # the target alone
 devstack service stop    [name] --stack <name>
 devstack group   start|stop|restart <group>       # every service in the group
@@ -83,7 +103,7 @@ devstack workspace topology [service]
 
 Commands are noun first: `devstack <noun> <action> [target]`. A name can be both a service and a group, so the noun says which one you mean. devstack never guesses. If you name nothing after `service`, devstack works out the service from your working directory.
 
-`start` resolves dependencies and brings them up first. If the dev daemon is down, `start` also boots it. `restart` acts on the target alone. `status` collapses the groups and stacks that run nothing. To see them, pass `--all`.
+`start` brings up first the services that the old workspace `dependencies:` map lists for the target. If the dev daemon is down, `start` also boots it. `restart` acts on the target alone. `status` collapses the groups and stacks that run nothing. To see them, pass `--all`.
 
 Each of `start`, `stop` and `restart` changes what is running, so each one acts on one copy. Read [Naming the copy](#naming-the-copy).
 
@@ -99,9 +119,9 @@ runtime:
     command: "dotnet build ..."  # your own prep still runs, after
 ```
 
-devstack resolves those ports as it resolves `${self.port.http}`. From that one line, base frees the port that it pins, and a stack frees the port that devstack allocated to it.
+devstack resolves those ports as it resolves `${self.port.http}`. From that one line, a shared service frees the port that it declares, and a stack frees the port that devstack allocated to it.
 
-CAUTION: Never write a port as a literal in `freePorts`. The worktree of a stack copies the literal. Then `fuser -k 63290/tcp` in a stack kills base.
+CAUTION: Never write a port as a literal in `freePorts`. The worktree of a stack copies the literal. Then `fuser -k 63290/tcp` in a stack kills the process that serves the declared port.
 
 A copy can free only the ports that it owns. devstack names the process before it kills the process. devstack sends `SIGTERM` before `SIGKILL`, so a dev server stops its own child processes instead of orphaning them.
 
@@ -121,7 +141,7 @@ runtime:
 
 Write `memory` as a systemd size, such as `512M`, `4G` or `infinity`, and `cpu` as a percentage, such as `200%`. devstack refuses any other value when it loads the manifest. Swap is fixed at 1G for each service. Every scope is in `devstack.slice`, and `devstack workspace down` stops the slice with the daemon. To list the scopes, run `systemctl --user status devstack.slice`. On a host without a systemd user session (macOS, WSL without systemd, a container), the services run without scopes, and devstack ignores `runtime.limits` with one warning.
 
-Dependencies and groups:
+Groups, and the old workspace `dependencies:` map. The `dependencies` commands edit that map. devstack loads its entries as `calls` edges, so the daemon does not order start on them. `service start` still starts them first. For a real start order, declare `needs` in the service manifest (see [Service edges](#service-edges-needs-and-calls)):
 
 ```bash
 devstack dependencies add <service> <dep>       # <dep> starts first
@@ -149,25 +169,83 @@ One directory declares as many services as it runs. Name the files for what the 
 
 `devstack init` writes `devstack.service.yaml` for the first service in a directory, and `devstack.<name>.yaml` for each service after that. Run it once for each service, with the same `--path`. If a directory grows a second service, rename the first file to `devstack.<name>.yaml` yourself. devstack reads both names, so the rename is safe.
 
+### Service edges: `needs` and `calls`
+
+A service declares its edges in its own `devstack.service.yaml`. There are two lists:
+
+```yaml
+needs:                   # the service can not work without these
+  - navexa-sql
+  - service: navexa-api
+    via: http
+calls:                   # the service talks to these, and works without them
+  - service: nxTradeImporter
+    via: queue
+    entities: [stage-trades-queue]
+migrations: db/migrations   # optional: a path relative to the service directory
+```
+
+An entry is a service name, or a map with `service`, an optional `via` and optional `entities`.
+
+| Edge | Pulls into a stack | Orders start | Shown in `wiring` and `topology` |
+|---|---|---|---|
+| `needs` | yes, transitively | yes | yes |
+| `calls` | no | no | yes |
+
+- The daemon's start order comes from `needs` only.
+- A `needs` edge to a shared service orders start, and pulls nothing into a stack.
+- A `needs` cycle stops the load. The error names the cycle. To break it, change one edge to `calls`.
+- An edge to a service that the workspace does not declare stops the load.
+- `wiring` and `topology` show `via`. devstack reads `entities` and shows it nowhere. devstack acts on neither. For `via`, use the nxAlmanac values: `http`, `sql`, `redis`, `mcp`, `queue`, `blob`, `webhook`, `otlp`, `oidc`.
+- `migrations` names the migrations directory of the service. If `stack resync` moves commits that change it, resync says so.
+
+The workspace maps `dependencies:`, `calls:` and `startsAfter:` are the old form. devstack loads each entry of them as a `calls` edge, not as `needs`. To move them onto each service, run `devstack migrate shared-stacks`.
+
+`${stack.suffix:<svc>[,<svc>...]}` resolves to `-<stack>` when the stack runs its own copy of every listed service. It resolves to an empty string in any other case, and for a shared service. Use it in a queue, topic or bucket name, so that each stack gets its own name inside a shared store.
+
 ## Feature stacks
 
-A feature stack runs a parallel version of a few services beside base. Each changed service gets a git worktree on a feature branch, and a port that devstack allocates. Both fold into the one host daemon as `<workspace>:<service>:<stack>`. Every service that the stack does not change resolves to the copy of base. So several features can run at the same time, and you copy nothing that you did not change.
+A feature stack runs the services that one feature needs. Each member gets a git worktree, and a port that devstack allocates. The stack folds into the one host daemon as `<workspace>:<service>:<stack>`. The stack uses the shared set for databases and stores. So several features run at the same time, and each stack stays small.
 
 ```bash
-devstack stack create <name> --repos <svc>[,<svc>]  # worktrees for the changed services and their callers
+devstack stack create <name> --repos <svc>[,<svc>]  # the named services and what they need
+devstack stack create main --repos <svc> --detach   # run the default branch, with no branch
 devstack stack up <name>                            # fold it into the host daemon
 devstack stack down <name>                          # stop it, keep the worktrees
 devstack stack status <name>                        # its copies: state, ports, environment
-devstack stack list
+devstack stack list                                 # each stack, its state and its stop time
 devstack stack rm <name>                            # remove worktrees, release ports, deregister
 devstack stack config <svc> --stack <name>          # the configuration that copy runs with
 devstack stack note <name> [text]                   # what this stack is for
 devstack stack note <name> --add "..."              # append where it got to
+devstack stack resync <name>                        # fast-forward the worktrees to origin
+devstack stack adopt <name>                         # take over an agent's stack
+devstack stack sweep [--dry-run]                    # stop each stack past its stop time
 ```
 
-`devstack stack create` cuts each worktree from the default branch of the repository, as origin holds that branch where a remote exists. It never cuts from the branch that your checkout has checked out. `--from <ref>` names a different ref. If the branch already exists, devstack attaches to it with the history that it already has, and `--from` does not apply to it.
+### Members
 
-`--repos` also takes a group name. devstack expands the group to its members, and records the group on the stack. `devstack stack list` then reports how much of that group the stack covers. A group action against a stack reaches only the members that the stack overlays, and devstack names the members that stay on base.
+The members of a stack are the services that you name in `--repos`, and every service that they `need`, transitively. A shared service is never a member. A service that a member only `calls` does not come in. A caller of a member does not come in either. If a stack names only `api`, it gets no frontend. If the feature needs the frontend, name it too.
+
+`stack create` prints the members. For each service that it added, it prints the `needs` chain that pulled it in. `stack create` and `stack add` refuse a shared service, and name the shared set.
+
+If a member calls or references a service that is neither a member nor shared, `stack create` and `stack up` warn, and name `stack add`. They never refuse. The reference resolves to the declared port of that service, where nothing serves. You decide whether the change needs that service.
+
+`--repos` also takes a group name. devstack expands the group to its members, and records the group on the stack. `devstack stack list` then reports how much of that group the stack covers. A group action against a stack reaches only the members of the stack. devstack names the services of the group that are not in the stack.
+
+### Branches
+
+A named service gets the stack's branch. `--branch` names it, and defaults to the stack name. If that branch exists, devstack attaches to it with the history that it already has. A service that comes in through `needs` is detached at the default branch tip. With `--detach`, every worktree is detached, and the stack has no branch.
+
+`devstack stack create` cuts each worktree from the default branch of the repository, as origin holds that branch where a remote exists. It never cuts from the branch that your checkout has checked out. `--from <ref>` names a different ref. `--from` does not apply to a branch that already exists.
+
+`devstack stack resync` moves a stack to what you pushed. It fetches origin, and fast-forwards each worktree on the stack's branch to `origin/<branch>`. It fast-forwards each detached worktree to the default branch tip. It refuses a worktree with uncommitted changes, or one that diverged from origin. It never merges or rebases. If the stack is up, devstack restarts the services that moved, and the members that depend on them.
+
+Resync adds no service. It reports each repository outside the stack that has the branch on origin. It reports each service that a member now needs and the stack does not run. Each report names `stack add`. If the new commits change the `migrations:` directory of a service, resync says so, and names `task_run`. Resync runs no migration.
+
+`stack up` checks each worktree against origin. If a worktree is behind, `stack up` names `stack resync`. It does not resync by itself.
+
+### Adding and removing services
 
 `devstack stack add` puts a service into a stack that already exists:
 
@@ -175,7 +253,7 @@ devstack stack note <name> --add "..."              # append where it got to
 devstack stack add <name> <service|group> [service|group...]
 ```
 
-`stack add` stops nothing and starts nothing. The stack stays exactly as up or as down as it was. If the stack is up, the added copies become resources in the host daemon, but devstack does not start them. Start each one with `devstack service start <service> --stack <name>`.
+`stack add` also adds the services that the new members need. It stops nothing and starts nothing. The stack stays exactly as up or as down as it was. If the stack is up, the added copies become resources in the host daemon, but devstack does not start them. Start each one with `devstack service start <service> --stack <name>`.
 
 `devstack stack remove` takes a service out of a stack, and keeps the rest of the stack as it is:
 
@@ -183,13 +261,27 @@ devstack stack add <name> <service|group> [service|group...]
 devstack stack remove <name> <service> [service...]
 ```
 
-`stack remove` removes the services from the stack record and the stack manifest, and releases only their ports. It refuses to remove a service that another service of the stack depends on, and names that service. It keeps the worktrees on disk, and prints the `git worktree remove` command for each one. If the stack is up, the host daemon drops the removed copies. Never edit `stacks.json`, `ports.json` or a stack manifest by hand; use `stack add` and `stack remove`.
+`stack remove` removes the services from the stack record and the stack manifest, and releases only their ports. It refuses to remove a service that another member needs, and names that member. It keeps the worktrees on disk, and prints the `git worktree remove` command for each one. If the stack is up, the host daemon drops the removed copies. Never edit `stacks.json`, `ports.json` or a stack manifest by hand; use `stack add` and `stack remove`.
 
 `stack remove` fires the `stack.destroy` hooks for the removed services first, while their ports and record still exist; a hook failure does not stop the removal.
 
-To work on a stack, change directory into its worktree. `stack create` and `stack list` print the path. That worktree is already on the branch of the stack, so you never run `git checkout`. To reload that one copy, run `service restart --stack <name>`. That command leaves base and every other stack untouched.
+### The stop time
 
-`create` also takes `--branch` and `--note`. `--branch` defaults to the stack name. If that branch exists, devstack attaches to it. A branch says what changed. A note says why. A week later, the note is the part that you cannot reconstruct.
+Every stack has a stop time. `stack create` sets it to the create time plus 24 hours. `stack up` sets it to now plus 24 hours. The MCP tool `stack_extend` pushes it back: to the later of the stop time and now, plus the hours you give. One call adds 24 hours at most. `DEVSTACK_STOP_AFTER` changes the 24-hour window.
+
+`devstack stack sweep` stops each stack that is up and past its stop time, in every workspace of this machine. A stop is the same as `stack down`: the `stack.down` hooks fire, and the host daemon drops the stack. devstack keeps the worktrees, the ports and the record. The sweep never removes a stack. `stack list` shows the stop time of each stack that is up, and when the sweep stopped a stack.
+
+`devstack workspace up` installs a systemd user timer, `devstack-sweep.timer`. Every 10 minutes it runs `devstack tick`. Each tick runs the sweep and publishes the [herdr pane tokens](#the-stack-of-a-herdr-pane). Once an hour, the tick also refreshes the shared set. On a host without systemd, devstack runs the sweep before a command, at most once in 10 minutes. `devstack stack gc` is a hidden old name for `stack sweep`.
+
+### Agents
+
+An agent acts only on its own `agent-*` stacks. devstack does not limit how many stacks an agent creates. `devstack stack adopt <name>` hands an agent's stack to you. devstack clears the owner, so no agent can act on it. The stop time stays as it is.
+
+### Working in a stack
+
+To work on a stack, change directory into its worktree. `stack create` and `stack list` print the path. That worktree is already on the branch of the stack, so you never run `git checkout`. To reload that one copy, run `service restart --stack <name>`. That command leaves the shared set and every other stack untouched.
+
+`create` also takes `--note`. A branch says what changed. A note says why. A week later, the note is the part that you cannot reconstruct.
 
 `--add` appends a dated entry, and does not replace the purpose. A stack that you left half-done then says where the work got to. devstack keeps the last 5 entries, each of 200 characters at most. If the new entry repeats the last one, devstack changes nothing. A log that records every step buries the line that is worth reading.
 
@@ -202,13 +294,13 @@ NAV-412 daily value spike
   2026-08-03  traced to the FX join; parked pending a prod diff
 ```
 
-> WARNING: Shared state is not isolated. A stack isolates code and ports. A stack does not isolate the database, the queues or the caches. Two stacks on one database read and write the same rows. If that matters, point one stack at another database with an [environment](#environments).
+> WARNING: Shared data is not isolated. A stack isolates code and ports. Every stack reads and writes the same rows in the shared databases, queues and caches. To give a stack its own queue or bucket name, use [`${stack.suffix:...}`](#service-edges-needs-and-calls) and the `stack.create` and `stack.destroy` [hooks](#hooks). To point one stack at another database, use an [environment](#environments).
 
 ## Environments
 
-An environment is a named set of configuration values in the workspace manifest. It holds database URLs, feature flags and endpoints. You repoint a service with an environment, and you touch no code. Base can run against `local` while one stack runs against `staging`.
+An environment is a named set of configuration values in the workspace manifest. It holds database URLs, feature flags and endpoints. You repoint a service with an environment, and you touch no code. One stack can run against `local` while another stack runs against `staging`.
 
-You define an environment one time, in the workspace manifest of base, and every stack inherits it. A stack defines no environment of its own. `env use --stack <name>` points the stack at an environment that base defines. There are three scopes: stack, service and workspace. The most specific scope wins.
+You define an environment one time, in the workspace manifest, and every stack inherits it. A stack defines no environment of its own. `env use --stack <name>` points the stack at an environment that the workspace manifest defines. There are three scopes: stack, service and workspace default. The most specific scope wins. `env use --workspace-default` points the workspace default. With no flag, the working directory decides: a stack worktree selects that stack, and every other directory selects the workspace default. The MCP tools take `scope="workspace"` for the workspace default.
 
 An environment carries a description that says what the environment is for. The name and the key list say what it sets. Only the description says why you pick it, or why the choice is dangerous:
 
@@ -224,7 +316,7 @@ devstack shows the description in `env list`, in `env show` and in the session b
 
 ```bash
 devstack env set <name> KEY=VALUE [KEY=VALUE ...]    # creates the environment if it is new
-devstack env use <name> [--service <svc>] [--stack <name>]
+devstack env use <name> [--service <svc> | --stack <name> | --workspace-default]
 devstack env which [--service <svc>] [--stack <name>]   # what a service resolves to, key by key
 devstack env show <name>
 devstack env list
@@ -328,7 +420,7 @@ devstack otel services               # which copies report telemetry
 devstack otel traces                 # recent root spans
 devstack otel traces --service=api --since=15m
 devstack otel traces --stack=feat-x
-devstack otel traces --stack=all     # base and every stack together
+devstack otel traces --stack=all     # every stack and the shared set (the default)
 devstack otel traces <trace-id>      # full span tree
 devstack otel logs --trace=<trace-id>
 devstack otel status                 # collector state, ports, per-service evidence
@@ -336,17 +428,18 @@ devstack otel open                   # the UI
 devstack otel plugins                # backends and their config keys
 ```
 
-A query with no `--stack` covers base alone. Pass a stack's short name for that stack alone, or `--stack all` for base and every stack together. The `investigate` MCP tool has the same default, so the two surfaces cover the same copies.
+A query with no `--stack` covers every stack and the shared set. Pass a stack's short name for that stack alone. `--stack all` is the same as no `--stack`. The `investigate` MCP tool has the same default, so the two surfaces cover the same copies.
 
 Every copy reports to that one backend. devstack stamps each report with `devstack.workspace`, `devstack.service`, `devstack.stack` and `devstack.env`. These attributes carry the `devstack` prefix on purpose. `deployment.environment` belongs to the owner of the destination, and the `forwarding` backend sets it for each workspace. So you run one backend, and you slice the data at query time.
 
 A service often reports itself under a name that devstack does not know it by. A filter matches either name, and `otel services` prints both:
 
 ```
-Navexa.API      (devstack: navexa-api)  stack=agent env=dev
-Navexa.API      (devstack: navexa-api)  stack=base  env=dev
-nxTradeImporter                         stack=base  env=dev
+Navexa.API      (devstack: navexa-api)  stack=agent      env=dev
+Navexa.API      (devstack: navexa-api)  stack=nvxa-1422  env=dev
 ```
+
+A shared service reports `devstack.stack=base`. That value is the label of the shared set, not a stack. Hooks get the same label in `DEVSTACK_STACK` when they run with no stack.
 
 ## Tunnels
 
@@ -357,7 +450,7 @@ devstack tunnel push my-box.ts.net --user alice        # first run saves the rem
 devstack tunnel push                                   # later runs reuse it
 devstack tunnel push --service navexa-api,navexa-frontend
 devstack tunnel push --stacks                          # every stack that is up, each on its own port
-devstack tunnel push --as-base agent                   # one stack, on the ports base normally serves
+devstack tunnel push --as-declared-ports agent         # one stack, on its declared ports
 devstack tunnel push --otel                            # also the observability UI
 devstack tunnel pull <host>
 devstack tunnel status                                 # what is forwarded right now
@@ -369,16 +462,16 @@ devstack tunnel restart [--mode push|pull]
 
 `--service` takes exact names, the names that `tunnel status --planned` prints. It matches no partial name. Repeat the flag, or give a comma-separated list. devstack forwards only the ports that serve traffic. With `--otel`, the remote host reads the traces of this machine at the address that you use locally.
 
-`--stacks` and `--as-base` do different jobs, and you cannot combine them. `--stacks` gives every stack its own port on the far end. `--as-base <name>` puts one stack on the ports where base lives. The far end then reaches that stack at the address that it already knows, and you configure nothing on the far end:
+With no stack flag, devstack forwards the ports of the shared set. `--stacks` and `--as-declared-ports` do different jobs, and you cannot combine them. `--stacks` gives every stack its own port on the far end. `--as-declared-ports <name>` puts one stack on the ports that its service manifests declare. The far end then reaches that stack at the address that it already knows, and you configure nothing on the far end. `--as-base` is a deprecated old name of `--as-declared-ports`:
 
 ```
-devstack tunnel push my-box.ts.net --as-base agent
+devstack tunnel push my-box.ts.net --as-declared-ports agent
 # far end :4200 → here :20006, far end :63290 → here :20005
 ```
 
 `stop` and `status` read the forwards that really run, and not what discovery covers now. So devstack still reports and still stops a port whose service went away. devstack does the same for the observability UI, which was never a Tilt resource.
 
-`restart` repeats the last push or pull: the same direction, the same services and the same stack mapping. It says what it repeats. If devstack saved no push or pull, `restart` rebuilds from the defaults. Base returns to the ports that a mapped stack was serving, and a push runs on the machine that you ran `pull` from. Any flag that you pass overrides the saved one.
+`restart` repeats the last push or pull: the same direction, the same services and the same stack mapping. It says what it repeats. If devstack saved no push or pull, `restart` rebuilds from the defaults. A stack that was on its declared ports then drops off them, and a push runs on the machine that you ran `pull` from. Any flag that you pass overrides the saved one.
 
 CAUTION: `--reclaim` kills what already holds those ports on the far host. What it kills can belong to a colleague, or to another stack. `--reclaim` touches only the ports that devstack forwards, so `--service` narrows the blast radius. Before you pass it, run `devstack tunnel check <host>` to see who holds those ports.
 
@@ -387,7 +480,7 @@ CAUTION: `--reclaim` kills what already holds those ports on the far host. What 
 A service of this machine often answers on the tailnet too. The request crosses three hops: the tailnet address, then the local proxy, then the service. devstack reads the map of every hop, joins them, and prints the address at the front of the chain. Give that address to a person, or open it on your phone.
 
 ```bash
-devstack urls                     # the addresses of this workspace
+devstack urls                     # the shared set and every stack of this workspace
 devstack urls --stack orbit       # one feature stack
 devstack urls --all               # every service, published or not
 devstack urls --json              # the same list, for a script or an agent
@@ -496,14 +589,28 @@ rows = [
 `devstack serve` is the MCP server. `.mcp.json` starts it over stdio. You do not run it yourself.
 
 ```
-environment  status  urls    topology  start  stop  restart  process_logs
-service_env  configure         observability  investigate  tunnel  hooks  base
-migrate      stack_create      stack_add   stack_remove  stack_up
-stack_down   stack_list  stack_rm  stack_note   stack_config
-env_use      env_which env_set
+environment   status        urls          topology      wiring
+start         stop          restart       process_logs  service_env
+configure     observability investigate   tunnel        hooks
+shared        doctor        cleanup       migrate       task_run
+stack_create  stack_add     stack_remove  stack_up      stack_down
+stack_list    stack_rm      stack_note    stack_config  stack_extend
+stack_resync  stack_adopt   env_use       env_which     env_set
 ```
 
-`base` reads the path of the replica with `action="path"`, and builds the replica and moves base to the default branch tip with `action="sync"`. `stack_add` adds services to a stack that already exists, and `stack_remove` takes them out. `migrate` lists the migrations of this machine with `action="list"`, and runs the pending ones with `action="run"`. A run writes and deletes files in the service repositories, so read the git diff it makes and commit it yourself.
+| Tool | What it does |
+|---|---|
+| `shared` | Reads the shared set with `action="status"` or `action="path"`. `action="sync"` moves the replica to the default branch tip, and restarts the shared services that moved. |
+| `stack_extend` | Pushes back the stop time of a stack, by 24 hours at most in one call. |
+| `stack_adopt` | Hands an agent's stack to the owner. It clears the owner, and keeps the stop time. |
+| `stack_resync` | Fast-forwards the worktrees of a stack to origin, and restarts what moved. |
+| `task_run` | Runs a task that a service declares under `tasks:`, in a stack's worktree of that service. It takes no command of its own. |
+| `doctor` | Finds what is broken in the workspace, and names the fix for each problem. It changes nothing. |
+| `cleanup` | Removes orphaned port allocations, worktrees and stack records. `dry_run` defaults to true. |
+| `urls` | Reports the tailnet address of each service. |
+| `wiring` | Shows how each service reaches the services it talks to: the env key, the resolved value, and the `needs` or `calls` edge. |
+
+`stack_add` adds services to a stack that already exists, and `stack_remove` takes them out. `migrate` lists the migrations of this machine with `action="list"`, and runs the pending ones with `action="run"`. A run writes and deletes files in the service repositories, so read the git diff it makes and commit it yourself.
 
 The set of tools adapts to the workspace. `investigate` appears only when observability is on. `tunnel` appears only when the machine has an ssh client. Call `environment` first. It reports the observability state of the workspace, the stacks in flight, and the tools that exist here.
 
@@ -513,7 +620,7 @@ The set of tools adapts to the workspace. `investigate` appears only when observ
 - Give it `attribute` and `value`, and it finds every root span with that value, for example `portfolio.id=57835`. It then expands each trace.
 - Give it neither, and it returns the most recent executions.
 
-The `stack` parameter scopes the search. An absent `stack` searches base. A name searches that stack. `"all"` searches every copy. When OTEL logs are not available, `investigate` reads the process logs of the dev daemon instead. `investigate` matches root spans only, so each result is a separate entry point of a trace, whichever service owns the root.
+The `stack` parameter scopes the search. An absent `stack`, or `"all"`, searches every stack and the shared set. A name searches that stack alone. When OTEL logs are not available, `investigate` reads the process logs of the dev daemon instead. `investigate` matches root spans only, so each result is a separate entry point of a trace, whichever service owns the root.
 
 `service_env` resolves and edits the environment of a service:
 
@@ -525,7 +632,7 @@ The `stack` parameter scopes the search. An absent `stack` searches base. A name
 | `check` | Audit for placeholders and missing keys |
 | `drift` | Compare what devstack resolves with what the repository says it needs |
 
-Some commands have no tool and need a shell. They are: `upgrade`, `init`, `prime`, `serve`, `panel`, `ports`, `dependencies`, `group add`, `group remove`, `group list`, `env list`, `env show`, `env remove`, `otel start`, `otel stop`, `otel open`, `otel plugins`, and every `workspace` command but `topology`.
+Some commands have no tool and need a shell. They are: `upgrade`, `init`, `prime`, `serve`, `panel`, `ports`, `dependencies`, `group add`, `group remove`, `group list`, `env list`, `env show`, `env remove`, `otel start`, `otel stop`, `otel open`, `otel plugins`, `stack sweep`, `herdr publish`, `herdr open`, and every `workspace` command but `topology`.
 
 The remaining otel commands have a tool. `investigate` covers `otel traces` and `otel logs`. The `observability` tool covers `otel status` with `action="status"`, `otel services` with `action="variants"`, and `otel config` with the three `config_*` actions.
 
@@ -544,17 +651,19 @@ The binary generates the briefing, so `go install` updates every workspace at on
 ## WHERE YOU ARE
 workspace navexa · service navexa-api · stack nvxa-1422
   purpose NVXA-1422 wrong Holdings.Name: arbitrary Companies match at import
-  Your changes here go on the branch of this stack, not on base.
+  Your changes here go on the branch of this stack.
 
 ## THIS SERVICE — navexa-api
-runs as 5 copies:
-    base         :63290   running   branch (detached at master)
-      /home/nick/dev/.devstack-base/navexa/navexa-api
+runs as 2 copies:
+    agent-fx     :20006   stopped   branch agent/fx-rates
+      /home/nick/dev/.devstack-stacks/agent-fx/navexa-api
   ▸ nvxa-1422    :20012   running   branch nick/nvxa-1422-wrong-company-name…
       /home/nick/dev/.devstack-stacks/nvxa-1422/navexa-api
   The marker ▸ shows the copy that you are in now: nvxa-1422.
-  The directory under each copy is the directory that copy RUNS. base runs the replica, not your checkout.
+  The directory under each copy is the directory that copy RUNS.
 ```
+
+The sample is a short form. The briefing also names the shared set, the stop time of each stack, and how to extend it.
 
 `prime` also names the stack that a session is probably for. That is a different question from where you are. Where you are comes from the filesystem, and `prime` marks it `▸`. What you are here for is a guess, and `prime` marks it `?`.
 
@@ -580,7 +689,7 @@ devstack once wrote a block of instructions into `AGENTS.md`, and a shorter bloc
 devstack migrate
 ```
 
-That file work is the migration that `devstack migrate` runs today. The command runs every pending migration. Building the replica that base runs from is not a migration: `devstack upgrade` builds it, and so does `devstack workspace up`. To read what is pending without changing anything, run `devstack migrate --list`. An agent does the same with the `migrate` tool: `action="list"` to read, `action="run"` to apply.
+That file work is the migration that `devstack migrate` runs today. The command runs every pending migration. Building the replica that the shared set runs from is not a migration: `devstack upgrade` builds it, and so does `devstack workspace up`. To read what is pending without changing anything, run `devstack migrate --list`. An agent does the same with the `migrate` tool: `action="list"` to read, `action="run"` to apply.
 
 A migration runs one time in each workspace, and then it is done forever. `devstack upgrade` runs the pending ones for you. Run `devstack migrate` yourself when you clone a repository that still holds a block an older devstack committed, because nothing else finds that block.
 
@@ -589,6 +698,24 @@ A migration does not watch this machine. To find a repository devstack is not co
 devstack removes only what devstack wrote. Your own text stays, byte for byte. Where devstack can not find the end of its own block, it changes nothing and it names the file for you. Run the command again at any time: a second run changes nothing.
 
 devstack does not own these repositories, so read the diff in each one before you commit it.
+
+### Moving a workspace to the shared set
+
+`devstack migrate shared-stacks` converts one workspace to the shared set and small stacks. Without `--apply`, it prints what it would change, and it changes nothing.
+
+```bash
+devstack migrate shared-stacks                                   # dry run
+devstack migrate shared-stacks --apply --shared navexa-sql,azurite
+devstack migrate shared-stacks --apply --needs navexa-api=navexa-sql
+```
+
+- **shared.** If the manifest has no `shared:` list, devstack proposes one: each service that starts a container, and each store. devstack writes the list only from `--shared`.
+- **edges.** devstack moves the workspace maps `dependencies:`, `startsAfter:` and `calls:` onto each service, as `calls` in its `devstack.service.yaml`. It then removes the maps. `--needs svc=dep` makes that edge a `needs` edge.
+- **groups.** devstack removes the shared services from each group.
+- **stacks.** devstack removes the shared services from the members of each stack, and releases their ports. It removes no worktree, record or branch.
+- **refs.** devstack names each `${svc.*}` reference to a stack service. It changes nothing for these.
+
+Before it writes, devstack copies `stacks.json` and each file it edits to `<data dir>/migrate-backup-<time>/`, and prints that path. A second run changes nothing.
 
 ## Per-repo setup
 
@@ -647,7 +774,7 @@ Tiltfile
 
 A service manifest is machine-local and gitignored, so the worktree of a stack does not inherit one. For that reason `devstack stack create` copies the ignored configuration into each worktree. It copies every `devstack.*.yaml` beside the service. A directory that declares several services then keeps all of its manifests. git carries none of these files there. `devstack workspace up` copies the same files into each replica worktree.
 
-`devstack stack create` never copies `devstack.workspace.yaml`. A worktree runs from the generated manifest of its stack, and a copied template manifest points the stack back at base.
+`devstack stack create` never copies `devstack.workspace.yaml`. A worktree runs from the generated manifest of its stack, not from the template manifest.
 
 ### Secrets and `devstack env set`
 

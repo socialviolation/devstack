@@ -14,7 +14,7 @@ After plan steps 1–8, run `/tool-surface-review` over the repo.
 - `base` tool (`tools_base.go`) → `shared`.
 - Tools that name base: `environment`, `stack_create`, `stack_list`,
   `stack_up`, `stack_down`, `stack_config`, `start`, `restart`, `stop`,
-  `status`, `process_logs`, `configure`, `tunnel` (`as_base`),
+  `status`, `process_logs`, `configure`, `tunnel` (`as_base`, now `as_declared_ports`),
   `investigate` (`StackScopeDesc` in `internal/observability/backend.go`),
   `doctor`, `cleanup`, `urls`, `wiring`, `hooks`, `env_use`, `env_which`,
   `env_set`, `service_env`, `task_run`, `observability`.

@@ -12,7 +12,8 @@ Your services live in many repositories. To run one, you first run the ones that
 
 devstack holds the map. Then it gives you three things:
 
-- **Two features at one time.** A [feature stack](REFERENCE.md#feature-stacks) runs its own copy of the services that you change, from a git worktree, on its own ports. Everything else resolves to base. Neither feature blocks the other.
+- **Two features at one time.** A [feature stack](REFERENCE.md#feature-stacks) runs the services that a feature needs, from git worktrees, on its own ports. Databases and stores run once, as the [shared set](REFERENCE.md#the-shared-set-and-the-replica). Neither feature blocks the other.
+- **A stack that stops by itself.** Each stack stops 24 hours after you create it or bring it up. devstack keeps its worktrees, so `stack up` starts it again.
 - **A stack that cleans up after itself.** A [hook](REFERENCE.md#hooks) provisions the state that a stack needs beyond this machine, and removes that state when the stack goes.
 - **The failure, and not a guess.** Every copy reports to [one backend](REFERENCE.md#observability), stamped with its workspace, service, stack and environment.
 
@@ -41,7 +42,7 @@ devstack configures itself. Give this section to a coding agent, or do the steps
 
 ```bash
 devstack --help            # set up this machine, work on a feature, point it somewhere
-devstack help more         # otel, tunnel, ports, hooks, dependencies, base
+devstack help more         # otel, tunnel, ports, hooks, dependencies, shared
 devstack <command> --help
 ```
 
@@ -51,7 +52,7 @@ devstack <command> --help
 devstack workspace add ~/dev/my-workspace
 ```
 
-devstack writes `devstack.workspace.yaml`, registers the directory on this machine, and builds the [replica](REFERENCE.md#base-and-the-replica) that base runs. This command starts nothing.
+devstack writes `devstack.workspace.yaml`, registers the directory on this machine, and builds the [replica](REFERENCE.md#the-shared-set-and-the-replica) that the shared set runs from. This command starts nothing.
 
 **3. Generate a service file. Run this once for each service.**
 
@@ -64,7 +65,9 @@ devstack writes the manifest `devstack.service.yaml` in the directory of the ser
 **4. Start it.**
 
 ```bash
-devstack workspace up      # start the dev daemon (and the collector, if enabled)
+devstack workspace up      # start the dev daemon and the shared set (and the collector, if enabled)
+devstack stack create feat-x --repos api   # a stack that runs api and what api needs
+devstack stack up feat-x
 devstack status            # what runs, on which port, pointing where
 ```
 
@@ -104,13 +107,14 @@ The flags are in [Updating devstack](REFERENCE.md#updating-devstack).
 | Workspace | A directory with a `devstack.workspace.yaml` manifest. It groups one or more services. |
 | Service | A process that a service manifest defines: an API, a worker, an importer. The manifest is `devstack.service.yaml`, or `devstack.<name>.yaml` for each service after the first one in that directory. |
 | Group | A named set of services that you start and stop together. |
-| Host daemon | One Tilt daemon (`:10300`) for the whole machine. The services of every workspace run inside it, and so does the overlay of every stack that is up. Each one runs as `<workspace>:<service>[:<stack>]`. There is no daemon for each workspace. |
+| Host daemon | One Tilt daemon (`:10300`) for the whole machine. The shared set of every workspace runs inside it, and so does every stack that is up. Each service runs as `<workspace>:<service>` when it is shared, and as `<workspace>:<service>:<stack>` in a stack. There is no daemon for each workspace. |
 | Template | Your own checkout of a service. It holds the git objects, the workspace manifest and the machine-local gitignored configuration. It runs nothing. |
-| Replica | One git worktree for each service, under `<parent>/.devstack-base/<workspace>/<service>`. devstack builds the replica from the template. Each worktree is detached at the default branch tip of its repository. |
-| Base | The workspace that runs with no stack. Base runs from the replica, and never from your checkout. Spell it literally as `base` where a command takes a stack name. |
-| Copy | One running process of a service. Base runs one copy of a service. Each stack that overlays that service runs another copy. |
-| Overlay | The set of services that a stack runs its own copies of. Every other service resolves to the copy of base. |
-| Feature stack | A parallel version of one or more services. devstack runs it from a git worktree on a feature branch, on its own port, beside base. It reuses base for everything that it does not change. |
+| Shared service | A service in the `shared:` list of the workspace manifest. It runs once for the workspace, and never in a stack. Every stack uses it. Databases and stores are shared. |
+| Shared set | All the shared services of one workspace. `workspace up` starts it. It runs from the replica, at the latest default branch, and devstack refreshes it every hour. |
+| Replica | One git worktree for each repository that holds a shared service, under `<parent>/.devstack-base/<workspace>/`. devstack builds the replica from the template. Each worktree is detached at the default branch tip of its repository. |
+| Feature stack | The services that one feature needs, in git worktrees, on their own ports. Its members are the services that you name, and every service that they `need`. A service that a member only `calls` does not come in. Every service that is not shared runs only in a stack. |
+| Copy | One running process of a service. A shared service has one copy. Each stack that has a service as a member runs its own copy. |
+| Stop time | The time when devstack stops a stack. It is 24 hours after `stack create` or `stack up`. `stack_extend` pushes it back. devstack keeps the worktrees, and never removes the stack. |
 | Environment | A named set of configuration values (`environments:` in the workspace manifest). devstack applies it at workspace scope, service scope or stack scope. It sets where a service points. |
 | Hook | A shell command that devstack runs on a lifecycle event, for example a stack created or a service started. A disposable stack uses hooks to provision and de-provision the state that it needs outside this machine. |
 

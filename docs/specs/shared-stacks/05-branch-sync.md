@@ -47,8 +47,9 @@ No change. A stack cut from a pushed branch tracks it.
 
 - Resync runs no migrations, as today.
 - With shared databases, a pushed migration that one stack applies changes
-  data for every stack. Resync output names `migrate` and this risk when
-  the moved commits touch a migrations directory. (Detection rule: open.)
+  data for every stack. Resync output names `task_run` and this risk when
+  the moved commits touch a migrations directory. Detection: the per-service `migrations:`
+  path in `devstack.service.yaml`.
 
 ### Agents and handoff
 
@@ -60,5 +61,5 @@ No change. A stack cut from a pushed branch tracks it.
 
 ## Open questions
 
-- How does resync know the moved commits touch migrations? A per-service
-  `migrations:` path in the service definition is one option.
+- Resolved: resync reads the per-service `migrations:` path in the
+  service definition.
