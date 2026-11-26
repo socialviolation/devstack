@@ -41,7 +41,7 @@ type Source struct {
 
 // Event is one lifecycle trigger and the context its hooks resolve against.
 // Services is the event's service set: the overlay for a stack event, the
-// started services for service.start, every service for workspace.up.
+// started services for service.start, the shared set for workspace.up.
 type Event struct {
 	Name          string
 	WorkspaceName string
