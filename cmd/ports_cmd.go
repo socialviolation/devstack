@@ -30,8 +30,8 @@ behind, and that is the mess this command prevents.
 
 A generated Tiltfile calls this command for a service that sets
 runtime.prep.freePorts. It passes that copy's OWN resolved ports. A stack frees
-the ports it was allocated. Base frees the ports it pins. Neither can reach the
-other's ports.
+the ports it was allocated. A shared service frees the ports it pins. Neither
+can reach the other's ports.
 
 Run by hand, this command does what you ask. So find what holds a port first:
 

@@ -38,8 +38,8 @@ directories and git worktrees under the stacks root with no stack, git worktree
 entries whose directory is gone, and the records of stacks whose directory is
 gone.
 
-cleanup never touches base, a stack whose directory exists, or a stack that is
-up. It keeps a worktree that holds uncommitted work, and says so. It ignores
+cleanup never touches the replica, a stack whose directory exists, or a stack
+that is up. It keeps a worktree that holds uncommitted work, and says so. It ignores
 anything younger than 10 minutes, because a stack that is being created looks
 like an orphan.
 

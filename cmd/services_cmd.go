@@ -37,7 +37,7 @@ open when one of its services is erroring, starting or building. Pass --all to
 list every group and stack, and to show the directory that each copy runs from.
 
 That directory, and the BRANCH beside it, are the code that the process runs:
-the replica worktree for base, and the stack's own worktree for a stack. It is
+the replica worktree for a shared service, and the stack's own worktree for a stack. It is
 never your checkout. If you do not expect that branch there, the copy does not
 contain the work that you look for.
 

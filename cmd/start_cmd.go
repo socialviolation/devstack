@@ -41,7 +41,7 @@ runs there. To read the directory that each copy runs from, run
 
 One daemon serves the whole machine. It runs the services of every workspace. It
 watches the files of the directory that each copy runs from: the replica for
-base, and its own worktree for a stack. When that code changes, the daemon
+a shared service, and its own worktree for a stack. When that code changes, the daemon
 reloads the copy. 'devstack service start' starts the daemon on demand, so you
 rarely need this command first.
 

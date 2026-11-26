@@ -102,7 +102,7 @@ func Add(in AddInput) (*AddResult, error) {
 		promote = append(promote, s)
 	}
 	if len(changed) == 0 && len(promote) == 0 {
-		return nil, fmt.Errorf("stack %q already overlays %s on branch %s, so there is nothing to add\nto see what it runs, run: devstack stack list", rec.Name, strings.Join(already, ", "), rec.Branch)
+		return nil, fmt.Errorf("stack %q already runs %s on branch %s, so there is nothing to add\nto see what it runs, run: devstack stack list", rec.Name, strings.Join(already, ", "), rec.Branch)
 	}
 
 	var adding []string
