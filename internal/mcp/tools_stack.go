@@ -544,7 +544,7 @@ func registerStackNoteTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_rm",
 		mcp.WithDescription("Tear down a feature stack of THIS workspace. devstack removes its worktrees, releases its ports, deletes its record, and deletes its stack root. "+
-			"There is no daemon of its own to stop. If the stack is up, call stack_down first, so the host daemon drops its services. "+
+			"If the stack is up, devstack first takes its services out of the host daemon. It does not fire stack.down hooks. "+
 			"It refuses a worktree that has uncommitted changes, until you set force. "+
 			"devstack keeps the branch of the stack, and somebody must decide what happens to it. Before you call this tool, ask the user: merge the branch of this stack, or discard it? NEVER merge it without an answer. After a merge, delete the branch with `git branch -d <branch>`. "+
 			"This workspace can declare lifecycle HOOKS that de-provision external state on stack.destroy. They fire before devstack removes anything, while the ports and the record can still be read. "+
@@ -578,13 +578,32 @@ func removeStack(ws *workspace.Workspace, name string, force bool) *mcp.CallTool
 		return mcp.NewToolResultError(err.Error())
 	}
 
+	rec, err := stack.Resolve(ws.Name, name)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error())
+	}
+
 	var hookOut strings.Builder
 	hookErr := hooks.Fire(ws, name, config.EventStackDestroy, nil, &hookOut)
+
+	det, err := hostdaemon.DetachStack(ws.Name, rec.Name)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error())
+	}
 
 	res, err := stack.Remove(ws, name, force)
 
 	var sb strings.Builder
 	appendHookOutput(&sb, config.EventStackDestroy, hookOut.String(), hookErr)
+	for _, w := range det.Warnings {
+		fmt.Fprintf(&sb, "WARNING: %s\n", w)
+	}
+	if det.RegenErr != nil {
+		fmt.Fprintf(&sb, "warning: failed to regenerate host Tiltfile: %v\n", det.RegenErr)
+	}
+	if note := hostdaemon.KeptNote(det.Kept); note != "" {
+		fmt.Fprintf(&sb, "%s\n", note)
+	}
 	if res != nil {
 		fmt.Fprintf(&sb, "Removing stack %q (workspace %s)\n", res.Name, res.BaseName)
 		for _, p := range res.RemovedWorktrees {

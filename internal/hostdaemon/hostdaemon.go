@@ -41,6 +41,25 @@ func RegenerateScope(scope Scope) (string, []string, []string, error) {
 	return res.Path, res.Warnings, res.Kept, err
 }
 
+// Detach is what DetachStack did to the host Tiltfile. RegenErr is set when devstack marked the stack inactive but could not write the host Tiltfile again.
+type Detach struct {
+	Warnings []string
+	Kept     []string
+	RegenErr error
+}
+
+// DetachStack marks a stack inactive. If the host daemon is up, it writes the host Tiltfile again, so the daemon drops the stack's resources.
+func DetachStack(wsName, stackName string) (Detach, error) {
+	if err := stack.SetActive(wsName, stackName, false); err != nil {
+		return Detach{}, err
+	}
+	if !TiltReachable(fmt.Sprintf("http://localhost:%d/api/view", workspace.HostTiltPort)) {
+		return Detach{}, nil
+	}
+	_, warnings, kept, err := RegenerateScope(ScopeStack(wsName, stackName))
+	return Detach{Warnings: warnings, Kept: kept, RegenErr: err}, nil
+}
+
 // KeptNote tells the reader which resources devstack held at the definition on disk. It is empty when devstack held none.
 func KeptNote(kept []string) string {
 	if len(kept) == 0 {

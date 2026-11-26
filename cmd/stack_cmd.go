@@ -622,17 +622,18 @@ func runStackRemove(cmd *cobra.Command, args []string) error {
 	// still readable, so a teardown hook can de-provision what create provisioned.
 	fireTeardownHooks(base, args[0], config.EventStackDestroy, nil)
 
-	if err := stack.SetActive(base.Name, args[0], false); err != nil {
+	det, err := hostdaemon.DetachStack(base.Name, rec.Name)
+	if err != nil {
 		return err
 	}
-	if isTiltReachable(fmt.Sprintf("http://localhost:%d/api/view", workspace.HostTiltPort)) {
-		_, kept, gerr := regenerateHostTiltfileScope(hostdaemon.ScopeStack(base.Name, rec.Name))
-		if gerr != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to regenerate host Tiltfile: %v\n", gerr)
-		}
-		if note := hostdaemon.KeptNote(kept); note != "" {
-			fmt.Println(note)
-		}
+	for _, w := range det.Warnings {
+		fmt.Fprintf(os.Stderr, "WARNING: %s\n", w)
+	}
+	if det.RegenErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to regenerate host Tiltfile: %v\n", det.RegenErr)
+	}
+	if note := hostdaemon.KeptNote(det.Kept); note != "" {
+		fmt.Println(note)
 	}
 
 	res, err := stack.Remove(base, args[0], force)
