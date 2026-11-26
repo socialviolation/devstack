@@ -1,7 +1,5 @@
 <p align="center"><img src="docs/logo.png" alt="devstack" width="480"></p>
 
-<img width="1672" height="941" alt="ChatGPT Image Jul 22, 2026, 03_59_46 PM" src="https://github.com/user-attachments/assets/7b9c8b3e-5f8f-4298-9870-60073ee4f2db" />
-
 Devstack runs the local services of your team in dependency order, across every repository.
 
 Devstack is optimised for coding agents, not for people. An agent drives the whole lifecycle of a local dev environment over [MCP](https://modelcontextprotocol.io). It builds the environment, starts a service, reads the logs of that service, and reads the trace that shows the failure. You paste no output. The CLI does the same job, when you want it.
