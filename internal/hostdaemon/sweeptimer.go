@@ -24,6 +24,7 @@ func sweepUnits(bin string) map[string]string {
 			"Description=devstack stops the stacks that are past their stop time\n\n" +
 			"[Service]\n" +
 			"Type=oneshot\n" +
+			"Environment=PATH=" + os.Getenv("PATH") + "\n" +
 			"ExecStart=" + bin + " tick\n",
 		SweepUnit + ".timer": "[Unit]\n" +
 			"Description=Run devstack tick every 10 minutes\n\n" +

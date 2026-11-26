@@ -133,3 +133,35 @@ func TestStopAfterReadsTheLegacyTTLWithAWarning(t *testing.T) {
 		})
 	}
 }
+
+func TestTheTimerIsNotInstalledForATemporaryBuild(t *testing.T) {
+	for _, c := range []struct{ name, dir string }{
+		{"temp dir", "bin"},
+		{"go run build", "go-build123/b001/exe"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			bin := filepath.Join(t.TempDir(), c.dir, "devstack")
+			if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(bin, nil, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if c.dir != "bin" {
+				t.Setenv("TMPDIR", "/elsewhere")
+			}
+			cfg := t.TempDir()
+			t.Setenv("XDG_CONFIG_HOME", cfg)
+			t.Setenv("PATH", t.TempDir())
+			prevHost, prevExe := systemdHost, executable
+			systemdHost = func() bool { return true }
+			executable = func() (string, error) { return bin, nil }
+			t.Cleanup(func() { systemdHost, executable = prevHost, prevExe })
+
+			installSweepTimer()
+			if _, err := os.Stat(filepath.Join(cfg, "systemd", "user", "devstack-sweep.service")); err == nil {
+				t.Errorf("devstack wrote the timer units for the binary %s", bin)
+			}
+		})
+	}
+}

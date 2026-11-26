@@ -23,6 +23,7 @@ func fakeSystemctl(t *testing.T) *[]string {
 func TestInstallSweepTimerWritesBothUnitsOnce(t *testing.T) {
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
+	t.Setenv("PATH", "/home/u/.local/bin:/usr/bin")
 	calls := fakeSystemctl(t)
 
 	installed, err := InstallSweepTimer("/opt/bin/devstack")
@@ -34,7 +35,7 @@ func TestInstallSweepTimerWritesBothUnitsOnce(t *testing.T) {
 	}
 	dir := filepath.Join(cfg, "systemd", "user")
 	service, err := os.ReadFile(filepath.Join(dir, "devstack-sweep.service"))
-	if err != nil || !strings.Contains(string(service), "ExecStart=/opt/bin/devstack tick\n") {
+	if err != nil || !strings.Contains(string(service), "ExecStart=/opt/bin/devstack tick\n") || !strings.Contains(string(service), "Environment=PATH=/home/u/.local/bin:/usr/bin\n") {
 		t.Errorf("service unit = %q, %v", service, err)
 	}
 	timer, err := os.ReadFile(filepath.Join(dir, "devstack-sweep.timer"))

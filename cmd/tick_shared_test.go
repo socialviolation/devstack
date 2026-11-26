@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"io"
 	"os"
 	"reflect"
@@ -62,4 +63,28 @@ func TestTickRunsTheSharedSync(t *testing.T) {
 
 func funcName(f func() error) string {
 	return runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name()
+}
+
+func TestTickRetriesAFailedSharedSyncOnTheNextTick(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	n := 0
+	prev := syncAllShared
+	syncAllShared = func(io.Writer) error {
+		n++
+		if n == 1 {
+			return errors.New("git fetch failed")
+		}
+		return nil
+	}
+	t.Cleanup(func() { syncAllShared = prev })
+
+	if err := tickSharedSync(); err == nil {
+		t.Fatal("a failed sync returned no error")
+	}
+	if err := tickSharedSync(); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("the tick after a failed sync synced %d times in total, want 2", n)
+	}
 }

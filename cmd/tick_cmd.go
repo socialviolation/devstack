@@ -61,6 +61,7 @@ const directSweepEvery = 10 * time.Minute
 
 var (
 	systemdHost = hostdaemon.SystemdUserSession
+	executable  = os.Executable
 	directSweep = func() {
 		var out bytes.Buffer
 		n, err := nvxmcp.Sweep(false, &out)
@@ -98,10 +99,15 @@ func sharedSyncStampPath() string {
 }
 
 func tickSharedSync() error {
-	if !stampDue(sharedSyncStampPath(), time.Now(), sharedSyncEvery) {
+	now := time.Now()
+	if stampFresh(sharedSyncStampPath(), now, sharedSyncEvery) {
 		return nil
 	}
-	return syncAllShared(os.Stdout)
+	if err := syncAllShared(os.Stdout); err != nil {
+		return err
+	}
+	writeStamp(sharedSyncStampPath(), now)
+	return nil
 }
 
 var syncAllShared = func(w io.Writer) error {
@@ -119,11 +125,19 @@ var syncAllShared = func(w io.Writer) error {
 }
 
 func stampDue(path string, now time.Time, every time.Duration) bool {
-	if data, err := os.ReadFile(path); err == nil {
-		if last, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data))); err == nil && now.Sub(last) < every && !now.Before(last) {
-			return false
-		}
+	return !stampFresh(path, now, every) && writeStamp(path, now)
+}
+
+func stampFresh(path string, now time.Time, every time.Duration) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
 	}
+	last, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data)))
+	return err == nil && now.Sub(last) < every && !now.Before(last)
+}
+
+func writeStamp(path string, now time.Time) bool {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return false
 	}
@@ -134,12 +148,16 @@ func installSweepTimer() {
 	if !systemdHost() {
 		return
 	}
-	bin, err := os.Executable()
+	bin, err := executable()
 	if err == nil {
 		bin, err = filepath.EvalSymlinks(bin)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: devstack can not find its own binary, so it does not install the %s timer: %v\n", hostdaemon.SweepUnit, err)
+		return
+	}
+	if strings.HasPrefix(bin, os.TempDir()+string(filepath.Separator)) || strings.Contains(bin, "/go-build") {
+		fmt.Fprintf(os.Stderr, "Warning: devstack runs from the temporary build %s, so it does not install the %s timer. Install devstack, then run this command again.\n", bin, hostdaemon.SweepUnit)
 		return
 	}
 	installed, err := hostdaemon.InstallSweepTimer(bin)
