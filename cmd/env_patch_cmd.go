@@ -23,8 +23,8 @@ import (
 var envSetCmd = &cobra.Command{
 	Use:   "set <name> KEY=VALUE [KEY=VALUE ...]",
 	Short: "Set configuration values in a named environment",
-	Long: `Set configuration values in one of the base workspace's named environments.
-devstack defines every environment once, in the base workspace manifest. Feature
+	Long: `Set configuration values in one of the workspace's named environments.
+devstack defines every environment once, in the workspace manifest. Feature
 stacks inherit them.
 
 CAUTION: do not put a secret here. This command writes the value into
@@ -55,7 +55,7 @@ var envUseCmd = &cobra.Command{
 var envShowCmd = &cobra.Command{
 	Use:   "show <name>",
 	Short: "Show the configuration values of a named environment",
-	Long:  "Show the configuration values of one base workspace environment.\ndevstack defines every environment once, in the base workspace manifest.\ndevstack redacts a credential in place. A connection string still shows its server and its database.\nWARNING: --reveal prints every credential in the clear. devstack redacts values when it shows them, and never at rest.",
+	Long:  "Show the configuration values of one workspace environment.\ndevstack defines every environment once, in the workspace manifest.\ndevstack redacts a credential in place. A connection string still shows its server and its database.\nWARNING: --reveal prints every credential in the clear. devstack redacts values when it shows them, and never at rest.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runEnvShow,
 }
@@ -63,7 +63,7 @@ var envShowCmd = &cobra.Command{
 var envWhichCmd = &cobra.Command{
 	Use:   "which",
 	Short: "Show the environment a service resolves to, and where each value came from",
-	Long:  "Show which base environment a service resolves to at each scope. The three scopes are the workspace, the service and the stack.\nThen show the full resolved environment that the process receives. Each key carries the ladder rung it came from: .envrc, env.files, manifest env.values, active env, or devstack-computed.\ndevstack redacts a credential in place. A connection string still shows its server and its database.\nWARNING: --reveal prints every credential in the clear. devstack redacts values when it shows them, and never at rest.",
+	Long:  "Show which named environment a service resolves to at each scope. The three scopes are the workspace, the service and the stack.\nThen show the full resolved environment that the process receives. Each key carries the ladder rung it came from: .envrc, env.files, manifest env.values, active env, or devstack-computed.\ndevstack redacts a credential in place. A connection string still shows its server and its database.\nWARNING: --reveal prints every credential in the clear. devstack redacts values when it shows them, and never at rest.",
 	Args:  cobra.NoArgs,
 	RunE:  runEnvWhich,
 }
@@ -76,7 +76,7 @@ func init() {
 	envUseCmd.Flags().Bool("workspace-default", false, "Point the workspace default at the environment. Every stack and every engineer shares it")
 
 	envWhichCmd.Flags().String("service", "", "Service to resolve. Default: the service of the current directory")
-	envWhichCmd.Flags().String("stack", "", "Stack whose environment to include")
+	envWhichCmd.Flags().String("stack", "", "Stack whose environment to include. Default: no stack")
 	envWhichCmd.Flags().Bool("shadowed", false, "Also show the lower-rung values that each key overrode")
 
 	envShowCmd.Flags().Bool("reveal", false, "Print every value in full, in the clear. This includes the credentials")
@@ -102,7 +102,7 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 	if _, _, err := regenerateHostTiltfileScope(hostdaemon.ScopeWorkspace(ws.Name)); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: devstack can not regenerate the host configuration: %v\n", err)
 	} else {
-		fmt.Println("devstack regenerated the host configuration. To apply it, restart the service: devstack service restart <service> --stack base (or --stack <name> for a stack's copy)")
+		fmt.Println("devstack regenerated the host configuration. To apply it, restart the service: devstack service restart <service> --stack <name> (no --stack for a shared service)")
 	}
 	return nil
 }
@@ -239,7 +239,7 @@ func printStackScopeHint(rec *stack.Record, svcName string) {
 	if err != nil || here == nil {
 		return
 	}
-	color.New(color.Faint).Printf("\nThis report is for base. Your directory is in stack %q, whose environment is %s.\n  For that copy, run: devstack env which --service %s --stack %s\n",
+	color.New(color.Faint).Printf("\nThis report has no stack. Your directory is in stack %q, whose environment is %s.\n  For that stack, run: devstack env which --service %s --stack %s\n",
 		here.Name, orDash(here.Env), svcName, here.Name)
 }
 
@@ -302,7 +302,7 @@ func runEnvWhich(cmd *cobra.Command, args []string) error {
 	}
 
 	stackEnv := ""
-	scope := "base (no stack)"
+	scope := "no stack"
 	if rec != nil {
 		stackEnv = rec.Env
 		scope = "stack " + rec.FullName()
@@ -510,11 +510,9 @@ func printEnvRows(rows []envRow, shadowed bool) {
 	}
 }
 
-// unknownEnvError explains "base"/"default" — which users type because --stack
-// base is accepted elsewhere — rather than listing envs they did not ask for.
 func unknownEnvError(name, wsName string, m *config.WorkspaceManifest) error {
 	if name == "base" || name == "default" {
-		return fmt.Errorf("%q is not an environment name — it means \"no stack\", the copy of a service that no stack overlays.\nWorkspace %q defines these environments: %s\nTo see what a base service resolves to, run: devstack env which --service <svc>", name, wsName, envNames(m))
+		return fmt.Errorf("%q is not an environment name.\nWorkspace %q defines these environments: %s\nTo see what a service resolves to with no stack, run: devstack env which --service <svc>", name, wsName, envNames(m))
 	}
 	return fmt.Errorf("environment %q is not defined in workspace %q. Available: %s", name, wsName, envNames(m))
 }

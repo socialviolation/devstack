@@ -56,7 +56,7 @@ type AddResult struct {
 func Add(in AddInput) (*AddResult, error) {
 	base := in.Base
 	if base == nil {
-		return nil, fmt.Errorf("devstack can not resolve the base workspace")
+		return nil, fmt.Errorf("devstack can not resolve the workspace")
 	}
 	rec, err := FindStack(base.Name, in.Name)
 	if err != nil {
@@ -68,7 +68,7 @@ func Add(in AddInput) (*AddResult, error) {
 
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return nil, fmt.Errorf("can not resolve the base workspace: %w", err)
+		return nil, fmt.Errorf("can not resolve the workspace: %w", err)
 	}
 	topo, err := config.BuildTopology(base.Path)
 	if err != nil {
@@ -238,7 +238,7 @@ func Add(in AddInput) (*AddResult, error) {
 	}
 	sort.Slice(res.Worktrees, func(i, j int) bool { return res.Worktrees[i].Service < res.Worktrees[j].Service })
 	if len(leftBehind) > 0 {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack cut the worktrees from %s, not from the base checkout. This stack does not have the uncommitted work in the checkout. This stack does not have the commits that the checkout holds beyond that ref.",
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack cut the worktrees from %s, not from the checkout. This stack does not have the uncommitted work in the checkout. This stack does not have the commits that the checkout holds beyond that ref.",
 			strings.Join(leftBehind, ", ")))
 	}
 	res.Warnings = append(res.Warnings, OutsideWarnings(baseRW, overlay)...)

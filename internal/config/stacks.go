@@ -7,7 +7,7 @@ import (
 
 func GenerateStackManifest(base *ResolvedWorkspace, stackName string, overlay []string, pathFor func(string) string) (*WorkspaceManifest, error) {
 	if base == nil || base.Manifest == nil {
-		return nil, fmt.Errorf("devstack can not resolve the base workspace")
+		return nil, fmt.Errorf("devstack can not resolve the workspace")
 	}
 
 	inOverlay := map[string]bool{}
@@ -25,7 +25,7 @@ func GenerateStackManifest(base *ResolvedWorkspace, stackName string, overlay []
 	for _, name := range members {
 		path := pathFor(name)
 		if path == "" {
-			return nil, fmt.Errorf("the overlay service %q has no worktree path", name)
+			return nil, fmt.Errorf("the stack member %q has no worktree path", name)
 		}
 		repos = append(repos, path)
 	}

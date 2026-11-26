@@ -19,14 +19,14 @@ import (
 
 func registerStackConfigTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_config",
-		mcp.WithDescription("Show the configuration that one copy of a service runs with. "+baseTermDesc+
+		mcp.WithDescription("Show the configuration that one service runs with, in the shared set or in a stack. "+stackTermDesc+
 			"The tool prints two tables. The first is the effective service configuration, and it names the source of each value. The second is the environment ladder, which is what the process receives.\n"+
 			"A star marks a value that the stack overrides, and devstack computes that value. devstack shows a secret value as "+svcconfig.MaskedValue+".\n"+
-			"This tool reads files. It does not ask the daemon what runs. If the copy is down, the tool says so, and it prints the configuration that the copy would run with.\n"+
+			"This tool reads files. It does not ask the daemon what runs. If the service is down, the tool says so, and it prints the configuration that the service would run with.\n"+
 			"With no stack, the service must be shared. devstack reads it from the replica that the shared set runs from, and not your checkout. If devstack has built no replica, run 'devstack workspace up' first.\n"+
 			"This tool mirrors 'devstack stack config'."),
 		mcp.WithString("service", mcp.Required(),
-			mcp.Description("Exact service name, for example 'api-service'. The tool reads that service's copy. Other tools reject a partial match, and so does this one.")),
+			mcp.Description("Exact service name, for example 'api-service'. Other tools reject a partial match, and so does this one.")),
 		mcp.WithString("stack",
 			mcp.Description("Optional. The SHORT name of the stack to read. A service that is not shared runs only in a stack, so it needs this parameter. With no stack, the tool reads a shared service.")),
 		mcp.WithReadOnlyHintAnnotation(true),

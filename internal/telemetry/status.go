@@ -135,8 +135,8 @@ func evidenceFor(service string, variants []observability.ServiceVariant) []Vari
 		if v.Service != "" && v.Service != service {
 			e.Reported = v.Service
 		}
-		if e.Stack == "" {
-			e.Stack = "base"
+		if e.Stack == "" || e.Stack == "base" {
+			e.Stack = "base (shared set)"
 		}
 		out = append(out, e)
 	}
@@ -148,7 +148,7 @@ func evidenceFor(service string, variants []observability.ServiceVariant) []Vari
 // tell which instance is emitting rather than only whether any of them is.
 func (s ServiceStatus) Summary() string {
 	if len(s.Variants) == 0 {
-		return "no copy reported"
+		return "no service reported"
 	}
 	parts := make([]string, 0, len(s.Variants))
 	for _, v := range s.Variants {

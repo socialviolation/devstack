@@ -107,7 +107,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		}
 		view, err = tiltClient.GetView()
 		if err != nil {
-			return fmt.Errorf("the dev daemon started, but it does not answer yet. Try again: devstack service start %s --stack base\n(%w)", targetName, err)
+			return fmt.Errorf("the dev daemon started, but it does not answer yet. Try again: devstack service start %s\n(%w)", targetName, err)
 		}
 	}
 
@@ -123,7 +123,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 
 	here, inBase := splitByPresence(ws.Name, namespace, stackName, toTrigger, present)
 	for _, svc := range inBase {
-		fmt.Printf("  (the dependency %s runs in base, so devstack does not start it here)\n", svc)
+		fmt.Printf("  (the dependency %s is not a member of this stack, so devstack does not start it here)\n", svc)
 	}
 
 	for _, svc := range here {

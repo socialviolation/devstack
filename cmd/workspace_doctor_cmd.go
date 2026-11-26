@@ -103,11 +103,11 @@ func reportWorkspaceDrift(w io.Writer, wsPath string) int {
 	}
 	if !doctor.ReplicaBuilt(ws) {
 		found++
-		fmt.Fprintf(w, "\nreplica: devstack has built no replica for this workspace, so base runs from your checkout\n")
+		fmt.Fprintf(w, "\nreplica: devstack has built no replica for this workspace, so the shared set runs from your checkout\n")
 		fmt.Fprintf(w, "- [warn] %s\n", replica.Root(ws))
 		fmt.Fprintln(w, "  To build it and restart what runs, run: devstack workspace up")
-		fmt.Fprintln(w, "  To build it and restart nothing, run: devstack base sync")
-		fmt.Fprintln(w, "  To read what a replica is, and the other repairs it takes, run: devstack base --help")
+		fmt.Fprintln(w, "  To build it and restart the shared services that moved, run: devstack shared sync")
+		fmt.Fprintln(w, "  To read what a replica is, run: devstack shared --help")
 	} else {
 		found += reportReplicaDrift(w, ws)
 	}
@@ -120,12 +120,12 @@ func reportReplicaDrift(w io.Writer, ws *workspace.Workspace) int {
 		return 0
 	}
 
-	fmt.Fprintf(w, "\nreplica drift: the replica no longer matches this workspace, so base runs the wrong services\n")
+	fmt.Fprintf(w, "\nreplica drift: the replica no longer matches this workspace, so the shared set runs the wrong services\n")
 	for _, d := range drift {
 		fmt.Fprintf(w, "- [warn] %-24s %s\n", d.Name, d.Detail)
 	}
 	fmt.Fprintln(w, "  To build it again and restart what runs, run: devstack workspace up")
-	fmt.Fprintln(w, "  To build it again and restart nothing, run: devstack base sync")
+	fmt.Fprintln(w, "  To build it again and restart the shared services that moved, run: devstack shared sync")
 	return len(drift)
 }
 

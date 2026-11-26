@@ -34,7 +34,7 @@ func registerStackAdoptTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if ws == nil {
-			return mcp.NewToolResultError("no workspace resolved for stacks"), nil
+			return mcp.NewToolResultError("devstack resolved no workspace, so it can not manage stacks"), nil
 		}
 		name := strings.TrimSpace(request.GetString("name", ""))
 		if name == "" {

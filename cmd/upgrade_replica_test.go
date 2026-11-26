@@ -117,7 +117,7 @@ func TestDeprecationsNameTheReplacementForEveryChangedHabit(t *testing.T) {
 
 	for _, want := range []string{
 		"devstack workspace up",
-		"--stack base",
+		"--stack <name>",
 		"devstack service start|stop|restart",
 		"devstack env use",
 		"git pull",

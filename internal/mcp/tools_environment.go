@@ -22,10 +22,10 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 	tool := mcp.NewTool("environment",
 		mcp.WithDescription(
 			"Show the active workspace and the available tools. Call this tool first, to learn what you can do and can not do in this context. "+
-				baseTermDesc+
-				"A tool that acts on a service acts on one copy. The stack parameter names that copy: a stack's short name, or \"base\". The read-only tools default to base, and they ignore the working directory. On start, stop, restart and env_use, the working directory decides: a stack worktree selects that stack, and every other directory selects base. So a tool that starts, stops or restarts a service acts on base by default. If you mean a stack, name it. "+
+				stackTermDesc+
+				"A tool that acts on a service acts on the shared set or on one stack. The stack parameter names the stack by its short name. With no stack, a tool reaches only the shared services. A service that is not shared runs only in a stack, so name the stack. On start, stop and restart, the working directory can name the stack: a stack worktree selects that stack. "+
 				"A service manifest declares one service. One directory declares as many services as it runs. Where the directory holds one service, the file is devstack.service.yaml. Where it holds several, each file is devstack.<name>.yaml and names its service. Only 'devstack init' in a shell writes one. "+
-				"An 'env' here is a CONFIG-PATCH environment. That is a named set of config vars, for example 'staging'. env_use points a workspace, a service or a stack at one of them (CLI: devstack env use). status and env_which show which env each copy points at. "+
+				"An 'env' here is a CONFIG-PATCH environment. That is a named set of config vars, for example 'staging'. env_use points a workspace, a service or a stack at one of them (CLI: devstack env use). status and env_which show which env each service points at. "+
 				"devstack is a LOCAL development environment. Its data is local and ephemeral, and it is not production. "+
 				"The tools available depend on this workspace's configuration. The investigate tool appears only where this workspace has observability. The observability tool is always there, and it is the tool that enables observability. The tunnel tool appears only when this machine has an ssh client.",
 		),
@@ -54,9 +54,10 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		if line := stacksSummary(ws); line != "" {
 			sb.WriteString(line)
 		}
-		sb.WriteString("copies: base runs from a replica of the workspace, and never from the user's checkouts. Those checkouts are the template devstack builds the replica from, and nothing runs in them.\n" +
-			"  start, stop, restart and env_use take the copy from stack=\"<name>\" or stack=\"base\". With neither, devstack reads the copy from the working directory, and uses base where that directory is neither a stack nor the replica. The read-only tools default to base too.\n" +
-			"  The base tool works on the replica. action=\"path\" prints where base runs from. action=\"sync\" moves the replica to each service's default branch tip, and it restarts nothing. An edit in a checkout reaches a running base copy only after it is on the default branch, that sync has run, and the copy has restarted (restart tool, stack=\"base\"). To see a change run now, put it in a stack.\n")
+		sb.WriteString("shared set: the services in the workspace \"shared:\" list. They run once for the workspace, from the replica, and never in a stack. Every stack uses them. Nothing runs in the user's checkouts.\n" +
+			"  stacks: a stack runs only the services you name and the services they need. Each stack stops 24 hours after create or stack_up. stack_extend adds time.\n" +
+			"  start, stop and restart take the stack from stack=\"<name>\". With no stack, devstack reads it from the working directory. Outside a stack worktree, they reach only the shared services.\n" +
+			"  The shared tool works on the replica. action=\"path\" prints where a shared service runs from. action=\"sync\" moves the replica to the default branch tip and restarts the shared services that moved. devstack also runs that sync every hour. To see a change run now, put it in a stack.\n")
 		if line := servicesSummary(workspacePath, defaultService); line != "" {
 			sb.WriteString(line)
 		}
@@ -70,7 +71,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		fmt.Fprintf(&sb, "tools: %s\n", strings.Join(visibleTools(ctx, tools), ", "))
 		if otelOn {
 			fmt.Fprintf(&sb, "recommended order: environment -> status -> observability -> process_logs/investigate\n")
-			fmt.Fprintf(&sb, "query scope: telemetry results stay inside this workspace. investigate's recent-executions mode defaults to base and to this repo's service. To widen it, pass a stack's short name, or 'all'. Its attribute search has no default service. A trace_id/span_id lookup ignores service and stack entirely.\n")
+			fmt.Fprintf(&sb, "query scope: telemetry results stay inside this workspace. investigate's recent-executions mode defaults to every stack, the shared set and this repo's service. To narrow it, pass a stack's short name. Its attribute search has no default service. A trace_id/span_id lookup ignores service and stack entirely.\n")
 		} else {
 			fmt.Fprintf(&sb, "recommended order: environment -> status -> process_logs\n")
 			fmt.Fprintf(&sb, "note: observability disabled — the investigate tool is not registered. Turn observability on with the observability tool (action=config_on).\n")
@@ -84,7 +85,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 			fmt.Fprintf(&sb, "groups: %s\n", availableGroups(cfg))
 		}
 		fmt.Fprintf(&sb, "envs: %s\n", envCatalog(workspacePath))
-		fmt.Fprintf(&sb, "config-patch env: env_use points a service, the workspace or a stack at a named config env (devstack env use). status and env_which show where each copy points.\n")
+		fmt.Fprintf(&sb, "config-patch env: env_use points a service, the workspace or a stack at a named config env (devstack env use). status and env_which show where each service points.\n")
 
 		return mcp.NewToolResultText(sb.String()), nil
 	})
@@ -135,8 +136,6 @@ func servicesSummary(workspacePath, defaultService string) string {
 // servicesListCap bounds how many service names orientation prints inline.
 const servicesListCap = 12
 
-// stacksSummary reports the workspace identity and its in-flight feature stacks,
-// so an agent bound to the base immediately sees the other versions in flight.
 func stacksSummary(ws *workspace.Workspace) string {
 	if ws == nil {
 		return ""
@@ -146,7 +145,7 @@ func stacksSummary(ws *workspace.Workspace) string {
 		return ""
 	}
 	if len(stacks) == 0 {
-		return fmt.Sprintf("workspace: %s — base only, no feature stacks in flight\n", ws.Name)
+		return fmt.Sprintf("workspace: %s — shared set only, no feature stacks in flight\n", ws.Name)
 	}
 	parts := make([]string, 0, len(stacks))
 	anyDown := false
@@ -157,16 +156,16 @@ func stacksSummary(ws *workspace.Workspace) string {
 			state = d
 		}
 		if s.Status == stack.StatusUp {
-			parts = append(parts, fmt.Sprintf("%s (%s, base :%d)", short, state, s.BasePort))
+			parts = append(parts, fmt.Sprintf("%s (%s, host :%d)", short, state, s.BasePort))
 		} else {
 			anyDown = true
 			parts = append(parts, fmt.Sprintf("%s (%s)", short, state))
 		}
 	}
-	line := fmt.Sprintf("workspace: %s — base + %d feature stack(s) in flight: %s — those are the short names every 'stack' parameter takes (full identity is %s--<name>)\n", ws.Name, len(stacks), strings.Join(parts, ", "), ws.Name)
+	line := fmt.Sprintf("workspace: %s — shared set + %d feature stack(s) in flight: %s — those are the short names every 'stack' parameter takes (full identity is %s--<name>)\n", ws.Name, len(stacks), strings.Join(parts, ", "), ws.Name)
 	if anyDown {
 		line += "down = the stack's worktrees and its record exist, and none of its services run. status, process_logs, restart, stop and configure against it " +
-			"error \"not up\" instead of falling through to base. " +
+			"error \"not up\". " +
 			"service_env still reads and writes its worktree config. investigate returns only what the stack emitted while it was last up.\n"
 	}
 	return line

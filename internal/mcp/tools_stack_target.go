@@ -13,12 +13,9 @@ import (
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
-// For the tools that do not start, stop or restart anything: absent = the base
-// workspace this daemon is bound to.
-const stackParamDesc = "Optional. Name a feature stack to act on instead of base. " + baseTermDesc +
-	"Absent (or the literal \"base\") acts on base's service copies. A stack name acts on that stack's copies. " +
-	"Those copies run in the one host daemon as <workspace>:<service>:<stack> resources. The tool also reads that stack's worktree config. " +
-	"On THIS tool, absent means base."
+const stackParamDesc = "Optional. The SHORT name of the stack to read. " + stackTermDesc +
+	"If you omit it, the tool reads the shared set only, and a service that is not shared fails with an error that asks for this parameter. " +
+	"A stack name reads that stack's services. They run in the one host daemon as <workspace>:<service>:<stack> resources."
 
 const mutatingStackParamDesc = "Which stack to act on: the stack's SHORT name (for example 'import-review'). " +
 	"If you omit this parameter, the server's working directory decides. A stack worktree selects that stack. " +
@@ -26,12 +23,9 @@ const mutatingStackParamDesc = "Which stack to act on: the stack's SHORT name (f
 	"A service that is not shared runs only in a stack, so the call fails and asks for this parameter. " +
 	"Every stack uses a shared service. If you restart or stop one, you restart or stop the copy that every stack uses."
 
-// resolveStackRecord looks up a feature stack by short name within the bound
-// (base) workspace, returning a clear error that lists the available stack names
-// when the name is unknown.
 func resolveStackRecord(ws *workspace.Workspace, name string) (*stack.Record, error) {
 	if ws == nil {
-		return nil, fmt.Errorf("devstack found no base workspace, so it can not look up stack %q", name)
+		return nil, fmt.Errorf("devstack resolved no workspace, so it can not look up stack %q", name)
 	}
 	rec, err := stack.FindStack(ws.Name, name)
 	if err == nil {
@@ -48,11 +42,6 @@ func resolveStackRecord(ws *workspace.Workspace, name string) (*stack.Record, er
 	return nil, fmt.Errorf("stack %q is not in workspace %q. Available stacks: %s", name, ws.Name, strings.Join(avail, ", "))
 }
 
-// serviceEnvTarget resolves the workspace path service_env reads and writes for
-// an optional stack param. Empty stack → the bound (base) workspace path,
-// byte-for-byte today's behavior. A named stack → the stack's synthesised root,
-// whose generated manifest points at the stack's worktrees, so every read and
-// write lands in the worktree and never in base.
 func serviceEnvTarget(ws *workspace.Workspace, basePath, stackName string) (path, instance, stackEnv string, err error) {
 	if stackName == "" {
 		return basePath, "", "", nil
@@ -64,11 +53,6 @@ func serviceEnvTarget(ws *workspace.Workspace, basePath, stackName string) (path
 	return rec.Root, fmt.Sprintf("stack %q", rec.Name), rec.Env, nil
 }
 
-// localTarget bundles everything a daemon-facing local tool needs to operate one
-// instance: the Tilt client for the base daemon, the service dirs and config for
-// its manifests, its default service, the namespace selecting a stack's resources,
-// and a label naming it. A zero namespace and label mean the base workspace, so
-// output stays byte-identical to today.
 type localTarget struct {
 	client      *tilt.Client
 	serviceDirs map[string]string
@@ -78,12 +62,6 @@ type localTarget struct {
 	label       string
 }
 
-// resolveLocalTarget picks the instance a daemon-facing tool acts on. Empty
-// stackName returns base unchanged. A named stack's services run in the base
-// workspace's one daemon as <service>:<stack> resources, so the returned target
-// keeps base's client and carries the stack's namespace and worktree config — or a
-// clear error (never a hang) when the stack is unknown, base's daemon is down, or
-// the stack is not active.
 func resolveLocalTarget(ws *workspace.Workspace, base localTarget, stackName string) (localTarget, error) {
 	if stackName == "" {
 		return base, nil
@@ -113,12 +91,6 @@ func resolveLocalTarget(ws *workspace.Workspace, base localTarget, stackName str
 	}, nil
 }
 
-// replicaServiceDirs is where base's copies actually run: the replica worktrees,
-// not the checkouts they were built from. PATH and BRANCH are read to answer "is
-// my work what is running", and the checkout answers it wrongly — it can sit on
-// any branch, dirty, while base runs a detached worktree at the default branch
-// tip. Falls back to the checkouts, which is then the truth, when no replica is
-// built.
 func replicaServiceDirs(ws *workspace.Workspace, checkouts map[string]string) map[string]string {
 	rw, err := replica.Resolve(ws)
 	if err != nil {
@@ -172,9 +144,6 @@ func targetGroupMembers(ws *workspace.Workspace, t localTarget, groupName string
 	return members, note, nil
 }
 
-// resourceName is the host-daemon resource name for a service, matching tiltgen's
-// hostName scheme: <workspace>:<service> for a base-workspace service, or
-// <workspace>:<service>:<stack> for a feature stack folded into the host Tiltfile.
 func resourceName(wsName, svc, namespace string) string {
 	if namespace == "" {
 		return wsName + ":" + svc
@@ -182,10 +151,6 @@ func resourceName(wsName, svc, namespace string) string {
 	return wsName + ":" + svc + ":" + namespace
 }
 
-// splitHostResource decomposes a host-daemon resource name under prefix
-// (<workspace>:) into its bare service and stack namespace. ok is false when the
-// name belongs to a different workspace. A base-workspace resource yields an empty
-// stack namespace.
 func splitHostResource(name, prefix string) (svc, stackNS string, ok bool) {
 	if !strings.HasPrefix(name, prefix) {
 		return "", "", false
@@ -197,9 +162,6 @@ func splitHostResource(name, prefix string) (svc, stackNS string, ok bool) {
 	return rest, "", true
 }
 
-// stackResourceNames returns the full resource names in view that belong to the
-// given workspace and namespace: <ws>:<svc> for the base (empty namespace), or
-// <ws>:<svc>:<stack> for a stack. Other workspaces' resources are excluded.
 func stackResourceNames(view *tilt.TiltView, wsName, namespace string) []string {
 	prefix := wsName + ":"
 	names := make([]string, 0, len(view.UiResources))
@@ -211,8 +173,6 @@ func stackResourceNames(view *tilt.TiltView, wsName, namespace string) []string 
 	return names
 }
 
-// targetHeader returns a one-line banner naming the instance a tool acted on, or
-// "" for the base workspace so its output is byte-identical to today.
 func targetHeader(label string) string {
 	if label == "" {
 		return ""
@@ -220,10 +180,6 @@ func targetHeader(label string) string {
 	return "target: " + label + "\n\n"
 }
 
-// prependInstanceResult adds a banner naming the instance a service_env action
-// acted on, so a set never silently edits the wrong repo. For the base workspace
-// (empty instance) and for error results it returns the result unchanged, keeping
-// the non-stack path byte-identical to today.
 func prependInstanceResult(res *mcp.CallToolResult, instance string) *mcp.CallToolResult {
 	if instance == "" || res == nil || res.IsError {
 		return res
@@ -233,8 +189,6 @@ func prependInstanceResult(res *mcp.CallToolResult, instance string) *mcp.CallTo
 	return res
 }
 
-// onTarget annotates a success message with the instance it acted on, or returns
-// it unchanged for the base workspace (byte-identical to today).
 func onTarget(label, msg string) string {
 	if label == "" {
 		return msg

@@ -55,7 +55,7 @@ type Restarter func(rec *Record, services []string) ([]string, error)
 
 func Resync(base *workspace.Workspace, name string, restart Restarter) (*ResyncResult, error) {
 	if base == nil {
-		return nil, fmt.Errorf("devstack can not resolve the base workspace")
+		return nil, fmt.Errorf("devstack can not resolve the workspace")
 	}
 	rec, err := Resolve(base.Name, name)
 	if err != nil {
@@ -82,7 +82,7 @@ func Resync(base *workspace.Workspace, name string, restart Restarter) (*ResyncR
 
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return res, fmt.Errorf("can not resolve the base workspace: %w", err)
+		return res, fmt.Errorf("can not resolve the workspace: %w", err)
 	}
 	stackRW, err := config.ResolveWorkspace(rec.Root)
 	if err != nil {

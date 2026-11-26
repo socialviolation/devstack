@@ -107,9 +107,9 @@ func TestWiringShowsBaseAndStackCopies(t *testing.T) {
 	for _, want := range []string{
 		"web → api",
 		"API_URL  via ${api.url}",
-		"base: http://localhost:5001/v1-base → base api",
-		"agent-mine: http://localhost:5001/v1-stack → base api",
-		"! stack agent-mine web → base api",
+		"no stack: http://localhost:5001/v1-base → api at its declared port",
+		"agent-mine: http://localhost:5001/v1-stack → api at its declared port",
+		"! stack agent-mine web → api at its declared port",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("owner output omits %q:\n%s", want, out)
@@ -125,7 +125,7 @@ func TestWiringHidesBaseValuesFromAgents(t *testing.T) {
 	if strings.Contains(out, "v1-base") {
 		t.Errorf("agent output shows a base value:\n%s", out)
 	}
-	if !strings.Contains(out, "base: → base api") || !strings.Contains(out, "v1-stack") {
+	if !strings.Contains(out, "no stack: → api at its declared port") || !strings.Contains(out, "v1-stack") {
 		t.Errorf("agent output must show the edge and its own stack's value:\n%s", out)
 	}
 

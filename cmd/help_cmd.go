@@ -53,10 +53,11 @@ var moreCommands = []helpRow{
 	{"otel", "traces and logs: query them, and run the collector"},
 	{"tunnel", "forward this workspace's ports over SSH"},
 	{"ports", "see which process holds a port, and take the port back"},
-	{"dependencies", "declare which service starts before another"},
+	{"dependencies", "edit the old dependencies: map of the workspace"},
 	{"hooks", "run an action when a stack or a service changes state"},
 	{"group", "act on a named set of services at one time"},
 	{"shared", "the shared services: their replica, and a sync to the default branch"},
+	{"herdr", "show each stack in the herdr pane that controls it"},
 	{"doctor", "find what is broken, and the command that fixes it"},
 	{"cleanup", "remove orphaned ports, worktrees and stack records"},
 }

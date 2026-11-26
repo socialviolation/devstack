@@ -135,7 +135,7 @@ func TestDeriveReferenceEdges(t *testing.T) {
 	if l.Stack.Value != "http://localhost:5001/v1" || l.Stack.Target != "base" {
 		t.Errorf("stack hop = %+v", l.Stack)
 	}
-	if got := l.Flag("feat"); got != "stack feat web → base api" {
+	if got := l.Flag("feat"); got != "stack feat web → api at its declared port" {
 		t.Errorf("flag = %q", got)
 	}
 }
@@ -161,7 +161,7 @@ func TestDeriveLiteralBasePortInAStackIsFlagged(t *testing.T) {
 	if l.Via != "literal port 5002" || l.Stack.Target != "base" {
 		t.Errorf("link = %+v stack = %+v", l, l.Stack)
 	}
-	if got := l.Flag("feat"); got != "stack feat web → base worker" {
+	if got := l.Flag("feat"); got != "stack feat web → worker at its declared port" {
 		t.Errorf("flag = %q", got)
 	}
 	for _, l := range m.Links {
@@ -177,7 +177,7 @@ func TestDeriveBaseReachingIntoAStackIsFlagged(t *testing.T) {
 	if l.Base.Target != "feat" || l.Stack != nil {
 		t.Errorf("base = %+v stack = %+v", l.Base, l.Stack)
 	}
-	if got := l.Flag("feat"); got != "base web → stack feat worker" {
+	if got := l.Flag("feat"); got != "web with no stack → stack feat worker" {
 		t.Errorf("flag = %q", got)
 	}
 }

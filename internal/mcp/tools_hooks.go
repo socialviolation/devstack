@@ -39,7 +39,7 @@ func registerHooksTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 		mcp.WithString("stack",
 			mcp.Description("Stack SHORT name to resolve against, so that a hook's ${self...} references resolve to THAT stack's allocated ports. Omit it for the workspace and its shared set, which use the pinned ports.")),
 		mcp.WithString("services",
-			mcp.Description("Comma-separated service names that form the event's service set, for action=\"run\". The default is the stack's overlay, or every service in the workspace.")),
+			mcp.Description("Comma-separated service names that form the event's service set, for action=\"run\". The default is the stack's members, or every service in the workspace.")),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),

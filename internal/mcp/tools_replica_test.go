@@ -7,15 +7,14 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// baseTermDesc is pasted into every description that says "base", so it is the
-// one place the replica has to be stated. A definition that still calls base
-// "the normal checkouts" tells an agent to edit a directory nothing runs.
-func TestBaseIsDefinedAsTheReplicaEverywhereItIsUsed(t *testing.T) {
-	if !strings.Contains(baseTermDesc, "replica") || !strings.Contains(baseTermDesc, "template") {
-		t.Fatalf("baseTermDesc must define base as a replica built from the checkout: %s", baseTermDesc)
+func TestStackTermDefinesTheSharedSetAndTheReplica(t *testing.T) {
+	for _, want := range []string{"shared:", "replica", "Nothing runs in the user's checkout", "services they need"} {
+		if !strings.Contains(stackTermDesc, want) {
+			t.Fatalf("stackTermDesc must state %q: %s", want, stackTermDesc)
+		}
 	}
-	if strings.Contains(baseTermDesc, "the normal checkouts and the service copies started from them") {
-		t.Fatalf("baseTermDesc still says base runs from the checkouts: %s", baseTermDesc)
+	if strings.Contains(stackTermDesc, "base") {
+		t.Fatalf("stackTermDesc still names base: %s", stackTermDesc)
 	}
 }
 
@@ -29,7 +28,7 @@ func TestEnvironmentToolOrientsOnTheReplicaAndTheTargetRule(t *testing.T) {
 	registerEnvironmentTool(s, "http://localhost:5080", ws.Name, root, "", ws)
 
 	out := clarityCallTool(t, s, "environment")
-	for _, want := range []string{"replica", "template", "uses base where that directory is neither"} {
+	for _, want := range []string{"replica", "shared set:", "Outside a stack worktree, they reach only the shared services"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("environment must orient on %q; got %s", want, out)
 		}

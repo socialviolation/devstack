@@ -12,7 +12,7 @@ type TraceQuery struct {
 	SpanID    string        // If set, find the trace containing this span (TraceID takes precedence)
 	Workspace string        // devstack.workspace filter; set for you by ScopedTo
 	Service   string        // Optional service filter
-	Stack     string        // Optional devstack.stack resource-attribute filter ("base" for base workspace)
+	Stack     string        // Optional devstack.stack resource-attribute filter ("base" for the shared set)
 	Attribute string        // Optional attribute key (paired with Value)
 	Value     string        // Optional attribute value to match
 	Since     time.Duration // Lookback window (default: 5 minutes)
@@ -49,7 +49,7 @@ type ServiceVariant struct {
 	// Devstack is the name devstack knows it by, which is what a caller stands
 	// in and filters on. It often differs from Service.
 	Devstack string
-	// Stack is the feature stack ("base" for the base workspace).
+	// Stack is the feature stack ("base" for the shared set).
 	Stack string
 	// Env is the config env the variant runs under, when one is selected.
 	Env string

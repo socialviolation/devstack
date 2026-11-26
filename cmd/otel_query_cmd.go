@@ -56,10 +56,11 @@ Examples:
 
 var otelServicesCmd = &cobra.Command{
 	Use:   "services",
-	Short: "List the copies that report telemetry (base, each stack, each environment)",
-	Long: `List every copy that reports telemetry, so it is obvious which one to query. The
-same service runs many times over — in the base workspace, in each feature stack,
-and under each environment. All of them report to the one shared backend.
+	Short: "List the services that report telemetry (the shared set, each stack, each environment)",
+	Long: `List every service that reports telemetry, so it is obvious which one to query.
+The same service can run many times over: in the shared set, in each feature
+stack, and under each environment. All of them report to the one shared backend.
+The stack value "base" is the label of the shared set.
 
 A service can report itself under a name that differs from the name devstack
 knows it by. devstack then shows both names. The --service flag filters on the
@@ -342,7 +343,9 @@ func runOtelServices(cmd *cobra.Command, args []string) error {
 			faint.Printf("  (devstack: %s)", v.Devstack)
 		}
 		var qualifiers []string
-		if v.Stack != "" {
+		if v.Stack == "base" {
+			qualifiers = append(qualifiers, "stack=base (shared set)")
+		} else if v.Stack != "" {
 			qualifiers = append(qualifiers, "stack="+v.Stack)
 		}
 		if v.Env != "" {

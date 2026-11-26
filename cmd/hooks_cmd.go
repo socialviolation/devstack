@@ -70,7 +70,7 @@ func init() {
 		c.Flags().String("stack", "", "Resolve against a stack's services and allocated ports. Default: the workspace and its shared set")
 	}
 	hooksListCmd.Flags().String("event", "", "Only show the hooks that fire on this event")
-	hooksRunCmd.Flags().String("services", "", "Comma-separated services for the event. Default: the stack's overlay, or every service")
+	hooksRunCmd.Flags().String("services", "", "Comma-separated services for the event. Default: the stack's members, or every service")
 }
 
 // fireHooks runs an event's hooks, writing their output to stderr so a command's

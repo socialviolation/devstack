@@ -137,8 +137,8 @@ func TestStopDescriptionStatesStackScoping(t *testing.T) {
 	for _, want := range []string{
 		"stops the default service for this repo",
 		"Stopping everything requires all=true",
-		"never base's",
-		"touches only that stack's copies",
+		"never the shared set",
+		"touches only that stack's services",
 	} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("stop description missing %q; got %s", want, desc)
@@ -207,7 +207,7 @@ func TestCoreLogEmptyNoteNamesFiltersAndWidening(t *testing.T) {
 		"since_restart=false",
 		"errors_only=false",
 		"drop grep",
-		"omit stack to read base",
+		"omit stack to read the shared set",
 	} {
 		if !strings.Contains(note, want) {
 			t.Errorf("note missing %q; got:\n%s", want, note)
@@ -216,10 +216,10 @@ func TestCoreLogEmptyNoteNamesFiltersAndWidening(t *testing.T) {
 
 	base := coreLogEmptyNote(coreLogFilters{Lines: 100})
 	if !strings.Contains(base, "scope=every service of this target") {
-		t.Errorf("unscoped note should say it covered every service of the one target, not of base and every stack; got:\n%s", base)
+		t.Errorf("unscoped note should say it covered every service of the one target, not of the shared set and every stack; got:\n%s", base)
 	}
-	if !strings.Contains(base, "stack=base") {
-		t.Errorf("unscoped note should name the base stack scope; got:\n%s", base)
+	if !strings.Contains(base, "stack=none (the shared set)") {
+		t.Errorf("unscoped note should name the shared set scope; got:\n%s", base)
 	}
 	if strings.Contains(base, "drop grep") {
 		t.Errorf("note should not suggest dropping a grep that was not set; got:\n%s", base)

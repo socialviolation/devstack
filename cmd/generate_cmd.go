@@ -16,8 +16,8 @@ var workspaceGenerateCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Regenerate the host daemon's Tiltfile from devstack manifests",
 	Long: `Regenerate the host daemon's Tiltfile. That is the one file that the running
-Tilt daemon reads. It holds the base services of every active workspace, and the
-overlay services of every active feature stack.
+Tilt daemon reads. It holds the shared set of every active workspace, and the
+members of every active feature stack.
 
 The Tiltfile is a build artifact. Edit the manifests, not the Tiltfile.
 

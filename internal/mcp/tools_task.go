@@ -20,7 +20,7 @@ func registerTaskRunTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("task_run",
 		mcp.WithDescription("Run a task that a service declares, in a feature stack's worktree of that service. A task is a named shell command under 'tasks:' in the service manifest, such as a test suite, a seed or a codegen step. "+
 			"This tool runs only declared tasks. It takes no command of its own. To list the tasks a service declares, omit task.\n\n"+
-			"The task runs under sh -c in the stack's worktree, never in base. A task's workDir is relative to that worktree. Its run and env take the same references a hook takes: ${self.url}, ${self.port.<key>}, ${<service>.url} and ${<service>.port.<key>} resolve to the stack's own ports. "+
+			"The task runs under sh -c in the stack's worktree, never in the checkout or the replica. A task's workDir is relative to that worktree. Its run and env take the same references a hook takes: ${self.url}, ${self.port.<key>}, ${<service>.url} and ${<service>.port.<key>} resolve to the stack's own ports. "+
 			"A task stops at its timeout (10m by default), and devstack kills its whole process group. The result gives the exit code, the time it took and the last 64KB of its output."),
 		mcp.WithString("stack", mcp.Required(),
 			mcp.Description(requiredStackNameDesc)),

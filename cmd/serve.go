@@ -36,29 +36,34 @@ devstack capabilities as tools that an AI agent can call directly.
 not normally run this command by hand.
 
 TOOLS EXPOSED TO AI AGENTS
-  environment     which workspace, which copies, which tools (start here)
-  status          live state of every copy: state, port, path, branch, env
-  urls            the tailnet address that reaches each copy from another machine
-  topology        the declared service graph: groups, deps, callers
-  start           start a service or a group, dependencies first
+  environment     which workspace, which stacks, which tools (start here)
+  status          live state of the shared set and each stack: state, port, path, branch, env
+  urls            the tailnet address that reaches each service from another machine
+  topology        the declared service graph: groups, needs, calls
+  wiring          how each service reaches the next, and the env key that carries it
+  start           start a service or a group
   restart         rebuild and restart a service or a group
-  stop            stop one service, a group, or every service of one copy (all=true)
-  process_logs    fetch stdout/stderr from a running copy
+  stop            stop one service, a group, or every service of a stack (all=true)
+  process_logs    fetch stdout/stderr from a running service
   service_env     read and write a service's env files, and audit them
-  base            print the replica that base runs from, or sync it to the default branch tip
+  shared          the shared set: status, replica path, sync to the default branch tip
   configure       read or set a dev daemon runtime argument
   hooks           list the declared lifecycle hooks, or run the hooks of one event
   migrate         list the migrations of this machine, or run the pending ones
   observability   show, enable or disable OTEL, and read the telemetry evidence
   stack_create    cut a feature stack from the default branch
   stack_add       put another service into a stack that already exists
-  stack_list      the stacks in flight, with their overlays, links and notes
-  stack_config    the configuration one copy runs with, and where each value comes from
+  stack_remove    take services out of a stack, and keep the rest
+  stack_list      the stacks in flight, with their members, links and notes
+  stack_config    the configuration one service runs with, and where each value comes from
   stack_note      read, set or append to what a stack is for
   stack_up        start a stack in the host daemon
-  stack_down      stop a stack's copies, and keep its worktrees
+  stack_down      stop a stack's services, and keep its worktrees
   stack_rm        tear a stack down: worktrees, ports and record
   stack_extend    push back the stop time of a stack
+  stack_resync    fast-forward a stack's worktrees to origin, and restart what moved
+  stack_adopt     hand an agent's stack to the owner
+  task_run        run a task that a service declares, in a stack's worktree
   doctor          what is broken, and the fix for each problem
   cleanup         remove orphaned ports, worktrees and stack records
   env_use         point a scope at a named env
@@ -96,7 +101,8 @@ AGENT LIMITS
   Every stack stops when its stop time passes. devstack never removes it.
   DEVSTACK_STOP_AFTER  time from create or up to the stop (default 24h)
   ~/.devstack/config.json takes stop_after too.
-  'devstack stack sweep' stops the stacks. A systemd user timer runs it.`,
+  'devstack stack sweep' stops the stacks. A systemd user timer runs
+  'devstack tick', which runs the sweep.`,
 	RunE: runServe,
 }
 

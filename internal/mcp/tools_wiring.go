@@ -20,16 +20,17 @@ import (
 func registerWiringTool(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	tool := mcp.NewTool("wiring",
 		mcp.WithDescription("Show how each service reaches the services it talks to. For every edge A → B it names the env key of A that carries the address of B, and how devstack knows: a ${B.url}, ${B.host} or ${B.port.<key>} reference, a ${stack.suffix:B} messaging name, or a literal port that B listens on. "+
-			"For each key it shows the value that base's copy of A resolves to, and the copy of B that value reaches. Pass stack to add that stack's copy of A beside base.\n\n"+
-			"\"stack X A → base B\" means the stack's A still reaches base's B. That is normal when the stack does not change B. \"base A → stack X B\" means base reaches into a stack. "+
+			"For each key it shows the value that A resolves to with no stack, and the service that value reaches. Pass stack to add that stack's value of each key.\n\n"+
+			"\"shared B\" means the shared service B. \"B at its declared port\" means a port where no stack serves B. If a stack's A reaches B at its declared port, nothing answers there: add B to the stack with stack_add. "+
+			"\"A with no stack → stack X B\" means a value outside the stack points into stack X. "+
 			"Read both before you change config: they show what a change moves. An env key that names a service which does not exist is an error. "+
 			"Each edge shows its declared kind: needs or calls, and the via value if the edge has one. "+
 			"A note says a declared edge has no key that carries it, or a key that reaches a service with no declared edge. "+
-			"This reads the env ladder of each checkout. Use topology for the declared graph alone, and service_env to see or set a value. Values that hold a credential are masked."),
+			"This reads the env ladder of each checkout and each stack worktree. Use topology for the declared graph alone, and service_env to see or set a value. Values that hold a credential are masked."),
 		mcp.WithString("service",
 			mcp.Description("Exact service name. Shows only the edges into and out of it. Omit it for every edge.")),
 		mcp.WithString("stack",
-			mcp.Description(optionalStackNameDesc+" Adds that stack's copy of each service beside base.")),
+			mcp.Description(optionalStackNameDesc+" Adds that stack's value of each key.")),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -58,7 +59,7 @@ func wiringReport(ws *workspace.Workspace, workspacePath, stackName, service str
 	if err != nil {
 		return "", err
 	}
-	base := wiring.Copy{Label: "base", Env: baseEnv, Book: config.BuildPortBook(baseRW)}
+	base := wiring.Copy{Label: "no stack", Env: baseEnv, Book: config.BuildPortBook(baseRW)}
 
 	services := make([]string, 0, len(baseRW.Services))
 	deps := map[string][]string{}
@@ -113,17 +114,17 @@ func wiringReport(ws *workspace.Workspace, workspacePath, stackName, service str
 	}
 
 	m := wiring.Derive(services, deps, base, stackCopy)
-	return renderWiring(m, edges, service, stackCopy, showBase), nil
+	return renderWiring(m, edges, service, stackCopy, showBase, baseRW.IsShared), nil
 }
 
-func renderWiring(m wiring.Map, edges map[[2]string]string, service string, stackCopy *wiring.Copy, showBase bool) string {
+func renderWiring(m wiring.Map, edges map[[2]string]string, service string, stackCopy *wiring.Copy, showBase bool, isShared func(string) bool) string {
 	var sb strings.Builder
 	label := ""
 	if stackCopy != nil {
 		label = stackCopy.Label
-		fmt.Fprintf(&sb, "Wiring of base and stack %s\n", label)
+		fmt.Fprintf(&sb, "Wiring with no stack and in stack %s\n", label)
 	} else {
-		sb.WriteString("Wiring of base\n")
+		sb.WriteString("Wiring with no stack\n")
 	}
 
 	shown := 0
@@ -145,12 +146,12 @@ func renderWiring(m wiring.Map, edges map[[2]string]string, service string, stac
 			declared = "  (undeclared)"
 		}
 		fmt.Fprintf(&sb, "  %s  via %s%s\n", l.Key, l.Via, declared)
-		writeHop(&sb, "base", l.Key, l.To, l.Base, showBase)
+		writeHop(&sb, "no stack", l.Key, l.To, l.Base, showBase, isShared)
 		if stackCopy != nil {
 			if _, runs := stackCopy.Env[l.From]; !runs {
-				fmt.Fprintf(&sb, "    %s: runs base's copy of %s\n", label, l.From)
+				fmt.Fprintf(&sb, "    %s: does not run %s\n", label, l.From)
 			} else {
-				writeHop(&sb, label, l.Key, l.To, l.Stack, true)
+				writeHop(&sb, label, l.Key, l.To, l.Stack, true, isShared)
 			}
 		}
 		if flag := l.Flag(label); flag != "" {
@@ -174,17 +175,20 @@ func renderWiring(m wiring.Map, edges map[[2]string]string, service string, stac
 		}
 	}
 	if !showBase {
-		sb.WriteString("\nBase values are hidden. Only the owner sees them.\n")
+		sb.WriteString("\nValues with no stack are hidden. Only the owner sees them.\n")
 	}
 	return sb.String()
 }
 
-func writeHop(sb *strings.Builder, copyLabel, key, to string, hop *wiring.Hop, showValue bool) {
+func writeHop(sb *strings.Builder, copyLabel, key, to string, hop *wiring.Hop, showValue bool, isShared func(string) bool) {
 	if hop == nil {
 		fmt.Fprintf(sb, "    %s: does not set %s\n", copyLabel, key)
 		return
 	}
-	target := "base " + to
+	target := to + " at its declared port"
+	if isShared(to) {
+		target = "shared " + to
+	}
 	if hop.Target != "base" {
 		target = "stack " + hop.Target + " " + to
 	}

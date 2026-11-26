@@ -94,7 +94,7 @@ func TestDoctorNamesAServiceOnlyTheReplicaDeclares(t *testing.T) {
 	if !strings.Contains(got, "ghost") || !strings.Contains(got, "the replica declares this service, and the workspace does not") {
 		t.Errorf("the doctor never names the service only the replica declares:\n%s", got)
 	}
-	if !strings.Contains(got, "devstack workspace up") || !strings.Contains(got, "devstack base sync") {
+	if !strings.Contains(got, "devstack workspace up") || !strings.Contains(got, "devstack shared sync") {
 		t.Errorf("the doctor names no repair for the drift:\n%s", got)
 	}
 }

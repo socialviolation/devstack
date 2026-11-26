@@ -579,11 +579,9 @@ func printServiceOrientation(ws *workspace.Workspace, rw *config.ResolvedWorkspa
 	sort.Slice(rows, func(i, j int) bool { return rows[i].stack < rows[j].stack })
 
 	faint := color.New(color.Faint)
-	// Not "base": base runs from its replica, and naming this directory base was
-	// read as "the code here is the code base runs".
 	where := "template checkout"
 	if _, rerr := replica.DetectFromCwd(); rerr == nil {
-		where = "base replica"
+		where = "replica of the shared set"
 	}
 	if hereStack != "" {
 		where = "stack " + hereStack

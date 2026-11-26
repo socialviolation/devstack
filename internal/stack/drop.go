@@ -40,7 +40,7 @@ type DropResult struct {
 func Drop(in DropInput) (*DropResult, error) {
 	base := in.Base
 	if base == nil {
-		return nil, fmt.Errorf("devstack can not resolve the base workspace")
+		return nil, fmt.Errorf("devstack can not resolve the workspace")
 	}
 	rec, err := FindStack(base.Name, in.Name)
 	if err != nil {
@@ -70,7 +70,7 @@ func Drop(in DropInput) (*DropResult, error) {
 
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return nil, fmt.Errorf("can not resolve the base workspace: %w", err)
+		return nil, fmt.Errorf("can not resolve the workspace: %w", err)
 	}
 	topo, err := config.BuildTopology(base.Path)
 	if err != nil {

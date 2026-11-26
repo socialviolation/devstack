@@ -149,7 +149,7 @@ func transformStep(noMigrate, noRestart bool, step step2Result) error {
 	if noRestart {
 		fmt.Println("You gave --no-restart, so devstack restarts nothing.")
 		fmt.Println("Each copy that runs keeps serving the code it started with.")
-		fmt.Println("To move one copy to the replica, run: devstack service restart <svc> --stack base")
+		fmt.Println("To move one shared service to the replica, run: devstack service restart <svc>")
 		return nil
 	}
 	if noMigrate {
@@ -414,10 +414,10 @@ func writeUpgradeIntent(w io.Writer, noMigrate, noRestart bool) {
 		fmt.Fprintln(w, "You gave --no-migrate, so devstack installs the binary and changes nothing else.")
 		fmt.Fprintln(w, "Your configuration stays on its current version. To read what is pending, run: devstack migrate --list")
 	case noRestart:
-		fmt.Fprintln(w, "It writes files in your repositories, and it builds the replica that base runs from.")
+		fmt.Fprintln(w, "It writes files in your repositories, and it builds the replica that the shared set runs from.")
 		fmt.Fprintln(w, "You gave --no-restart, so each copy that runs keeps serving the old code.")
 	default:
-		fmt.Fprintln(w, "It writes files in your repositories. It builds the replica that base runs from.")
+		fmt.Fprintln(w, "It writes files in your repositories. It builds the replica that the shared set runs from.")
 		fmt.Fprintln(w, "It then restarts each copy that runs, so that copy serves the code in the replica.")
 		fmt.Fprintln(w, "To install the binary and change nothing else, run: devstack upgrade --no-migrate")
 	}

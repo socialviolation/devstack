@@ -110,7 +110,7 @@ func TestStatusReportsEvidencePerVariant(t *testing.T) {
 	if len(got.Variants) != 2 {
 		t.Fatalf("variants = %+v, want one per stack", got.Variants)
 	}
-	if got.Variants[0].Stack != "base" || got.Variants[1].Stack != "perf" {
+	if got.Variants[0].Stack != "base (shared set)" || got.Variants[1].Stack != "perf" {
 		t.Errorf("variants not sorted by stack: %+v", got.Variants)
 	}
 	if got.Variants[1].Env != "perf" {
@@ -119,7 +119,7 @@ func TestStatusReportsEvidencePerVariant(t *testing.T) {
 	if got.TraceCount != 8 {
 		t.Errorf("TraceCount = %d, want the total across variants", got.TraceCount)
 	}
-	if summary := got.Summary(); summary != "base=5 spans, perf=3 spans env=perf" {
+	if summary := got.Summary(); summary != "base (shared set)=5 spans, perf=3 spans env=perf" {
 		t.Errorf("Summary() = %q", summary)
 	}
 }

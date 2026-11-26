@@ -19,12 +19,12 @@ var envCmd = &cobra.Command{
 	Short: "Manage the named environments of a workspace",
 	Long: `An environment is a named set of configuration values in the workspace manifest.
 The values can be database URLs, feature flags or endpoints. devstack defines
-every environment once, in the base workspace manifest.
+every environment once, in the workspace manifest. Every stack inherits them.
 
 The set subcommand writes values, and it creates the environment when it does not
 exist yet. The remove subcommand deletes one. The use subcommand points a scope at
 one. The show and which subcommands read them. devstack status shows the
-environment that each copy points at.
+environment that each service points at.
 
 The use subcommand writes, so it acts on one scope. There are three scopes, and
 the most specific one wins. A stack beats a service, and a service beats the

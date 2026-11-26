@@ -54,7 +54,7 @@ With no flag, cleanup lists what it would do and changes nothing.
 func init() {
 	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(cleanupCmd)
-	doctorCmd.Flags().String("stack", "", "Check one feature stack. Default: base, every stack and the orphans")
+	doctorCmd.Flags().String("stack", "", "Check one feature stack. Default: the shared set, every stack and the orphans")
 	cleanupCmd.Flags().Bool("apply", false, "Remove the orphans. Without it, cleanup only lists them")
 }
 

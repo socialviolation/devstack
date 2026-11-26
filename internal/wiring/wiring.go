@@ -37,9 +37,9 @@ type Link struct {
 func (l Link) Flag(stackLabel string) string {
 	switch {
 	case l.Stack != nil && l.Stack.Target == "base":
-		return fmt.Sprintf("stack %s %s → base %s", stackLabel, l.From, l.To)
+		return fmt.Sprintf("stack %s %s → %s at its declared port", stackLabel, l.From, l.To)
 	case l.Base != nil && l.Base.Target != "" && l.Base.Target != "base":
-		return fmt.Sprintf("base %s → stack %s %s", l.From, l.Base.Target, l.To)
+		return fmt.Sprintf("%s with no stack → stack %s %s", l.From, l.Base.Target, l.To)
 	}
 	return ""
 }

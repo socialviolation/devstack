@@ -41,7 +41,7 @@ names that 'devstack tunnel status' prints, not partial matches:
 
   devstack tunnel push my-box.ts.net --service navexa-api,navexa-frontend
 
-By default devstack forwards only this workspace's base service ports. The two
+By default devstack forwards only the ports of this workspace's shared set. The two
 stack modes do different things, and you can not combine them:
 
   devstack tunnel push my-box.ts.net --stacks          # every stack, each on its own port
@@ -397,7 +397,7 @@ func runTunnelForward(mode tunnel.Mode, args []string) error {
 		}
 		svcs = serving
 		if len(svcs) == 0 {
-			fmt.Println("No port serves traffic right now. Start the services first: devstack service start <svc> --stack base")
+			fmt.Println("No port serves traffic right now. Start the services first: devstack workspace up, or devstack stack up <name>")
 			return nil
 		}
 	}
@@ -705,7 +705,7 @@ func runTunnelCheck(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if len(svcs) == 0 {
-		fmt.Println("No port serves traffic right now. Start the services first: devstack service start <svc> --stack base")
+		fmt.Println("No port serves traffic right now. Start the services first: devstack workspace up, or devstack stack up <name>")
 		return nil
 	}
 

@@ -30,15 +30,17 @@ workspace. The services of every workspace run in that daemon, with the name
 <workspace>/devstack.workspace.yaml. Each workspace also has its own share of the
 machine-wide collector.
 
-The daemon does not run your checkouts. It runs a replica that devstack builds
-beside the workspace: one git worktree for each service, at its default branch
-tip. Your checkout is the template. 'devstack workspace up' builds the replica,
-and it moves each worktree to the current default branch tip.
+The daemon does not run your checkouts. The shared set runs from a replica that
+devstack builds beside the workspace: one git worktree for each repository that
+holds a shared service, at its default branch tip. Every other service runs
+only in a stack, from the stack's own worktrees. Your checkout is the template.
+'devstack workspace up' builds the replica, and it moves each worktree to the
+current default branch tip.
 
 SUBCOMMANDS
   devstack workspace            show all registered workspaces and service counts
-  devstack workspace up         move base to the default branch tip, and run it
-  devstack workspace down       stop them, and the daemon if no workspace needs it
+  devstack workspace up         move the shared set to the default branch tip, and run it
+  devstack workspace down       stop the shared set and every stack, and the daemon if no workspace needs it
   devstack workspace add        register a directory as a workspace
   devstack workspace remove     remove a workspace from the registry
   devstack workspace topology   the service graph: groups, dependencies, dependents
@@ -59,9 +61,9 @@ it, targets this workspace. You do not need a flag.
 devstack then makes the workspace ready to use:
   1. It writes the Claude Code SessionStart hook, so that each session in this
      directory runs 'devstack prime'.
-  2. It builds the replica that base runs from: one git worktree for each
-     repository of the workspace. A workspace with no service yet gets an empty
-     replica, and each later 'devstack init' adds to it.
+  2. It builds the replica that the shared set runs from: one git worktree for
+     each repository that holds a shared service. A workspace with no shared
+     service gets an empty replica.
 
 This command starts nothing. It does not start the daemon, and it does not start
 a service.
@@ -271,7 +273,7 @@ func prepareWorkspace(ws *workspace.Workspace) {
 		fmt.Fprintln(os.Stderr, "  To build it after you add a service, run: devstack workspace up")
 		return
 	}
-	fmt.Printf("  ✓ Built the replica that base runs from: %s\n", replica.Root(ws))
+	fmt.Printf("  ✓ Built the replica that the shared set runs from: %s\n", replica.Root(ws))
 }
 
 func runWorkspaceRemove(cmd *cobra.Command, args []string) error {

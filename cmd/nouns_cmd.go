@@ -22,13 +22,15 @@ var serviceCmd = &cobra.Command{
 
 With no name, devstack finds the service from the working directory.
 
-These actions change what runs, so they also name the copy to act on. Pass
---stack <name> for a feature stack, or --stack base for base. Base runs from the
-replica that devstack keeps, not from your checkout.
+These actions change what runs, so they also name the stack to act on. Pass
+--stack <name> for a feature stack. With no flag, devstack uses the stack whose
+worktree you are in.
 
-With no flag, devstack acts on the copy whose directory you are in. Anywhere
-else it acts on base. Each action names the copy it changed: a base copy has no
-:stack suffix.`,
+Outside a stack worktree, only a shared service resolves. A shared service is a
+service in the workspace "shared:" list. It runs once, from the replica, and
+every stack uses it. A service that is not shared runs only in a stack, so the
+command asks for --stack. Each action names what it changed: a shared service
+has no :stack suffix.`,
 }
 
 var groupCmd = &cobra.Command{
@@ -39,9 +41,9 @@ group, devstack starts every service in it, in dependency order.
 
 The name must be a group. To act on one service, run 'devstack service <action> <name>'.
 
-start, stop and restart change what runs, so they also name the copy to act on:
---stack <name>, or --stack base. With no flag they use the copy whose directory
-you are in, and base anywhere else.
+start, stop and restart change what runs, so they also name the stack to act on:
+--stack <name>. With no flag they use the stack whose worktree you are in.
+Outside a stack worktree, they reach only the shared services.
 
 A stack rarely runs a whole group. With --stack <name>, the action reaches
 only the members that the stack runs. devstack names the members that are not
@@ -94,6 +96,6 @@ func init() {
 		serviceStartCmd, serviceStopCmd, serviceRestartCmd,
 		groupStartCmd, groupStopCmd, groupRestartCmd,
 	} {
-		c.Flags().String("stack", "", "The copy to act on: a feature stack name, or \"base\" for the replica that base runs from. Default: the copy your directory is in, or base")
+		c.Flags().String("stack", "", "The stack to act on, by short name. Default: the stack whose worktree you are in. Outside a stack, only a shared service resolves")
 	}
 }

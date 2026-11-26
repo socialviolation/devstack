@@ -42,7 +42,7 @@ func transformRunningState(w io.Writer, wsName string, skip []string) error {
 
 	copies := runningBaseCopies(view, wsName, skip)
 	if len(copies) == 0 {
-		fmt.Fprintln(w, "The daemon runs, and no base copy runs in it. devstack restarts nothing.")
+		fmt.Fprintln(w, "The daemon runs, and no shared service runs in it. devstack restarts nothing.")
 		return nil
 	}
 
@@ -71,7 +71,7 @@ func transformRunningState(w io.Writer, wsName string, skip []string) error {
 	for _, e := range errs {
 		fmt.Fprintf(w, "  %v\n", e)
 	}
-	fmt.Fprintln(w, "To try one of these again, run: devstack service restart <svc> --stack base")
+	fmt.Fprintln(w, "To try one of these again, run: devstack service restart <svc>")
 	return errors.Join(errs...)
 }
 

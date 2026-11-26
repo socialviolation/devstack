@@ -186,7 +186,7 @@ func TestCopyInErrorNamesTheRestart(t *testing.T) {
 		t.Fatalf("got %v", kinds(r))
 	}
 	base, stk := r.Problems[0], r.Problems[1]
-	if base.Fix != "devstack service restart web --stack base" || base.Tool != "" {
+	if base.Fix != "devstack service restart web" || base.Tool != "" {
 		t.Errorf("base fix = %q, tool = %q", base.Fix, base.Tool)
 	}
 	if stk.Fix != "devstack service restart api --stack agent-x" || stk.Tool != `restart(service="api", stack="agent-x")` {
@@ -354,7 +354,7 @@ func TestReplicaMissingAndDrift(t *testing.T) {
 	f.host.Replica = func() (bool, []Drift) {
 		return true, []Drift{{"web", "the replica declares this service, and the workspace does not: /r/web"}}
 	}
-	if p := only(t, f.check(""), KindReplicaDrift, Degraded); p.Fix != "devstack base sync" {
+	if p := only(t, f.check(""), KindReplicaDrift, Degraded); p.Fix != "devstack shared sync" {
 		t.Errorf("got %+v", p)
 	}
 }

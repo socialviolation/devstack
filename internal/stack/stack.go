@@ -133,7 +133,7 @@ func StacksRoot(base *workspace.Workspace) string {
 func Create(in CreateInput) (*CreateResult, error) {
 	base := in.Base
 	if base == nil {
-		return nil, fmt.Errorf("devstack can not resolve the base workspace")
+		return nil, fmt.Errorf("devstack can not resolve the workspace")
 	}
 	if _, err := FindStack(base.Name, in.Name); err == nil {
 		return nil, fmt.Errorf("stack %q already exists in workspace %q", in.Name, base.Name)
@@ -147,7 +147,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return nil, fmt.Errorf("can not resolve the base workspace: %w", err)
+		return nil, fmt.Errorf("can not resolve the workspace: %w", err)
 	}
 	topo, err := config.BuildTopology(base.Path)
 	if err != nil {
@@ -172,7 +172,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 	// the same name in the other.
 	stackRoot := filepath.Join(StacksRoot(base), in.Name)
 	if stackRoot == base.Path || strings.HasPrefix(stackRoot, base.Path+string(os.PathSeparator)) {
-		return nil, fmt.Errorf("devstack can not use the stack root %s. The root is under base %s, and a nested root breaks workspace detection", stackRoot, base.Path)
+		return nil, fmt.Errorf("devstack can not use the stack root %s. The root is under the workspace %s, and a nested root breaks workspace detection", stackRoot, base.Path)
 	}
 	res.StackRoot = stackRoot
 
@@ -265,7 +265,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 	}
 	sort.Slice(res.Worktrees, func(i, j int) bool { return res.Worktrees[i].Service < res.Worktrees[j].Service })
 	if len(leftBehind) > 0 {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack cut the worktrees from %s, not from the base checkout. This stack does not have the uncommitted work in the checkout. This stack does not have the commits that the checkout holds beyond that ref.",
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack cut the worktrees from %s, not from the checkout. This stack does not have the uncommitted work in the checkout. This stack does not have the commits that the checkout holds beyond that ref.",
 			strings.Join(leftBehind, ", ")))
 	}
 	res.Warnings = append(res.Warnings, OutsideWarnings(baseRW, overlay)...)
@@ -388,7 +388,7 @@ func CheckRemovable(base *workspace.Workspace, name string, force bool) error {
 		return nil
 	}
 	if base == nil {
-		return fmt.Errorf("devstack can not resolve the base workspace")
+		return fmt.Errorf("devstack can not resolve the workspace")
 	}
 	rec, err := FindStack(base.Name, name)
 	if err != nil {
@@ -433,7 +433,7 @@ func worktreePaths(rec *Record) ([]string, error) {
 
 func Remove(base *workspace.Workspace, name string, force bool) (*RemoveResult, error) {
 	if base == nil {
-		return nil, fmt.Errorf("devstack can not resolve the base workspace")
+		return nil, fmt.Errorf("devstack can not resolve the workspace")
 	}
 	rec, err := FindStack(base.Name, name)
 	if err != nil {
@@ -535,11 +535,11 @@ func splitPortKey(qualified string) (service, key string, ok bool) {
 func GenerateOptions(rec *Record, names []string) (tiltgen.Options, error) {
 	base, err := workspace.FindByName(rec.Base)
 	if err != nil {
-		return tiltgen.Options{}, fmt.Errorf("stack %q: devstack can not find the base workspace %q in the registry: %w", rec.FullName(), rec.Base, err)
+		return tiltgen.Options{}, fmt.Errorf("stack %q: devstack can not find the workspace %q in the registry: %w", rec.FullName(), rec.Base, err)
 	}
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return tiltgen.Options{}, fmt.Errorf("can not resolve the base workspace %q at %s: %w", base.Name, base.Path, err)
+		return tiltgen.Options{}, fmt.Errorf("can not resolve the workspace %q at %s: %w", base.Name, base.Path, err)
 	}
 
 	allocated, err := workspace.LoadPorts(rec.RuntimeKey())
@@ -577,11 +577,11 @@ func GenerateOptions(rec *Record, names []string) (tiltgen.Options, error) {
 func ResolveWorktree(rec *Record) (*config.ResolvedWorkspace, error) {
 	base, err := workspace.FindByName(rec.Base)
 	if err != nil {
-		return nil, fmt.Errorf("stack %q: devstack can not find the base workspace %q in the registry: %w", rec.FullName(), rec.Base, err)
+		return nil, fmt.Errorf("stack %q: devstack can not find the workspace %q in the registry: %w", rec.FullName(), rec.Base, err)
 	}
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return nil, fmt.Errorf("can not resolve the base workspace %q at %s: %w", base.Name, base.Path, err)
+		return nil, fmt.Errorf("can not resolve the workspace %q at %s: %w", base.Name, base.Path, err)
 	}
 	rw, err := config.ResolveWorkspace(rec.Root)
 	if err != nil {
