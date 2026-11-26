@@ -96,7 +96,7 @@ func TestHelpMoreNamesEveryDemotedCommand(t *testing.T) {
 func TestEveryHiddenCommandKeepsItsOwnHelp(t *testing.T) {
 	installHelp()
 
-	for _, name := range []string{"base", "prime", "serve", "migrate", "completion"} {
+	for _, name := range []string{"base", "shared", "prime", "serve", "migrate", "completion"} {
 		c := leafCommand(name)
 		if c == nil {
 			t.Fatalf("`devstack %s` is not registered", name)
@@ -120,21 +120,18 @@ func TestEveryHiddenCommandKeepsItsOwnHelp(t *testing.T) {
 	}
 }
 
-// `base` is the repair for a replica, and it was reachable from nothing: hidden,
-// absent from `help more`, and named only in its own help and in the MCP tool.
-// Somebody who needs it can not find it.
-func TestHelpMoreNamesBase(t *testing.T) {
+func TestHelpMoreNamesShared(t *testing.T) {
 	installHelp()
 	screen := moreScreen()
 
-	if !strings.Contains(screen, "devstack base") {
-		t.Errorf("`devstack help more` never names base:\n%s", screen)
+	if !strings.Contains(screen, "devstack shared") {
+		t.Errorf("`devstack help more` never names shared:\n%s", screen)
 	}
 	if !strings.Contains(screen, "replica") {
-		t.Errorf("`devstack help more` never says what base is for:\n%s", screen)
+		t.Errorf("`devstack help more` never says what shared is for:\n%s", screen)
 	}
-	if leafCommand("base") == nil {
-		t.Error("`devstack base` is not registered, and `help more` sends the reader to it")
+	if leafCommand("shared") == nil {
+		t.Error("`devstack shared` is not registered, and `help more` sends the reader to it")
 	}
 }
 

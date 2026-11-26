@@ -18,8 +18,9 @@ import (
 )
 
 var sharedCmd = &cobra.Command{
-	Use:   "shared",
-	Short: "Inspect and refresh the shared services of a workspace",
+	Use:    "shared",
+	Hidden: true,
+	Short:  "Inspect and refresh the shared services of a workspace",
 	Long: `A shared service is a service in the workspace "shared:" list. It runs once
 for the workspace, and never in a stack. Every stack uses it. Databases and
 stores are shared.

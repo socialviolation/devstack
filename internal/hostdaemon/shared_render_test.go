@@ -33,6 +33,13 @@ func TestRenderRunsOnlySharedServicesOutsideAStack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	unbuilt, _, err := render()
+	if err != nil {
+		t.Fatalf("render with no replica: %v", err)
+	}
+	if _, ok := resourceBlocks(unbuilt)["shop:api"]; ok {
+		t.Errorf("with no replica, the checkout fallback runs the stack service api: %v", sortedBlockNames(resourceBlocks(unbuilt)))
+	}
 	if _, err := replica.Ensure(ws); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}

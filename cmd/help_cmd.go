@@ -40,12 +40,12 @@ var helpGroups = []helpGroup{
 	{"SET UP THIS MACHINE", []helpRow{
 		{"devstack workspace add <path>", "register the directory of your services"},
 		{"devstack init --name <svc> --path <dir> --cmd <cmd>", "register one service in it"},
-		{"devstack workspace up", "start the daemon, and base"},
+		{"devstack workspace up", "start the daemon, and the shared services"},
 		{"devstack upgrade", "install the current devstack, and migrate"},
 	}},
 }
 
-var moreRow = helpRow{"devstack help more", "otel, tunnel, ports, hooks, dependencies, base"}
+var moreRow = helpRow{"devstack help more", "otel, tunnel, ports, hooks, dependencies, shared"}
 
 // moreCommands are real and are needed now and then. They are not part of
 // learning the tool, so they leave the first screen and keep everything else.
@@ -56,7 +56,7 @@ var moreCommands = []helpRow{
 	{"dependencies", "declare which service starts before another"},
 	{"hooks", "run an action when a stack or a service changes state"},
 	{"group", "act on a named set of services at one time"},
-	{"base", "the replica that base runs from: print its path, or build it again"},
+	{"shared", "the shared services: their replica, and a sync to the default branch"},
 	{"doctor", "find what is broken, and the command that fixes it"},
 	{"cleanup", "remove orphaned ports, worktrees and stack records"},
 }

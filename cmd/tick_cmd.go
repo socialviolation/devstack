@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +35,7 @@ func init() {
 var tickJobs = []func() error{
 	tickSweep,
 	tickHerdrPublish,
+	tickSharedSync,
 }
 
 func runTick(cmd *cobra.Command, args []string) error {
@@ -86,8 +88,39 @@ func sweepIfDirect(now time.Time) {
 }
 
 func sweepDue(path string, now time.Time) bool {
+	return stampDue(path, now, directSweepEvery)
+}
+
+const sharedSyncEvery = time.Hour
+
+func sharedSyncStampPath() string {
+	return filepath.Join(workspace.DataRoot(), "shared-sync.stamp")
+}
+
+func tickSharedSync() error {
+	if !stampDue(sharedSyncStampPath(), time.Now(), sharedSyncEvery) {
+		return nil
+	}
+	return syncAllShared(os.Stdout)
+}
+
+var syncAllShared = func(w io.Writer) error {
+	active, err := workspace.ActiveWorkspaces()
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for i := range active {
+		if err := syncShared(&active[i], w); err != nil {
+			errs = append(errs, fmt.Errorf("workspace %q: %w", active[i].Name, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func stampDue(path string, now time.Time, every time.Duration) bool {
 	if data, err := os.ReadFile(path); err == nil {
-		if last, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data))); err == nil && now.Sub(last) < directSweepEvery && !now.Before(last) {
+		if last, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data))); err == nil && now.Sub(last) < every && !now.Before(last) {
 			return false
 		}
 	}

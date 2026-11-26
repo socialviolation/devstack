@@ -33,8 +33,9 @@ stack is a group of those services that you cut for one feature. A stack is
 local infrastructure that does not last. You stand it up, and you tear it down.
 An environment points a stack at a database and at a set of endpoints.
 
-base runs every service that no stack replaces. 'devstack workspace up' keeps
-base on the default branch, so you do not maintain it.
+The shared services run once for the workspace, and every stack uses them.
+'devstack workspace up' keeps them on the default branch, so you do not
+maintain them.
 
 Run any command in a workspace directory, or in a service directory. devstack
 detects the workspace for you. No flag is necessary.`,
