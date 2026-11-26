@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -11,49 +12,39 @@ import (
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
-// The briefing is what every session reads before it touches anything, so the
-// two facts that decide whether it edits the right directory have to be in it:
-// base runs from a replica rather than the checkout, and the checkout is a
-// template. Without them an agent edits here and reports a fix that never ran.
-func TestBriefingSaysBaseRunsFromTheReplica(t *testing.T) {
+func TestBriefingTermsDefineTheSharedSetAndTheReplica(t *testing.T) {
 	var b strings.Builder
 	writePrimeTerms(&b)
 	terms := b.String()
 
-	for _, want := range []string{"replica", "template", "devstack workspace up"} {
+	for _, want := range []string{"shared set", "replica", "default branch", "needs", "calls", "stack_extend", "devstack stack up <name>"} {
 		if !strings.Contains(terms, want) {
-			t.Errorf("the briefing's terms must state %q, so an edit is not made in a directory nothing runs:\n%s", want, terms)
+			t.Errorf("the briefing's terms must state %q:\n%s", want, terms)
 		}
 	}
-	if strings.Contains(terms, "base       your normal checkout") {
-		t.Errorf("the briefing still defines base as the checkout:\n%s", terms)
+	if regexp.MustCompile(`\bbase\b`).MatchString(terms) {
+		t.Errorf("the briefing's terms still name base:\n%s", terms)
 	}
 }
 
-// The other half of the same rule: a command that changes what is running has
-// no default instance. A briefing that says "if you do not give --stack, a
-// command uses base" sends an agent to run one that is refused.
-func TestBriefingSaysAMutatingCommandNeedsAnInstance(t *testing.T) {
+func TestBriefingSaysAMutatingCommandNamesItsStack(t *testing.T) {
 	var b strings.Builder
 	writePrimeTerms(&b)
 	terms := b.String()
 
-	if !strings.Contains(terms, "--stack base") {
-		t.Errorf("the briefing must name --stack base as how base is targeted:\n%s", terms)
-	}
-	if !strings.Contains(terms, "the default is base") {
-		t.Errorf("the briefing must say what a mutating command does with no --stack:\n%s", terms)
-	}
-	// The fallback is only safe if the reader can see where it landed, so the
-	// briefing has to send them to the line that names the copy.
-	if !strings.Contains(terms, "names the copy it changed") {
-		t.Errorf("the briefing must say a command reports the copy it acted on:\n%s", terms)
+	for _, want := range []string{
+		"names the stack with `--stack <name>`",
+		"Outside a stack, it acts only on a shared service",
+		"It can not start, stop or restart one",
+		"names the copy it changed",
+	} {
+		if !strings.Contains(terms, want) {
+			t.Errorf("the briefing never states %q:\n%s", want, terms)
+		}
 	}
 }
 
-// Standing in the checkout, the briefing has to say so — and say where base
-// really runs — rather than reporting the directory as base itself.
-func TestBriefingNamesTheCheckoutATemplateAndPointsAtTheReplica(t *testing.T) {
+func TestBriefingNamesTheCheckoutAndPointsAtTheReplica(t *testing.T) {
 	root := t.TempDir()
 	ws := &workspace.Workspace{Name: "navexa", Path: filepath.Join(root, "navexa")}
 	if err := os.MkdirAll(replica.Root(ws), 0755); err != nil {
@@ -62,31 +53,28 @@ func TestBriefingNamesTheCheckoutATemplateAndPointsAtTheReplica(t *testing.T) {
 	writeFile(t, filepath.Join(replica.Root(ws), config.WorkspaceManifestFileName), "version: 1\nworkspace:\n  name: navexa\n")
 
 	var b strings.Builder
-	writePrimeIdentity(&b, ws, "api", "base", false)
+	writePrimeIdentity(&b, ws, "api", "", false, true)
 	got := b.String()
 
-	if !strings.Contains(got, "template checkout") {
-		t.Errorf("identity = %q, want the checkout named as the template", got)
+	if !strings.Contains(got, "checkout (not a stack)") || !strings.Contains(got, "Nothing runs here") {
+		t.Errorf("identity = %q, want the checkout named, and that nothing runs it", got)
 	}
-	if !strings.Contains(got, ".devstack-base") {
-		t.Errorf("identity = %q, want the replica path base runs from", got)
+	if !strings.Contains(got, replica.Root(ws)) {
+		t.Errorf("identity = %q, want the replica path the shared set runs from", got)
 	}
 
 	b.Reset()
-	writePrimeIdentity(&b, ws, "api", "base", true)
-	if got := b.String(); !strings.Contains(got, "base replica") || !strings.Contains(got, "do not edit here") {
+	writePrimeIdentity(&b, ws, "api", "", true, true)
+	if got := b.String(); !strings.Contains(got, "replica of the shared set") || !strings.Contains(got, "do not edit here") {
 		t.Errorf("identity in the replica = %q, want it named and marked read-only", got)
 	}
 }
 
-// Until 'devstack workspace up' has built the replica, the daemon really does
-// run the checkout. Saying otherwise here would be as wrong as the claim it
-// replaced, so the briefing states the exception and how to end it.
 func TestBriefingSaysSoWhileNoReplicaIsBuilt(t *testing.T) {
 	ws := &workspace.Workspace{Name: "navexa", Path: filepath.Join(t.TempDir(), "navexa")}
 
 	var b strings.Builder
-	writePrimeIdentity(&b, ws, "api", "base", false)
+	writePrimeIdentity(&b, ws, "api", "", false, true)
 	got := b.String()
 
 	if !strings.Contains(got, "No replica is built yet") || !strings.Contains(got, "devstack workspace up") {
@@ -97,55 +85,43 @@ func TestBriefingSaysSoWhileNoReplicaIsBuilt(t *testing.T) {
 	}
 }
 
-// The reload verdict is the line an agent acts on after an edit. Every restart
-// it prints has to name an instance, or the command it suggests is refused; and
-// in the checkout it must not promise that an edit reloads into anything.
-func TestReloadVerdictNamesAnInstanceAndDoesNotPromiseTheCheckoutReloads(t *testing.T) {
+func TestBriefingSaysNothingRunsTheCheckoutOfAWorkspaceWithNoSharedSet(t *testing.T) {
+	ws := &workspace.Workspace{Name: "navexa", Path: filepath.Join(t.TempDir(), "navexa")}
+
+	var b strings.Builder
+	writePrimeIdentity(&b, ws, "api", "", false, false)
+	got := b.String()
+
+	if !strings.Contains(got, "Nothing runs here") || strings.Contains(got, "replica") {
+		t.Errorf("identity = %q, want nothing runs here, and no replica named", got)
+	}
+}
+
+func TestReloadVerdictNamesAStackAndDoesNotPromiseTheCheckoutReloads(t *testing.T) {
 	rw := &config.ResolvedWorkspace{Services: map[string]config.ResolvedService{
 		"api": {Manifest: &config.ServiceManifest{}},
 	}}
 	rw.Services["api"].Manifest.Runtime.Run.Command = "go run ."
 
 	var b strings.Builder
-	writePrimeReload(&b, rw, "api", "base", false, true, nil)
+	writePrimeReload(&b, rw, "api", "", false, true, nil)
 	got := b.String()
 
-	if !strings.Contains(got, "devstack service restart api --stack base") {
-		t.Errorf("reload verdict = %q, want a restart that names its instance", got)
+	if !strings.Contains(got, "devstack service restart api --stack <name>") {
+		t.Errorf("reload verdict = %q, want a restart that names its stack", got)
 	}
-	if !strings.Contains(got, "base runs the replica") {
-		t.Errorf("reload verdict = %q, want it to say an edit here does not reach base", got)
+	if !strings.Contains(got, "no copy runs your checkout") {
+		t.Errorf("reload verdict = %q, want it to say an edit here reaches no copy", got)
 	}
 
 	b.Reset()
-	rw.Services["api"].Manifest.Runtime.Run.Command = "dotnet watch run"
-	writePrimeReload(&b, rw, "api", "base", false, true, nil)
-	if got := b.String(); strings.Contains(got, "Your code changes apply without a restart") {
-		t.Errorf("reload verdict = %q, want no claim that an edit here reloads: base runs the replica", got)
+	rw.Manifest = &config.WorkspaceManifest{Shared: []string{"api"}}
+	writePrimeReload(&b, rw, "api", "", false, true, nil)
+	if got := b.String(); !strings.Contains(got, "devstack service restart api\n") {
+		t.Errorf("reload verdict = %q, want a shared service restarted with no --stack", got)
 	}
 }
 
-// The two facts an agent gets wrong without them: base runs a replica and not
-// the checkout, and a mutating command names its copy. devstack no longer writes
-// them into any repository, so the briefing is the only place that states them.
-func TestBriefingStatesTheReplicaAndDemandsAnInstance(t *testing.T) {
-	var b strings.Builder
-	writePrimeTerms(&b)
-	terms := b.String()
-
-	for _, want := range []string{"replica", "template", "--stack base"} {
-		if !strings.Contains(terms, want) {
-			t.Errorf("the briefing never states %q:\n%s", want, terms)
-		}
-	}
-	if !strings.Contains(terms, "the default is base") {
-		t.Errorf("the briefing must say what --stack defaults to:\n%s", terms)
-	}
-}
-
-// A stack cut from the checkout's HEAD was the old behaviour, and an agent told
-// so will commit onto a base it never had. The help of the command states the
-// rule, which is where an agent reads it now that no repository carries it.
 func TestStackCreateHelpStatesWhereAStackIsCutFrom(t *testing.T) {
 	cmd, _, err := rootCmd.Find([]string{"stack", "create"})
 	if err != nil {
@@ -162,9 +138,7 @@ func TestStackCreateHelpStatesWhereAStackIsCutFrom(t *testing.T) {
 	}
 }
 
-// The base row of the instance table has to print the worktree base RUNS. It
-// printed the checkout, which is the one directory guaranteed not to be it.
-func TestBaseRowNamesTheReplicaWorktreeNotTheCheckout(t *testing.T) {
+func TestSharedRowNamesTheReplicaWorktreeNotTheCheckout(t *testing.T) {
 	root := t.TempDir()
 	ws := &workspace.Workspace{Name: "navexa", Path: filepath.Join(root, "navexa")}
 	replicaAPI := filepath.Join(replica.Root(ws), "api")
@@ -182,6 +156,6 @@ func TestBaseRowNamesTheReplicaWorktreeNotTheCheckout(t *testing.T) {
 		t.Fatalf("replicaDir reported no replica while one is built at %s", replica.Root(ws))
 	}
 	if dir != replicaAPI {
-		t.Errorf("base row directory = %q, want the replica worktree %q", dir, replicaAPI)
+		t.Errorf("shared row directory = %q, want the replica worktree %q", dir, replicaAPI)
 	}
 }
