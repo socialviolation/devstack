@@ -155,6 +155,18 @@ func TestPublishClearsTheBindingOfAPaneHerdrNoLongerHas(t *testing.T) {
 	}
 }
 
+func TestPublishKeepsEveryBindingWhenHerdrListsNoPanes(t *testing.T) {
+	installHerdr(t)
+	registerStore(t, "navexa", stack.Record{Name: "kept", Base: "navexa", Pane: "w1:p1", CreatedAt: t0})
+
+	if err := Publish(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if kept, _ := stack.FindStack("navexa", "kept"); kept.Pane != "w1:p1" {
+		t.Errorf("an empty pane list cleared the binding: pane %q", kept.Pane)
+	}
+}
+
 func TestPublishClearsTokensFromAPaneThatBindsNoStack(t *testing.T) {
 	f := installHerdr(t)
 	f.panes = []Pane{

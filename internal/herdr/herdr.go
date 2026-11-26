@@ -147,7 +147,7 @@ func Publish(ctx context.Context) error {
 
 	byPane, errs := loadBound()
 	for pane, recs := range byPane {
-		if live[pane] {
+		if len(panes) == 0 || live[pane] {
 			continue
 		}
 		for _, b := range recs {
