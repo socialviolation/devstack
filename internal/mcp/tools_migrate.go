@@ -32,7 +32,7 @@ func registerMigrateTool(mcpServer *server.MCPServer, ws *workspace.Workspace, p
 			"If that block is there, read it and do what it says. A run that changed nothing, and every action=\"list\", ends with its own closing line instead.\n"+
 			"This tool builds no replica and starts nothing. To find a workspace with no replica, run 'devstack workspace doctor'.\n"+
 			"A second run changes nothing. This tool mirrors 'devstack migrate' and 'devstack migrate --list'.\n"+
-			"action=\"shared-stacks\" converts THIS workspace to the shared set and small stacks. Without apply=true, it changes nothing and prints what it would change. It mirrors 'devstack migrate shared-stacks'. Before it writes, devstack copies each file it edits to a backup directory, and prints that path."),
+			"action=\"shared-stacks\" converts THIS workspace to the shared set and small stacks. Without apply=true, it changes nothing and prints what it changes. It mirrors 'devstack migrate shared-stacks'. Before it writes, devstack copies each file it edits to a backup directory, and prints that path."),
 		mcp.WithString("action", mcp.Required(),
 			mcp.Description("\"list\" prints the version of each workspace, and it changes nothing. Use it first: it reports what a run changes. \"run\" applies each pending migration. It writes and deletes files in repositories that devstack does not own. \"shared-stacks\" converts this workspace to the shared set. It changes nothing without apply=true.")),
 		mcp.WithBoolean("force",
@@ -40,7 +40,7 @@ func registerMigrateTool(mcpServer *server.MCPServer, ws *workspace.Workspace, p
 		mcp.WithBoolean("apply",
 			mcp.Description("Only for action=\"shared-stacks\". Write the changes. The default is false, and then devstack changes nothing.")),
 		mcp.WithString("shared",
-			mcp.Description("Only for action=\"shared-stacks\". The shared services, comma separated. With apply=true, devstack writes this list to shared:.")),
+			mcp.Description("Only for action=\"shared-stacks\". The shared services, separated by commas. With apply=true, devstack writes this list to shared:.")),
 		mcp.WithString("needs",
 			mcp.Description("Only for action=\"shared-stacks\". Make an edge a needs edge, as svc=dep. Separate more than one with commas.")),
 		mcp.WithReadOnlyHintAnnotation(false),

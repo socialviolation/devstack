@@ -77,7 +77,7 @@ func TestBriefingSaysSoWhileNoReplicaIsBuilt(t *testing.T) {
 	writePrimeIdentity(&b, ws, "api", "", false, true)
 	got := b.String()
 
-	if !strings.Contains(got, "No replica is built yet") || !strings.Contains(got, "devstack workspace up") {
+	if !strings.Contains(got, "devstack has built no replica yet") || !strings.Contains(got, "devstack workspace up") {
 		t.Errorf("identity = %q, want the un-built replica named, with the command that builds it", got)
 	}
 	if strings.Contains(got, "Nothing runs here") {

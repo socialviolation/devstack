@@ -25,8 +25,8 @@ func registerWiringTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 			"\"A with no stack → stack X B\" means a value outside the stack points into stack X. "+
 			"Read both before you change config: they show what a change moves. An env key that names a service which does not exist is an error. "+
 			"Each edge shows its declared kind: needs or calls, and the via value if the edge has one. "+
-			"A note says a declared edge has no key that carries it, or a key that reaches a service with no declared edge. "+
-			"This reads the env ladder of each checkout and each stack worktree. Use topology for the declared graph alone, and service_env to see or set a value. Values that hold a credential are masked."),
+			"A note says that a declared edge has no key that carries it, or that a key reaches a service with no declared edge. "+
+			"This reads the env ladder of each checkout and each stack worktree. Use topology for the declared graph alone, and service_env to see or set a value. The report masks each value that holds a credential."),
 		mcp.WithString("service",
 			mcp.Description("Exact service name. Shows only the edges into and out of it. Omit it for every edge.")),
 		mcp.WithString("stack",
@@ -175,7 +175,7 @@ func renderWiring(m wiring.Map, edges map[[2]string]string, service string, stac
 		}
 	}
 	if !showBase {
-		sb.WriteString("\nValues with no stack are hidden. Only the owner sees them.\n")
+		sb.WriteString("\ndevstack hides the values with no stack. Only the owner sees them.\n")
 	}
 	return sb.String()
 }

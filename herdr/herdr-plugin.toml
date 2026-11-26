@@ -6,10 +6,10 @@
 id = "devstack"
 name = "devstack"
 version = "0.2.0"
-# 0.9.1 is the version this plugin was tested against. It uses the overlay
+# The last test of this plugin ran on herdr 0.9.1. The plugin uses the overlay
 # placement, --cwd and --env on `plugin pane open`, a startup hook, and the pane
-# context for an action. An older herdr installs the plugin, and then the pane
-# fails where the reason is hard to read.
+# context for an action. An older herdr installs the plugin. Then the pane
+# fails, and the error does not say why.
 min_herdr_version = "0.9.1"
 description = "Watch every devstack service, and open or copy the tailnet address of one."
 platforms = ["linux", "macos"]
@@ -63,6 +63,6 @@ command = ["bash", "scripts/open-links.sh"]
 [[actions]]
 id = "open-pane-stack"
 title = "devstack: open this pane's stack"
-description = "Open the tailnet address of the stack that the focused pane controls."
+description = "Open the tailnet address of the stack that the focused pane binds."
 contexts = ["pane"]
 command = ["devstack", "herdr", "open"]

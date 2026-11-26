@@ -54,7 +54,8 @@ func runTaskRun(cmd *cobra.Command, args []string) error {
 	if len(args) > 1 {
 		task = args[1]
 	}
-	out, failed, err := nvxmcp.RunTask(cmd.Context(), base, stackName, args[0], task)
+	out, failed, err := nvxmcp.RunTask(cmd.Context(), base, stackName, args[0], task,
+		"--stack <name>", fmt.Sprintf("run: devstack stack add %s %s", stackName, args[0]))
 	if err != nil {
 		return err
 	}

@@ -158,7 +158,7 @@ func TestTaskRunRefusesAnUndeclaredTask(t *testing.T) {
 
 func TestTaskRunRefusesNoStackAndBase(t *testing.T) {
 	ws, _ := seedTaskWorkspace(t)
-	for name, want := range map[string]string{"": "Pass stack=", "base": "is not in workspace"} {
+	for name, want := range map[string]string{"": `Name the stack: stack=`, "base": "is not in workspace"} {
 		out := safetyCallTool(t, taskServer(t, ws), "task_run", map[string]any{"stack": name, "service": "api", "task": "where"})
 		if !strings.Contains(out, `"isError":true`) || !strings.Contains(out, want) {
 			t.Errorf("stack %q: want a refusal with %q:\n%s", name, want, out)

@@ -37,7 +37,7 @@ func TestStackConfigSaysAStackIsDown(t *testing.T) {
 			t.Fatalf("runStackConfig: %v", err)
 		}
 	})
-	for _, want := range []string{"is down", "would run with", "devstack stack up feat"} {
+	for _, want := range []string{"is down", "the configuration it starts with", "devstack stack up feat"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output must contain %q, got:\n%s", want, out)
 		}

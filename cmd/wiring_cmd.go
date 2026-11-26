@@ -20,7 +20,7 @@ and the service that value reaches. With --stack, it also shows the value in
 that stack.
 
 With a service name, devstack shows only the edges into and out of it.
-Values that hold a credential are masked.
+The report masks each value that holds a credential.
 
   devstack wiring
   devstack wiring api --stack feat`,

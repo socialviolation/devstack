@@ -46,7 +46,7 @@ func registerDoctorTool(mcpServer *server.MCPServer, ws *workspace.Workspace, ho
 func registerCleanupTool(mcpServer *server.MCPServer, ws *workspace.Workspace, host func(*workspace.Workspace) doctor.Host) {
 	tool := mcp.NewTool("cleanup",
 		mcp.WithDescription("Remove the orphans of this workspace: port allocations with no stack, directories and git worktrees under the stacks root with no stack, git worktree entries whose directory is gone, and the records of stacks whose directory is gone. "+
-			"It never touches the replica, a stack whose directory exists, or a stack that is up. It keeps a worktree that holds uncommitted work, and says so. It ignores anything younger than 10 minutes, because a stack that is being created looks like an orphan. "+
+			"It never touches the replica, a stack whose directory exists, or a stack that is up. It keeps a worktree that holds uncommitted work, and says so. It ignores anything younger than 10 minutes, because a stack looks like an orphan while devstack creates it. "+
 			"dry_run defaults to true: the tool then lists exactly what it would do, and changes nothing. To find the orphans first, call doctor. "+
 			"This tool mirrors 'devstack cleanup'."),
 		mcp.WithBoolean("dry_run",

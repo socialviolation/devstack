@@ -170,7 +170,7 @@ func (g *guard) check(caller auth.Caller, req mcp.CallToolRequest) string {
 	name := req.Params.Name
 	p, ok := agentPolicies[name]
 	if !ok {
-		return fmt.Sprintf("agents may not call %s", name)
+		return fmt.Sprintf("agents can not call %s", name)
 	}
 	action := strings.ToLower(strings.TrimSpace(req.GetString("action", "")))
 	switch p.ruleFor(action) {
@@ -192,14 +192,14 @@ func (g *guard) check(caller auth.Caller, req mcp.CallToolRequest) string {
 	case ownStackNotShared:
 		given := strings.TrimSpace(req.GetString(p.StackArg, ""))
 		if svc := strings.TrimSpace(req.GetString("service", "")); given == "" && g.isShared(svc) {
-			return fmt.Sprintf("agents may not call %s on shared service %q. Every stack uses it. Ask the owner", name, svc)
+			return fmt.Sprintf("agents can not call %s on shared service %q, because every stack uses it. Ask the owner", name, svc)
 		}
 		return g.checkOwnStack(caller, name, p.StackArg, given)
 	}
 	if action != "" {
-		return fmt.Sprintf("agents may not call %s with action=%q", name, action)
+		return fmt.Sprintf("agents can not call %s with action=%q", name, action)
 	}
-	return fmt.Sprintf("agents may not call %s", name)
+	return fmt.Sprintf("agents can not call %s", name)
 }
 
 func (g *guard) isShared(svc string) bool {

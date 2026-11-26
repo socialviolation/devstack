@@ -529,7 +529,7 @@ func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, he
 		fmt.Fprintf(b, "  Nothing runs here. The shared set runs from the replica at %s.\n", replica.Root(ws))
 	case hasShared:
 		b.WriteString(" · checkout (not a stack)\n")
-		fmt.Fprintf(b, "  No replica is built yet, so the shared set runs from this checkout. `devstack workspace up`\n  builds the replica at %s. After that, nothing here runs.\n", replica.Root(ws))
+		fmt.Fprintf(b, "  devstack has built no replica yet, so the shared set runs from this checkout.\n  `devstack workspace up` builds the replica at %s. After that, nothing here runs.\n", replica.Root(ws))
 	default:
 		b.WriteString(" · checkout (not a stack)\n")
 		b.WriteString("  Nothing runs here. A service of this workspace runs only in a stack.\n")
@@ -644,7 +644,7 @@ func writePrimeTerms(b *strings.Builder) {
 	b.WriteString("With no flag it uses the stack your directory is in. Outside a stack, it acts only on a shared service.\n")
 	b.WriteString("An agent can read a shared service. It can not start, stop or restart one, because every stack uses it.\n")
 	b.WriteString("Each command names the copy it changed. A shared copy has no :stack suffix, so read that line to confirm it.\n")
-	b.WriteString("Never edit stacks.json, ports.json or a stack manifest by hand; use stack add/remove.\n")
+	b.WriteString("Never edit stacks.json, ports.json or a stack manifest by hand. Use stack add and stack remove.\n")
 	writePrimeStates(b)
 }
 
@@ -873,7 +873,7 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 		if replicaBuilt {
 			b.WriteString("  The shared copy runs from the replica, not from your checkout. It takes no --stack.\n")
 		} else {
-			b.WriteString("  No replica is built yet, so the shared copy runs your checkout. It takes no --stack.\n")
+			b.WriteString("  devstack has built no replica yet, so the shared copy runs your checkout. It takes no --stack.\n")
 		}
 	}
 	b.WriteString("  To start, stop or restart a stack copy, name it: `--stack <name>`. With no flag the command\n")

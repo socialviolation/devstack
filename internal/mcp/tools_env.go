@@ -118,7 +118,7 @@ func registerEnvUseTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 func registerEnvWhichTool(mcpServer *server.MCPServer, ws *workspace.Workspace, workspacePath string) {
 	tool := mcp.NewTool("env_which",
 		mcp.WithDescription("Show which config-patch environment applies to a service at each scope: workspace, service and stack. It also shows the merged config vars that the service runs with. This tool mirrors 'devstack env which'.\n"+
-			"devstack defines the environments once, in the workspace manifest, and every feature stack inherits them. The stack scope shows the environment that a stack was pointed at.\n"+
+			"devstack defines the environments once, in the workspace manifest, and every feature stack inherits them. The stack scope shows the environment that a stack points at.\n"+
 			"devstack redacts credentials in place. The identifying parts of a value stay visible: server, database, account, endpoint and user. Only the credential is hidden. Where a value has no structure to keep, devstack masks the whole value.\n"+
 			"If you omit service, devstack resolves it from the server's working directory."),
 		mcp.WithString("service",

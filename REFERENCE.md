@@ -70,7 +70,7 @@ A shared service has one copy. A stack service has one copy in each stack that r
 - Over MCP, pass `stack="<name>"`.
 - Run the command from a working directory inside a stack worktree. That directory names the copy.
 
-A shared service needs no stack. Name it with no `--stack`. An agent can read the status and the logs of a shared service. An agent can not start, stop or restart one, because every stack depends on it.
+A shared service needs no stack. Name it with no `--stack`. An agent can read the status and the logs of a shared service. An agent can not start, stop or restart one, because every stack uses it.
 
 No stack can carry the name `shared` or `base`. Each command names the copy it changed, so read that line. A shared copy has no `:stack` suffix.
 
@@ -263,7 +263,7 @@ devstack stack add <name> <service|group> [service|group...]
 devstack stack remove <name> <service> [service...]
 ```
 
-`stack remove` removes the services from the stack record and the stack manifest, and releases only their ports. It refuses to remove a service that another member needs, and names that member. It keeps the worktrees on disk, and prints the `git worktree remove` command for each one. If the stack is up, the host daemon drops the removed copies. Never edit `stacks.json`, `ports.json` or a stack manifest by hand; use `stack add` and `stack remove`.
+`stack remove` removes the services from the stack record and the stack manifest, and releases only their ports. It refuses to remove a service that another member needs, and names that member. It keeps the worktrees on disk, and prints the `git worktree remove` command for each one. If the stack is up, the host daemon drops the removed copies. Never edit `stacks.json`, `ports.json` or a stack manifest by hand. Use `stack add` and `stack remove`.
 
 `stack remove` fires the `stack.destroy` hooks for the removed services first, while their ports and record still exist; a hook failure does not stop the removal.
 
@@ -704,7 +704,7 @@ devstack does not own these repositories, so read the diff in each one before yo
 
 ### Moving a workspace to the shared set
 
-`devstack migrate shared-stacks` converts one workspace to the shared set and small stacks. Without `--apply`, it prints what it would change, and it changes nothing. The MCP tool `migrate` runs it with `action="shared-stacks"`. Only the owner can call that tool.
+`devstack migrate shared-stacks` converts one workspace to the shared set and small stacks. Without `--apply`, it prints what it changes, and it changes nothing. The MCP tool `migrate` runs it with `action="shared-stacks"`. Only the owner can call that tool.
 
 ```bash
 devstack migrate shared-stacks                                   # dry run

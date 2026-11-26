@@ -159,7 +159,7 @@ func TestStopDescriptionStatesStackScoping(t *testing.T) {
 func TestInvestigateDescribesPerModeFiltering(t *testing.T) {
 	tools := listCoreTools(t)
 	desc := tools["investigate"].Description
-	if !strings.Contains(desc, "every other filter is ignored, including service, stack, since_minutes, limit and errors_only") {
+	if !strings.Contains(desc, "the tool ignores every other filter, including service, stack, since_minutes, limit and errors_only") {
 		t.Errorf("investigate description does not state that mode 1 ignores the other filters; got %s", desc)
 	}
 

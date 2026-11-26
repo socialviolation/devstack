@@ -96,6 +96,23 @@ func TestTaskRunListsTheTasksWithNoTaskName(t *testing.T) {
 	}
 }
 
+func TestTaskRunErrorsUseCLISyntax(t *testing.T) {
+	seedTaskWiringWorkspace(t)
+	for _, tc := range []struct{ stack, svc, want string }{
+		{"", "api", "Name the stack: --stack <name>"},
+		{"feat", "web", "run: devstack stack add feat web"},
+	} {
+		c, _ := stackFlagCommand(tc.stack)
+		err := runTaskRun(c, []string{tc.svc, "hello"})
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("stack %q service %q: want an error with %q, got %v", tc.stack, tc.svc, tc.want, err)
+		}
+		if err != nil && strings.Contains(err.Error(), "stack_add") {
+			t.Errorf("CLI error names the MCP tool: %v", err)
+		}
+	}
+}
+
 func TestWiringShowsEachEdge(t *testing.T) {
 	seedTaskWiringWorkspace(t)
 	c, out := stackFlagCommand("feat")

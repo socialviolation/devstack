@@ -38,7 +38,8 @@ func registerTaskRunTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 		out, failed, err := RunTask(ctx, ws,
 			strings.TrimSpace(request.GetString("stack", "")),
 			strings.TrimSpace(request.GetString("service", "")),
-			strings.TrimSpace(request.GetString("task", "")))
+			strings.TrimSpace(request.GetString("task", "")),
+			`stack="<name>"`, "use stack_add")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -49,9 +50,9 @@ func registerTaskRunTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	})
 }
 
-func RunTask(ctx context.Context, ws *workspace.Workspace, stackName, service, taskName string) (string, bool, error) {
+func RunTask(ctx context.Context, ws *workspace.Workspace, stackName, service, taskName, stackHow, addHow string) (string, bool, error) {
 	if stackName == "" {
-		return "", false, fmt.Errorf("task_run runs in a stack's worktree. Pass stack=<name>")
+		return "", false, fmt.Errorf("a task runs in a stack's worktree. Name the stack: %s", stackHow)
 	}
 	if service == "" {
 		return "", false, fmt.Errorf("service must not be empty")
@@ -66,7 +67,7 @@ func RunTask(ctx context.Context, ws *workspace.Workspace, stackName, service, t
 	}
 	svc, ok := rw.Services[service]
 	if !ok || svc.Manifest == nil {
-		return "", false, fmt.Errorf("stack %q has no worktree of service %q. To add one, use stack_add", rec.Name, service)
+		return "", false, fmt.Errorf("stack %q has no worktree of service %q. To add one, %s", rec.Name, service, addHow)
 	}
 	declared := svc.Manifest.Tasks
 

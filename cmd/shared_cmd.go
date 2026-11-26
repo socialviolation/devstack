@@ -54,9 +54,10 @@ var sharedSyncCmd = &cobra.Command{
 	Short: "Move the replica to the default branch tip, and restart the shared services that moved",
 	Long: `If the replica does not exist, devstack builds it first.
 
-For each repository that holds a shared service, devstack fetches it. It then moves the
-replica worktree to the default branch tip. If the commit of a repository
-changed, devstack restarts the shared services in that repository that run now.
+For each repository that holds a shared service, devstack fetches it. Then
+it moves the replica worktree to the default branch tip. If the commit of a
+repository changed, devstack restarts the shared services in that repository
+that run now.
 It starts no shared service that is stopped.
 
 If a fetch fails, devstack keeps the current commit and writes a warning. A

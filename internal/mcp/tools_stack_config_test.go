@@ -187,7 +187,7 @@ func TestStackConfigReadsTheStackWorktree(t *testing.T) {
 	s := stackConfigServer(t, ws)
 
 	out := safetyCallTool(t, s, "stack_config", map[string]any{"service": "api", "stack": "feat"})
-	if !strings.Contains(out, "is down") || !strings.Contains(out, "would run with") {
+	if !strings.Contains(out, "is down") || !strings.Contains(out, "the configuration it starts with") {
 		t.Errorf("a stack that is down must be reported as down:\n%s", out)
 	}
 	if !strings.Contains(out, "serve_env ladder") {

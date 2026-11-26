@@ -50,8 +50,8 @@ Run this command again at any time. A second run changes nothing.
 func init() {
 	migrateCmd.AddCommand(migrateSharedStacksCmd)
 	migrateSharedStacksCmd.Flags().Bool("apply", false, "Write the changes. Without it, devstack changes nothing")
-	migrateSharedStacksCmd.Flags().String("shared", "", "The shared services, comma separated. devstack writes this list to shared: with --apply")
-	migrateSharedStacksCmd.Flags().StringSlice("needs", nil, "Make an edge a needs edge, as svc=dep. Give it more than once, or comma separated")
+	migrateSharedStacksCmd.Flags().String("shared", "", "The shared services, separated by commas. With --apply, devstack writes this list to shared:")
+	migrateSharedStacksCmd.Flags().StringSlice("needs", nil, "Make an edge a needs edge, as svc=dep. Give the flag more than once, or separate the edges with commas")
 }
 
 func runMigrateSharedStacks(cmd *cobra.Command, args []string) error {

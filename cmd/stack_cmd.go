@@ -45,7 +45,8 @@ The telemetry queries are the exception. 'devstack otel traces' with no --stack
 searches every stack and the shared set. Pass --stack <name> for one stack.
 Pass --stack shared for the shared set.
 
-Never edit stacks.json, ports.json or a stack manifest by hand; use stack add/remove.`,
+Never edit stacks.json, ports.json or a stack manifest by hand. Use
+'devstack stack add' and 'devstack stack remove'.`,
 	RunE: runStackList,
 }
 
@@ -174,7 +175,7 @@ configuration, and the environment ladder that the process receives.
 
 This command reads files. It does not ask the daemon what runs. If the service
 is down, the command says so, and it prints the configuration that the service
-would run with.
+starts with.
 
   --stack <name>  the stack's worktree of the service
   no --stack      the stack that holds the current directory. In a plain
@@ -243,7 +244,7 @@ sweep. Once an hour, the tick also runs 'devstack shared sync'.
 'devstack workspace up' installs the timer. On a host without systemd, devstack
 runs the sweep before a command, at most once in 10 minutes.
 
-  --dry-run  print the stacks the sweep would stop, and stop none.`,
+  --dry-run  print the stacks that are up and past their stop time, and stop none.`,
 	Args:         cobra.NoArgs,
 	SilenceUsage: true,
 	RunE:         runStackSweep,
@@ -343,11 +344,12 @@ var stackAdoptCmd = &cobra.Command{
 	Use:   "adopt <name>",
 	Short: "Take over an agent's stack, so agents lose access to it",
 	Long: `Hand an agent's feature stack to you. devstack clears the stack's owner, so
-no agent may act on it. The stop time stays as it is. The record keeps the
+no agent can act on it. The stop time stays as it is. The record keeps the
 agent's name as adopted-from.
 
 devstack prints the stack's worktrees, the branch of each, whether it is up,
-and its tailnet addresses. A stack that is already yours is left as it is.`,
+and its tailnet addresses. If the stack is already yours, devstack does not
+change it.`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackAdopt,
@@ -712,7 +714,7 @@ func runStackList(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	color.New(color.Faint).Println("SERVICES are the members: the services this stack runs. It uses the shared set, and runs no other service.")
 	color.New(color.Faint).Println("STATUS up means registered, not running. Each service has its own state. Show it with: devstack status --stack <name>")
-	color.New(color.Faint).Println("\"covers group g (3/4). x is not in this stack\" is a group this stack was cut to cover. The stack runs 3 of the 4 members. A group action reaches only the members the stack runs.")
+	color.New(color.Faint).Println("\"covers group g (3/4). x is not in this stack\" is a group that devstack cut this stack to cover. The stack runs 3 of the 4 members. A group action reaches only the members the stack runs.")
 	color.New(color.Faint).Println("Set what a stack is for with: devstack stack note <name> \"...\". Record where the work got to with --add")
 	return nil
 }
@@ -859,7 +861,7 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 
 	tense := "the configuration it runs with"
 	if !rec.Active {
-		tense = "the configuration it would run with"
+		tense = "the configuration it starts with"
 		fmt.Printf("Stack %s is down. Nothing runs with this configuration now. To start the stack, run: devstack stack up %s\n", rec.FullName(), rec.Name)
 	}
 	printConfigTable(service, "stack "+rec.FullName(), tense, entries)
@@ -909,7 +911,7 @@ func runSharedConfig(service string) error {
 		return fmt.Errorf("devstack has not built the replica of workspace %q. The shared set runs from it, so there is no configuration to read yet. To build the replica, run: devstack workspace up", ws.Name)
 	}
 	if err != nil {
-		return fmt.Errorf("the shared set runs from the replica of workspace %q. The replica is stale or incomplete. To rebuild it, run: devstack workspace up. devstack could not read it: %w", ws.Name, err)
+		return fmt.Errorf("the shared set runs from the replica of workspace %q. The replica is stale or incomplete. To rebuild it, run: devstack workspace up. devstack can not read it: %w", ws.Name, err)
 	}
 	svc, ok := rw.Services[service]
 	if !ok {
@@ -923,7 +925,7 @@ func runSharedConfig(service string) error {
 
 	tense := "the configuration it runs with"
 	if !ws.Active {
-		tense = "the configuration it would run with"
+		tense = "the configuration it starts with"
 		fmt.Printf("The workspace is down, so the shared set does not run. To start it, run: devstack workspace up\n")
 	}
 	printConfigTable(service, "the shared set", tense, entries)

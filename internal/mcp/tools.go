@@ -2075,7 +2075,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			"This tool queries this workspace's configured telemetry backend. It is NOT a natural language search engine. The parameters are structured: exact service names, structured time ranges, and exact attribute key and value pairs.\n"+
 			"Results always stay inside this workspace's telemetry. In mode 3 a call with no service narrows to the service that the server runs in.\n"+
 			"Modes, and what each one filters on:\n"+
-			"  (1) trace_id or span_id — look up one trace or span by id. Here every other filter is ignored, including service, stack, since_minutes, limit and errors_only. So the trace comes back whichever service emitted it, and however old it is.\n"+
+			"  (1) trace_id or span_id — look up one trace or span by id. Then the tool ignores every other filter, including service, stack, since_minutes, limit and errors_only. So the trace comes back whichever service emitted it, and however old it is.\n"+
 			"  (2) attribute and value — search by business attribute, for example attribute='portfolio.id' value='123'. This mode filters by stack, since_minutes, limit and errors_only. It also filters by service when you give service. This mode has no default service.\n"+
 			"  (3) service — recent executions. This mode filters by stack, since_minutes, limit, errors_only and service. Where you omit service, the tool falls back to this repo's default service.\n"+
 			"A query against a stack that is down is not an error, and it is rarely useful. It returns only what that stack emitted while it was last up. So an empty result there means that the stack is down, and not that it is healthy. stack_list reports which stacks are up.\n"+

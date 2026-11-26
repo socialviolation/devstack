@@ -16,7 +16,7 @@ func TestStackAdoptDeniesAnAgent(t *testing.T) {
 	registerStackAdoptTool(s, ws)
 
 	out := callAs(t, s, alice, "stack_adopt", `{"name":"agent-mine"}`)
-	if !strings.Contains(out, `"isError":true`) || !strings.Contains(out, "may not call stack_adopt") {
+	if !strings.Contains(out, `"isError":true`) || !strings.Contains(out, "can not call stack_adopt") {
 		t.Errorf("agent stack_adopt: want a denial, got %s", out)
 	}
 	rec, err := stack.FindStack("navexa", "agent-mine")

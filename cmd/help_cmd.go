@@ -57,7 +57,7 @@ var moreCommands = []helpRow{
 	{"hooks", "run an action when a stack or a service changes state"},
 	{"group", "act on a named set of services at one time"},
 	{"shared", "the shared services: their replica, and a sync to the default branch"},
-	{"herdr", "show each stack in the herdr pane that controls it"},
+	{"herdr", "show each stack in the herdr pane that binds it"},
 	{"doctor", "find what is broken, and the command that fixes it"},
 	{"cleanup", "remove orphaned ports, worktrees and stack records"},
 	{"task", "run a task that a service declares, in a stack's worktree"},
