@@ -141,12 +141,12 @@ runtime:
 
 Write `memory` as a systemd size, such as `512M`, `4G` or `infinity`, and `cpu` as a percentage, such as `200%`. devstack refuses any other value when it loads the manifest. Swap is fixed at 1G for each service. Every scope is in `devstack.slice`, and `devstack workspace down` stops the slice with the daemon. To list the scopes, run `systemctl --user status devstack.slice`. On a host without a systemd user session (macOS, WSL without systemd, a container), the services run without scopes, and devstack ignores `runtime.limits` with one warning.
 
-Groups, and the old workspace `dependencies:` map. The `dependencies` commands edit that map. devstack loads its entries as `calls` edges, so the daemon does not order start on them. `service start` still starts them first. For a real start order, declare `needs` in the service manifest (see [Service edges](#service-edges-needs-and-calls)):
+Groups, and the old workspace `dependencies:` map. The `dependencies` commands edit that map. devstack loads its entries as `calls` edges, so nothing orders start on them. `service start`, `group start` and `stack up` start what each service needs. For a real start order, declare `needs` in the service manifest (see [Service edges](#service-edges-needs-and-calls)):
 
 ```bash
-devstack dependencies add <service> <dep>       # <dep> starts first
+devstack dependencies add <service> <dep>       # adds <dep> to the old map
 devstack dependencies remove <service> <dep>
-devstack dependencies list <service>            # full resolved startup sequence
+devstack dependencies list <service>            # the order that the old map gives
 devstack group list
 devstack group add <group> <service> [service...]
 devstack group remove <group> <service> [service...]

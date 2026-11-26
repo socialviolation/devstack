@@ -21,18 +21,16 @@ not wait for it.
 
 To declare an edge, use "needs" or "calls" in devstack.service.yaml. A needs
 edge pulls the service into a stack, and the host daemon starts it first.
-
-'devstack service start' and 'devstack group start' still read this map. They
-start the services it lists first, in order.
+'devstack service start' and 'devstack group start' also start it first.
+They do not read this map.
 
 Example:
   devstack dependencies add api postgres
-  devstack service start api --stack feat   ← starts postgres, then api
 
 SUBCOMMANDS
-  devstack dependencies add <svc> <dep>    declare that svc needs dep to run first
-  devstack dependencies remove <svc> <dep> remove a declared dependency
-  devstack dependencies list <svc>         show the full resolved startup sequence for a service`,
+  devstack dependencies add <svc> <dep>    add dep to the list of svc in the old map
+  devstack dependencies remove <svc> <dep> remove dep from the list of svc
+  devstack dependencies list <svc>         show the order that the old map gives svc`,
 }
 
 var depsAddCmd = &cobra.Command{
@@ -52,12 +50,11 @@ var depsRemoveCmd = &cobra.Command{
 var depsOrderCmd = &cobra.Command{
 	Use:     "list <service>",
 	Aliases: []string{"order"},
-	Short:   "Show the full resolved startup sequence for a service",
-	Long: `devstack resolves the complete dependency graph for a service and prints the
-startup order from the old dependencies: map. That is the sequence that
-'devstack service start <service>' uses.
-
-Use this command to make sure that the dependencies are correct.`,
+	Short:   "Show the order that the old dependencies: map gives a service",
+	Long: `devstack resolves the old dependencies: map for a service and prints the
+order that it gives. devstack does not start services in this order.
+'devstack service start' and 'stack up' start what each service needs.
+To move the old map onto each service, run 'devstack migrate shared-stacks'.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runDepsOrder,
 }
