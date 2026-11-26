@@ -319,10 +319,10 @@ runtime:
 	if !ok {
 		t.Fatalf("expected a block per service; got:\n%s", out)
 	}
-	if !strings.Contains(aBlock, `"PEER_URL": "http://localhost:1111"`) || strings.Contains(aBlock, "2222") {
+	if !strings.Contains(aBlock, `"PEER_URL": "http://localhost:1111"`) || strings.Contains(aBlock, "localhost:2222") {
 		t.Errorf("service a should get only its own PEER_URL; got:\n%s", aBlock)
 	}
-	if !strings.Contains(bBlock, `"PEER_URL": "http://localhost:2222"`) || strings.Contains(bBlock, "1111") {
+	if !strings.Contains(bBlock, `"PEER_URL": "http://localhost:2222"`) || strings.Contains(bBlock, "localhost:1111") {
 		t.Errorf("service b should get only its own PEER_URL; got:\n%s", bBlock)
 	}
 }
