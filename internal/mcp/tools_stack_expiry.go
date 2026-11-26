@@ -19,7 +19,8 @@ func registerStackExtendTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 	tool := mcp.NewTool("stack_extend",
 		mcp.WithDescription(fmt.Sprintf("Push back the stop time of a feature stack. When the stop time passes, devstack stops the stack, the same way stack_down stops it. devstack never removes it. "+
 			"The new stop time is the later of the current stop time and now, plus the hours you give. You can add %d hours at most in one call. "+
-			"stack_up also sets a new stop time: %s after the up.", int(stack.MaxExtend.Hours()), WindowText(stack.StopAfter))),
+			"stack_up also sets a new stop time: %s after the up. "+
+			"This tool mirrors 'devstack stack extend'.", int(stack.MaxExtend.Hours()), WindowText(stack.StopAfter))),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(requiredStackNameDesc)),
 		mcp.WithNumber("hours", mcp.Required(),
@@ -38,16 +39,25 @@ func registerStackExtendTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		if name == "" {
 			return mcp.NewToolResultError("name must not be empty"), nil
 		}
-		hours := request.GetFloat("hours", 0)
-		if hours <= 0 {
-			return mcp.NewToolResultError("hours must be more than 0"), nil
-		}
-		stopAt, err := stack.Extend(ws.Name, name, time.Duration(hours*float64(time.Hour)), stack.Now())
+		out, err := ExtendStack(ctx, ws, name, request.GetFloat("hours", 0))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("Stack %q now stops at %s.", name, stopAt.Local().Format(time.RFC3339))), nil
+		return mcp.NewToolResultText(out), nil
 	})
+}
+
+func ExtendStack(ctx context.Context, ws *workspace.Workspace, name string, hours float64) (string, error) {
+	if hours <= 0 {
+		return "", fmt.Errorf("hours must be more than 0")
+	}
+	stopAt, err := stack.Extend(ws.Name, name, time.Duration(hours*float64(time.Hour)), stack.Now())
+	if err != nil {
+		return "", err
+	}
+	bindPane(ctx, ws, name)
+	herdr.Notify()
+	return fmt.Sprintf("Stack %q now stops at %s.", name, stopAt.Local().Format(time.RFC3339)), nil
 }
 
 func Sweep(dryRun bool, w io.Writer) (int, error) {

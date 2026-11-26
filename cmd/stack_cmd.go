@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -232,7 +233,7 @@ fire, and the host daemon drops the stack. devstack keeps the worktrees, the
 ports and the record. The sweep never removes a stack.
 
 Every stack gets a stop time when you create it or bring it up: that time plus
-DEVSTACK_STOP_AFTER (default 24h). The stack_extend MCP tool pushes the stop
+DEVSTACK_STOP_AFTER (default 24h). 'devstack stack extend' pushes the stop
 time back.
 
 A systemd user timer runs 'devstack tick' every 10 minutes. Each tick runs the
@@ -262,6 +263,41 @@ func runStackSweep(cmd *cobra.Command, args []string) error {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	_, err := nvxmcp.Sweep(dryRun, os.Stdout)
 	return err
+}
+
+var stackExtendCmd = &cobra.Command{
+	Use:   "extend <name> <hours>",
+	Short: "Push back the stop time of a feature stack",
+	Long: fmt.Sprintf(`Push back the stop time of a feature stack. When the stop time passes,
+devstack stops the stack, the same way 'devstack stack down' stops it.
+devstack never removes it.
+
+The new stop time is the later of the current stop time and now, plus the
+hours you give. You can add %d hours at most in one call. 'devstack stack up'
+also sets a new stop time.
+
+Example:
+  devstack stack extend perf 8`, int(stack.MaxExtend.Hours())),
+	Args:         cobra.ExactArgs(2),
+	SilenceUsage: true,
+	RunE:         runStackExtend,
+}
+
+func runStackExtend(cmd *cobra.Command, args []string) error {
+	hours, err := strconv.ParseFloat(args[1], 64)
+	if err != nil {
+		return fmt.Errorf("hours must be a number, got %q", args[1])
+	}
+	base, err := resolveWorkspace(viper.GetString("workspace"))
+	if err != nil {
+		return err
+	}
+	out, err := nvxmcp.ExtendStack(cmd.Context(), base, args[0], hours)
+	if err != nil {
+		return err
+	}
+	fmt.Println(out)
+	return nil
 }
 
 var stackResyncCmd = &cobra.Command{
@@ -331,6 +367,7 @@ func runStackAdopt(cmd *cobra.Command, args []string) error {
 func init() {
 	rootCmd.AddCommand(stackCmd)
 	stackCmd.AddCommand(stackSweepCmd)
+	stackCmd.AddCommand(stackExtendCmd)
 	stackCmd.AddCommand(stackGCCmd)
 	stackCmd.AddCommand(stackResyncCmd)
 	stackCmd.AddCommand(stackAdoptCmd)
