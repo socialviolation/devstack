@@ -50,8 +50,8 @@ func registerTaskRunTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 }
 
 func runTask(ctx context.Context, ws *workspace.Workspace, stackName, service, taskName string) (string, bool, error) {
-	if stackName == "" || strings.EqualFold(stackName, "base") {
-		return "", false, fmt.Errorf("task_run runs in a feature stack's worktree, and never in base. Pass stack=<name>")
+	if stackName == "" {
+		return "", false, fmt.Errorf("task_run runs in a stack's worktree. Pass stack=<name>")
 	}
 	if service == "" {
 		return "", false, fmt.Errorf("service must not be empty")

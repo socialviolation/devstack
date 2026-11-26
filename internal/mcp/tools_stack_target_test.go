@@ -406,9 +406,6 @@ func TestMutatingToolsDocumentThatAbsentIsNotBase(t *testing.T) {
 		if strings.Contains(desc, "the call fails") || strings.Contains(desc, "NO implicit default") {
 			t.Errorf("%s's stack parameter promises a refusal that ResolveTarget no longer gives: %s", name, desc)
 		}
-		if !strings.Contains(desc, "replica") {
-			t.Errorf("%s's stack parameter must say what base runs from: %s", name, desc)
-		}
 	}
 	if desc := tools["status"].InputSchema.Properties["stack"].Description; !strings.Contains(desc, "Absent (or the literal \"base\")") {
 		t.Errorf("a read-only tool must keep its base default: %s", desc)

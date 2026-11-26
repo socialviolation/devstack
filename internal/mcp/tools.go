@@ -1106,7 +1106,7 @@ func coreStillRunning(ws *workspace.Workspace, stoppedAll bool, stackName string
 		return ""
 	}
 	var sb strings.Builder
-	if stackName == "" || stackName == "base" {
+	if stackName == "" {
 		if recs, err := stack.LoadStore(ws.Name); err == nil {
 			var active []string
 			for _, rec := range recs {

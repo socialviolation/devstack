@@ -30,14 +30,17 @@ func registerEnvUseTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 		mcp.WithDescription("Point a scope at one of the config-patch environments that the BASE workspace manifest defines, so that its services run with that environment's config vars. This tool mirrors 'devstack env use'.\n"+
 			"devstack defines the environments ONCE, in the base workspace. A feature stack does NOT define its own. A stack inherits the base environments, and 'stack' points a stack at one of them.\n"+
 			"Scope precedence is stack first, then service, then workspace.\n"+
-			"This tool changes what services run with, so it names its scope explicitly: 'service' points one service, stack='<name>' points that feature stack, and stack='base' sets the workspace default. If you omit both, the server's working directory decides the scope. A stack worktree selects that stack. Every other directory selects the workspace default. Every stack and every engineer shares that default.\n"+
+			"This tool changes what services run with, so it names its scope explicitly: 'service' points one service, stack='<name>' points that stack, and scope='workspace' sets the workspace default. If you omit all three, the server's working directory decides the scope. A stack worktree selects that stack. Every other directory selects the workspace default. Every stack and every engineer shares that default.\n"+
 			"The env name must be one that the base workspace manifest defines. To see where each copy points, use env_which or status."),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description("Named environment to select. The workspace manifest must define it, for example 'staging'.")),
 		mcp.WithString("service",
 			mcp.Description("Exact service name to point at the env. This selects the service scope. You can not combine it with stack.")),
 		mcp.WithString("stack",
-			mcp.Description(envStackParamDesc+" A stack name points that stack at the env, which is the stack scope. \"base\" sets the workspace default. You can not combine this with service. service selects the service scope, and it names no copy.")),
+			mcp.Description("The SHORT name of the stack to point at the env, for example 'import-review'. This is the stack scope. You can not combine it with service or scope. If you omit stack, service and scope, the server's working directory decides. A stack worktree selects that stack. Every other directory selects the workspace default.")),
+		mcp.WithString("scope",
+			mcp.Enum("workspace"),
+			mcp.Description("\"workspace\" points the workspace default at the env. Every stack and every engineer shares that default. You can not combine it with service or stack.")),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -54,12 +57,17 @@ func registerEnvUseTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 		}
 		svcName := strings.TrimSpace(request.GetString("service", ""))
 		stackName := strings.TrimSpace(request.GetString("stack", ""))
+		scope := strings.TrimSpace(request.GetString("scope", ""))
+		if scope != "" && scope != "workspace" {
+			return mcp.NewToolResultError(fmt.Sprintf("unknown scope %q. The only scope is \"workspace\"", scope)), nil
+		}
+		if scope != "" && (svcName != "" || stackName != "") {
+			return mcp.NewToolResultError("scope=\"workspace\" names the workspace default. Do not combine it with service or stack"), nil
+		}
 		if svcName != "" && stackName != "" {
 			return mcp.NewToolResultError("specify either service or stack, not both"), nil
 		}
-		if stackName == "base" {
-			stackName = ""
-		} else if svcName == "" {
+		if scope == "" && svcName == "" {
 			resolved, err := stack.ResolveTarget(ws, stackName)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
@@ -153,7 +161,7 @@ func registerEnvWhichTool(mcpServer *server.MCPServer, ws *workspace.Workspace, 
 		}
 
 		stackEnv := ""
-		if stackName := strings.TrimSpace(request.GetString("stack", "")); stackName != "" && stackName != "base" {
+		if stackName := strings.TrimSpace(request.GetString("stack", "")); stackName != "" {
 			rec, err := stack.Resolve(ws.Name, stackName)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil

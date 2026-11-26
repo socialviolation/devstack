@@ -72,7 +72,7 @@ func TestEnvUseDescriptionDropsTheWorkspaceDefault(t *testing.T) {
 	if strings.Contains(desc, "with neither service nor stack devstack sets the workspace default") {
 		t.Errorf("env_use still claims an implicit workspace scope: %s", desc)
 	}
-	if !strings.Contains(desc, "stack='base' sets the workspace default") {
+	if !strings.Contains(desc, "scope='workspace' sets the workspace default") {
 		t.Errorf("env_use must say how the workspace scope is named now: %s", desc)
 	}
 }

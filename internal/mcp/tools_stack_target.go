@@ -26,10 +26,6 @@ const mutatingStackParamDesc = "Which stack to act on: the stack's SHORT name (f
 	"A service that is not shared runs only in a stack, so the call fails and asks for this parameter. " +
 	"Every stack uses a shared service. If you restart or stop one, you restart or stop the copy that every stack uses."
 
-const envStackParamDesc = "Which copy to act on: a feature stack's SHORT name (for example 'import-review'), or the literal \"base\". " + baseTermDesc +
-	"If you omit this parameter, the server's working directory decides the copy. A stack worktree selects that stack. base's replica selects base. " +
-	"Every other directory selects base, which is the fallback."
-
 // resolveStackRecord looks up a feature stack by short name within the bound
 // (base) workspace, returning a clear error that lists the available stack names
 // when the name is unknown.
@@ -58,7 +54,7 @@ func resolveStackRecord(ws *workspace.Workspace, name string) (*stack.Record, er
 // whose generated manifest points at the stack's worktrees, so every read and
 // write lands in the worktree and never in base.
 func serviceEnvTarget(ws *workspace.Workspace, basePath, stackName string) (path, instance, stackEnv string, err error) {
-	if stackName == "" || stackName == "base" {
+	if stackName == "" {
 		return basePath, "", "", nil
 	}
 	rec, err := resolveStackRecord(ws, stackName)

@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -16,6 +17,7 @@ func newEnvTestCmd(stackName, service string) *cobra.Command {
 	c.Flags().String("service", service, "")
 	c.Flags().Bool("shadowed", false, "")
 	c.Flags().Bool("reveal", false, "")
+	c.Flags().Bool("workspace-default", false, "")
 	return c
 }
 
@@ -61,6 +63,63 @@ func TestEnvUseDefaultsToTheWorkspace(t *testing.T) {
 	}
 	if err := runEnvUse(newEnvTestCmd("", "backend"), []string{"dev"}); err != nil {
 		t.Errorf("env use --service names its own scope and must still work: %v", err)
+	}
+}
+
+func TestEnvUseWorkspaceDefaultWinsOverAStackWorktree(t *testing.T) {
+	rec, _ := buildStackScenario(t)
+	base, err := workspace.FindByName("navexa")
+	if err != nil {
+		t.Fatalf("find base: %v", err)
+	}
+	if err := config.SetEnvValue(base.Path, "dev", "LOG_LEVEL", "debug"); err != nil {
+		t.Fatalf("define env: %v", err)
+	}
+	t.Chdir(rec.Worktrees["backend"])
+
+	c := newEnvTestCmd("", "")
+	if err := c.Flags().Set("workspace-default", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runEnvUse(c, []string{"dev"}); err != nil {
+		t.Fatalf("env use --workspace-default: %v", err)
+	}
+	m, err := config.LoadWorkspaceManifest(base.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Workspace.Env != "dev" {
+		t.Errorf("workspace.env = %q, want dev", m.Workspace.Env)
+	}
+	got, err := stack.Resolve("navexa", rec.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Env != "" {
+		t.Errorf("stack env = %q, want it untouched", got.Env)
+	}
+}
+
+func TestEnvUseRefusesBadScopes(t *testing.T) {
+	buildStackScenario(t)
+	base, err := workspace.FindByName("navexa")
+	if err != nil {
+		t.Fatalf("find base: %v", err)
+	}
+	if err := config.SetEnvValue(base.Path, "dev", "LOG_LEVEL", "debug"); err != nil {
+		t.Fatalf("define env: %v", err)
+	}
+	t.Chdir(base.Path)
+
+	withDefault := newEnvTestCmd("feat", "")
+	if err := withDefault.Flags().Set("workspace-default", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runEnvUse(withDefault, []string{"dev"}); err == nil {
+		t.Error("--workspace-default with --stack must refuse")
+	}
+	if err := runEnvUse(newEnvTestCmd("base", ""), []string{"dev"}); err == nil {
+		t.Error("--stack base names no stack and must refuse")
 	}
 }
 

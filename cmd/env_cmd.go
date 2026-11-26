@@ -28,8 +28,8 @@ environment that each copy points at.
 
 The use subcommand writes, so it acts on one scope. There are three scopes, and
 the most specific one wins. A stack beats a service, and a service beats the
-workspace default. Pass --service <svc>, or --stack <name>, or --stack base for
-the workspace default. With no flag, the working directory decides the scope. A
+workspace default. Pass --service <svc>, or --stack <name>, or --workspace-default
+for the workspace default. With no flag, the working directory decides the scope. A
 stack worktree selects that stack. Every other directory selects the workspace
 default.
 
@@ -114,7 +114,7 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("\nTo see the values, run: devstack env show <name>\n")
-	fmt.Printf("To point a scope at one, run: devstack env use <name> --stack base (or --stack <name>, or --service <svc>)\n")
+	fmt.Printf("To point a scope at one, run: devstack env use <name> --workspace-default (or --stack <name>, or --service <svc>)\n")
 	return nil
 }
 

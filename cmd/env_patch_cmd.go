@@ -47,7 +47,7 @@ To see the rung each key came from, run:
 var envUseCmd = &cobra.Command{
 	Use:   "use <name>",
 	Short: "Point a workspace, a service or a stack at a named environment",
-	Long:  "Point one scope at one of the base workspace's named environments.\ndevstack defines every environment once, in the base workspace manifest. A feature stack does not define its own.\nPass --stack <name> to point that stack at one of the base environments. Pass --stack base to point the workspace. Pass --service <svc> to point one service. The base workspace must define <name>.",
+	Long:  "Point one scope at one of the workspace's named environments.\ndevstack defines every environment once, in the workspace manifest. A stack does not define its own.\nPass --stack <name> to point that stack. Pass --service <svc> to point one service. Pass --workspace-default to point the workspace default.\nWith no flag, the working directory decides. A stack worktree selects that stack. Every other directory selects the workspace default.\nThe workspace manifest must define <name>.",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runEnvUse,
 }
@@ -72,7 +72,8 @@ func init() {
 	envCmd.AddCommand(envSetCmd, envUseCmd, envShowCmd, envWhichCmd)
 
 	envUseCmd.Flags().String("service", "", "Point this service at the environment")
-	envUseCmd.Flags().String("stack", "", "Point this stack at the environment. Use \"base\" for the workspace scope. Default: the copy your directory is in, or base")
+	envUseCmd.Flags().String("stack", "", "Point this stack at the environment. Default: the stack your directory is in, or the workspace default")
+	envUseCmd.Flags().Bool("workspace-default", false, "Point the workspace default at the environment. Every stack and every engineer shares it")
 
 	envWhichCmd.Flags().String("service", "", "Service to resolve. Default: the service of the current directory")
 	envWhichCmd.Flags().String("stack", "", "Stack whose environment to include")
@@ -122,9 +123,11 @@ func runEnvUse(cmd *cobra.Command, args []string) error {
 
 	stackName, _ := cmd.Flags().GetString("stack")
 	svcName, _ := cmd.Flags().GetString("service")
-	if stackName == "base" {
-		stackName = ""
-	} else if svcName == "" {
+	workspaceDefault, _ := cmd.Flags().GetBool("workspace-default")
+	if workspaceDefault && (stackName != "" || svcName != "") {
+		return fmt.Errorf("--workspace-default names the workspace default. Do not combine it with --stack or --service")
+	}
+	if !workspaceDefault && svcName == "" {
 		if stackName, err = stack.ResolveTarget(ws, stackName); err != nil {
 			return err
 		}
@@ -154,13 +157,13 @@ func runEnvUse(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		fmt.Printf("service %q now uses environment %q\n", svcName, name)
-		restartHint = fmt.Sprintf("devstack service restart %s --stack base", svcName)
+		restartHint = fmt.Sprintf("devstack service restart %s (add --stack <name> for a stack service)", svcName)
 	default:
 		if err := config.SetWorkspaceEnv(ws.Path, name); err != nil {
 			return err
 		}
 		fmt.Printf("workspace %q now uses environment %q\n", ws.Name, name)
-		restartHint = "devstack service restart <service> --stack base"
+		restartHint = "devstack service restart <service> (add --stack <name> for a stack service)"
 	}
 	if _, _, err := regenerateHostTiltfileScope(hostdaemon.ScopeWorkspace(ws.Name)); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: devstack can not regenerate the host configuration: %v\n", err)
