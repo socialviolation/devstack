@@ -75,7 +75,7 @@ func TestDropRefusesAServiceAnotherStillDependsOn(t *testing.T) {
 	newStack(t, base, "api")
 
 	_, err := Drop(DropInput{Base: base, Name: "feat", Services: []string{"api"}})
-	if err == nil || !strings.Contains(err.Error(), "web depends on api") {
+	if err == nil || !strings.Contains(err.Error(), "web needs api") {
 		t.Fatalf("Drop() error = %v, want a refusal naming web", err)
 	}
 	rec, _ := FindStack(base.Name, "feat")

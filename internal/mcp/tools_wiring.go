@@ -23,7 +23,8 @@ func registerWiringTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 			"For each key it shows the value that base's copy of A resolves to, and the copy of B that value reaches. Pass stack to add that stack's copy of A beside base.\n\n"+
 			"\"stack X A → base B\" means the stack's A still reaches base's B. That is normal when the stack does not change B. \"base A → stack X B\" means base reaches into a stack. "+
 			"Read both before you change config: they show what a change moves. An env key that names a service which does not exist is an error. "+
-			"A note says an edge the workspace manifest declares has no key that carries it, or a key that reaches a service with no declared edge. "+
+			"Each edge shows its declared kind: needs or calls, and the via value if the edge has one. "+
+			"A note says a declared edge has no key that carries it, or a key that reaches a service with no declared edge. "+
 			"This reads the env ladder of each checkout. Use topology for the declared graph alone, and service_env to see or set a value. Values that hold a credential are masked."),
 		mcp.WithString("service",
 			mcp.Description("Exact service name. Shows only the edges into and out of it. Omit it for every edge.")),
@@ -61,9 +62,25 @@ func wiringReport(ws *workspace.Workspace, workspacePath, stackName, service str
 
 	services := make([]string, 0, len(baseRW.Services))
 	deps := map[string][]string{}
+	edges := map[[2]string]string{}
 	for name := range baseRW.Services {
 		services = append(services, name)
-		deps[name] = baseRW.Manifest.ResourceDeps(name)
+		for _, kind := range []struct {
+			verb  string
+			edges []config.ServiceEdge
+		}{{"needs", baseRW.Needs(name)}, {"calls", baseRW.CallEdges(name)}} {
+			for _, e := range kind.edges {
+				deps[name] = append(deps[name], e.Service)
+				if _, ok := edges[[2]string{name, e.Service}]; ok {
+					continue
+				}
+				label := kind.verb
+				if e.Via != "" {
+					label += ", via " + e.Via
+				}
+				edges[[2]string{name, e.Service}] = label
+			}
+		}
 	}
 	sort.Strings(services)
 	if service != "" && baseRW.Services[service].Name == "" {
@@ -96,10 +113,10 @@ func wiringReport(ws *workspace.Workspace, workspacePath, stackName, service str
 	}
 
 	m := wiring.Derive(services, deps, base, stackCopy)
-	return renderWiring(m, service, stackCopy, showBase), nil
+	return renderWiring(m, edges, service, stackCopy, showBase), nil
 }
 
-func renderWiring(m wiring.Map, service string, stackCopy *wiring.Copy, showBase bool) string {
+func renderWiring(m wiring.Map, edges map[[2]string]string, service string, stackCopy *wiring.Copy, showBase bool) string {
 	var sb strings.Builder
 	label := ""
 	if stackCopy != nil {
@@ -118,6 +135,9 @@ func renderWiring(m wiring.Map, service string, stackCopy *wiring.Copy, showBase
 		shown++
 		if edge := l.From + " → " + l.To; edge != prev {
 			prev = edge
+			if kind := edges[[2]string{l.From, l.To}]; kind != "" {
+				edge += "  (" + kind + ")"
+			}
 			fmt.Fprintf(&sb, "\n%s\n", edge)
 		}
 		declared := ""

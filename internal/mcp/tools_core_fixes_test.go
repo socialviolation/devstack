@@ -334,7 +334,7 @@ func TestCoreRenderTopology(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"workspace: navexa", "Groups:", "core: api, db", "- api", "dependencies: db", "dependents: api", "called by: api", "something odd", "declared configuration, not runtime state"} {
+	for _, want := range []string{"workspace: navexa", "Groups:", "core: api, db", "- api", "needs: db", "needed by: api", "called by: api", "something odd", "declared configuration, not runtime state"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("topology output missing %q; got:\n%s", want, all)
 		}

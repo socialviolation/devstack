@@ -453,9 +453,9 @@ func coreRenderTopology(graph *config.TopologyGraph, service string) (string, er
 		fmt.Fprintf(sb, "  - %s\n", s.Name)
 		fmt.Fprintf(sb, "      path: %s\n", s.Path)
 		fmt.Fprintf(sb, "      groups: %s\n", coreCSV(s.Groups))
-		fmt.Fprintf(sb, "      dependencies: %s\n", coreCSV(s.Dependencies))
-		fmt.Fprintf(sb, "      dependents: %s\n", coreCSV(s.Dependents))
-		fmt.Fprintf(sb, "      calls: %s\n", coreCSV(s.Calls))
+		fmt.Fprintf(sb, "      needs: %s\n", coreCSV(s.WithVia(s.Dependencies)))
+		fmt.Fprintf(sb, "      needed by: %s\n", coreCSV(s.Dependents))
+		fmt.Fprintf(sb, "      calls: %s\n", coreCSV(s.WithVia(s.Calls)))
 		fmt.Fprintf(sb, "      called by: %s\n", coreCSV(s.CalledBy))
 	}
 
@@ -497,7 +497,7 @@ func coreRenderTopology(graph *config.TopologyGraph, service string) (string, er
 
 func registerTopologyTool(mcpServer *server.MCPServer, workspacePath string) {
 	tool := mcp.NewTool("topology",
-		mcp.WithDescription("Show this workspace's declared service graph. For every service it shows the source directory, the groups, and the call edges recorded for it. It also shows the services it depends on and the services that depend on it. It reports configuration issues too, such as an unknown group member, an unknown dependency, or a dependency cycle. Read this before you claim that one service calls or depends on another. The graph comes from the workspace manifest, and not from a guess at the code. To show one service's node alone, pass service. This is declared configuration, not runtime state. To see what runs, use status."),
+		mcp.WithDescription("Show this workspace's declared service graph. For every service it shows the source directory and the groups. It shows the services it needs and calls, with the via value if an edge has one. It also shows the services that need it and call it. A needs edge pulls a service in and orders start. A calls edge does neither. It reports configuration issues too, such as an unknown group member or an unknown service in an edge. Read this before you claim that one service calls or needs another. The graph comes from the service and workspace manifests, and not from a guess at the code. To show one service's node alone, pass service. This is declared configuration, not runtime state. To see what runs, use status."),
 		mcp.WithString("service",
 			mcp.Description("Exact service name to show alone (for example 'api-service'). NOT a description or partial match. If you omit it, the tool shows the whole graph."),
 		),

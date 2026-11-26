@@ -169,6 +169,9 @@ func TestGenerateStackManifestFiltersDependencyEdges(t *testing.T) {
 		t.Fatalf("GenerateStackManifest(): %v", err)
 	}
 
+	if !m.Partial {
+		t.Fatal("a stack manifest must be partial: its services may name services the stack does not run")
+	}
 	if got, ok := m.Calls["frontend"]; !ok || !reflect.DeepEqual(got, []string{"backend"}) {
 		t.Fatalf("Calls[frontend] = %#v (ok=%v), want [backend] (edge among overlay services kept)", got, ok)
 	}

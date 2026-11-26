@@ -67,6 +67,7 @@ func GenerateStackManifest(base *ResolvedWorkspace, stackName string, overlay []
 		Dependencies: filterEdges(base.Manifest.Dependencies, inOverlay, true),
 		Calls:        filterEdges(base.Manifest.Calls, inOverlay, true),
 		StartsAfter:  filterEdges(base.Manifest.StartsAfter, inOverlay, true),
+		Partial:      true,
 	}
 	return manifest, nil
 }

@@ -196,7 +196,7 @@ func renderWorkspace(b *strings.Builder, rw *config.ResolvedWorkspace, opts Opti
 		if svc.Manifest == nil {
 			return fmt.Errorf("service %q has no manifest. devstack can not generate from a legacy .devstack.json", name)
 		}
-		block, err := renderService(svc, rw.Manifest, groupsOf[name], opts, book, prefix, namespace)
+		block, err := renderService(svc, rw, groupsOf[name], opts, book, prefix, namespace)
 		if err != nil {
 			return fmt.Errorf("service %q: %w", name, err)
 		}
@@ -221,7 +221,7 @@ func hostName(prefix, name, suffix string) string {
 	return strings.Join(parts, namespaceDelim)
 }
 
-func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, groups []string, opts Options, book config.PortBook, prefix, namespace string) (string, error) {
+func renderService(svc config.ResolvedService, rw *config.ResolvedWorkspace, groups []string, opts Options, book config.PortBook, prefix, namespace string) (string, error) {
 	m := svc.Manifest
 	if m.Runtime.Run.Command == "" {
 		return "", fmt.Errorf("runtime.run.command is required")
@@ -253,7 +253,7 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	fmt.Fprintf(&b, "    serve_cmd=%s,\n", starStr(runCmd))
 	fmt.Fprintf(&b, "    serve_dir=%s,\n", starStr(serveDir))
 
-	layers, err := config.EnvLadder(serveDir, ws, m, opts.StackEnv, opts.ManagedEnv[svc.Name], svc.ManifestPath)
+	layers, err := config.EnvLadder(serveDir, rw.Manifest, m, opts.StackEnv, opts.ManagedEnv[svc.Name], svc.ManifestPath)
 	if err != nil {
 		return "", err
 	}
@@ -284,7 +284,7 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	if len(labels) > 0 {
 		fmt.Fprintf(&b, "    labels=[%s],\n", starList(labels))
 	}
-	if deps := ws.ResourceDeps(svc.Name); len(deps) > 0 {
+	if deps := rw.ResourceDeps(svc.Name); len(deps) > 0 {
 		nsDeps := make([]string, len(deps))
 		for i, d := range deps {
 			nsDeps[i] = hostName(prefix, d, namespace)

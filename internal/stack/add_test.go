@@ -28,6 +28,8 @@ runtime:
     command: npm run dev
 ports:
   http: 3000
+needs:
+  - api
 `
 
 const billingSvc = `version: 1

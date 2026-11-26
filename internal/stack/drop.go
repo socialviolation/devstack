@@ -78,9 +78,9 @@ func Drop(in DropInput) (*DropResult, error) {
 	}
 	var blocked []string
 	for _, s := range remaining {
-		for _, d := range baseRW.Manifest.ResourceDeps(s) {
+		for _, d := range baseRW.ResourceDeps(s) {
 			if removing[d] {
-				blocked = append(blocked, fmt.Sprintf("%s depends on %s", s, d))
+				blocked = append(blocked, fmt.Sprintf("%s needs %s", s, d))
 			}
 		}
 	}

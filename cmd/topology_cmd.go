@@ -61,8 +61,10 @@ func runTopology(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  - %s\n", service.Name)
 		fmt.Printf("      path: %s\n", service.Path)
 		fmt.Printf("      groups: %s\n", printableCSV(service.Groups))
-		fmt.Printf("      dependencies: %s\n", printableCSV(service.Dependencies))
-		fmt.Printf("      dependents: %s\n", printableCSV(service.Dependents))
+		fmt.Printf("      needs: %s\n", printableCSV(service.WithVia(service.Dependencies)))
+		fmt.Printf("      needed by: %s\n", printableCSV(service.Dependents))
+		fmt.Printf("      calls: %s\n", printableCSV(service.WithVia(service.Calls)))
+		fmt.Printf("      called by: %s\n", printableCSV(service.CalledBy))
 	}
 
 	if len(graph.Issues) > 0 {

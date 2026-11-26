@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -40,10 +42,7 @@ type WorkspaceManifest struct {
 	StartsAfter   map[string][]string             `yaml:"startsAfter,omitempty"`
 	Environments  map[string]WorkspaceEnvironment `yaml:"environments,omitempty"`
 	Hooks         []Hook                          `yaml:"hooks,omitempty"`
-}
-
-func (m *WorkspaceManifest) ResourceDeps(svc string) []string {
-	return unionSorted(m.Dependencies[svc], m.StartsAfter[svc], m.Calls[svc])
+	Partial       bool                            `yaml:"partial,omitempty"`
 }
 
 type WorkspaceManifestEnv struct {
@@ -134,7 +133,23 @@ type ServiceManifest struct {
 	Telemetry ServiceTelemetry       `yaml:"telemetry,omitempty"`
 	Hooks     []Hook                 `yaml:"hooks,omitempty"`
 	Tasks     map[string]ServiceTask `yaml:"tasks,omitempty"`
+	Needs     []ServiceEdge          `yaml:"needs,omitempty"`
+	Calls     []ServiceEdge          `yaml:"calls,omitempty"`
 	Dev       map[string]any         `yaml:"dev,omitempty"`
+}
+
+type ServiceEdge struct {
+	Service  string   `yaml:"service"`
+	Via      string   `yaml:"via,omitempty"`
+	Entities []string `yaml:"entities,omitempty"`
+}
+
+func (e *ServiceEdge) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		return value.Decode(&e.Service)
+	}
+	type plain ServiceEdge
+	return value.Decode((*plain)(e))
 }
 
 type ServiceConfig struct {
@@ -379,7 +394,35 @@ func LoadWorkspaceManifest(workspacePath string) (*WorkspaceManifest, error) {
 	if err := manifest.Validate(); err != nil {
 		return nil, fmt.Errorf("the workspace manifest %s is not valid: %w", path, err)
 	}
+	if !manifest.Partial {
+		warnLegacyEdges(path, &manifest)
+	}
 	return &manifest, nil
+}
+
+var (
+	legacyEdgeWarnings io.Writer = os.Stderr
+	legacyEdgeWarned   sync.Map
+)
+
+func warnLegacyEdges(path string, m *WorkspaceManifest) {
+	var used []string
+	if len(m.Dependencies) > 0 {
+		used = append(used, "dependencies")
+	}
+	if len(m.Calls) > 0 {
+		used = append(used, "calls")
+	}
+	if len(m.StartsAfter) > 0 {
+		used = append(used, "startsAfter")
+	}
+	if len(used) == 0 {
+		return
+	}
+	if _, seen := legacyEdgeWarned.LoadOrStore(path, true); seen {
+		return
+	}
+	fmt.Fprintf(legacyEdgeWarnings, "warning: %s uses the old workspace maps %s. devstack reads them as calls. To move them onto each service, run devstack migrate.\n", path, strings.Join(used, ", "))
 }
 
 func (m *WorkspaceManifest) Validate() error {
@@ -454,6 +497,16 @@ func (m *ServiceManifest) validate(scope string) error {
 	if l := m.Runtime.Limits.CPU; l != "" && !cpuLimit.MatchString(l) {
 		return fmt.Errorf("service %q: runtime.limits.cpu %q is not a percentage, such as 200%%", m.Service.Name, l)
 	}
+	for _, list := range []struct {
+		key   string
+		edges []ServiceEdge
+	}{{"needs", m.Needs}, {"calls", m.Calls}} {
+		for _, e := range list.edges {
+			if strings.TrimSpace(e.Service) == "" {
+				return fmt.Errorf("service %q: an entry in %s has no service name", m.Service.Name, list.key)
+			}
+		}
+	}
 	return validateHooks(m.Hooks, scope, false)
 }
 
@@ -473,12 +526,16 @@ func ResolveWorkspace(workspacePath string) (*ResolvedWorkspace, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &ResolvedWorkspace{
+		rw := &ResolvedWorkspace{
 			RootPath: workspacePath,
 			Source:   WorkspaceManifestFileName,
 			Manifest: manifest,
 			Services: services,
-		}, nil
+		}
+		if err := rw.validateEdges(); err != nil {
+			return nil, err
+		}
+		return rw, nil
 	}
 
 	legacy, err := loadLegacyConfig(workspacePath)

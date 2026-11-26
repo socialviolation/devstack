@@ -165,7 +165,7 @@ func Derive(services []string, deps map[string][]string, base Copy, stack *Copy)
 		undeclared[pair] = true
 		issues = append(issues, Issue{
 			Severity: "note", Code: "undeclared-edge", From: l.From, To: l.To,
-			Message: fmt.Sprintf("%s reaches %s through %s, and the workspace manifest declares no edge from %s to %s", l.From, l.To, l.Key, l.From, l.To),
+			Message: fmt.Sprintf("%s reaches %s through %s, and no needs or calls edge goes from %s to %s", l.From, l.To, l.Key, l.From, l.To),
 		})
 	}
 	for _, from := range services {

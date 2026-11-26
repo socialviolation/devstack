@@ -78,7 +78,9 @@ ports:
 	services := []string{"api", "web", "worker"}
 	deps := map[string][]string{}
 	for _, s := range services {
-		deps[s] = rw.Manifest.ResourceDeps(s)
+		for _, e := range rw.CallEdges(s) {
+			deps[s] = append(deps[s], e.Service)
+		}
 	}
 	return rw, services, deps
 }

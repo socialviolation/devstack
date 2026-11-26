@@ -136,3 +136,25 @@ func TestWiringHidesBaseValuesFromAgents(t *testing.T) {
 		}
 	}
 }
+
+func TestWiringNamesTheEdgeKindAndVia(t *testing.T) {
+	ws := seedWiringWorkspace(t)
+	if out := callAs(t, wiringServer(t, ws), owner, "wiring", `{}`); !strings.Contains(out, "web → api  (calls)") {
+		t.Errorf("a legacy dependency must show as calls:\n%s", out)
+	}
+
+	writeFile(t, filepath.Join(ws.Path, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: navexa
+  repoDiscovery:
+    mode: explicit
+    repos: [./api, ./web]
+`)
+	writeFile(t, filepath.Join(ws.Path, "web", config.ServiceManifestFileName), wiringWeb("v1-base")+`needs:
+  - service: api
+    via: http
+`)
+	if out := callAs(t, wiringServer(t, ws), owner, "wiring", `{}`); !strings.Contains(out, "web → api  (needs, via http)") {
+		t.Errorf("a needs edge must show its kind and via:\n%s", out)
+	}
+}
