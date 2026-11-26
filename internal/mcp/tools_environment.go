@@ -84,11 +84,33 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 		if cfg, err := config.Load(workspacePath); err == nil && len(cfg.Groups) > 0 {
 			fmt.Fprintf(&sb, "groups: %s\n", availableGroups(cfg))
 		}
+		sb.WriteString(templatesSummary(workspacePath))
 		fmt.Fprintf(&sb, "envs: %s\n", envCatalog(workspacePath))
 		fmt.Fprintf(&sb, "config-patch env: env_use points a service, the workspace or a stack at a named config env (devstack env use). status and env_which show where each service points.\n")
 
 		return mcp.NewToolResultText(sb.String()), nil
 	})
+}
+
+func templatesSummary(workspacePath string) string {
+	m, err := config.LoadWorkspaceManifest(workspacePath)
+	if err != nil || len(m.Templates) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("templates: recipes for stack_create (template=\"<name>\"). A template never runs anything.\n")
+	for _, n := range m.TemplateNames() {
+		t := m.Templates[n]
+		fmt.Fprintf(&sb, "  %s: %s", n, strings.Join(t.Services, ", "))
+		if t.Env != "" {
+			fmt.Fprintf(&sb, " (env %s)", t.Env)
+		}
+		if t.Purpose != "" {
+			fmt.Fprintf(&sb, " — %s", t.Purpose)
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }
 
 // envCatalog lists the config-patch environments the workspace manifest defines.

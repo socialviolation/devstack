@@ -72,6 +72,7 @@ but only for the repositories that hold shared services (see 01).
 - `04-herdr-pane.md` — pane binding and the herdr plugin.
 - `05-branch-sync.md` — how resync and attach change.
 - `06-agent-surface.md` — every text that must change.
+- `07-templates.md` — templates: named recipes for a new stack.
 
 ## Open questions
 

@@ -19,7 +19,7 @@ const workspaceManifestTemplate = `# devstack workspace manifest. This file is t
 # manifests, then run 'devstack workspace up' or 'devstack workspace generate' to
 # write the Tiltfile again.
 #
-# This directory is the TEMPLATE. Nothing runs here. 'devstack workspace up'
+# This directory is the SOURCE. Nothing runs here. 'devstack workspace up'
 # builds a REPLICA from it: one git worktree for each repository that holds a
 # shared service, at its default branch tip, in a .devstack-base directory beside
 # this one. The shared set runs there. Every other service runs only in a stack.
@@ -67,6 +67,15 @@ shared: []
 groups: {}
   # backend: [my-api]
   # workers: [my-worker]
+
+# templates are recipes for a new stack: services, groups and an optional
+# environment. A template runs nothing. To use one, run:
+#   devstack stack create <name> --template <template>
+# templates:
+#   api-work:
+#     purpose: Work on the API and its workers.
+#     services: [my-api, workers]
+#     env: staging
 
 # Each service declares its edges in its own devstack.service.yaml, with needs
 # and calls. This file has no edge map.

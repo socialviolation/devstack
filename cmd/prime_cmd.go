@@ -574,6 +574,10 @@ func writePrimeApplies(b *strings.Builder, ws *workspace.Workspace, rw *config.R
 		lines = append(lines, "                To see the values one sets, run: devstack env which --service <svc>")
 	}
 
+	if names := rw.Manifest.TemplateNames(); len(names) > 0 {
+		lines = append(lines, fmt.Sprintf("  templates     %s. Create a stack from one: devstack stack create <name> --template <t>", strings.Join(names, ", ")))
+	}
+
 	if n := countHooks(ws, rw); n > 0 {
 		lines = append(lines, fmt.Sprintf("  hooks         %d declared. They run automatically on the stack and service lifecycle. See: devstack hooks list", n))
 	}

@@ -1,7 +1,5 @@
 <p align="center"><img src="docs/logo.png" alt="devstack" width="480"></p>
 
-<img width="1672" height="941" alt="ChatGPT Image Jul 22, 2026, 03_59_46 PM" src="https://github.com/user-attachments/assets/7b9c8b3e-5f8f-4298-9870-60073ee4f2db" />
-
 Devstack runs the local services of your team in dependency order, across every repository.
 
 Devstack is optimised for coding agents, not for people. An agent drives the whole lifecycle of a local dev environment over [MCP](https://modelcontextprotocol.io). It builds the environment, starts a service, reads the logs of that service, and reads the trace that shows the failure. You paste no output. The CLI does the same job, when you want it.
@@ -110,14 +108,15 @@ The flags are in [Updating devstack](REFERENCE.md#updating-devstack).
 | Service | A process that a service manifest defines: an API, a worker, an importer. The manifest is `devstack.service.yaml`, or `devstack.<name>.yaml` for each service after the first one in that directory. |
 | Group | A named set of services that you start and stop together. |
 | Host daemon | One Tilt daemon (`:10300`) for the whole machine. The shared set of every workspace runs inside it, and so does every stack that is up. Each service runs as `<workspace>:<service>` when it is shared, and as `<workspace>:<service>:<stack>` in a stack. There is no daemon for each workspace. |
-| Template | Your own checkout of a service. It holds the git objects, the workspace manifest and the machine-local gitignored configuration. It runs nothing. |
+| Source | Your own checkout of a service. devstack cuts worktrees from it. It holds the git objects, the workspace manifest and the machine-local gitignored configuration. It runs nothing. |
 | Shared service | A service in the `shared:` list of the workspace manifest. It runs once for the workspace, and never in a stack. Every stack uses it. Databases and stores are shared. |
 | Shared set | All the shared services of one workspace. `workspace up` starts it. It runs from the replica, at the latest default branch, and devstack refreshes it every hour. |
-| Replica | One git worktree for each repository that holds a shared service, under `<parent>/.devstack-base/<workspace>/`. devstack builds the replica from the template. Each worktree is detached at the default branch tip of its repository. |
+| Replica | One git worktree for each repository that holds a shared service, under `<parent>/.devstack-base/<workspace>/`. devstack builds the replica from the source. Each worktree is detached at the default branch tip of its repository. |
 | Feature stack | The services that one feature needs, in git worktrees, on their own ports. Its members are the services that you name, and every service that they `need`. A service that a member only `calls` does not come in. Every service that is not shared runs only in a stack. |
 | Copy | One running process of a service. A shared service has one copy. Each stack that has a service as a member runs its own copy. |
 | Stop time | The time when devstack stops a stack. It is 24 hours after `stack create` or `stack up`. `devstack stack extend` pushes it back. devstack keeps the worktrees, and never removes the stack. |
 | Environment | A named set of configuration values (`environments:` in the workspace manifest). devstack applies it at workspace scope, service scope or stack scope. It sets where a service points. |
+| Template | A named recipe for a new stack (`templates:` in the workspace manifest). It names services, groups and an optional environment. It runs nothing. `stack create --template <t>` uses it. |
 | Hook | A shell command that devstack runs on a lifecycle event, for example a stack created or a service started. A disposable stack uses hooks to provision and de-provision the state that it needs outside this machine. |
 
 ## What else is here

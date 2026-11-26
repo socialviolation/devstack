@@ -28,9 +28,10 @@ type CreateInput struct {
 	Detach bool
 	// From is the ref every worktree is cut from. Empty resolves each service
 	// repo's default branch instead, origin's copy of it when there is one.
-	From  string
-	Note  string
-	Owner string
+	From     string
+	Note     string
+	Owner    string
+	Template string
 }
 
 type OverlayMember struct {
@@ -66,6 +67,8 @@ type CreateResult struct {
 	BaseName     string
 	BasePath     string
 	Groups       []string
+	Template     string
+	Env          string
 	Members      []OverlayMember
 	Worktrees    []WorktreeResult
 	ManifestPath string
@@ -96,6 +99,7 @@ type StackInfo struct {
 	Note      string
 	Log       []NoteEntry
 	Groups    []string
+	Template  string
 	Created   time.Time
 	Owner     string
 	StopAt    time.Time
@@ -141,7 +145,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 	if _, err := FindStack(base.Name, in.Name); err == nil {
 		return nil, fmt.Errorf("stack %q already exists in workspace %q", in.Name, base.Name)
 	}
-	if len(in.Repos) == 0 {
+	if len(in.Repos) == 0 && in.Template == "" {
 		return nil, fmt.Errorf("no services given: name the services that this stack runs")
 	}
 	if in.Detach && in.Branch != "" {
@@ -152,6 +156,11 @@ func Create(in CreateInput) (*CreateResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("can not resolve the workspace: %w", err)
 	}
+	names, env, err := applyTemplate(baseRW, in.Template, in.Repos)
+	if err != nil {
+		return nil, err
+	}
+	in.Repos = names
 	topo, err := config.BuildTopology(base.Path)
 	if err != nil {
 		return nil, err
@@ -166,6 +175,8 @@ func Create(in CreateInput) (*CreateResult, error) {
 		BaseName: base.Name,
 		BasePath: base.Path,
 		Groups:   groups,
+		Template: in.Template,
+		Env:      env,
 		Ports:    map[string]int{},
 	}
 	res.Members = memberReasons(overlay, changedSet, chains)
@@ -316,8 +327,10 @@ func Create(in CreateInput) (*CreateResult, error) {
 		Base:      base.Name,
 		Root:      stackRoot,
 		Branch:    branch,
+		Env:       env,
 		Note:      in.Note,
 		Groups:    groups,
+		Template:  in.Template,
 		Members:   overlayNames,
 		Worktrees: worktrees,
 		Ports:     res.Ports,
@@ -511,6 +524,7 @@ func List(workspaceName string) ([]StackInfo, error) {
 			Note:      rec.Note,
 			Log:       rec.Log,
 			Groups:    rec.Groups,
+			Template:  rec.Template,
 			Created:   rec.CreatedAt,
 			Owner:     rec.Owner,
 			StopAt:    rec.StopAt,

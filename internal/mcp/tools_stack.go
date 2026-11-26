@@ -69,6 +69,7 @@ func stackBranchNote(wt stack.WorktreeResult) string {
 func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_create",
 		mcp.WithDescription("Create a feature stack in THIS workspace. A stack runs only the services you name, the members of the groups you name, and the services they need. Each one runs in its own git worktree, on a port devstack allocates. Use this tool for the request 'I need a stack to work on X in services A and B'.\n"+
+			"A TEMPLATE is a named recipe for a stack in the workspace manifest. It gives services, groups and an optional environment. The environment tool lists the templates. Pass template, and repos only for extra services.\n"+
 			"A 'needs' edge in devstack.service.yaml pulls a service in. A 'calls' edge does not. devstack never pulls in the services that call a member. If a member calls or references a service that the stack does not run, devstack warns and names stack_add. Decide if the change needs that service. "+
 			"A shared service is never in a stack. Every stack uses the one shared set. "+
 			"A named service gets the stack's branch. A service that comes in through needs is detached at the default branch tip. To commit in one, name it with stack_add.\n"+
@@ -79,8 +80,10 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			"This workspace can declare lifecycle HOOKS: shell commands that devstack runs on its own for this action. They can change state outside this machine, for example register a callback URL or provision a resource. They fire on their own, and their output is in the result below. A hook failure is returned as an error, and it means that the stack exists and is NOT fully provisioned. Do not report success. See the hooks tool. If you do not know what this workspace fires, run the hooks tool with action=\"list\" first. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description("Short stack name (for example 'import-review'). The full stack identity becomes '<workspace>--<name>'. Every stack parameter across these tools takes the short name. No stack can have the name \"shared\" or \"base\".")),
-		mcp.WithString("repos", mcp.Required(),
-			mcp.Description("Comma-separated exact service OR group names that this stack changes (for example 'frontend,backend' or 'core'). A group expands to its members. devstack adds the services that they need. A service that they only call does not come in, and devstack warns about it. devstack refuses a shared service.")),
+		mcp.WithString("repos",
+			mcp.Description("Comma-separated exact service OR group names that this stack changes (for example 'frontend,backend' or 'core'). A group expands to its members. devstack adds the services that they need. A service that they only call does not come in, and devstack warns about it. devstack refuses a shared service. Give repos, template, or both.")),
+		mcp.WithString("template",
+			mcp.Description("Name of a template from the workspace manifest. Its services and groups become members, with repos added. If the template names an environment, the stack uses it, as env_use with stack does. The environment tool lists the templates.")),
 		mcp.WithString("note",
 			mcp.Description("What this stack is for, in the author's words: a ticket URL, an issue key, or a sentence. devstack never derives this: the branch says what changed, and the note says why. stack_list shows it. It is optional. To edit it later, call stack_note.")),
 		mcp.WithString("branch",
@@ -88,7 +91,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		mcp.WithBoolean("detach",
 			mcp.Description("If true, devstack cuts every worktree detached at the default branch tip, with no branch. Use it to run the default branch. Do not combine it with branch.")),
 		mcp.WithString("from",
-			mcp.Description("The git ref that devstack cuts the worktrees from, for example 'origin/release-2' or a commit SHA. The default is each repo's default branch, as origin has it. The default is never whatever the user's checkout has checked out, because that checkout is a template and it can hold parked work. This applies only where devstack creates the branch. Where the branch already exists, the worktree attaches to it with the history it already has.")),
+			mcp.Description("The git ref that devstack cuts the worktrees from, for example 'origin/release-2' or a commit SHA. The default is each repo's default branch, as origin has it. The default is never whatever the user's checkout has checked out, because that checkout is the source and it can hold parked work. This applies only where devstack creates the branch. Where the branch already exists, the worktree attaches to it with the history it already has.")),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),
@@ -109,18 +112,20 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 				repos = append(repos, r)
 			}
 		}
-		if len(repos) == 0 {
-			return mcp.NewToolResultError("repos must name at least one service this stack changes"), nil
+		template := strings.TrimSpace(request.GetString("template", ""))
+		if len(repos) == 0 && template == "" {
+			return mcp.NewToolResultError("give repos, template, or both. repos names the services that this stack changes"), nil
 		}
 
 		in := stack.CreateInput{
-			Note:   request.GetString("note", ""),
-			Base:   ws,
-			Name:   name,
-			Repos:  repos,
-			Branch: strings.TrimSpace(request.GetString("branch", "")),
-			Detach: request.GetBool("detach", false),
-			From:   strings.TrimSpace(request.GetString("from", "")),
+			Note:     request.GetString("note", ""),
+			Base:     ws,
+			Name:     name,
+			Repos:    repos,
+			Branch:   strings.TrimSpace(request.GetString("branch", "")),
+			Detach:   request.GetBool("detach", false),
+			From:     strings.TrimSpace(request.GetString("from", "")),
+			Template: template,
 		}
 		if caller := auth.CallerFrom(ctx); caller.Scope != auth.ScopeOwner {
 			in.Owner = caller.Name
@@ -141,7 +146,14 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "Stack %q created (workspace %s).\n", res.StackName, res.BaseName)
-		fmt.Fprintf(&sb, "Stack root: %s\n\n", res.StackRoot)
+		fmt.Fprintf(&sb, "Stack root: %s\n", res.StackRoot)
+		if res.Template != "" {
+			fmt.Fprintf(&sb, "Template: %s\n", res.Template)
+		}
+		if res.Env != "" {
+			fmt.Fprintf(&sb, "Environment: %s\n", res.Env)
+		}
+		sb.WriteString("\n")
 
 		sb.WriteString("Members (the services you named, and the services they need):\n")
 		for _, m := range res.Members {
@@ -444,6 +456,9 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			}
 			if s.AdoptedFrom != "" {
 				fmt.Fprintf(&sb, "  adopted:  from %s\n", s.AdoptedFrom)
+			}
+			if s.Template != "" {
+				fmt.Fprintf(&sb, "  template: %s\n", s.Template)
 			}
 			if s.Note != "" {
 				fmt.Fprintf(&sb, "  note:     %s\n", s.Note)

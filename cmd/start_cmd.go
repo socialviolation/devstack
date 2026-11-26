@@ -35,7 +35,7 @@ This command makes the shared services current, in four steps.
   3. It restarts each shared service that runs now and that step 2 moved.
   4. It starts each shared service that does not run.
 
-Your checkout is the template that devstack builds the replica from, and nothing
+Your checkout is the source that devstack builds the replica from, and nothing
 runs there. To read the directory that each copy runs from, run
 'devstack status --all' and read the DIR column.
 

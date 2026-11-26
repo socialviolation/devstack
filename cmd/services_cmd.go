@@ -579,7 +579,7 @@ func printServiceOrientation(ws *workspace.Workspace, rw *config.ResolvedWorkspa
 	sort.Slice(rows, func(i, j int) bool { return rows[i].stack < rows[j].stack })
 
 	faint := color.New(color.Faint)
-	where := "template checkout"
+	where := "source checkout"
 	if _, rerr := replica.DetectFromCwd(); rerr == nil {
 		where = "replica of the shared set"
 	}
