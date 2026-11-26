@@ -139,15 +139,6 @@ func resolveMutatingTarget(ws *workspace.Workspace, base localTarget, stackParam
 	return resolveLocalTarget(ws, base, name)
 }
 
-// targetGroupMembers resolves a group name against the instance a tool acts on,
-// with the two answers a stack makes wrong put right.
-//
-// A stack's generated manifest lists only the group members that made it into
-// the overlay. So a group half in a stack silently resolves to that half, and a
-// group not in it at all reads as a name that does not exist — while the group
-// does exist, on base. Both readings are true of the stack and false of the
-// workspace, and the caller asked about the workspace. The returned note is
-// empty unless the group falls short, and belongs in the tool's result text.
 func targetGroupMembers(ws *workspace.Workspace, t localTarget, groupName string) (members []string, note string, err error) {
 	members, ok := t.cfg.Groups[groupName]
 	if t.namespace == "" {
@@ -164,18 +155,18 @@ func targetGroupMembers(ws *workspace.Workspace, t localTarget, groupName string
 		}
 	}
 	if !ok {
-		onBase, isBaseGroup := baseGroups[groupName]
-		if !isBaseGroup {
+		inWorkspace, isWorkspaceGroup := baseGroups[groupName]
+		if !isWorkspaceGroup {
 			return nil, "", fmt.Errorf("group %q not found — available groups: %s", groupName, availableGroups(t.cfg))
 		}
-		return nil, "", fmt.Errorf("group %q has no services in stack %q. It runs entirely on base (%s). There is nothing of it here to act on. To act on base's copies, call this tool again with stack=\"base\"",
-			groupName, t.namespace, strings.Join(onBase, ", "))
+		return nil, "", fmt.Errorf("group %q has no services in stack %q. Its services are %s. There is nothing of it here to act on. To add them to the stack, use stack_add",
+			groupName, t.namespace, strings.Join(inWorkspace, ", "))
 	}
 	for _, cov := range stack.CoverageOf([]string{groupName}, members, baseGroups) {
 		if cov.Complete() {
 			continue
 		}
-		note = fmt.Sprintf("stack %s %s, and this call does not touch them. To act on base's copies, use stack=\"base\".\n",
+		note = fmt.Sprintf("stack %s %s, and this call does not touch them. To add them to the stack, use stack_add.\n",
 			t.namespace, cov.Sentence())
 	}
 	return members, note, nil

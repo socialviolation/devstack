@@ -536,7 +536,7 @@ groups:
 		// The CLI prints Coverage.Sentence() for the same fact, so the tool has
 		// to quote it rather than word the shortfall its own way.
 		shared := stack.Coverage{Group: "core", In: []string{"api"}, Missing: []string{"frontend", "orbit"}}.Sentence()
-		for _, want := range []string{shared, `stack="base"`, "does not touch them"} {
+		for _, want := range []string{shared, "stack_add", "does not touch them"} {
 			if !strings.Contains(note, want) {
 				t.Errorf("the shortfall note must state %q; got %q", want, note)
 			}
@@ -555,7 +555,7 @@ groups:
 		if strings.Contains(err.Error(), "not found") {
 			t.Errorf("a group that exists on base must not read as a typo: %v", err)
 		}
-		for _, want := range []string{"runs entirely on base", "api, frontend, orbit", `stack="base"`} {
+		for _, want := range []string{"has no services in stack", "api, frontend, orbit", "stack_add"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("the refusal must state %q; got %v", want, err)
 			}

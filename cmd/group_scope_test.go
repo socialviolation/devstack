@@ -95,7 +95,7 @@ func TestGroupMissingEntirelyFromAStackExplainsWhy(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for a group with no services in the stack")
 	}
-	for _, want := range []string{"core", "feat", "runs entirely on base", "--stack base"} {
+	for _, want := range []string{"core", "feat", "has no services in stack", "devstack stack add feat core"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error must mention %q, got: %v", want, err)
 		}
@@ -112,7 +112,7 @@ func TestUnknownGroupStaysUnknown(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for a group nothing declares")
 	}
-	if strings.Contains(err.Error(), "runs entirely on base") {
+	if strings.Contains(err.Error(), "has no services in stack") {
 		t.Errorf("a group base does not declare must not be reported as a shortfall: %v", err)
 	}
 }

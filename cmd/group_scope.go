@@ -11,14 +11,6 @@ import (
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
-// resolveInstanceTarget is resolveTargetKind for a command acting on one
-// instance, with the two answers a stack makes wrong put right.
-//
-// A stack's generated manifest lists only the group members that made it into
-// the overlay. So a group half in a stack silently resolves to that half, and a
-// group not in it at all is reported as unknown — while `devstack group list`,
-// which reads base, shows it. Both readings are true of the stack and false of
-// the workspace, and the caller asked about the workspace.
 func resolveInstanceTarget(cmd *cobra.Command, ws *workspace.Workspace, wsPath, name string, cfg *config.WorkspaceConfig, stackName string) ([]string, error) {
 	kind := targetKindOf(cmd)
 	services, err := resolveTargetKind(wsPath, name, cfg, kind)
@@ -27,13 +19,13 @@ func resolveInstanceTarget(cmd *cobra.Command, ws *workspace.Workspace, wsPath, 
 	}
 
 	baseGroups := baseGroupMembers(ws)
-	members, isBaseGroup := baseGroups[name]
+	members, isWorkspaceGroup := baseGroups[name]
 	if err != nil {
-		if !isBaseGroup {
+		if !isWorkspaceGroup {
 			return nil, err
 		}
-		return nil, fmt.Errorf("group %q has no services in stack %q. It runs entirely on base (%s).\nAct on base's copies: devstack group %s %s --stack base",
-			name, stackName, joinServices(members), cmd.Name(), name)
+		return nil, fmt.Errorf("group %q has no services in stack %q. Its services are %s.\nTo add them to the stack, run: devstack stack add %s %s",
+			name, stackName, joinServices(members), stackName, name)
 	}
 
 	for _, cov := range stack.CoverageOf([]string{name}, services, baseGroups) {
