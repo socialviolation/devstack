@@ -559,7 +559,7 @@ The panel shows the workspace of the pane where you press the key. From a direct
 
 ### The stack of a herdr pane
 
-A herdr pane binds a stack when you run `stack create`, `stack up`, `stack resync` or `stack adopt` in it. This includes an agent in the pane that calls the stdio MCP tools. A call over HTTP binds no pane. The last pane wins. One pane can bind more than one stack.
+A herdr pane binds a stack when you run `stack create`, `stack up`, `stack resync`, `stack adopt` or `stack extend` in it. This includes an agent in the pane that calls the stdio MCP tools. A call over HTTP binds no pane. The last pane wins. One pane can bind more than one stack.
 
 After each stack change, devstack sets these tokens on the pane, with the source `devstack`:
 

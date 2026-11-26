@@ -14,7 +14,7 @@ var herdrCmd = &cobra.Command{
 	Use:   "herdr",
 	Short: "Show each stack in the herdr pane that controls it",
 	Long: `A herdr pane binds the stacks that a command in it created, brought up,
-resynced or adopted. devstack sets the tokens stack, stack_state, stack_url and
+resynced, adopted or extended. devstack sets the tokens stack, stack_state, stack_url and
 stack_stop on that pane. The herdr sidebar shows them.
 
 If herdr is not installed or does not run, these commands do nothing.`,
