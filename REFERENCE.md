@@ -99,6 +99,7 @@ devstack service stop    [name] --stack <name>
 devstack group   start|stop|restart <group>       # every service in the group
 devstack status  [--all] [--stack <name>]
 devstack workspace topology [service]
+devstack wiring [service] [--stack <name>]
 ```
 
 Commands are noun first: `devstack <noun> <action> [target]`. A name can be both a service and a group, so the noun says which one you mean. devstack never guesses. If you name nothing after `service`, devstack works out the service from your working directory.
@@ -221,6 +222,7 @@ devstack stack note <name> --add "..."              # append where it got to
 devstack stack resync <name>                        # fast-forward the worktrees to origin
 devstack stack adopt <name>                         # take over an agent's stack
 devstack stack sweep [--dry-run]                    # stop each stack past its stop time
+devstack task run <svc> [task] --stack <name>       # run a task the service declares, in the stack's worktree
 ```
 
 ### Members
@@ -611,7 +613,7 @@ stack_resync  stack_adopt   env_use       env_which     env_set
 | `urls` | Reports the tailnet address of each service. |
 | `wiring` | Shows how each service reaches the services it talks to: the env key, the resolved value, and the `needs` or `calls` edge. |
 
-`stack_add` adds services to a stack that already exists, and `stack_remove` takes them out. `migrate` lists the migrations of this machine with `action="list"`, and runs the pending ones with `action="run"`. A run writes and deletes files in the service repositories, so read the git diff it makes and commit it yourself.
+`stack_add` adds services to a stack that already exists, and `stack_remove` takes them out. `migrate` lists the migrations of this machine with `action="list"`, and runs the pending ones with `action="run"`. A run writes and deletes files in the service repositories, so read the git diff it makes and commit it yourself. `action="shared-stacks"` runs `devstack migrate shared-stacks`. It changes nothing until you set `apply=true`.
 
 The set of tools adapts to the workspace. `investigate` appears only when observability is on. `tunnel` appears only when the machine has an ssh client. Call `environment` first. It reports the observability state of the workspace, the stacks in flight, and the tools that exist here.
 
@@ -702,7 +704,7 @@ devstack does not own these repositories, so read the diff in each one before yo
 
 ### Moving a workspace to the shared set
 
-`devstack migrate shared-stacks` converts one workspace to the shared set and small stacks. Without `--apply`, it prints what it would change, and it changes nothing.
+`devstack migrate shared-stacks` converts one workspace to the shared set and small stacks. Without `--apply`, it prints what it would change, and it changes nothing. The MCP tool `migrate` runs it with `action="shared-stacks"`. Only the owner can call that tool.
 
 ```bash
 devstack migrate shared-stacks                                   # dry run

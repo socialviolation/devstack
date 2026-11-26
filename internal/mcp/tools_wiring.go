@@ -39,7 +39,7 @@ func registerWiringTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		showBase := auth.CallerFrom(ctx).Scope == auth.ScopeOwner
-		out, err := wiringReport(ws, workspacePath,
+		out, err := WiringReport(ws, workspacePath,
 			strings.TrimSpace(request.GetString("stack", "")),
 			strings.TrimSpace(request.GetString("service", "")),
 			showBase)
@@ -50,7 +50,7 @@ func registerWiringTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 	})
 }
 
-func wiringReport(ws *workspace.Workspace, workspacePath, stackName, service string, showBase bool) (string, error) {
+func WiringReport(ws *workspace.Workspace, workspacePath, stackName, service string, showBase bool) (string, error) {
 	baseRW, err := config.ResolveWorkspace(workspacePath)
 	if err != nil {
 		return "", err

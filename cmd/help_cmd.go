@@ -60,6 +60,8 @@ var moreCommands = []helpRow{
 	{"herdr", "show each stack in the herdr pane that controls it"},
 	{"doctor", "find what is broken, and the command that fixes it"},
 	{"cleanup", "remove orphaned ports, worktrees and stack records"},
+	{"task", "run a task that a service declares, in a stack's worktree"},
+	{"wiring", "show how each service reaches the services it talks to"},
 }
 
 var helpCmd = &cobra.Command{

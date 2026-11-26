@@ -35,7 +35,7 @@ func registerTaskRunTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		out, failed, err := runTask(ctx, ws,
+		out, failed, err := RunTask(ctx, ws,
 			strings.TrimSpace(request.GetString("stack", "")),
 			strings.TrimSpace(request.GetString("service", "")),
 			strings.TrimSpace(request.GetString("task", "")))
@@ -49,7 +49,7 @@ func registerTaskRunTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	})
 }
 
-func runTask(ctx context.Context, ws *workspace.Workspace, stackName, service, taskName string) (string, bool, error) {
+func RunTask(ctx context.Context, ws *workspace.Workspace, stackName, service, taskName string) (string, bool, error) {
 	if stackName == "" {
 		return "", false, fmt.Errorf("task_run runs in a stack's worktree. Pass stack=<name>")
 	}
