@@ -83,6 +83,7 @@ needs: [api]
 		// serve_cmd is the run command alone: all env now flows through serve_env
 		`serve_cmd="dotnet run"`,
 		filepath.Join(apiDir, "src/App"), // serve_dir with workDir
+		"\n    dir=\"" + filepath.Join(apiDir, "src/App") + "\",\n",
 		// merged env: managed + workspace + service, sorted
 		`"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317"`,
 		`"OTEL_EXPORTER_OTLP_PROTOCOL": "grpc"`,

@@ -263,6 +263,7 @@ func renderService(svc config.ResolvedService, rw *config.ResolvedWorkspace, gro
 	}
 	if prep != "" {
 		fmt.Fprintf(&b, "    cmd=%s,\n", starStr(prep))
+		fmt.Fprintf(&b, "    dir=%s,\n", starStr(serveDir))
 	}
 
 	if opts.SystemdScopes {
