@@ -41,8 +41,7 @@ service that is not shared takes --stack <name>. With no --stack, it acts on the
 stack that your directory is in.
 
 The telemetry queries are the exception. 'devstack otel traces' with no --stack
-searches base alone. Pass --stack <name> for one stack, or --stack all for base
-and every stack together.
+searches every stack and the shared set. Pass --stack <name> for one stack.
 
 Never edit stacks.json, ports.json or a stack manifest by hand; use stack add/remove.`,
 	RunE: runStackList,

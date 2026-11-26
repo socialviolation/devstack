@@ -230,20 +230,20 @@ func TestCoreInvestigateEmptyNoteNamesFiltersAndWidening(t *testing.T) {
 	note := coreInvestigateEmptyNote(coreInvestigateFilters{
 		Service:       "api-service",
 		ServiceSource: "this repo's default service, not asked for",
-		Stack:         "base",
+		Stack:         "perf",
 		SinceMinutes:  5,
 		Limit:         3,
 		ErrorsOnly:    false,
 	})
 	for _, want := range []string{
 		"NOT that the service is healthy, idle or uninstrumented",
-		"stack=base only",
+		"stack=stack perf only",
 		"service=api-service (this repo's default service, not asked for)",
 		"window=last 5 minute(s)",
 		"limit=3",
 		"errors_only=false",
 		"raise since_minutes above 5",
-		"stack='all'",
+		"omit stack",
 		"observability tool's status action",
 	} {
 		if !strings.Contains(note, want) {
@@ -261,7 +261,7 @@ func TestCoreInvestigateEmptyNoteNamesFiltersAndWidening(t *testing.T) {
 	if !strings.Contains(withErrors, "7 execution(s) matched everything except errors_only") {
 		t.Errorf("note should report what errors_only discarded; got:\n%s", withErrors)
 	}
-	if !strings.Contains(withErrors, "stack=base and every feature stack") {
+	if !strings.Contains(withErrors, "stack=every stack and the shared set") {
 		t.Errorf("note should say an empty stack filter means every copy; got:\n%s", withErrors)
 	}
 	if !strings.Contains(withErrors, "service=(none — every service)") {

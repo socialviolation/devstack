@@ -2001,11 +2001,8 @@ type coreInvestigateFilters struct {
 // traces" otherwise reads as "this service is not instrumented".
 func coreInvestigateEmptyNote(f coreInvestigateFilters) string {
 	stackScope := "stack " + f.Stack + " only"
-	switch f.Stack {
-	case "":
-		stackScope = "base and every feature stack"
-	case "base":
-		stackScope = "base only (base-workspace services, no feature stack)"
+	if f.Stack == "" {
+		stackScope = "every stack and the shared set"
 	}
 
 	applied := []string{"workspace=this workspace only (always applied)", "stack=" + stackScope}
@@ -2031,10 +2028,8 @@ func coreInvestigateEmptyNote(f coreInvestigateFilters) string {
 	if f.ErrorsOnly {
 		widen = append(widen, "errors_only=false to keep executions whose root span is not an error")
 	}
-	if f.Stack == "base" {
-		widen = append(widen, "stack='all' to include every feature stack's telemetry, or stack='<name>' for one")
-	} else if f.Stack != "" {
-		widen = append(widen, "stack='all' to include base and the other stacks")
+	if f.Stack != "" {
+		widen = append(widen, "omit stack to include the shared set and every stack")
 	}
 	if f.Service != "" {
 		widen = append(widen, fmt.Sprintf("name a different service, or search by attribute and value to span services rather than pin %s", f.Service))
@@ -2084,7 +2079,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			"  devstack.stack      base, or a feature stack's name.\n"+
 			"  devstack.env        the config env that copy runs under.\n"+
 			"In modes 2 and 3 you can isolate the results to one stack's service. 'service' pins the service, and 'stack' pins the devstack.stack resource attribute. "+observability.StackScopeDesc+"\n"+
-			"To compare a feature stack against base, run the same query twice: once with stack='<name>', and once with stack='base'. Before you conclude that a service is silent, use the observability tool's status action to see which copies emit telemetry.\n"+
+			"Before you conclude that a service is silent, use the observability tool's status action to see which copies emit telemetry.\n"+
 			"Example: service='api-service' stack='perf' since_minutes=15 errors_only=true.\n"+
 			"The tool returns an ASCII span tree that shows service calls, durations and errors. Combine it with process_logs and status for the full debugging context.",
 		queryURL,

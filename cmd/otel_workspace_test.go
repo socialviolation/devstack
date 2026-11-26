@@ -89,16 +89,16 @@ func TestOtelSubcommandFlagBeatsTheEnvVar(t *testing.T) {
 // there, so a human and an agent comparing notes disagreed about what they had
 // searched. Both surfaces now quote one sentence, and base only is the narrower
 // reading of the two.
-func TestOtelTracesDefaultsToBaseAlone(t *testing.T) {
+func TestOtelTracesDefaultsToEveryStackAndTheSharedSet(t *testing.T) {
 	usage := otelTracesCmd.Flags().Lookup("stack").Usage
 	if !strings.Contains(usage, observability.StackScopeDesc) {
 		t.Errorf("--stack must state the shared default %q; got %q", observability.StackScopeDesc, usage)
 	}
-	if !strings.Contains(otelTracesCmd.Long, "base alone") || !strings.Contains(otelTracesCmd.Long, "--stack all") {
+	if !strings.Contains(otelTracesCmd.Long, "every stack and the shared set") {
 		t.Errorf("the command help must state the default and how to widen it:\n%s", otelTracesCmd.Long)
 	}
 
-	cases := map[string]string{"": "base", "  ": "base", "all": "", "*": ""}
+	cases := map[string]string{"": "", "  ": "", "all": "", "*": ""}
 	for in, want := range cases {
 		got, err := resolveStackFlag(otelSubcommand(t, ""), in)
 		if err != nil {
