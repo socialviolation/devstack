@@ -9,7 +9,7 @@ func linkSnapshot() Snapshot {
 		},
 		Workspaces: []Workspace{{
 			Name: "navexa",
-			Base: []Service{
+			Shared: []Service{
 				{Name: "orbit-web", State: "running", URLs: []string{"https://box.ts.net:9420"}},
 				{Name: "navexa-api", State: "running"},
 			},
@@ -54,8 +54,8 @@ func TestTypingAServiceNameFindsItsAddresses(t *testing.T) {
 	if len(links) != 2 {
 		t.Fatalf("filterLinks gave %d links, want the two orbit-web copies", len(links))
 	}
-	if links[0].Group != "base" {
-		t.Errorf("first hit is the %s copy, want base: it is the one running", links[0].Group)
+	if links[0].Group != "shared" {
+		t.Errorf("first hit is the %s copy, want shared: it is the one running", links[0].Group)
 	}
 }
 
@@ -111,7 +111,7 @@ func TestATailnetAddressComesBeforeALocalOne(t *testing.T) {
 		}},
 		Workspaces: []Workspace{{
 			Name: "navexa",
-			Base: []Service{{
+			Shared: []Service{{
 				Name: "orbit-web", State: "running",
 				URLs: []string{"https://box.ts.net:9420"},
 			}},

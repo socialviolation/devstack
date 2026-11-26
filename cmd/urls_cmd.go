@@ -80,7 +80,7 @@ func urlRows(snap panel.Snapshot, wsName, stackName string, all bool) []urlRow {
 			continue
 		}
 		if stackName == "" {
-			for _, svc := range ws.Base {
+			for _, svc := range ws.Shared {
 				if all || len(svc.URLs) > 0 {
 					rows = append(rows, urlRow{ws.Name, "", svc.Name, svc.State, svc.Ports, svc.URLs})
 				}

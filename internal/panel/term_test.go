@@ -51,7 +51,7 @@ func TestEscapeDoesNotQuitTheList(t *testing.T) {
 // whatever moved under it.
 func TestThePickerHoldsTheAddressUnderTheCursor(t *testing.T) {
 	m := &model{jump: true, style: newStyles(terminalTheme())}
-	m.snap = Snapshot{Workspaces: []Workspace{{Name: "w", Base: []Service{
+	m.snap = Snapshot{Workspaces: []Workspace{{Name: "w", Shared: []Service{
 		{Name: "api", State: "stopped", URLs: []string{"https://box:8401"}},
 		{Name: "web", State: "running", URLs: []string{"https://box:8402"}},
 	}}}}
@@ -63,7 +63,7 @@ func TestThePickerHoldsTheAddressUnderTheCursor(t *testing.T) {
 	m.linkIndex = 1
 	picked := m.links[1].URL
 
-	m.snap.Workspaces[0].Base[0].State = "running"
+	m.snap.Workspaces[0].Shared[0].State = "running"
 	m.refilterLinks()
 
 	if m.links[m.linkIndex].URL != picked {

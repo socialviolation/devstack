@@ -11,10 +11,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
-	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/tunnel"
 	"github.com/socialviolation/devstack/internal/workspace"
 )

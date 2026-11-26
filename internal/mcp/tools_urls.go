@@ -21,7 +21,7 @@ func registerURLsTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 			"Use this tool after 'stack up', when somebody asks where to see the work.\n"+
 			"The CLI equivalent is `devstack urls`. `devstack panel` shows the same addresses in a terminal, and opens one in a browser."),
 		mcp.WithString("stack",
-			mcp.Description("Report the addresses of one feature stack. With no stack, the tool reports base and every stack of this workspace.")),
+			mcp.Description("Report the addresses of one feature stack. With no stack, the tool reports the shared set and every stack of this workspace.")),
 		mcp.WithString("workspace",
 			mcp.Description("Report another workspace of this machine, by name. With no workspace, the tool reports the workspace of this repository. Pass 'all' for every workspace of this machine.")),
 		mcp.WithBoolean("all",
@@ -55,7 +55,7 @@ func registerURLsTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 				continue
 			}
 			if stackName == "" {
-				rows = append(rows, urlRowsOf(w.Name, "", w.Base, all)...)
+				rows = append(rows, urlRowsOf(w.Name, "", w.Shared, all)...)
 			}
 			for _, st := range w.Stacks {
 				if stackName != "" && st.Name != stackName {

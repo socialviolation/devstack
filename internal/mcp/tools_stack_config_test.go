@@ -126,7 +126,7 @@ func TestStackConfigMasksSecrets(t *testing.T) {
 
 	for name, args := range map[string]map[string]any{
 		"shared": {"service": "api"},
-		"stack": {"service": "api", "stack": "feat"},
+		"stack":  {"service": "api", "stack": "feat"},
 	} {
 		out := safetyCallTool(t, s, "stack_config", args)
 		for _, leaked := range []string{"sk-live-PLAINTEXT", "hunter2"} {
