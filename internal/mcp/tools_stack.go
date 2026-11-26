@@ -93,6 +93,8 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			mcp.Description("What this stack is for, in the author's words: a ticket URL, an issue key, or a sentence. devstack never derives this: the branch says what changed, and the note says why. stack_list shows it. It is optional, and you can edit it later with the CLI: devstack stack note <name> \"...\"")),
 		mcp.WithString("branch",
 			mcp.Description("Git branch for the worktrees of the changed repos. devstack creates it where it is absent, and attaches to it where it already exists. The default is the stack name.")),
+		mcp.WithBoolean("detach",
+			mcp.Description("If true, devstack cuts every worktree detached at the default branch tip, with no branch. Use it to run the default branch. Do not combine it with branch.")),
 		mcp.WithString("from",
 			mcp.Description("The git ref that devstack cuts the worktrees from, for example 'origin/release-2' or a commit SHA. The default is each repo's default branch, as origin has it. The default is never whatever the user's checkout has checked out, because that checkout is a template and it can hold parked work. This applies only where devstack creates the branch. Where the branch already exists, the worktree attaches to it with the history it already has.")),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -125,6 +127,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			Name:   name,
 			Repos:  repos,
 			Branch: strings.TrimSpace(request.GetString("branch", "")),
+			Detach: request.GetBool("detach", false),
 			From:   strings.TrimSpace(request.GetString("from", "")),
 		}
 		if caller := auth.CallerFrom(ctx); caller.Scope != auth.ScopeOwner {
@@ -137,8 +140,8 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		bindPane(ctx, ws, name)
 		defer herdr.Notify()
 
-		overlay := make([]string, 0, len(res.Overlay))
-		for _, m := range res.Overlay {
+		overlay := make([]string, 0, len(res.Members))
+		for _, m := range res.Members {
 			overlay = append(overlay, m.Service)
 		}
 		var hookOut strings.Builder
@@ -148,13 +151,9 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		fmt.Fprintf(&sb, "Stack %q created (base %s).\n", res.StackName, res.BaseName)
 		fmt.Fprintf(&sb, "Stack root: %s\n\n", res.StackRoot)
 
-		sb.WriteString("Overlay set (changed ∪ transitive callers):\n")
-		for _, m := range res.Overlay {
-			reason := "calls a changed service"
-			if m.Reason == "changed" {
-				reason = "changed"
-			}
-			fmt.Fprintf(&sb, "  %-16s %s\n", m.Service, reason)
+		sb.WriteString("Members (the services you named, and the services they need):\n")
+		for _, m := range res.Members {
+			fmt.Fprintf(&sb, "  %-16s %s\n", m.Service, m.Describe())
 		}
 
 		sb.WriteString("\nWorktrees:\n")

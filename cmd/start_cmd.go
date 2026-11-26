@@ -17,24 +17,23 @@ import (
 
 var upCmd = &cobra.Command{
 	Use:   "up",
-	Short: "Move base to the current default branch, and run it in the dev daemon",
-	Long: `Fold this workspace's services into the dev daemon. If the daemon is not up
-already, devstack starts it. On Linux with a systemd user session, the daemon
-is the systemd user service devstack-tilt. On other hosts (macOS, WSL without
-systemd, containers), it is a detached background process.
+	Short: "Start the dev daemon and the shared services of this workspace",
+	Long: `Start the shared services of this workspace in the dev daemon. If the daemon
+is not up already, devstack starts it. On Linux with a systemd user session, the
+daemon is the systemd user service devstack-tilt. On other hosts (macOS, WSL
+without systemd, containers), it is a detached background process.
 
-This command also makes base current, in three steps.
+A shared service is a service in the workspace "shared:" list. Every other
+service runs only in a stack. To run one, use 'devstack stack create'.
 
-  1. It builds the replica that base runs from, if that replica is absent: one
-     git worktree for each repository, detached at that repository's default
-     branch tip, under a .devstack-base sibling of the workspace.
+This command makes the shared services current, in four steps.
+
+  1. It builds the replica if it is absent: one git worktree for each
+     repository that holds a shared service, detached at the default branch
+     tip, under a .devstack-base sibling of the workspace.
   2. It moves each worktree to the current default branch tip.
-  3. It restarts each copy of this workspace that runs now, so that copy serves
-     the code that step 2 moved under it.
-
-CAUTION: Step 3 restarts services that serve right now. devstack restarts only
-the copies that were already running. It starts no copy that is stopped, and it
-touches no copy of a feature stack.
+  3. It restarts each shared service that runs now and that step 2 moved.
+  4. It starts each shared service that does not run.
 
 Your checkout is the template that devstack builds the replica from, and nothing
 runs there. To read the directory that each copy runs from, run
@@ -97,16 +96,13 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 	if _, err := ensureReplica(ws); err != nil {
 		return nil, err
 	}
-	if err := syncBase(ws); err != nil {
-		return nil, err
-	}
 	if _, err := regenerateHostTiltfile(); err != nil {
 		return nil, fmt.Errorf("can not generate the host Tiltfile: %w", err)
 	}
 	if err := ensureHostDaemon(); err != nil {
 		return nil, err
 	}
-	fmt.Printf("Service(s) for '%s' run in the host daemon on :%d as %s:<svc>.\n", ws.Name, workspace.HostTiltPort, ws.Name)
+	fmt.Printf("The shared services of '%s' run in the host daemon on :%d as %s:<svc>.\n", ws.Name, workspace.HostTiltPort, ws.Name)
 
 	if composeSpec, err := infra.ResolveComposeSpec(ws.Path); err != nil {
 		fmt.Fprintf(os.Stderr, "compose infra configuration error: %v\n", err)
@@ -149,10 +145,10 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 		}
 	}
 
-	// Last, so that a restarted service finds its infrastructure and its
-	// collector up. A copy that does not restart is a warning: the workspace is
-	// up, and the report names the copy to restart by hand.
-	if err := transformRunningState(os.Stdout, ws.Name, nil); err != nil {
+	if err := syncShared(ws, os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	}
+	if err := startShared(os.Stdout, ws); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 

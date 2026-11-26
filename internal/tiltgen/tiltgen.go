@@ -35,6 +35,8 @@ type Options struct {
 	// ${stack.suffix:...}. Base generation leaves it empty.
 	Stack config.StackScope
 
+	Shared map[string]bool
+
 	// SkipFreePorts names ports a service must not reclaim, keyed by service name.
 	// GenerateHost fills it for a reclaim that would kill another supervised
 	// resource, so the collision costs one service its reclaim instead of costing
@@ -205,6 +207,22 @@ func renderWorkspace(b *strings.Builder, rw *config.ResolvedWorkspace, opts Opti
 	return nil
 }
 
+func resourceDeps(rw *config.ResolvedWorkspace, svc string, shared map[string]bool, prefix, namespace string) []string {
+	var out []string
+	for _, d := range rw.ResourceDeps(svc) {
+		out = append(out, hostName(prefix, d, namespace))
+	}
+	seen := map[string]bool{}
+	for _, e := range rw.Needs(svc) {
+		if _, inRW := rw.Services[e.Service]; !inRW && shared[e.Service] && !seen[e.Service] {
+			seen[e.Service] = true
+			out = append(out, hostName(prefix, e.Service, ""))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // hostName joins the non-empty of [prefix, name, suffix] with namespaceDelim.
 // With an empty prefix it equals the old suffix-only namespacing (name, or
 // name:suffix); host mode supplies the workspace prefix to yield prefix:name or
@@ -284,12 +302,8 @@ func renderService(svc config.ResolvedService, rw *config.ResolvedWorkspace, gro
 	if len(labels) > 0 {
 		fmt.Fprintf(&b, "    labels=[%s],\n", starList(labels))
 	}
-	if deps := rw.ResourceDeps(svc.Name); len(deps) > 0 {
-		nsDeps := make([]string, len(deps))
-		for i, d := range deps {
-			nsDeps[i] = hostName(prefix, d, namespace)
-		}
-		fmt.Fprintf(&b, "    resource_deps=[%s],\n", starList(nsDeps))
+	if deps := resourceDeps(rw, svc.Name, opts.Shared, prefix, namespace); len(deps) > 0 {
+		fmt.Fprintf(&b, "    resource_deps=[%s],\n", starList(deps))
 	}
 	if len(m.Runtime.Watch) > 0 {
 		fmt.Fprintf(&b, "    deps=[%s],\n", starList(m.Runtime.Watch))

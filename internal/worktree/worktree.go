@@ -39,10 +39,8 @@ func Create(repoPath, worktreePath, branch, from string, changed bool) (Result, 
 	cutFrom := from
 	var args []string
 	switch {
-	case !changed:
+	case !changed || branch == "":
 		args = []string{"worktree", "add", "--detach", worktreePath}
-	case branch == "":
-		return res, fmt.Errorf("the changed repo %s needs a branch name", repoPath)
 	default:
 		exists, err := branchExists(repoPath, branch)
 		if err != nil {

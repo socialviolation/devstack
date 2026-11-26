@@ -74,7 +74,7 @@ workspace:
 		Base:      "navexa",
 		Root:      stackRoot,
 		Owner:     "alice",
-		Overlay:   []string{"web"},
+		Members:   []string{"web"},
 		Worktrees: map[string]string{"web": worktree},
 	}})
 	if err != nil {

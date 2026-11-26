@@ -36,6 +36,7 @@ type WorkspaceManifest struct {
 	Runtime       WorkspaceManifestRuntime        `yaml:"runtime,omitempty"`
 	Observability WorkspaceManifestObservability  `yaml:"observability,omitempty"`
 	Env           WorkspaceManifestEnv            `yaml:"env,omitempty"`
+	Shared        []string                        `yaml:"shared,omitempty"`
 	Groups        map[string][]string             `yaml:"groups,omitempty"`
 	Dependencies  map[string][]string             `yaml:"dependencies,omitempty"`
 	Calls         map[string][]string             `yaml:"calls,omitempty"`
@@ -533,6 +534,9 @@ func ResolveWorkspace(workspacePath string) (*ResolvedWorkspace, error) {
 			Services: services,
 		}
 		if err := rw.validateEdges(); err != nil {
+			return nil, err
+		}
+		if err := rw.validateShared(); err != nil {
 			return nil, err
 		}
 		return rw, nil

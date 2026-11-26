@@ -50,17 +50,17 @@ func Drop(in DropInput) (*DropResult, error) {
 		return nil, fmt.Errorf("no services given: name the services to remove from stack %q", rec.Name)
 	}
 
-	present := stringSet(rec.Overlay)
+	present := stringSet(rec.Members)
 	removing := map[string]bool{}
 	for _, s := range in.Services {
 		if !present[s] {
-			return nil, fmt.Errorf("stack %q does not run %q. It runs: %s", rec.Name, s, strings.Join(rec.Overlay, ", "))
+			return nil, fmt.Errorf("stack %q does not run %q. It runs: %s", rec.Name, s, strings.Join(rec.Members, ", "))
 		}
 		removing[s] = true
 	}
 	var removed []string
 	remaining := []string{}
-	for _, s := range rec.Overlay {
+	for _, s := range rec.Members {
 		if removing[s] {
 			removed = append(removed, s)
 		} else {
@@ -145,7 +145,7 @@ func Drop(in DropInput) (*DropResult, error) {
 		res.Kept = append(res.Kept, kept)
 	}
 
-	rec.Overlay = remaining
+	rec.Members = remaining
 	rec.Worktrees = worktreePaths
 	rec.Ports = ports
 	rec.Groups = groupsStillCovered(rec.Groups, topo.Groups, remaining)

@@ -15,7 +15,7 @@ func TestBriefingNamesTheServicesTheStackOwns(t *testing.T) {
 	rec := &stack.Record{
 		Name:    "fx-rates",
 		Base:    "navexa",
-		Overlay: []string{"navexa-api", "nxPriceService"},
+		Members: []string{"navexa-api", "nxPriceService"},
 		Worktrees: map[string]string{
 			"navexa-api":     "/home/nick/dev/.devstack-stacks/navexa/fx-rates/Navexa",
 			"nxPriceService": "/home/nick/dev/.devstack-stacks/navexa/fx-rates/nxPriceService",
@@ -46,7 +46,7 @@ func TestTheTaskBlockIsTheLoopWithRealNames(t *testing.T) {
 	rec := &stack.Record{
 		Name:      "fx-rates",
 		Branch:    "nick/fx",
-		Overlay:   []string{"navexa-api", "nxPriceService"},
+		Members:   []string{"navexa-api", "nxPriceService"},
 		Worktrees: map[string]string{"navexa-api": "/tmp/fx-rates/navexa-api"},
 	}
 
@@ -70,7 +70,7 @@ func TestTheTaskBlockIsTheLoopWithRealNames(t *testing.T) {
 // task block that always names it sends half the workspaces to a tool that is
 // not there.
 func TestTheTaskBlockNamesTheTraceToolOnlyWhereThereIsTelemetry(t *testing.T) {
-	rec := &stack.Record{Name: "perf", Overlay: []string{"api"}, Worktrees: map[string]string{"api": "/tmp/perf/api"}}
+	rec := &stack.Record{Name: "perf", Members: []string{"api"}, Worktrees: map[string]string{"api": "/tmp/perf/api"}}
 
 	var b strings.Builder
 	writePrimeStackTask(&b, rec, "api", nil, false)
@@ -83,7 +83,7 @@ func TestTheTaskBlockNamesTheTraceToolOnlyWhereThereIsTelemetry(t *testing.T) {
 // The restart step has to name a service even in a directory that names none —
 // the sibling directory of a shared repository is one.
 func TestTheTaskBlockRestartsAServiceTheStackRuns(t *testing.T) {
-	rec := &stack.Record{Name: "feat", Overlay: []string{"web"}, Worktrees: map[string]string{"web": "/tmp/feat/web"}}
+	rec := &stack.Record{Name: "feat", Members: []string{"web"}, Worktrees: map[string]string{"web": "/tmp/feat/web"}}
 
 	var b strings.Builder
 	writePrimeStackTask(&b, rec, "", nil, false)
@@ -97,7 +97,7 @@ func TestTheTaskBlockRestartsAServiceTheStackRuns(t *testing.T) {
 // genuinely needs another service. Without that, an agent that needs one either
 // stops or edits base.
 func TestBriefingSaysHowToWidenTheStack(t *testing.T) {
-	rec := &stack.Record{Name: "perf", Overlay: []string{"api"}, Worktrees: map[string]string{"api": "/tmp/perf/api"}}
+	rec := &stack.Record{Name: "perf", Members: []string{"api"}, Worktrees: map[string]string{"api": "/tmp/perf/api"}}
 
 	var b strings.Builder
 	writePrimeStackTask(&b, rec, "api", nil, false)
@@ -115,7 +115,7 @@ func TestTheTaskBlockAsksBeforeItActsOnAGuessedStack(t *testing.T) {
 	rec := &stack.Record{
 		Name:      "bybit",
 		Branch:    "nick/bybit",
-		Overlay:   []string{"nxFileProcessor"},
+		Members:   []string{"nxFileProcessor"},
 		Worktrees: map[string]string{"nxFileProcessor": "/tmp/bybit/nxFileProcessor"},
 	}
 

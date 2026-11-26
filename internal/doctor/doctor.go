@@ -173,7 +173,7 @@ func checkCopies(ws *workspace.Workspace, stackName string, scoped []stack.Recor
 			continue
 		}
 		res := tilt.ResourceMap(view.UiResources, ws.Name, rec.Name)
-		for _, svc := range rec.Overlay {
+		for _, svc := range rec.Members {
 			r, ok := res[svc]
 			c := copyRef{stack: rec.Name, service: svc, res: r, found: ok}
 			all = append(all, c)

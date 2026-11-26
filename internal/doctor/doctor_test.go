@@ -150,7 +150,7 @@ func only(t *testing.T, r Report, kind string, sev Severity) Problem {
 func TestHealthyWorkspaceIsOneLine(t *testing.T) {
 	f := newFixture(t)
 	root := f.stackDir("perf")
-	f.store(stack.Record{Name: "perf", Base: "navexa", Root: root, Active: true, Overlay: []string{"api"}})
+	f.store(stack.Record{Name: "perf", Base: "navexa", Root: root, Active: true, Members: []string{"api"}})
 	f.view.UiResources = []tilt.UIResource{resource("navexa:api", "ok", 4000), resource("navexa:api:perf", "ok", 20011)}
 
 	if got := f.check("").Render(false); got != "healthy: 2 copies, 1 stacks checked\n" {
@@ -178,7 +178,7 @@ func TestDaemonStillBoundToAllInterfaces(t *testing.T) {
 
 func TestCopyInErrorNamesTheRestart(t *testing.T) {
 	f := newFixture(t)
-	f.store(stack.Record{Name: "agent-x", Base: "navexa", Root: f.stackDir("agent-x"), Active: true, Overlay: []string{"api"}})
+	f.store(stack.Record{Name: "agent-x", Base: "navexa", Root: f.stackDir("agent-x"), Active: true, Members: []string{"api"}})
 	f.view.UiResources = []tilt.UIResource{resource("navexa:web", "error", 0), resource("navexa:api:agent-x", "error", 0)}
 
 	r := f.check("")
@@ -196,7 +196,7 @@ func TestCopyInErrorNamesTheRestart(t *testing.T) {
 
 func TestUpStackWithNoCopyInTheDaemon(t *testing.T) {
 	f := newFixture(t)
-	f.store(stack.Record{Name: "perf", Base: "navexa", Root: f.stackDir("perf"), Active: true, Overlay: []string{"api"}})
+	f.store(stack.Record{Name: "perf", Base: "navexa", Root: f.stackDir("perf"), Active: true, Members: []string{"api"}})
 	p := only(t, f.check(""), KindCopyMissing, Broken)
 	if p.Subject != "perf:api" || p.Fix != "devstack stack up perf" {
 		t.Errorf("got %+v", p)
@@ -271,7 +271,7 @@ func TestStackBehindOriginSuggestsResync(t *testing.T) {
 
 func TestRunningCopyWithNoTailnetAddress(t *testing.T) {
 	f := newFixture(t)
-	f.store(stack.Record{Name: "perf", Base: "navexa", Root: f.stackDir("perf"), Active: true, Overlay: []string{"api"}})
+	f.store(stack.Record{Name: "perf", Base: "navexa", Root: f.stackDir("perf"), Active: true, Members: []string{"api"}})
 	f.view.UiResources = []tilt.UIResource{resource("navexa:api", "ok", 4000), resource("navexa:api:perf", "ok", 20011), resource("navexa:db", "ok", 5432)}
 	f.host.Published = func() (map[int]bool, error) { return map[int]bool{4000: true}, nil }
 
@@ -362,8 +362,8 @@ func TestReplicaMissingAndDrift(t *testing.T) {
 func TestStackScopeChecksOnlyThatStack(t *testing.T) {
 	f := newFixture(t)
 	f.store(
-		stack.Record{Name: "agent-a", Base: "navexa", Root: f.stackDir("agent-a"), Active: true, Overlay: []string{"api"}},
-		stack.Record{Name: "perf", Base: "navexa", Root: f.stackDir("perf"), Active: true, Overlay: []string{"api"}},
+		stack.Record{Name: "agent-a", Base: "navexa", Root: f.stackDir("agent-a"), Active: true, Members: []string{"api"}},
+		stack.Record{Name: "perf", Base: "navexa", Root: f.stackDir("perf"), Active: true, Members: []string{"api"}},
 	)
 	f.stackDir("lost")
 	f.host.Replica = func() (bool, []Drift) { return false, nil }

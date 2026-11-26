@@ -93,7 +93,7 @@ func inferWorkingStack(ws *workspace.Workspace, service, branch string) *working
 	}
 	var candidates []*stack.Record
 	for i := range recs {
-		if containsString(recs[i].Overlay, service) {
+		if containsString(recs[i].Members, service) {
 			candidates = append(candidates, &recs[i])
 		}
 	}
@@ -222,14 +222,14 @@ func writePrimeTask(b *strings.Builder, service, here string, working *workingSt
 
 func writePrimeStackTask(b *strings.Builder, rec *stack.Record, service string, siblings map[string]string, telemetry bool) {
 	fmt.Fprintf(b, "stack %s", rec.Name)
-	if len(rec.Overlay) > 0 {
-		fmt.Fprintf(b, " · %s", strings.Join(rec.Overlay, ", "))
+	if len(rec.Members) > 0 {
+		fmt.Fprintf(b, " · %s", strings.Join(rec.Members, ", "))
 	}
 	b.WriteString("\n")
 	writePrimeStackNote(b, rec)
 
 	b.WriteString("\n")
-	if len(rec.Overlay) == 0 {
+	if len(rec.Members) == 0 {
 		fmt.Fprintf(b, "1. This stack runs no service yet. Add the one this feature changes: devstack stack add %s <service>\n", rec.Name)
 	} else {
 		b.WriteString("1. Change code in these directories, and in no others:\n")
@@ -249,8 +249,8 @@ func writePrimeStackTask(b *strings.Builder, rec *stack.Record, service string, 
 func writePrimeOtherStackTask(b *strings.Builder, working *workingStack, service string) {
 	rec := working.Rec
 	fmt.Fprintf(b, "stack %s · a guess: %s\n", rec.Name, working.Reason)
-	if len(rec.Overlay) > 0 {
-		fmt.Fprintf(b, "services %s\n", strings.Join(rec.Overlay, ", "))
+	if len(rec.Members) > 0 {
+		fmt.Fprintf(b, "services %s\n", strings.Join(rec.Members, ", "))
 	}
 	writePrimeStackNote(b, rec)
 
@@ -365,12 +365,12 @@ func writePrimeStackNote(b *strings.Builder, rec *stack.Record) {
 
 func writePrimeOverlayDirs(b *strings.Builder, rec *stack.Record) {
 	width := 0
-	for _, svc := range rec.Overlay {
+	for _, svc := range rec.Members {
 		if len(svc) > width {
 			width = len(svc)
 		}
 	}
-	for _, svc := range rec.Overlay {
+	for _, svc := range rec.Members {
 		if path := rec.Worktrees[svc]; path != "" {
 			fmt.Fprintf(b, "     %-*s  %s\n", width, svc, path)
 		}
@@ -391,8 +391,8 @@ func taskService(rec *stack.Record, service string) string {
 	if service != "" {
 		return service
 	}
-	if len(rec.Overlay) > 0 {
-		return rec.Overlay[0]
+	if len(rec.Members) > 0 {
+		return rec.Members[0]
 	}
 	return "<service>"
 }
@@ -403,12 +403,12 @@ func taskService(rec *stack.Record, service string) string {
 // from its own directory.
 func stackSiblings(rw *config.ResolvedWorkspace, rec *stack.Record) map[string]string {
 	overlay := map[string]bool{}
-	for _, s := range rec.Overlay {
+	for _, s := range rec.Members {
 		overlay[s] = true
 	}
 
 	out := map[string]string{}
-	for _, s := range rec.Overlay {
+	for _, s := range rec.Members {
 		repoDir, top := splitStackWorktree(rec.Root, rec.Worktrees[s], rw.Services[s].RepoPath)
 		if repoDir == "" {
 			continue
@@ -467,13 +467,13 @@ func writePrimeStackDirectory(b *strings.Builder, rec *stack.Record, here, cwd s
 	svc := siblingAt(siblings, cwd)
 	if svc == "" {
 		fmt.Fprintf(b, "This directory is in the worktree of stack %s. devstack can not name a service in it.\n", here)
-		fmt.Fprintf(b, "The stack runs its own copy of these services only: %s.\n", strings.Join(rec.Overlay, ", "))
+		fmt.Fprintf(b, "The stack runs its own copy of these services only: %s.\n", strings.Join(rec.Members, ", "))
 		b.WriteString("A change you make here goes on the branch of this stack. Before you change code here,\n")
 		b.WriteString("run `devstack status`. It names the copy that runs this code.\n")
 		return
 	}
 	fmt.Fprintf(b, "This directory holds the code of %s, on the branch of stack %s.\n", svc, here)
-	fmt.Fprintf(b, "This stack runs no copy of %s. It runs its own copy of: %s.\n", svc, strings.Join(rec.Overlay, ", "))
+	fmt.Fprintf(b, "This stack runs no copy of %s. It runs its own copy of: %s.\n", svc, strings.Join(rec.Members, ", "))
 	fmt.Fprintf(b, "base runs its own copy of %s, from its own directory elsewhere.\n", svc)
 	b.WriteString("A change you make here runs nowhere. No copy serves it, and no test executes it.\n")
 	fmt.Fprintf(b, "To make this stack run %s, run: devstack stack add %s %s\n", svc, here, svc)
@@ -763,7 +763,7 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 	recs, _ := stack.LoadStore(ws.Name)
 	sort.Slice(recs, func(i, j int) bool { return recs[i].Name < recs[j].Name })
 	for _, rec := range recs {
-		if !containsString(rec.Overlay, service) {
+		if !containsString(rec.Members, service) {
 			continue
 		}
 		row := instance{name: rec.Name, port: "-", state: "down", note: firstLine(rec.Note, 74)}

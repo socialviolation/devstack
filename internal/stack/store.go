@@ -28,7 +28,7 @@ type Record struct {
 	Note       string            `json:"note,omitempty"`        // what this stack is for, in the author's words
 	Log        []NoteEntry       `json:"log,omitempty"`         // dated entries: where the work got to
 	Groups     []string          `json:"groups,omitempty"`      // groups this stack was created to cover
-	Overlay    []string          `json:"overlay"`               // overlay service names, sorted
+	Members    []string          `json:"members"`               // service names the stack runs, sorted
 	Worktrees  map[string]string `json:"worktrees"`             // service -> worktree path
 	Ports      map[string]int    `json:"ports"`                 // service/portKey -> allocated port
 	Active     bool              `json:"active,omitempty"`      // folded into the base Tiltfile as namespaced resources
@@ -62,11 +62,15 @@ func (r *Record) UnmarshalJSON(data []byte) error {
 	var v struct {
 		plain
 		ExpiresAt time.Time `json:"expires_at"`
+		Overlay   []string  `json:"overlay"`
 	}
 	if err := json.Unmarshal(data, &v); err != nil {
 		return err
 	}
 	*r = Record(v.plain)
+	if r.Members == nil {
+		r.Members = v.Overlay
+	}
 	if r.StopAt.IsZero() {
 		r.StopAt = v.ExpiresAt
 	}

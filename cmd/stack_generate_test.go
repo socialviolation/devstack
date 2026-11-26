@@ -103,5 +103,6 @@ calls:
 	if port == 0 {
 		t.Fatalf("no port allocated for backend/http: %v", rec.Ports)
 	}
+	shareServices(t, baseRoot, "backend", "frontend")
 	return rec, port
 }

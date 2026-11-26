@@ -19,6 +19,7 @@ func TestEnsureReplicasBuildsTheReplicaThatIsMissing(t *testing.T) {
 	root := filepath.Join(home, "dev", "shop")
 	gitRepoWith(t, filepath.Join(root, "api"), map[string]string{".": "api"})
 	ws := workspaceAt(t, root, "shop", "api")
+	shareServices(t, root, "api")
 	if err := workspace.Register(*ws); err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +47,7 @@ func TestEnsureReplicasLeavesABuiltReplicaAlone(t *testing.T) {
 	root := filepath.Join(home, "dev", "shop")
 	gitRepoWith(t, filepath.Join(root, "api"), map[string]string{".": "api"})
 	ws := workspaceAt(t, root, "shop", "api")
+	shareServices(t, root, "api")
 	if err := workspace.Register(*ws); err != nil {
 		t.Fatal(err)
 	}
@@ -71,13 +73,16 @@ func TestEnsureReplicasWarnsAndKeepsGoing(t *testing.T) {
 
 	loose := filepath.Join(home, "dev", "aloose")
 	writeAt(t, filepath.Join(loose, "api", config.ServiceManifestFileName), serviceManifest("api"))
-	if err := workspace.Register(*workspaceAt(t, loose, "aloose", "api")); err != nil {
+	looseWS := workspaceAt(t, loose, "aloose", "api")
+	shareServices(t, loose, "api")
+	if err := workspace.Register(*looseWS); err != nil {
 		t.Fatal(err)
 	}
 
 	good := filepath.Join(home, "dev", "shop")
 	gitRepoWith(t, filepath.Join(good, "api"), map[string]string{".": "api"})
 	shop := workspaceAt(t, good, "shop", "api")
+	shareServices(t, good, "api")
 	if err := workspace.Register(*shop); err != nil {
 		t.Fatal(err)
 	}

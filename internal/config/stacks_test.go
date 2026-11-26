@@ -8,65 +8,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestOverlaySetReuseRule(t *testing.T) {
-	dir := writeTopoWorkspace(t, []string{"frontend", "backend", "db", "logger"}, `calls:
-  frontend:
-    - backend
-  backend:
-    - db
-startsAfter:
-  logger:
-    - backend
-`)
-
-	graph, err := BuildTopology(dir)
-	if err != nil {
-		t.Fatalf("BuildTopology(): %v", err)
-	}
-
-	overlay, err := OverlaySet(graph, []string{"backend"})
-	if err != nil {
-		t.Fatalf("OverlaySet(): %v", err)
-	}
-	want := []string{"backend", "frontend"}
-	if !reflect.DeepEqual(overlay, want) {
-		t.Fatalf("OverlaySet(backend) = %#v, want %#v (frontend calls backend transitively; db is downstream and reused; logger only starts after)", overlay, want)
-	}
-}
-
-func TestOverlaySetNoCallers(t *testing.T) {
-	dir := writeTopoWorkspace(t, []string{"frontend", "backend"}, `calls:
-  frontend:
-    - backend
-`)
-
-	graph, err := BuildTopology(dir)
-	if err != nil {
-		t.Fatalf("BuildTopology(): %v", err)
-	}
-
-	overlay, err := OverlaySet(graph, []string{"frontend"})
-	if err != nil {
-		t.Fatalf("OverlaySet(): %v", err)
-	}
-	if !reflect.DeepEqual(overlay, []string{"frontend"}) {
-		t.Fatalf("OverlaySet(frontend) = %#v, want [frontend]", overlay)
-	}
-}
-
-func TestOverlaySetUnknownService(t *testing.T) {
-	dir := writeTopoWorkspace(t, []string{"frontend"}, "")
-
-	graph, err := BuildTopology(dir)
-	if err != nil {
-		t.Fatalf("BuildTopology(): %v", err)
-	}
-
-	if _, err := OverlaySet(graph, []string{"ghost"}); err == nil {
-		t.Fatal("expected an error for an unknown changed service")
-	}
-}
-
 func baseWorkspace() *ResolvedWorkspace {
 	return &ResolvedWorkspace{
 		Manifest: &WorkspaceManifest{

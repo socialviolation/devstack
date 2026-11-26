@@ -67,6 +67,7 @@ workspace:
     mode: explicit
     repos:
       - ./api
+shared: [api]
 `)
 
 	stackRoot := filepath.Join(home, "stacks", "feat")

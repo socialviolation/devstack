@@ -22,7 +22,7 @@ func TestStackStartOrderCoversEveryOverlayService(t *testing.T) {
 		}
 		seen[svc] = true
 	}
-	for _, svc := range rec.Overlay {
+	for _, svc := range rec.Members {
 		if !seen[svc] {
 			t.Errorf("overlay service %q missing from the start order %v, so it would never run", svc, got)
 		}
@@ -30,7 +30,7 @@ func TestStackStartOrderCoversEveryOverlayService(t *testing.T) {
 }
 
 func TestStackStartOrderFallsBackToNameOrder(t *testing.T) {
-	rec := &stack.Record{Name: "feat", Root: "/nonexistent", Overlay: []string{"web", "api"}}
+	rec := &stack.Record{Name: "feat", Root: "/nonexistent", Members: []string{"web", "api"}}
 	if got := stack.StartOrder(rec); !reflect.DeepEqual(got, []string{"api", "web"}) {
 		t.Fatalf("start order with an unreadable stack manifest = %v, want [api web]", got)
 	}

@@ -435,7 +435,7 @@ func stackSections(ws *workspace.Workspace, view *tilt.TiltView, baseDeps map[st
 		}
 
 		services := map[string]bool{}
-		for _, svc := range rec.Overlay {
+		for _, svc := range rec.Members {
 			services[svc] = true
 		}
 		for svc := range resourceMap {
@@ -606,7 +606,7 @@ func printServiceOrientation(ws *workspace.Workspace, rw *config.ResolvedWorkspa
 
 	var rows []serviceOrientation
 	for _, rec := range recs {
-		if !containsString(rec.Overlay, service) {
+		if !containsString(rec.Members, service) {
 			continue
 		}
 		row := serviceOrientation{

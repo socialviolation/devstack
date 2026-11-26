@@ -12,7 +12,7 @@ import (
 
 func TestDropRemovesTheServiceFromRecordManifestAndPorts(t *testing.T) {
 	base := newAddBase(t)
-	newStack(t, base, "api")
+	newStack(t, base, "web")
 	if _, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"billing"}}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -26,8 +26,8 @@ func TestDropRemovesTheServiceFromRecordManifestAndPorts(t *testing.T) {
 	}
 
 	rec, _ := FindStack(base.Name, "feat")
-	if !reflect.DeepEqual(rec.Overlay, []string{"api", "web"}) {
-		t.Errorf("Overlay = %v, want [api web]", rec.Overlay)
+	if !reflect.DeepEqual(rec.Members, []string{"api", "web"}) {
+		t.Errorf("Overlay = %v, want [api web]", rec.Members)
 	}
 	if _, ok := rec.Worktrees["billing"]; ok {
 		t.Errorf("Worktrees still name billing: %v", rec.Worktrees)
@@ -72,21 +72,21 @@ func TestDropRemovesTheServiceFromRecordManifestAndPorts(t *testing.T) {
 
 func TestDropRefusesAServiceAnotherStillDependsOn(t *testing.T) {
 	base := newAddBase(t)
-	newStack(t, base, "api")
+	newStack(t, base, "web")
 
 	_, err := Drop(DropInput{Base: base, Name: "feat", Services: []string{"api"}})
 	if err == nil || !strings.Contains(err.Error(), "web needs api") {
 		t.Fatalf("Drop() error = %v, want a refusal naming web", err)
 	}
 	rec, _ := FindStack(base.Name, "feat")
-	if !reflect.DeepEqual(rec.Overlay, []string{"api", "web"}) {
-		t.Errorf("Overlay = %v, want it untouched", rec.Overlay)
+	if !reflect.DeepEqual(rec.Members, []string{"api", "web"}) {
+		t.Errorf("Overlay = %v, want it untouched", rec.Members)
 	}
 }
 
 func TestDropRefusesAServiceTheStackDoesNotRun(t *testing.T) {
 	base := newAddBase(t)
-	newStack(t, base, "api")
+	newStack(t, base, "web")
 
 	_, err := Drop(DropInput{Base: base, Name: "feat", Services: []string{"billing"}})
 	if err == nil || !strings.Contains(err.Error(), `does not run "billing"`) {
@@ -96,7 +96,7 @@ func TestDropRefusesAServiceTheStackDoesNotRun(t *testing.T) {
 
 func TestDropRunsTheTeardownForTheRemovedServicesBeforeReleasingTheirPorts(t *testing.T) {
 	base := newAddBase(t)
-	newStack(t, base, "api")
+	newStack(t, base, "web")
 	if _, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"billing"}}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestDropRunsTheTeardownForTheRemovedServicesBeforeReleasingTheirPorts(t *te
 
 func TestDropRunsNoTeardownForARefusal(t *testing.T) {
 	base := newAddBase(t)
-	newStack(t, base, "api")
+	newStack(t, base, "web")
 
 	ran := false
 	_, err := Drop(DropInput{Base: base, Name: "feat", Services: []string{"api"}, Teardown: func([]string) { ran = true }})

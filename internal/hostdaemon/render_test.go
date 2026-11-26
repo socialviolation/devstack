@@ -50,7 +50,7 @@ func newActiveWorkspace(t *testing.T, home, name, service string, port int) *wor
 	root := filepath.Join(home, "dev", name)
 	makeRepo(t, filepath.Join(root, service), service, port)
 	writeFile(t, filepath.Join(root, "devstack.workspace.yaml"),
-		"version: 1\nworkspace:\n  name: "+name+"\n  repoDiscovery:\n    mode: explicit\n    repos:\n      - ./"+service+"\n")
+		"version: 1\nworkspace:\n  name: "+name+"\n  repoDiscovery:\n    mode: explicit\n    repos:\n      - ./"+service+"\nshared: ["+service+"]\n")
 
 	if err := workspace.Register(workspace.Workspace{Name: name, Path: root, TiltPort: port}); err != nil {
 		t.Fatalf("register %s: %v", name, err)

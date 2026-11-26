@@ -79,7 +79,7 @@ workspace:
 		Name:      "feat",
 		Base:      "navexa",
 		Root:      stackRoot,
-		Overlay:   []string{"api"},
+		Members:   []string{"api"},
 		Worktrees: map[string]string{"api": worktree},
 	}})
 	if err != nil {

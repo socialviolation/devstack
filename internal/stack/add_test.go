@@ -115,7 +115,7 @@ func newStack(t *testing.T, base *workspace.Workspace, repos ...string) *CreateR
 // its worktree and touch nothing else.
 func TestAddBuildsOnlyTheNewWorktree(t *testing.T) {
 	base := newAddBase(t)
-	created := newStack(t, base, "api")
+	created := newStack(t, base, "web")
 
 	wt := worktreesByService(created)
 	writeFile(t, filepath.Join(wt["api"].Path, "wip.txt"), "in progress\n")
@@ -157,8 +157,8 @@ func TestAddBuildsOnlyTheNewWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindStack: %v", err)
 	}
-	if !reflect.DeepEqual(rec.Overlay, []string{"api", "billing", "web"}) {
-		t.Errorf("record overlay = %v, want [api billing web]", rec.Overlay)
+	if !reflect.DeepEqual(rec.Members, []string{"api", "billing", "web"}) {
+		t.Errorf("record overlay = %v, want [api billing web]", rec.Members)
 	}
 	if rec.Worktrees["billing"] != billing {
 		t.Errorf("record worktree for billing = %q, want %q", rec.Worktrees["billing"], billing)
@@ -180,7 +180,7 @@ func TestAddBuildsOnlyTheNewWorktree(t *testing.T) {
 // addition that re-allocates the whole key set moves every one of them.
 func TestAddLeavesExistingPortsWhereTheyAre(t *testing.T) {
 	base := newAddBase(t)
-	created := newStack(t, base, "api")
+	created := newStack(t, base, "web")
 
 	before := map[string]int{}
 	for k, v := range created.Ports {
@@ -228,7 +228,7 @@ func TestAddLeavesExistingPortsWhereTheyAre(t *testing.T) {
 
 func TestAddExpandsAndRecordsAGroup(t *testing.T) {
 	base := newAddBase(t)
-	newStack(t, base, "api")
+	newStack(t, base, "web")
 
 	res, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"money"}})
 	if err != nil {
@@ -245,8 +245,8 @@ func TestAddExpandsAndRecordsAGroup(t *testing.T) {
 	if !reflect.DeepEqual(rec.Groups, []string{"money"}) {
 		t.Errorf("record groups = %v, want [money]", rec.Groups)
 	}
-	if !reflect.DeepEqual(rec.Overlay, []string{"api", "billing", "web", "worker"}) {
-		t.Errorf("record overlay = %v, want [api billing web worker]", rec.Overlay)
+	if !reflect.DeepEqual(rec.Members, []string{"api", "billing", "web", "worker"}) {
+		t.Errorf("record overlay = %v, want [api billing web worker]", rec.Members)
 	}
 	if _, ok := rec.Ports[QualifyPortKey("worker", "http")]; ok {
 		t.Errorf("worker declares no ports and must not be allocated one: %v", rec.Ports)
@@ -255,14 +255,14 @@ func TestAddExpandsAndRecordsAGroup(t *testing.T) {
 
 func TestAddReportsAServiceAlreadyInTheStack(t *testing.T) {
 	base := newAddBase(t)
-	newStack(t, base, "api")
+	newStack(t, base, "web")
 
-	res, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"api", "billing"}})
+	res, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"web", "billing"}})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	if !reflect.DeepEqual(res.AlreadyPresent, []string{"api"}) {
-		t.Errorf("AlreadyPresent = %v, want [api]", res.AlreadyPresent)
+	if !reflect.DeepEqual(res.AlreadyPresent, []string{"web"}) {
+		t.Errorf("AlreadyPresent = %v, want [web]", res.AlreadyPresent)
 	}
 	if got := addedServices(res); !reflect.DeepEqual(got, []string{"billing"}) {
 		t.Errorf("Added = %v, want [billing]", got)
@@ -275,18 +275,16 @@ func TestAddReportsAServiceAlreadyInTheStack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindStack: %v", err)
 	}
-	if !reflect.DeepEqual(rec.Overlay, []string{"api", "billing", "web"}) {
-		t.Errorf("record overlay = %v, want api listed once", rec.Overlay)
+	if !reflect.DeepEqual(rec.Members, []string{"api", "billing", "web"}) {
+		t.Errorf("record members = %v, want web listed once", rec.Members)
 	}
 }
 
 func TestAddNothingNewIsAnError(t *testing.T) {
 	base := newAddBase(t)
-	newStack(t, base, "api")
+	newStack(t, base, "web")
 
-	// api is on the stack's branch already. web is in the stack too, but on a
-	// detached HEAD, so naming it is a promotion and not nothing.
-	_, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"api"}})
+	_, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"web"}})
 	if err == nil {
 		t.Fatal("Add of services the stack already has = nil, want an error")
 	}
@@ -299,7 +297,7 @@ func TestAddNothingNewIsAnError(t *testing.T) {
 // picking it up must keep its commits, not cut a new branch over them.
 func TestAddAttachesAnExistingBranchInsteadOfRecutting(t *testing.T) {
 	base := newAddBase(t)
-	newStack(t, base, "api")
+	newStack(t, base, "web")
 
 	billing := filepath.Join(base.Path, "billing")
 	writeFile(t, filepath.Join(billing, "earlier.txt"), "yesterday\n")
@@ -324,7 +322,7 @@ func TestAddAttachesAnExistingBranchInsteadOfRecutting(t *testing.T) {
 
 func TestAddFromOverridesTheDefaultBranch(t *testing.T) {
 	base := newAddBase(t)
-	newStack(t, base, "api")
+	newStack(t, base, "web")
 
 	billing := filepath.Join(base.Path, "billing")
 	parkedTip := park(t, billing)
@@ -343,39 +341,48 @@ func TestAddFromOverridesTheDefaultBranch(t *testing.T) {
 	}
 }
 
-// A service is added because something the caller named needs it, so the
-// services that call it come too — the same overlay rule create applies.
-func TestAddPullsInCallersOfTheAddedService(t *testing.T) {
+func TestAddPullsInTheNeedsOfTheAddedServiceAndNotItsCallers(t *testing.T) {
 	base := newAddBase(t)
 	newStack(t, base, "billing")
 
-	res, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"api"}})
+	res, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"web"}})
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 	reason := map[string]string{}
 	for _, m := range res.Added {
-		reason[m.Service] = m.Reason
+		reason[m.Service] = m.Describe()
 	}
-	if reason["api"] != "changed" {
-		t.Errorf("api reason = %q, want changed", reason["api"])
+	if reason["web"] != "named" {
+		t.Errorf("web reason = %q, want named", reason["web"])
 	}
-	if reason["web"] != "caller" {
-		t.Errorf("web reason = %q, want caller (it calls api)", reason["web"])
+	if reason["api"] != "needed: web needs api" {
+		t.Errorf("api reason = %q, want the needs chain from web", reason["api"])
 	}
 	for _, wt := range res.Worktrees {
-		if wt.Service == "web" && !wt.Detached {
-			t.Errorf("a service pulled in as a caller must be detached, got %+v", wt)
+		if wt.Service == "api" && !wt.Detached {
+			t.Errorf("a service pulled in by needs must be detached, got %+v", wt)
 		}
-		if wt.Service == "api" && wt.Branch != "feat" {
+		if wt.Service == "web" && wt.Branch != "feat" {
 			t.Errorf("a named service must get the stack's branch, got %+v", wt)
 		}
+	}
+
+	if _, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"worker"}}); err != nil {
+		t.Fatalf("Add worker: %v", err)
+	}
+	rec, err := FindStack(base.Name, "feat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(rec.Members, []string{"api", "billing", "web", "worker"}) {
+		t.Errorf("members = %v, want no caller pulled in", rec.Members)
 	}
 }
 
 func TestAddUnknownName(t *testing.T) {
 	base := newAddBase(t)
-	newStack(t, base, "api")
+	newStack(t, base, "web")
 
 	if _, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"nope"}}); err == nil {
 		t.Fatal("Add of an unknown name = nil, want an error")

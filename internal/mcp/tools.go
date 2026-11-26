@@ -78,7 +78,7 @@ func RegisterTools(
 	registerConfigureTool(mcpServer, tiltClient, ws)
 	registerProcessLogsTool(mcpServer, tiltClient, defaultService, cfg, ws)
 	registerServiceEnvTool(mcpServer, ws, workspacePath)
-	registerBaseTool(mcpServer, ws)
+	registerSharedTool(mcpServer, ws)
 	registerMigrateTool(mcpServer, patches)
 
 	// Observability control (status/enable/disable/configure) is always

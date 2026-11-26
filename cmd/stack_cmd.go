@@ -327,6 +327,7 @@ func init() {
 
 	stackCreateCmd.Flags().String("repos", "", "Service or group names that this stack changes, separated by commas. A group expands to its members")
 	stackCreateCmd.Flags().String("branch", "", "Branch for the changed repos (default: the stack name). devstack attaches to it if it already exists")
+	stackCreateCmd.Flags().Bool("detach", false, "Cut every worktree detached at the default branch tip, with no branch. Use it to run the default branch")
 	stackCreateCmd.Flags().String("from", "", "Ref that devstack cuts the worktrees from (default: each repo's default branch, origin's copy of it where there is one). Never what your checkout has checked out")
 	stackCreateCmd.Flags().String("note", "", "What this stack is for: a ticket URL, an issue key, or a sentence. 'devstack stack list' shows it")
 	stackAddCmd.Flags().String("from", "", "Ref that devstack cuts the new worktrees from (default: each repo's default branch, origin's copy of it where there is one)")
@@ -352,7 +353,8 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 	branchFlag, _ := cmd.Flags().GetString("branch")
 	fromFlag, _ := cmd.Flags().GetString("from")
 	noteFlag, _ := cmd.Flags().GetString("note")
-	res, err := stack.Create(stack.CreateInput{Base: base, Name: args[0], Repos: changed, Branch: branchFlag, From: fromFlag, Note: noteFlag})
+	detachFlag, _ := cmd.Flags().GetBool("detach")
+	res, err := stack.Create(stack.CreateInput{Base: base, Name: args[0], Repos: changed, Branch: branchFlag, Detach: detachFlag, From: fromFlag, Note: noteFlag})
 	if err != nil {
 		return err
 	}
@@ -360,13 +362,9 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 	defer herdr.Notify()
 
 	fmt.Printf("Base workspace: %s (%s)\n", res.BaseName, res.BasePath)
-	fmt.Printf("Overlay (the services you changed, and the services that call them):\n")
-	for _, m := range res.Overlay {
-		note := "pulled in (calls a changed service)"
-		if m.Reason == "changed" {
-			note = "changed"
-		}
-		fmt.Printf("  %-16s %s\n", m.Service, note)
+	fmt.Printf("Members (the services you named, and the services they need):\n")
+	for _, m := range res.Members {
+		fmt.Printf("  %-16s %s\n", m.Service, m.Describe())
 	}
 	fmt.Printf("Stack root (sibling of base): %s\n", res.StackRoot)
 	for _, wt := range res.Worktrees {
@@ -389,8 +387,8 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "WARNING: %s\n", w)
 	}
 
-	overlay := make([]string, 0, len(res.Overlay))
-	for _, m := range res.Overlay {
+	overlay := make([]string, 0, len(res.Members))
+	for _, m := range res.Members {
 		overlay = append(overlay, m.Service)
 	}
 	if err := fireHooks(base, args[0], config.EventStackCreate, overlay); err != nil {

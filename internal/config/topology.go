@@ -30,8 +30,6 @@ type ServiceTopology struct {
 	CalledBy     []string
 	Via          map[string]string
 	Source       string
-	overlayCalls []string
-	overlayBy    []string
 }
 
 func (s *ServiceTopology) WithVia(names []string) []string {
@@ -86,12 +84,6 @@ func BuildTopology(workspacePath string) (*TopologyGraph, error) {
 			}
 		}
 		node.Dependencies = unionSorted(node.Dependencies)
-		if service.Manifest != nil {
-			for _, e := range service.Manifest.Calls {
-				node.overlayCalls = append(node.overlayCalls, e.Service)
-			}
-		}
-		node.overlayCalls = unionSorted(node.overlayCalls, resolved.Manifest.Calls[name])
 		graph.Services[name] = node
 	}
 
@@ -139,11 +131,6 @@ func BuildTopology(workspacePath string) (*TopologyGraph, error) {
 			}
 			calleeService.CalledBy = append(calleeService.CalledBy, name)
 		}
-		for _, callee := range service.overlayCalls {
-			if calleeService, ok := graph.Services[callee]; ok {
-				calleeService.overlayBy = append(calleeService.overlayBy, name)
-			}
-		}
 	}
 
 	for _, service := range graph.Services {
@@ -190,37 +177,6 @@ func (g *TopologyGraph) HasErrors() bool {
 		}
 	}
 	return false
-}
-
-// TransitiveCallers walks only the calls declared as calls. The legacy
-// dependencies and startsAfter maps now load as calls too, and walking them
-// would pull every dependent into each stack overlay.
-func (g *TopologyGraph) TransitiveCallers(name string) []string {
-	result := map[string]bool{}
-	visited := map[string]bool{}
-
-	var visit func(string)
-	visit = func(n string) {
-		service, ok := g.Services[n]
-		if !ok {
-			return
-		}
-		for _, caller := range service.overlayBy {
-			result[caller] = true
-			if !visited[caller] {
-				visited[caller] = true
-				visit(caller)
-			}
-		}
-	}
-	visit(name)
-
-	callers := make([]string, 0, len(result))
-	for caller := range result {
-		callers = append(callers, caller)
-	}
-	sort.Strings(callers)
-	return callers
 }
 
 func detectTopologyCycles(services map[string]*ServiceTopology) []TopologyIssue {

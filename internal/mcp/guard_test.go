@@ -116,8 +116,8 @@ func TestAgentCalls(t *testing.T) {
 		{"wiring", map[string]any{"stack": "perf"}, `"perf" is not an agent-* stack`},
 		{"observability", map[string]any{"action": "status"}, ""},
 		{"observability", map[string]any{"action": "config_on"}, "may not call observability"},
-		{"base", map[string]any{"action": "path"}, ""},
-		{"base", map[string]any{"action": "sync"}, "may not call base"},
+		{"shared", map[string]any{"action": "path"}, ""},
+		{"shared", map[string]any{"action": "sync"}, "may not call shared"},
 		{"migrate", map[string]any{"action": "list"}, "may not call migrate"},
 		{"configure", map[string]any{"stack": "agent-mine"}, "may not call configure"},
 		{"tunnel", nil, "may not call tunnel"},
@@ -221,7 +221,7 @@ func TestAgentToolsListHidesDeniedTools(t *testing.T) {
 			t.Errorf("agent tools/list shows %q: %s", hidden, agentSees)
 		}
 	}
-	for _, shown := range []string{"status", "start", "stack_create", "service_env", "base", "observability", "hooks", "doctor"} {
+	for _, shown := range []string{"status", "start", "stack_create", "service_env", "shared", "observability", "hooks", "doctor"} {
 		if !strings.Contains(","+agentSees+",", ","+shown+",") {
 			t.Errorf("agent tools/list hides %q: %s", shown, agentSees)
 		}

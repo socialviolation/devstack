@@ -82,7 +82,7 @@ var agentPolicies = map[string]toolPolicy{
 	"env_set":       {Default: deny},
 	"env_use":       {Default: deny},
 	"migrate":       {Default: deny},
-	"base":          {Actions: map[string]rule{"path": allow}, Default: deny},
+	"shared":        {Actions: map[string]rule{"path": allow}, Default: deny},
 	"observability": {Actions: map[string]rule{"status": allow, "variants": allow}, Default: deny},
 	"hooks":         {StackArg: "stack", Actions: map[string]rule{"": allow, "list": allow, "run": ownStack}, Default: deny},
 	"service_env": {StackArg: "stack", Actions: map[string]rule{

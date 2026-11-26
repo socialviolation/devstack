@@ -124,6 +124,71 @@ func findCycle(names []string, edges map[string][]string) []string {
 	return nil
 }
 
+func (m *WorkspaceManifest) IsShared(svc string) bool {
+	if m == nil {
+		return false
+	}
+	for _, s := range m.Shared {
+		if s == svc {
+			return true
+		}
+	}
+	return false
+}
+
+func (rw *ResolvedWorkspace) IsShared(svc string) bool {
+	return rw != nil && rw.Manifest.IsShared(svc)
+}
+
+func (rw *ResolvedWorkspace) SharedSet() map[string]bool {
+	set := map[string]bool{}
+	if rw == nil || rw.Manifest == nil {
+		return set
+	}
+	for _, s := range rw.Manifest.Shared {
+		set[s] = true
+	}
+	return set
+}
+
+func (rw *ResolvedWorkspace) SharedNames() []string {
+	if rw == nil || rw.Manifest == nil {
+		return nil
+	}
+	return unionSorted(rw.Manifest.Shared)
+}
+
+func (rw *ResolvedWorkspace) SharedOnly() *ResolvedWorkspace {
+	out := *rw
+	out.Services = map[string]ResolvedService{}
+	for name, svc := range rw.Services {
+		if rw.IsShared(name) {
+			out.Services[name] = svc
+		}
+	}
+	return &out
+}
+
+func (rw *ResolvedWorkspace) validateShared() error {
+	if rw.Manifest.Partial {
+		return nil
+	}
+	shared := rw.SharedSet()
+	for _, name := range rw.Manifest.Shared {
+		if _, ok := rw.Services[name]; !ok {
+			return fmt.Errorf("shared names the service %q. The workspace does not declare %q", name, name)
+		}
+	}
+	for _, name := range rw.SharedNames() {
+		for _, e := range rw.Needs(name) {
+			if !shared[e.Service] {
+				return fmt.Errorf("the shared service %q needs %q, and %q is not shared. A shared service can only need shared services. Add %q to shared, or change the edge to calls", name, e.Service, e.Service, e.Service)
+			}
+		}
+	}
+	return nil
+}
+
 func (g *TopologyGraph) NeedsClosure(named []string, exclude map[string]bool) ([]string, map[string][]string) {
 	in := map[string]bool{}
 	chains := map[string][]string{}

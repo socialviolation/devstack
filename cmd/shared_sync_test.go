@@ -26,9 +26,6 @@ func serviceManifest(name string) string {
 	return "version: 1\nservice:\n  name: " + name + "\nruntime:\n  run:\n    command: go run .\n"
 }
 
-// gitRepoWith makes one git repository at dir, with one service manifest in
-// each of the named subdirectories. A subdirectory of "." puts the service at
-// the repository root.
 func gitRepoWith(t *testing.T, dir string, services map[string]string) {
 	t.Helper()
 	for sub, name := range services {
@@ -52,8 +49,6 @@ func gitRepoWith(t *testing.T, dir string, services map[string]string) {
 	run("commit", "-q", "-m", "init")
 }
 
-// workspaceAt writes a workspace manifest at root that lists repos, and returns
-// the workspace record.
 func workspaceAt(t *testing.T, root, name string, repos ...string) *workspace.Workspace {
 	t.Helper()
 	manifest := "version: 1\nworkspace:\n  name: " + name + "\n  env: dev\n  repoDiscovery:\n    mode: explicit\n    repos:\n"
@@ -64,24 +59,31 @@ func workspaceAt(t *testing.T, root, name string, repos ...string) *workspace.Wo
 	return &workspace.Workspace{Name: name, Path: root}
 }
 
-// 'base build' existed so a migration could build a replica without bringing
-// anything up. The migration builds in this process now, and nobody else asked
-// for a verb that only builds. sync does the whole job: it builds the replica
-// that is not there, and it starts nothing.
-func TestBaseSyncBuildsTheReplicaThatIsNotThereAndStartsNothing(t *testing.T) {
+func shareServices(t *testing.T, root string, names ...string) {
+	t.Helper()
+	path := filepath.Join(root, config.WorkspaceManifestFileName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeAt(t, path, string(data)+"shared: ["+strings.Join(names, ", ")+"]\n")
+}
+
+func TestSharedSyncBuildsTheReplicaThatIsNotThereAndStartsNothing(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
 	root := filepath.Join(home, "dev", "shop")
 	gitRepoWith(t, filepath.Join(root, "api"), map[string]string{".": "api"})
 	ws := workspaceAt(t, root, "shop", "api")
+	shareServices(t, root, "api")
 	if err := workspace.Register(*ws); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	useWorkspaceKey(t, ws.Name)
 
-	if err := runBaseSync(nil, nil); err != nil {
-		t.Fatalf("runBaseSync() with no replica = %v", err)
+	if err := runSharedSync(nil, nil); err != nil {
+		t.Fatalf("runSharedSync() with no replica = %v", err)
 	}
 
 	if !config.HasWorkspaceManifest(replica.Root(ws)) {
@@ -97,7 +99,7 @@ func TestBaseSyncBuildsTheReplicaThatIsNotThereAndStartsNothing(t *testing.T) {
 		}
 	}
 
-	if err := runBaseSync(nil, nil); err != nil {
-		t.Fatalf("runBaseSync() on a built replica = %v", err)
+	if err := runSharedSync(nil, nil); err != nil {
+		t.Fatalf("runSharedSync() on a built replica = %v", err)
 	}
 }

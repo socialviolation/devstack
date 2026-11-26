@@ -44,6 +44,7 @@ workspace:
     mode: explicit
     repos:
       - ./backend
+shared: [backend]
 runtime:
   orchestrator: tilt
   infra:

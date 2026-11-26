@@ -222,16 +222,3 @@ func TestNeedsClosureDoesNotWalkExcludedServices(t *testing.T) {
 		t.Errorf("disk is only needed through the excluded sql; chains = %v", chains)
 	}
 }
-
-func TestTransitiveCallersSkipsLegacyDependencies(t *testing.T) {
-	dir := writeEdgeWorkspace(t, map[string]string{"web": "", "api": "", "worker": "calls: [api]\n"}, `dependencies:
-  web: [api]
-`)
-	g, err := BuildTopology(dir)
-	if err != nil {
-		t.Fatalf("BuildTopology: %v", err)
-	}
-	if got := g.TransitiveCallers("api"); !reflect.DeepEqual(got, []string{"worker"}) {
-		t.Errorf("TransitiveCallers(api) = %v, want [worker]: a legacy dependency must not grow the overlay", got)
-	}
-}

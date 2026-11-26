@@ -171,7 +171,7 @@ func takeStacks(ws *workspace.Workspace, view *tilt.TiltView, links urls.Map, gr
 	for _, rec := range recs {
 		resources := tilt.ResourceMap(view.UiResources, ws.Name, rec.Name)
 		names := map[string]bool{}
-		for _, svc := range rec.Overlay {
+		for _, svc := range rec.Members {
 			names[svc] = true
 		}
 		for name := range resources {

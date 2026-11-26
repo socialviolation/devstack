@@ -12,9 +12,9 @@ import (
 
 func recs() []stack.Record {
 	return []stack.Record{
-		{Name: "agent", Branch: "feat/roi-api", Overlay: []string{"api", "frontend"}},
-		{Name: "fx-rates", Branch: "nick/fx", Overlay: []string{"api", "prices"}},
-		{Name: "solo", Branch: "nick/solo", Overlay: []string{"importer"}},
+		{Name: "agent", Branch: "feat/roi-api", Members: []string{"api", "frontend"}},
+		{Name: "fx-rates", Branch: "nick/fx", Members: []string{"api", "prices"}},
+		{Name: "solo", Branch: "nick/solo", Members: []string{"importer"}},
 	}
 }
 
@@ -34,7 +34,7 @@ func matchBranch(list []stack.Record, branch string) *stack.Record {
 func singleCandidate(list []stack.Record, service string) []*stack.Record {
 	var out []*stack.Record
 	for i := range list {
-		if containsString(list[i].Overlay, service) {
+		if containsString(list[i].Members, service) {
 			out = append(out, &list[i])
 		}
 	}

@@ -65,7 +65,7 @@ runtime:
 	if err != nil {
 		t.Fatalf("find base: %v", err)
 	}
-	if _, err := stack.Create(stack.CreateInput{Base: base, Name: "feat", Repos: []string{"backend"}}); err != nil {
+	if _, err := stack.Create(stack.CreateInput{Base: base, Name: "feat", Repos: []string{"backend", "frontend"}}); err != nil {
 		t.Fatalf("stack.Create: %v", err)
 	}
 	rec, err := stack.Resolve("navexa", "feat")
@@ -192,8 +192,8 @@ hooks:
 	if err != nil {
 		t.Fatalf("resolve stack: %v", err)
 	}
-	if len(rec.Overlay) != 1 || rec.Overlay[0] != "backend" {
-		t.Errorf("Overlay = %v, want [backend]", rec.Overlay)
+	if len(rec.Members) != 1 || rec.Members[0] != "backend" {
+		t.Errorf("Overlay = %v, want [backend]", rec.Members)
 	}
 }
 

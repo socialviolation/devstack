@@ -35,6 +35,10 @@ func setSouthfoundryRepos(t *testing.T, ws *workspace.Workspace, repos ...string
 	for _, r := range repos {
 		manifest += "      - ./" + r + "\n"
 	}
+	manifest += "shared:\n"
+	for _, r := range repos {
+		manifest += "  - " + r + "\n"
+	}
 	writeFile(t, filepath.Join(ws.Path, "devstack.workspace.yaml"), manifest)
 }
 
@@ -143,6 +147,8 @@ func TestRegenerateScopeAddsTheStackAndKeepsAnotherWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find the base workspace: %v", err)
 	}
+	writeFile(t, filepath.Join(target.Path, "devstack.workspace.yaml"),
+		"version: 1\nworkspace:\n  name: navexa\n  repoDiscovery:\n    mode: explicit\n    repos:\n      - ./backend\n")
 	if _, err := stack.Create(stack.CreateInput{Base: base, Name: "feat", Repos: []string{"backend"}}); err != nil {
 		t.Fatalf("stack.Create: %v", err)
 	}

@@ -34,7 +34,7 @@ func fakeDoctorHost(ws *workspace.Workspace) doctor.Host {
 }
 
 func TestDoctorToolGivesAnAgentToolCalls(t *testing.T) {
-	ws := guardStore(t, stack.Record{Name: "agent-mine", Base: "navexa", Owner: "alice", Root: t.TempDir(), Active: true, Overlay: []string{"api"}})
+	ws := guardStore(t, stack.Record{Name: "agent-mine", Base: "navexa", Owner: "alice", Root: t.TempDir(), Active: true, Members: []string{"api"}})
 	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws)...)
 	registerDoctorTool(s, ws, fakeDoctorHost)
 

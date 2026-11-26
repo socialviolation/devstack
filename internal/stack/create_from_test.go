@@ -59,7 +59,7 @@ func TestCreateCutsFromDefaultBranchNotTheParkedCheckout(t *testing.T) {
 	park(t, backend)
 	park(t, frontend)
 
-	res, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"backend"}})
+	res, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"frontend"}})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -68,15 +68,15 @@ func TestCreateCutsFromDefaultBranchNotTheParkedCheckout(t *testing.T) {
 	if got := gitOut(t, wt["backend"].Path, "rev-parse", "HEAD"); got != backendDefault {
 		t.Errorf("backend worktree at %s, want the default branch tip %s", got, backendDefault)
 	}
-	if got := gitOut(t, wt["backend"].Path, "rev-parse", "--abbrev-ref", "HEAD"); got != "feat" {
-		t.Errorf("backend worktree branch = %q, want feat", got)
+	if got := gitOut(t, wt["frontend"].Path, "rev-parse", "--abbrev-ref", "HEAD"); got != "feat" {
+		t.Errorf("frontend worktree branch = %q, want feat", got)
 	}
 	if _, err := os.Stat(filepath.Join(wt["backend"].Path, "parked.txt")); !os.IsNotExist(err) {
 		t.Errorf("the parked branch's commit landed in the stack")
 	}
 
-	if got := gitOut(t, wt["frontend"].Path, "rev-parse", "--abbrev-ref", "HEAD"); got != "HEAD" {
-		t.Errorf("frontend worktree = %q, want detached", got)
+	if got := gitOut(t, wt["backend"].Path, "rev-parse", "--abbrev-ref", "HEAD"); got != "HEAD" {
+		t.Errorf("backend worktree = %q, want detached", got)
 	}
 	if got := gitOut(t, wt["frontend"].Path, "rev-parse", "HEAD"); got != frontendDefault {
 		t.Errorf("frontend worktree detached at %s, want the default branch tip %s", got, frontendDefault)
@@ -127,7 +127,7 @@ func TestCreateFromOverridesTheDefaultBranch(t *testing.T) {
 	git(t, backend, "checkout", "-q", "main")
 	park(t, filepath.Join(base.Path, "frontend"))
 
-	res, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"backend"}, From: "refs/heads/parked"})
+	res, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"frontend"}, From: "refs/heads/parked"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -220,7 +220,7 @@ calls:
 		t.Fatalf("find base: %v", err)
 	}
 
-	res, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"backend"}})
+	res, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"frontend"}})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

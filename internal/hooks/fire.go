@@ -61,7 +61,7 @@ func Context(ws *workspace.Workspace, stackName, event string, services []string
 			ev.EnvName = rec.Env
 		}
 		if len(services) == 0 {
-			services = append([]string(nil), rec.Overlay...)
+			services = append([]string(nil), rec.Members...)
 		}
 	}
 

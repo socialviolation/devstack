@@ -22,6 +22,7 @@ func TestWorkspaceAddLeavesNothingPending(t *testing.T) {
 	root := filepath.Join(home, "dev", "shop")
 	gitRepoWith(t, filepath.Join(root, "api"), map[string]string{".": "api"})
 	ws := workspaceAt(t, root, "shop", "api")
+	shareServices(t, root, "api")
 	if err := config.SetWorkspaceVersion(root, config.WorkspaceManifestVersion, "test"); err != nil {
 		t.Fatal(err)
 	}
