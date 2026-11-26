@@ -802,13 +802,11 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 	})
 }
 
-// coreStartOrder expands each seed service into itself plus its dependencies, in
-// start order, unioned across seeds with duplicates dropped.
 func coreStartOrder(cfg *config.WorkspaceConfig, seeds []string) ([]string, error) {
 	var ordered []string
 	seen := map[string]bool{}
 	for _, svc := range seeds {
-		resolved, err := config.ResolveDeps(cfg, svc)
+		resolved, err := config.ResolveNeeds(cfg, svc)
 		if err != nil {
 			return nil, err
 		}
@@ -824,12 +822,12 @@ func coreStartOrder(cfg *config.WorkspaceConfig, seeds []string) ([]string, erro
 
 func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defaultService string, cfg *config.WorkspaceConfig, ws *workspace.Workspace) {
 	tool := mcp.NewTool("start",
-		mcp.WithDescription("Start one service, or every service of a group, in the LOCAL dev environment. Use this tool on a service that status reports as 'stopped' or 'disabled'. Use restart on a service that already runs. If the workspace manifest has the old 'dependencies:' map, devstack starts the services it lists first, in order. The host daemon starts a service only after the services it needs. This tool acts on local dev services only. The service name must be exact. If you give neither service nor group, the tool uses the default service for this repo (DEVSTACK_DEFAULT_SERVICE sets it)."),
+		mcp.WithDescription("Start one service, or every service of a group, in the LOCAL dev environment. Use this tool on a service that status reports as 'stopped' or 'disabled'. Use restart on a service that already runs. devstack also starts each service that it needs, before it. A calls edge does not start a service. This tool acts on local dev services only. The service name must be exact. If you give neither service nor group, the tool uses the default service for this repo (DEVSTACK_DEFAULT_SERVICE sets it)."),
 		mcp.WithString("service",
 			mcp.Description("Exact service name or configured alias (for example 'api-service'). NOT a description or partial match. If you omit it, and you give no group, the tool uses the default service for this repo."),
 		),
 		mcp.WithString("group",
-			mcp.Description("Group name to start. devstack starts every service of the group, and it starts the dependencies first. You can not combine this with service."),
+			mcp.Description("Group name to start. devstack starts every service of the group, and it starts the services they need first. You can not combine this with service."),
 		),
 		mcp.WithString("stack", mcp.Description(mutatingStackParamDesc)),
 		mcp.WithReadOnlyHintAnnotation(false),

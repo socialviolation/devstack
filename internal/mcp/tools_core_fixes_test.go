@@ -271,7 +271,7 @@ func TestCoreInvestigateEmptyNoteNamesFiltersAndWidening(t *testing.T) {
 
 func TestCoreStartOrderPutsDependenciesFirst(t *testing.T) {
 	cfg := &config.WorkspaceConfig{
-		Deps: map[string][]string{
+		Needs: map[string][]string{
 			"api":     {"db", "cache"},
 			"cache":   {"db"},
 			"web":     {"api"},
@@ -312,7 +312,7 @@ func TestCoreStartOrderPutsDependenciesFirst(t *testing.T) {
 		}
 	}
 
-	cycle := &config.WorkspaceConfig{Deps: map[string][]string{"a": {"b"}, "b": {"a"}}}
+	cycle := &config.WorkspaceConfig{Needs: map[string][]string{"a": {"b"}, "b": {"a"}}}
 	if _, err := coreStartOrder(cycle, []string{"a"}); err == nil {
 		t.Error("coreStartOrder must reject a dependency cycle")
 	}

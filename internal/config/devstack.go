@@ -10,6 +10,7 @@ import (
 // WorkspaceConfig holds the devstack configuration for a workspace.
 type WorkspaceConfig struct {
 	Deps         map[string][]string `json:"deps"`          // service -> list of deps
+	Needs        map[string][]string `json:"-"`
 	Groups       map[string][]string `json:"groups"`        // group name -> list of services
 	ServicePaths map[string]string   `json:"service_paths"` // service -> git repo root path
 }
@@ -53,6 +54,14 @@ func LegacyOtelSettings(workspacePath string) (string, map[string]string) {
 // Returns an error if a cycle is detected.
 // If service has no deps, returns [service].
 func ResolveDeps(cfg *WorkspaceConfig, service string) ([]string, error) {
+	return resolveOrder(cfg.Deps, service)
+}
+
+func ResolveNeeds(cfg *WorkspaceConfig, service string) ([]string, error) {
+	return resolveOrder(cfg.Needs, service)
+}
+
+func resolveOrder(edges map[string][]string, service string) ([]string, error) {
 	// Track the order services should be started (deps first)
 	var ordered []string
 	visited := map[string]bool{}
@@ -67,7 +76,7 @@ func ResolveDeps(cfg *WorkspaceConfig, service string) ([]string, error) {
 			return nil
 		}
 		inStack[s] = true
-		for _, dep := range cfg.Deps[s] {
+		for _, dep := range edges[s] {
 			if err := visit(dep); err != nil {
 				return err
 			}

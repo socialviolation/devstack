@@ -75,11 +75,11 @@ func groupAction(use, short string, run func(*cobra.Command, []string) error) *c
 }
 
 var (
-	serviceStartCmd   = serviceAction("start [service]", "Start a service and all the services it depends on", runEnable, cobra.MaximumNArgs(1))
+	serviceStartCmd   = serviceAction("start [service]", "Start a service and every service it needs", runEnable, cobra.MaximumNArgs(1))
 	serviceStopCmd    = serviceAction("stop [service]", "Stop a service", runStop, cobra.MaximumNArgs(1))
 	serviceRestartCmd = serviceAction("restart [service]", "Restart a service, but not the services it depends on", runRestart, cobra.MaximumNArgs(1))
 
-	groupStartCmd   = groupAction("start <group>", "Start every service in a group, in dependency order", runEnable)
+	groupStartCmd   = groupAction("start <group>", "Start every service in a group, after the services they need", runEnable)
 	groupStopCmd    = groupAction("stop <group>", "Stop every service in a group", runStop)
 	groupRestartCmd = groupAction("restart <group>", "Restart every service in a group", runRestart)
 )

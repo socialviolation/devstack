@@ -53,11 +53,10 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Auto-detected: %s\n", strings.Join(services, ", "))
 	}
 
-	// Expand deps for each resolved service, union the sets
 	var toTrigger []string
 	seen := map[string]bool{}
 	for _, svc := range services {
-		resolved, err := config.ResolveDeps(cfg, svc)
+		resolved, err := config.ResolveNeeds(cfg, svc)
 		if err != nil {
 			return err
 		}

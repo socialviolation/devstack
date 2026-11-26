@@ -660,8 +660,12 @@ func (rw *ResolvedWorkspace) ToLegacyConfig() *WorkspaceConfig {
 		Groups:       cloneStringSlicesMap(rw.Manifest.Groups),
 		ServicePaths: map[string]string{},
 	}
+	cfg.Needs = map[string][]string{}
 	for name, service := range rw.Services {
 		cfg.ServicePaths[name] = service.RepoPath
+		if deps := rw.ResourceDeps(name); len(deps) > 0 {
+			cfg.Needs[name] = deps
+		}
 	}
 	if cfg.Deps == nil {
 		cfg.Deps = map[string][]string{}
