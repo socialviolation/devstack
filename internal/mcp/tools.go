@@ -79,7 +79,7 @@ func RegisterTools(
 	registerProcessLogsTool(mcpServer, tiltClient, defaultService, cfg, ws)
 	registerServiceEnvTool(mcpServer, ws, workspacePath)
 	registerSharedTool(mcpServer, ws)
-	registerMigrateTool(mcpServer, patches)
+	registerMigrateTool(mcpServer, ws, patches)
 
 	// Observability control (status/enable/disable/configure) is always
 	// available so an agent can discover and turn it on.

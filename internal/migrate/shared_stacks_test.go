@@ -1,4 +1,4 @@
-package cmd
+package migrate
 
 import (
 	"bytes"
@@ -129,10 +129,10 @@ func snapshotTree(t *testing.T, dir string) map[string]string {
 	return out
 }
 
-func runSharedMigration(t *testing.T, f sharedFixture, opts sharedStacksOptions) string {
+func runSharedMigration(t *testing.T, f sharedFixture, opts SharedStacksOptions) string {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := migrateSharedStacks(&buf, f.ws, opts); err != nil {
+	if err := SharedStacks(&buf, f.ws, opts); err != nil {
 		t.Fatalf("migrateSharedStacks: %v\n%s", err, buf.String())
 	}
 	return buf.String()
@@ -157,7 +157,7 @@ func TestSharedStacksDryRunProposesAndChangesNothing(t *testing.T) {
 	f := setupSharedFixture(t)
 	before := snapshotTree(t, os.Getenv("HOME"))
 
-	out := runSharedMigration(t, f, sharedStacksOptions{})
+	out := runSharedMigration(t, f, SharedStacksOptions{})
 
 	for _, want := range []string{
 		"pg                           its run command starts a container",
@@ -189,7 +189,7 @@ func TestSharedStacksDryRunProposesAndChangesNothing(t *testing.T) {
 func TestSharedStacksApplyWithoutSharedWritesNoSharedList(t *testing.T) {
 	f := setupSharedFixture(t)
 
-	out := runSharedMigration(t, f, sharedStacksOptions{Apply: true})
+	out := runSharedMigration(t, f, SharedStacksOptions{Apply: true})
 
 	if !strings.Contains(out, "devstack writes no shared list without --shared") {
 		t.Errorf("the output does not name --shared:\n%s", out)
@@ -214,7 +214,7 @@ func TestSharedStacksApplyConvertsTheWorkspace(t *testing.T) {
 	origStore := readText(t, stack.StoreFile("shop"))
 	origWorkspace := readText(t, config.WorkspaceManifestPath(f.root))
 
-	out := runSharedMigration(t, f, sharedStacksOptions{
+	out := runSharedMigration(t, f, SharedStacksOptions{
 		Apply:  true,
 		Shared: []string{"pg", "redis-cache"},
 		Needs:  map[string][]string{"api": {"pg"}},
@@ -312,7 +312,7 @@ func TestSharedStacksApplyConvertsTheWorkspace(t *testing.T) {
 	}
 
 	before := snapshotTree(t, os.Getenv("HOME"))
-	again := runSharedMigration(t, f, sharedStacksOptions{
+	again := runSharedMigration(t, f, SharedStacksOptions{
 		Apply:  true,
 		Shared: []string{"pg", "redis-cache"},
 		Needs:  map[string][]string{"api": {"pg"}},
@@ -334,7 +334,7 @@ func TestSharedStacksApplyConvertsTheWorkspace(t *testing.T) {
 func TestSharedStacksKeepsTheCommentAfterTheRemovedMaps(t *testing.T) {
 	f := setupSharedFixture(t)
 
-	runSharedMigration(t, f, sharedStacksOptions{Apply: true, Shared: []string{"pg", "redis-cache"}})
+	runSharedMigration(t, f, SharedStacksOptions{Apply: true, Shared: []string{"pg", "redis-cache"}})
 
 	wsText := readText(t, config.WorkspaceManifestPath(f.root))
 	envAt := strings.Index(wsText, "environments:")
@@ -347,7 +347,7 @@ func TestSharedStacksKeepsTheCommentAfterTheRemovedMaps(t *testing.T) {
 func TestSharedStacksReportsRefsToStackServices(t *testing.T) {
 	f := setupSharedFixture(t)
 
-	out := runSharedMigration(t, f, sharedStacksOptions{Shared: []string{"pg", "redis-cache"}})
+	out := runSharedMigration(t, f, SharedStacksOptions{Shared: []string{"pg", "redis-cache"}})
 
 	if !strings.Contains(out, "api env.values.WEB") || !strings.Contains(out, "-> web.") {
 		t.Errorf("the scan does not report api's ref to web:\n%s", out)
@@ -364,7 +364,7 @@ func TestSharedStacksRefusesASharedServiceThatNeedsAStackService(t *testing.T) {
 	f := setupSharedFixture(t)
 
 	var buf bytes.Buffer
-	err := migrateSharedStacks(&buf, f.ws, sharedStacksOptions{Apply: true, Shared: []string{"pg"}, Needs: map[string][]string{"pg": {"api"}}})
+	err := SharedStacks(&buf, f.ws, SharedStacksOptions{Apply: true, Shared: []string{"pg"}, Needs: map[string][]string{"pg": {"api"}}})
 	if err == nil || !strings.Contains(err.Error(), "can only need a shared service") {
 		t.Fatalf("err = %v, want a refusal", err)
 	}
@@ -390,7 +390,7 @@ func TestStartsContainer(t *testing.T) {
 }
 
 func TestParseNeeds(t *testing.T) {
-	got, err := parseNeeds([]string{"api=pg", "api=web", "web=api"})
+	got, err := ParseNeeds([]string{"api=pg", "api=web", "web=api"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +400,7 @@ func TestParseNeeds(t *testing.T) {
 	if string(gotJSON) != string(wantJSON) {
 		t.Errorf("parseNeeds = %s, want %s", gotJSON, wantJSON)
 	}
-	if _, err := parseNeeds([]string{"api"}); err == nil {
+	if _, err := ParseNeeds([]string{"api"}); err == nil {
 		t.Error("parseNeeds accepts a pair with no =")
 	}
 }
@@ -410,7 +410,7 @@ func TestSharedStacksKeepsTheOldMapsWhenAnEdgeNamesAnUnknownService(t *testing.T
 	wsPath := config.WorkspaceManifestPath(f.root)
 	writeFile(t, wsPath, strings.Replace(sharedFixtureWorkspace, "web: [api]", "web: [api, ghost]", 1))
 
-	out := runSharedMigration(t, f, sharedStacksOptions{Apply: true, Shared: []string{"pg", "redis-cache"}})
+	out := runSharedMigration(t, f, SharedStacksOptions{Apply: true, Shared: []string{"pg", "redis-cache"}})
 
 	if !strings.Contains(out, "web -> ghost: the workspace does not declare ghost") {
 		t.Errorf("the output does not name the unknown edge:\n%s", out)
@@ -421,5 +421,12 @@ func TestSharedStacksKeepsTheOldMapsWhenAnEdgeNamesAnUnknownService(t *testing.T
 	}
 	if len(m.Dependencies) == 0 {
 		t.Errorf("devstack removed the old maps, and it could not move every edge")
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }
