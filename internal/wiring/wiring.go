@@ -36,9 +36,9 @@ type Link struct {
 
 func (l Link) Flag(stackLabel string) string {
 	switch {
-	case l.Stack != nil && l.Stack.Target == "base":
+	case l.Stack != nil && l.Stack.Target == "shared":
 		return fmt.Sprintf("stack %s %s → %s at its declared port", stackLabel, l.From, l.To)
-	case l.Base != nil && l.Base.Target != "" && l.Base.Target != "base":
+	case l.Base != nil && l.Base.Target != "" && l.Base.Target != "shared":
 		return fmt.Sprintf("%s with no stack → stack %s %s", l.From, l.Base.Target, l.To)
 	}
 	return ""
@@ -242,7 +242,7 @@ func findRefs(raw, self string, known map[string]bool, base Copy, stack *Copy) (
 }
 
 func resolveHop(c *Copy, from, raw string, r ref, base Copy, stackLabel string) *Hop {
-	hop := &Hop{Target: "base"}
+	hop := &Hop{Target: "shared"}
 	value, err := config.ResolveStackRefs(raw, from, c.Book, c.Scope)
 	if err != nil {
 		hop.Err = err.Error()

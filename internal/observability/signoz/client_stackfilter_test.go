@@ -1,6 +1,9 @@
 package signoz
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestStackFilter_Empty(t *testing.T) {
 	if got := stackFilter(""); got != nil {
@@ -46,5 +49,12 @@ func TestBuildQueryRangeRequest_IncludesStackFilter(t *testing.T) {
 	}
 	if !sawService {
 		t.Errorf("built query missing serviceName filter: %+v", items)
+	}
+}
+
+func TestStackFilter_SharedMatchesLegacyBase(t *testing.T) {
+	got := stackFilter("shared")
+	if len(got) != 1 || got[0].Op != "in" || !reflect.DeepEqual(got[0].Value, []string{"shared", "base"}) {
+		t.Errorf("stackFilter(\"shared\") = %+v, want devstack.stack in [shared base]", got)
 	}
 }

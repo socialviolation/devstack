@@ -98,7 +98,7 @@ func TestOtelTracesDefaultsToEveryStackAndTheSharedSet(t *testing.T) {
 		t.Errorf("the command help must state the default and how to widen it:\n%s", otelTracesCmd.Long)
 	}
 
-	cases := map[string]string{"": "", "  ": "", "all": "", "*": ""}
+	cases := map[string]string{"": "", "  ": "", "all": "", "*": "", "shared": "shared", "base": "shared"}
 	for in, want := range cases {
 		got, err := resolveStackFlag(otelSubcommand(t, ""), in)
 		if err != nil {
@@ -107,5 +107,25 @@ func TestOtelTracesDefaultsToEveryStackAndTheSharedSet(t *testing.T) {
 		if got != want {
 			t.Errorf("resolveStackFlag(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestOtelStackSharedSkipsTheStackLookup(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := workspace.Register(workspace.Workspace{Name: "alpha", Path: t.TempDir(), TiltPort: 10350}); err != nil {
+		t.Fatalf("register alpha: %v", err)
+	}
+	t.Chdir(t.TempDir())
+	initConfig()
+	useWorkspaceKey(t, nil)
+
+	for _, in := range []string{"shared", "base"} {
+		got, err := resolveStackFlag(otelSubcommand(t, "alpha"), in)
+		if err != nil || got != "shared" {
+			t.Errorf("resolveStackFlag(%q) = %q, %v; want shared", in, got, err)
+		}
+	}
+	if _, err := resolveStackFlag(otelSubcommand(t, "alpha"), "nope"); err == nil {
+		t.Error("resolveStackFlag(nope) must refuse a stack that does not exist")
 	}
 }

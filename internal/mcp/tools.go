@@ -2082,7 +2082,7 @@ func registerInvestigateTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 			"One backend holds every workspace and every stack, so resource attributes tell the results apart:\n"+
 			"  devstack.workspace  devstack applies this one for you, always.\n"+
 			"  devstack.service    the name devstack uses. It often differs from the name the service reports for itself, and either name matches.\n"+
-			"  devstack.stack      \"base\" for a shared service, or a feature stack's name.\n"+
+			"  devstack.stack      \"shared\" for a shared service, or a feature stack's name.\n"+
 			"  devstack.env        the config env that the service runs under.\n"+
 			"In modes 2 and 3 you can isolate the results to one stack's service. 'service' pins the service, and 'stack' pins the devstack.stack resource attribute. "+observability.StackScopeDesc+"\n"+
 			"Before you conclude that a service is silent, use the observability tool's status action to see which services emit telemetry.\n"+

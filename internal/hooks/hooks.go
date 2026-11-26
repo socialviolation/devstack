@@ -54,10 +54,10 @@ type Event struct {
 }
 
 // StackLabel is the stack an event ran against, spelled the way the CLI and the
-// OTEL resource attributes spell it: the short name, or "base" for the shared set.
+// OTEL resource attributes spell it: the short name, or "shared" for the shared set.
 func (e Event) StackLabel() string {
 	if strings.TrimSpace(e.Stack) == "" {
-		return "base"
+		return "shared"
 	}
 	return e.Stack
 }

@@ -60,7 +60,7 @@ var otelServicesCmd = &cobra.Command{
 	Long: `List every service that reports telemetry, so it is obvious which one to query.
 The same service can run many times over: in the shared set, in each feature
 stack, and under each environment. All of them report to the one shared backend.
-The stack value "base" is the label of the shared set.
+The stack value "shared" is the label of the shared set.
 
 A service can report itself under a name that differs from the name devstack
 knows it by. devstack then shows both names. The --service flag filters on the
@@ -125,7 +125,7 @@ func resolveQueryService(cmd *cobra.Command) string {
 
 func resolveStackFlag(cmd *cobra.Command, name string) (string, error) {
 	filter := observability.ResolveStackFilter(name)
-	if filter == "" {
+	if filter == "" || filter == observability.SharedStack {
 		return filter, nil
 	}
 	ws, err := resolveOtelWorkspace(cmd)
@@ -343,8 +343,8 @@ func runOtelServices(cmd *cobra.Command, args []string) error {
 			faint.Printf("  (devstack: %s)", v.Devstack)
 		}
 		var qualifiers []string
-		if v.Stack == "base" {
-			qualifiers = append(qualifiers, "stack=base (shared set)")
+		if v.Stack != "" && observability.IsSharedStack(v.Stack) {
+			qualifiers = append(qualifiers, "stack="+observability.SharedStack)
 		} else if v.Stack != "" {
 			qualifiers = append(qualifiers, "stack="+v.Stack)
 		}

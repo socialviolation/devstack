@@ -110,16 +110,16 @@ func TestStatusReportsEvidencePerVariant(t *testing.T) {
 	if len(got.Variants) != 2 {
 		t.Fatalf("variants = %+v, want one per stack", got.Variants)
 	}
-	if got.Variants[0].Stack != "base (shared set)" || got.Variants[1].Stack != "perf" {
+	if got.Variants[0].Stack != "perf" || got.Variants[1].Stack != "shared" {
 		t.Errorf("variants not sorted by stack: %+v", got.Variants)
 	}
-	if got.Variants[1].Env != "perf" {
-		t.Errorf("stack variant lost its env: %+v", got.Variants[1])
+	if got.Variants[0].Env != "perf" {
+		t.Errorf("stack variant lost its env: %+v", got.Variants[0])
 	}
 	if got.TraceCount != 8 {
 		t.Errorf("TraceCount = %d, want the total across variants", got.TraceCount)
 	}
-	if summary := got.Summary(); summary != "base (shared set)=5 spans, perf=3 spans env=perf" {
+	if summary := got.Summary(); summary != "perf=3 spans env=perf, shared=5 spans" {
 		t.Errorf("Summary() = %q", summary)
 	}
 }

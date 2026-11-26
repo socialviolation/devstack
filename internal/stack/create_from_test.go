@@ -240,3 +240,14 @@ calls:
 		t.Errorf("frontend cut ref = %q, want the local main fallback", wt["frontend"].Ref)
 	}
 }
+
+func TestCreateRefusesTheSharedSetNames(t *testing.T) {
+	base := newBase(t)
+	noDaemon(t)
+
+	for _, name := range []string{"shared", "Shared", "base"} {
+		if _, err := Create(CreateInput{Base: base, Name: name, Repos: []string{"backend"}}); err == nil || !strings.Contains(err.Error(), "shared set") {
+			t.Errorf("Create(%q) = %v, want a refusal that names the shared set", name, err)
+		}
+	}
+}

@@ -135,6 +135,9 @@ func Create(in CreateInput) (*CreateResult, error) {
 	if base == nil {
 		return nil, fmt.Errorf("devstack can not resolve the workspace")
 	}
+	if strings.EqualFold(in.Name, "shared") || strings.EqualFold(in.Name, "base") {
+		return nil, fmt.Errorf("no stack can have the name %q. devstack uses that name for the shared set. Choose a different name", in.Name)
+	}
 	if _, err := FindStack(base.Name, in.Name); err == nil {
 		return nil, fmt.Errorf("stack %q already exists in workspace %q", in.Name, base.Name)
 	}

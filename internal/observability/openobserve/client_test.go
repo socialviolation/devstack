@@ -427,3 +427,20 @@ func TestSpansForTracesDeduplicatesRepeatedSpans(t *testing.T) {
 		t.Errorf("got %d spans, want the duplicate collapsed", len(got[0]))
 	}
 }
+
+func TestQueryTracesStackFilter(t *testing.T) {
+	cases := map[string]string{
+		"perf":   `service_devstack_stack IN ('perf')`,
+		"shared": `service_devstack_stack IN ('shared', 'base')`,
+	}
+	for stack, want := range cases {
+		srv, queries := captureServer(t, nil)
+		c := NewClient(srv.URL, "token")
+		if _, err := c.QueryTraces(context.Background(), observability.TraceQuery{Workspace: "navexa", Stack: stack}); err != nil {
+			t.Fatal(err)
+		}
+		if len(*queries) == 0 || !strings.Contains((*queries)[0], want) {
+			t.Errorf("stack %q: query = %v, want it to contain %s", stack, *queries, want)
+		}
+	}
+}

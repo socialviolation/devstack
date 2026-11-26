@@ -87,8 +87,12 @@ func StateReason(r UIResource, all []UIResource) string {
 		self, _ := resourceCopy(r.Metadata.Name)
 		for _, d := range disabled {
 			svc, stackName := resourceCopy(d)
-			reason += fmt.Sprintf(". Start it: devstack service start %s --stack %s, or remove the dependency: devstack dependencies remove %s %s",
-				svc, stackName, self, svc)
+			start := "devstack service start " + svc
+			if stackName != "" {
+				start += " --stack " + stackName
+			}
+			reason += fmt.Sprintf(". Start it: %s, or remove the dependency: devstack dependencies remove %s %s",
+				start, self, svc)
 		}
 		return reason
 	}
@@ -117,7 +121,7 @@ func resourceCopy(name string) (svc, stackName string) {
 	case 3:
 		return parts[1], parts[2]
 	case 2:
-		return parts[1], "base"
+		return parts[1], ""
 	}
-	return name, "base"
+	return name, ""
 }

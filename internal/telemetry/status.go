@@ -135,8 +135,8 @@ func evidenceFor(service string, variants []observability.ServiceVariant) []Vari
 		if v.Service != "" && v.Service != service {
 			e.Reported = v.Service
 		}
-		if e.Stack == "" || e.Stack == "base" {
-			e.Stack = "base (shared set)"
+		if observability.IsSharedStack(e.Stack) {
+			e.Stack = observability.SharedStack
 		}
 		out = append(out, e)
 	}

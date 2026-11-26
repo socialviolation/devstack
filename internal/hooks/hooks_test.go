@@ -158,9 +158,9 @@ func TestOriginFallsBackToTheConventionalName(t *testing.T) {
 	}
 }
 
-func TestStackLabelSpellsBaseExplicitly(t *testing.T) {
-	if got := (Event{}).StackLabel(); got != "base" {
-		t.Errorf("empty stack label = %q, want base", got)
+func TestStackLabelSpellsSharedExplicitly(t *testing.T) {
+	if got := (Event{}).StackLabel(); got != "shared" {
+		t.Errorf("empty stack label = %q, want shared", got)
 	}
 	if got := (Event{Stack: "feat"}).StackLabel(); got != "feat" {
 		t.Errorf("stack label = %q, want feat", got)

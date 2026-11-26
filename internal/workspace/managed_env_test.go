@@ -36,7 +36,7 @@ func TestManagedEnvFor_StackAttributes(t *testing.T) {
 		stack     string
 		wantStack string
 	}{
-		{name: "base when empty", stack: "", wantStack: "base"},
+		{name: "shared when empty", stack: "", wantStack: "shared"},
 		{name: "explicit stack", stack: "perf", wantStack: "perf"},
 	}
 
@@ -95,7 +95,7 @@ func TestManagedEnv_DelegatesToBase(t *testing.T) {
 	ws := &Workspace{Name: "navexa", Path: dir}
 
 	got := ManagedEnv(ws, []string{"api"}, nil)
-	want := "devstack.workspace=navexa,devstack.service=api,devstack.stack=base"
+	want := "devstack.workspace=navexa,devstack.service=api,devstack.stack=shared"
 	if got["api"]["OTEL_RESOURCE_ATTRIBUTES"] != want {
 		t.Errorf("OTEL_RESOURCE_ATTRIBUTES = %q, want %q", got["api"]["OTEL_RESOURCE_ATTRIBUTES"], want)
 	}

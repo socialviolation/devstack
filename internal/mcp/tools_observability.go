@@ -25,7 +25,7 @@ func registerObservabilityTool(mcpServer *server.MCPServer, ws *workspace.Worksp
 		mcp.WithDescription("Inspect this workspace's OpenTelemetry (OTEL) setup, see whether telemetry arrives, and change the OTEL configuration.\n"+
 			"Actions:\n"+
 			"- 'status' reads. It shows the enabled state, the backend, whether the collector runs, and the OTLP ports. It then gives evidence for every service this workspace declares: which of that service's runs (the shared set, and each feature stack) emitted spans in the last 15 minutes, the env each one ran under, the name each one reports for itself, a span count, and a confidence rating. This is the answer to \"is my service sending telemetry?\". It covers only the services declared in this workspace's configuration.\n"+
-			"- 'variants' reads. It shows the backend's own list of every service that reported telemetry in the last 15 minutes, with the stack, the env and a span count. The stack value \"base\" is the label of the shared set. It lists a service whether or not devstack holds a manifest for it. This is the same data as `devstack otel services`. Use it when 'status' shows a service as silent, to see what reports instead: a different reported name, another stack, or another workspace.\n"+
+			"- 'variants' reads. It shows the backend's own list of every service that reported telemetry in the last 15 minutes, with the stack, the env and a span count. The stack value \"shared\" is the label of the shared set. It lists a service whether or not devstack holds a manifest for it. This is the same data as `devstack otel services`. Use it when 'status' shows a service as silent, to see what reports instead: a different reported name, another stack, or another workspace.\n"+
 			"- 'config_on' writes configuration. It sets enabled=true, and it takes an optional backend (CLI: `devstack otel config on`).\n"+
 			"- 'config_off' writes configuration. It sets enabled=false (CLI: `devstack otel config off`).\n"+
 			"- 'config_set' writes configuration. It sets the backend, or a plugin config key such as upstream, or both (CLI: `devstack otel config set`).\n"+
@@ -188,8 +188,8 @@ func renderVariants(variants []observability.ServiceVariant) string {
 			fmt.Fprintf(&sb, " (devstack: %s)", v.Devstack)
 		}
 		stack := v.Stack
-		if stack == "" || stack == "base" {
-			stack = "base (shared set)"
+		if observability.IsSharedStack(stack) {
+			stack = observability.SharedStack
 		}
 		fmt.Fprintf(&sb, " stack=%s", stack)
 		if v.Env != "" {

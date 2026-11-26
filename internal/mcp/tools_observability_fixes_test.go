@@ -19,7 +19,7 @@ func TestRenderVariantsNamesStackEnvAndReportedName(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"Navexa.API (devstack: navexa-api) stack=base (shared set) env=local spans=12",
+		"Navexa.API (devstack: navexa-api) stack=shared env=local spans=12",
 		"navexa-web stack=feat-x spans=3",
 	} {
 		if !strings.Contains(got, want) {

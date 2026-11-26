@@ -72,7 +72,7 @@ A shared service has one copy. A stack service has one copy in each stack that r
 
 A shared service needs no stack. Name it with no `--stack`. An agent can read the status and the logs of a shared service. An agent can not start, stop or restart one, because every stack depends on it.
 
-No stack can carry the name `base`. Each command names the copy it changed, so read that line. A shared copy has no `:stack` suffix.
+No stack can carry the name `shared` or `base`. Each command names the copy it changed, so read that line. A shared copy has no `:stack` suffix.
 
 ## Workspaces
 
@@ -420,6 +420,7 @@ devstack otel services               # which copies report telemetry
 devstack otel traces                 # recent root spans
 devstack otel traces --service=api --since=15m
 devstack otel traces --stack=feat-x
+devstack otel traces --stack=shared  # the shared set alone
 devstack otel traces --stack=all     # every stack and the shared set (the default)
 devstack otel traces <trace-id>      # full span tree
 devstack otel logs --trace=<trace-id>
@@ -428,7 +429,7 @@ devstack otel open                   # the UI
 devstack otel plugins                # backends and their config keys
 ```
 
-A query with no `--stack` covers every stack and the shared set. Pass a stack's short name for that stack alone. `--stack all` is the same as no `--stack`. The `investigate` MCP tool has the same default, so the two surfaces cover the same copies.
+A query with no `--stack` covers every stack and the shared set. Pass a stack's short name for that stack alone. Pass `shared` for the shared set alone. `--stack all` is the same as no `--stack`. The `investigate` MCP tool has the same default, so the two surfaces cover the same copies.
 
 Every copy reports to that one backend. devstack stamps each report with `devstack.workspace`, `devstack.service`, `devstack.stack` and `devstack.env`. These attributes carry the `devstack` prefix on purpose. `deployment.environment` belongs to the owner of the destination, and the `forwarding` backend sets it for each workspace. So you run one backend, and you slice the data at query time.
 
@@ -439,7 +440,7 @@ Navexa.API      (devstack: navexa-api)  stack=agent      env=dev
 Navexa.API      (devstack: navexa-api)  stack=nvxa-1422  env=dev
 ```
 
-A shared service reports `devstack.stack=base`. That value is the label of the shared set, not a stack. Hooks get the same label in `DEVSTACK_STACK` when they run with no stack.
+A shared service reports `devstack.stack=shared`. That value is the label of the shared set, not a stack. Hooks get the same label in `DEVSTACK_STACK` when they run with no stack. Older spans carry `devstack.stack=base`. `--stack shared` matches both values, and `--stack base` is a deprecated alias of `--stack shared`.
 
 ## Tunnels
 

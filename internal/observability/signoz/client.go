@@ -408,11 +408,15 @@ func stackFilter(stack string) []filter {
 	if stack == "" {
 		return nil
 	}
-	return []filter{{
+	f := filter{
 		Key:   filterKey{Key: "devstack.stack", Type: "resource", DataType: "string", IsColumn: false},
 		Op:    "=",
 		Value: stack,
-	}}
+	}
+	if values := observability.StackValues(stack); len(values) > 1 {
+		f.Op, f.Value = "in", values
+	}
+	return []filter{f}
 }
 
 func (c *Client) fetchTraceByID(traceID string) ([]observability.Span, error) {

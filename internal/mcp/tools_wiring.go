@@ -189,7 +189,7 @@ func writeHop(sb *strings.Builder, copyLabel, key, to string, hop *wiring.Hop, s
 	if isShared(to) {
 		target = "shared " + to
 	}
-	if hop.Target != "base" {
+	if hop.Target != "shared" {
 		target = "stack " + hop.Target + " " + to
 	}
 	switch {

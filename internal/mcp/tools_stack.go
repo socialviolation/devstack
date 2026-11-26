@@ -23,7 +23,7 @@ import (
 
 const stackShortNameDesc = "Feature stack SHORT name, for example 'import-review'. It is not the '<workspace>--<name>' full identity that telemetry and the host daemon resource names print. " +
 	stackTermDesc +
-	"No stack can have the name \"base\". "
+	"No stack can have the name \"shared\" or \"base\". "
 
 const requiredStackNameDesc = stackShortNameDesc +
 	"This parameter is REQUIRED. Name a stack, and do not omit it."
@@ -76,7 +76,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			"The tool returns each member with the reason it is in the stack, the worktree paths, the ref each worktree was cut from, the service links, and any warnings. A warning names a checkout that holds work the stack does not have, or a service the stack does not run.\n"+
 			"This workspace can declare lifecycle HOOKS: shell commands that devstack runs on its own for this action. They can change state outside this machine, for example register a callback URL or provision a resource. They fire on their own, and their output is in the result below. A hook failure is returned as an error, and it means that the stack exists and is NOT fully provisioned. Do not report success. See the hooks tool. If you do not know what this workspace fires, run the hooks tool with action=\"list\" first. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
-			mcp.Description("Short stack name (for example 'import-review'). The full stack identity becomes '<workspace>--<name>'. Every stack parameter across these tools takes the short name. No stack can have the name \"base\".")),
+			mcp.Description("Short stack name (for example 'import-review'). The full stack identity becomes '<workspace>--<name>'. Every stack parameter across these tools takes the short name. No stack can have the name \"shared\" or \"base\".")),
 		mcp.WithString("repos", mcp.Required(),
 			mcp.Description("Comma-separated exact service OR group names that this stack changes (for example 'frontend,backend' or 'core'). A group expands to its members. devstack adds the services that they need. A service that they only call does not come in, and devstack warns about it. A shared service is refused.")),
 		mcp.WithString("note",

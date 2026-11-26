@@ -37,12 +37,13 @@ A shared service is a service in the workspace "shared:" list. It runs once for
 the workspace, and never in a stack. Every stack uses it. Every other service
 runs only in a stack.
 
-No stack can carry the name "base". A command that starts, stops or writes a
-service that is not shared takes --stack <name>. With no --stack, it acts on the
-stack that your directory is in.
+No stack can carry the name "shared" or "base". A command that starts, stops
+or writes a service that is not shared takes --stack <name>. With no --stack,
+it acts on the stack that your directory is in.
 
 The telemetry queries are the exception. 'devstack otel traces' with no --stack
 searches every stack and the shared set. Pass --stack <name> for one stack.
+Pass --stack shared for the shared set.
 
 Never edit stacks.json, ports.json or a stack manifest by hand; use stack add/remove.`,
 	RunE: runStackList,

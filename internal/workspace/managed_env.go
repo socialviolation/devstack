@@ -32,7 +32,7 @@ func ManagedEnvFor(ws *Workspace, serviceNames []string, stack string, envNames 
 	}
 	stackLabel := stack
 	if stackLabel == "" {
-		stackLabel = "base"
+		stackLabel = "shared"
 	}
 	for _, name := range serviceNames {
 		attrs := []string{

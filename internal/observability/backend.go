@@ -12,22 +12,40 @@ type TraceQuery struct {
 	SpanID    string        // If set, find the trace containing this span (TraceID takes precedence)
 	Workspace string        // devstack.workspace filter; set for you by ScopedTo
 	Service   string        // Optional service filter
-	Stack     string        // Optional devstack.stack resource-attribute filter ("base" for the shared set)
+	Stack     string        // Optional devstack.stack resource-attribute filter ("shared" for the shared set)
 	Attribute string        // Optional attribute key (paired with Value)
 	Value     string        // Optional attribute value to match
 	Since     time.Duration // Lookback window (default: 5 minutes)
 	Limit     int           // Max traces to return (default: 3)
 }
 
-const StackScopeDesc = "The default is every stack and the shared set. Pass a stack's short name for that stack alone."
+const StackScopeDesc = "The default is every stack and the shared set. Pass \"shared\" for the shared set alone. Pass a stack's short name for that stack alone."
+
+const SharedStack = "shared"
+
+// Spans emitted before the shared set was renamed carry devstack.stack=base.
+const legacySharedStack = "base"
 
 func ResolveStackFilter(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", "all", "*":
 		return ""
+	case SharedStack, legacySharedStack:
+		return SharedStack
 	default:
 		return raw
 	}
+}
+
+func StackValues(filter string) []string {
+	if filter == SharedStack {
+		return []string{SharedStack, legacySharedStack}
+	}
+	return []string{filter}
+}
+
+func IsSharedStack(value string) bool {
+	return value == "" || value == SharedStack || value == legacySharedStack
 }
 
 // LogQuery parameters for querying logs.
@@ -49,7 +67,7 @@ type ServiceVariant struct {
 	// Devstack is the name devstack knows it by, which is what a caller stands
 	// in and filters on. It often differs from Service.
 	Devstack string
-	// Stack is the feature stack ("base" for the shared set).
+	// Stack is the feature stack ("shared" for the shared set).
 	Stack string
 	// Env is the config env the variant runs under, when one is selected.
 	Env string
