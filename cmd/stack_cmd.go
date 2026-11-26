@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/herdr"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
 	nvxmcp "github.com/socialviolation/devstack/internal/mcp"
 	"github.com/socialviolation/devstack/internal/replica"
@@ -273,6 +274,8 @@ func runStackResync(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	herdr.Bind(base.Name, args[0])
+	defer herdr.Notify()
 	out, err := nvxmcp.ResyncStack(base, args[0])
 	fmt.Print(out)
 	return err
@@ -353,6 +356,8 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	herdr.Bind(base.Name, args[0])
+	defer herdr.Notify()
 
 	fmt.Printf("Base workspace: %s (%s)\n", res.BaseName, res.BasePath)
 	fmt.Printf("Overlay (the services you changed, and the services that call them):\n")
@@ -554,6 +559,7 @@ func runStackRemove(cmd *cobra.Command, args []string) error {
 	if err := stack.CheckRemovable(base, args[0], force); err != nil {
 		return err
 	}
+	defer herdr.Notify()
 	rec, err := stack.Resolve(base.Name, args[0])
 	if err != nil {
 		return err
@@ -936,6 +942,8 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 	if err := stack.MarkUp(base.Name, rec.Name); err != nil {
 		return err
 	}
+	herdr.Bind(base.Name, rec.Name)
+	defer herdr.Notify()
 
 	if _, _, err := regenerateHostTiltfileScope(hostdaemon.ScopeStack(base.Name, rec.Name)); err != nil {
 		return fmt.Errorf("can not generate the host Tiltfile again: %w", err)
@@ -1001,6 +1009,7 @@ func runStackDown(cmd *cobra.Command, args []string) error {
 	if err := stack.MarkDown(base.Name, rec.Name, stack.StoppedByUser); err != nil {
 		return err
 	}
+	defer herdr.Notify()
 
 	_, kept, err := regenerateHostTiltfileScope(hostdaemon.ScopeStack(base.Name, rec.Name))
 	if err != nil {

@@ -39,6 +39,10 @@ func openURL(url string) error {
 	return nil
 }
 
+func OpenURL(url string) error {
+	return openURL(url)
+}
+
 var clipboardTools = [][]string{
 	{"wl-copy"},
 	{"pbcopy"},

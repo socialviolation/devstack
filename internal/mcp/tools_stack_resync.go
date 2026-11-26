@@ -8,6 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/socialviolation/devstack/internal/herdr"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
@@ -37,6 +38,8 @@ func registerStackResyncTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		if name == "" {
 			return mcp.NewToolResultError("name must not be empty"), nil
 		}
+		bindPane(ctx, ws, name)
+		defer herdr.Notify()
 		out, err := ResyncStack(ws, name)
 		if err != nil {
 			return mcp.NewToolResultError(out + err.Error()), nil

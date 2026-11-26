@@ -450,15 +450,46 @@ command = "devstack.open-links"
 description = "open a service address in the browser"
 ```
 
-Run `herdr server reload-config` to apply it. The plugin gives three actions:
+Run `herdr server reload-config` to apply it. The plugin gives four actions:
 
 | Action | What it does |
 | --- | --- |
 | `devstack.open-panel` | Open the panel beside the current work. The same key focuses it, then closes it |
 | `devstack.open-panel-tab` | Open the panel in its own tab, or switch to the tab that holds it |
 | `devstack.open-links` | Open the address picker over the current work. Type, then press enter |
+| `devstack.open-pane-stack` | Open the tailnet address of the stack that the focused pane binds |
 
 The panel shows the workspace of the pane where you press the key. From a directory outside every workspace, the panel shows all the workspaces. The panel draws with the palette of your herdr theme, and it follows `[theme]` and `[theme.custom]` in the herdr configuration.
+
+### The stack of a herdr pane
+
+A herdr pane binds a stack when you run `stack create`, `stack up`, `stack resync` or `stack adopt` in it. This includes an agent in the pane that calls the stdio MCP tools. A call over HTTP binds no pane. The last pane wins. One pane can bind more than one stack.
+
+After each stack change, devstack sets these tokens on the pane, with the source `devstack`:
+
+| Token | Value |
+| --- | --- |
+| `stack` | The stack name. If the pane binds more stacks, `name +N`. The name is the stack that was up or created last |
+| `stack_state` | `up`, `stopped`, or `stopped-auto` (the sweep stopped it) |
+| `stack_url` | The tailnet address of the first member that has one. Only while the stack is up |
+| `stack_stop` | The local stop time, for example `14:20`. Only while the stack is up |
+
+`devstack herdr publish` sets the tokens again. The plugin runs it when herdr starts, because herdr loses tokens when it restarts. The plugin action `devstack.open-pane-stack` opens `stack_url` of the focused pane. If herdr is not installed or does not run, devstack does nothing.
+
+devstack never edits your herdr configuration. To show the tokens, add rows to `~/.config/herdr/config.toml`:
+
+```toml
+[ui.sidebar.agents]
+rows = [
+  ["state_icon", "machine", "workspace", "tab"],
+  ["agent"],
+  ["$stack", { token = "$stack_state", rules = [
+    { equals = "up", fg = "#a6e3a1" },
+    { equals = "stopped-auto", dim = true },
+  ] }, "$stack_stop"],
+  ["$stack_url"],
+]
+```
 
 ## MCP
 

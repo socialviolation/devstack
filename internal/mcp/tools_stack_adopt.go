@@ -10,6 +10,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/socialviolation/devstack/internal/herdr"
 	"github.com/socialviolation/devstack/internal/panel"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -52,6 +53,8 @@ func AdoptStack(ctx context.Context, ws *workspace.Workspace, name string) (stri
 	if err != nil {
 		return "", err
 	}
+	bindPane(ctx, ws, rec.Name)
+	defer herdr.Notify()
 	if !adopted {
 		return fmt.Sprintf("Stack %q already belongs to the owner. devstack changed nothing.\n", rec.Name), nil
 	}

@@ -2,12 +2,41 @@ package cmd
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/spf13/viper"
+
+	"github.com/socialviolation/devstack/internal/herdr"
 )
+
+func TestTickPublishesToHerdr(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	sock := filepath.Join(dir, "herdr.sock")
+	if err := os.WriteFile(sock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_BIN_PATH", "/usr/bin/herdr-fake")
+	t.Setenv("HERDR_SOCKET_PATH", sock)
+	var calls []string
+	prev := herdr.Run
+	herdr.Run = func(bin string, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(args, " "))
+		return []byte(`{"result":{"panes":[]}}`), nil
+	}
+	t.Cleanup(func() { herdr.Run = prev })
+
+	if err := runTick(nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || calls[0] != "pane list" {
+		t.Errorf("tick ran herdr %q, want one pane list", calls)
+	}
+}
 
 func countDirectSweeps(t *testing.T, systemd bool) *int {
 	t.Helper()

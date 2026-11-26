@@ -11,6 +11,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/herdr"
 	"github.com/socialviolation/devstack/internal/hooks"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/mcp/auth"
@@ -133,6 +134,8 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		bindPane(ctx, ws, name)
+		defer herdr.Notify()
 
 		overlay := make([]string, 0, len(res.Overlay))
 		for _, m := range res.Overlay {
@@ -577,6 +580,7 @@ func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		if name == "" {
 			return mcp.NewToolResultError("name must not be empty"), nil
 		}
+		defer herdr.Notify()
 		return removeStack(ws, name, request.GetBool("force", false)), nil
 	})
 }
@@ -655,6 +659,8 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 		if err := stack.MarkUp(ws.Name, rec.Name); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		bindPane(ctx, ws, rec.Name)
+		defer herdr.Notify()
 		_, genWarnings, _, err := hostdaemon.RegenerateScope(hostdaemon.ScopeStack(ws.Name, rec.Name))
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("can not generate the host Tiltfile again: %v", err)), nil
@@ -722,6 +728,7 @@ func registerStackDownTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 		if name == "" {
 			return mcp.NewToolResultError("name must not be empty"), nil
 		}
+		defer herdr.Notify()
 		return stackDown(ws, name, stack.StoppedByUser), nil
 	})
 }

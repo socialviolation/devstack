@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/socialviolation/devstack/internal/herdr"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
 	nvxmcp "github.com/socialviolation/devstack/internal/mcp"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -31,6 +33,7 @@ func init() {
 
 var tickJobs = []func() error{
 	tickSweep,
+	tickHerdrPublish,
 }
 
 func runTick(cmd *cobra.Command, args []string) error {
@@ -41,6 +44,10 @@ func runTick(cmd *cobra.Command, args []string) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func tickHerdrPublish() error {
+	return herdr.Publish(context.Background())
 }
 
 func tickSweep() error {

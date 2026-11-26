@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/herdr"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/infra"
 	"github.com/socialviolation/devstack/internal/stack"
@@ -41,6 +42,7 @@ func init() {
 }
 
 func runDown(cmd *cobra.Command, args []string) error {
+	defer herdr.Notify()
 	all, _ := cmd.Flags().GetBool("all")
 	if all {
 		return runDownAll()

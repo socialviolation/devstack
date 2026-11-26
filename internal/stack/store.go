@@ -41,6 +41,8 @@ type Record struct {
 
 	AdoptedFrom string    `json:"adopted_from,omitempty"`
 	AdoptedAt   time.Time `json:"adopted_at,omitzero"`
+
+	Pane string `json:"pane,omitempty"`
 }
 
 const (
@@ -313,6 +315,18 @@ func MarkDown(base, name, by string) error {
 		r.Active = false
 		r.StoppedBy = by
 		r.StoppedAt = Now()
+	})
+}
+
+func SetPane(base, name, pane string) error {
+	return updateStack(base, name, func(r *Record) { r.Pane = pane })
+}
+
+func ClearPane(base, name, pane string) error {
+	return updateStack(base, name, func(r *Record) {
+		if r.Pane == pane {
+			r.Pane = ""
+		}
 	})
 }
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/socialviolation/devstack/internal/herdr"
 	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -22,5 +23,8 @@ func TestMain(m *testing.M) {
 	}
 	workspace.HostTiltPort = l.Addr().(*net.TCPAddr).Port
 	l.Close()
+	herdr.Notify = func() {}
+	os.Unsetenv("HERDR_PANE_ID")
+	os.Setenv("HERDR_SOCKET_PATH", "/nonexistent/herdr.sock")
 	os.Exit(m.Run())
 }

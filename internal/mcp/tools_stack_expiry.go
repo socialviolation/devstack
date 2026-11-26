@@ -10,6 +10,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/socialviolation/devstack/internal/herdr"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -88,6 +89,9 @@ func Sweep(dryRun bool, w io.Writer) (int, error) {
 	}
 	if found == 0 && len(failed) == 0 {
 		fmt.Fprintln(w, "No stack that is up is past its stop time.")
+	}
+	if found > 0 && !dryRun {
+		herdr.Notify()
 	}
 	if len(failed) > 0 {
 		return found, fmt.Errorf("devstack did not stop these stacks: %s", strings.Join(failed, ", "))
