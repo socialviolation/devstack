@@ -18,7 +18,7 @@ import (
 // opens an address, and herdr closes the pane with it, so a child that stays in
 // this process group dies before the browser window appears. A new session, and
 // no terminal of its own, is what keeps it alive.
-func openURL(url string) error {
+var openURL = func(url string) error {
 	opener := "xdg-open"
 	if runtime.GOOS == "darwin" {
 		opener = "open"
