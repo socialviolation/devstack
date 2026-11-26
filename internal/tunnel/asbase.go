@@ -5,25 +5,15 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 )
 
-// StackOnBasePorts maps one stack's instances onto the ports base normally
-// serves, so the far end reaches the stack at the address it already knows. Each
-// forward listens on base's port over there and lands on the stack's port here;
-// a service the stack does not overlay is left out, since base already serves it.
-func StackOnBasePorts(view *tilt.TiltView, filter map[string]bool, wsName, stackName string) ([]Service, []string, error) {
+func StackOnDeclaredPorts(view *tilt.TiltView, filter map[string]bool, wsName, stackName string, declared config.PortBook) ([]Service, []string, error) {
 	rec, err := stack.FindStack(wsName, stackName)
 	if err != nil {
 		return nil, nil, err
-	}
-
-	basePorts := map[string]int{}
-	for _, s := range Discover(view, nil, wsName, false) {
-		if _, seen := basePorts[s.Service]; !seen {
-			basePorts[s.Service] = s.Port
-		}
 	}
 
 	var out []Service
@@ -32,18 +22,27 @@ func StackOnBasePorts(view *tilt.TiltView, filter map[string]bool, wsName, stack
 		if !strings.HasSuffix(s.Name, ":"+rec.Name) {
 			continue
 		}
-		base, ok := basePorts[s.Service]
+		port, ok := declaredPortFor(rec, declared, s)
 		if !ok {
 			unmapped = append(unmapped, s.Service)
 			continue
 		}
-		s.RemotePort = base
+		s.RemotePort = port
 		out = append(out, s)
 	}
 
 	if len(out) == 0 {
-		return nil, unmapped, fmt.Errorf("stack %q runs no service that devstack can forward. To bring it up, run: devstack stack up %s", rec.Name, rec.Name)
+		return nil, unmapped, fmt.Errorf("stack %q runs no service with a declared port that devstack can forward. To bring it up, run: devstack stack up %s", rec.Name, rec.Name)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].RemotePort < out[j].RemotePort })
 	return out, unmapped, nil
+}
+
+func declaredPortFor(rec *stack.Record, declared config.PortBook, s Service) (int, bool) {
+	for key, port := range declared[s.Service] {
+		if rec.Ports[stack.QualifyPortKey(s.Service, key)] == s.Port {
+			return port, true
+		}
+	}
+	return 0, false
 }

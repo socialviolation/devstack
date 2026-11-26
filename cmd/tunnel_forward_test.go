@@ -173,11 +173,7 @@ func mustRead(t *testing.T, path string) []byte {
 	return data
 }
 
-// The feature itself, end to end: the far end binds the port base normally
-// serves and lands on the stack's own port here, so nothing over there is
-// reconfigured. Getting the two ends the wrong way round would still start a
-// forward, pointing at nothing.
-func TestPushAsBaseBindsBasePortOnTheFarEnd(t *testing.T) {
+func TestPushAsDeclaredPortsBindsTheDeclaredPortOnTheFarEnd(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	root := t.TempDir()
@@ -185,12 +181,29 @@ func TestPushAsBaseBindsBasePortOnTheFarEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(root)
+	declaredAPI := 63290
+	writeFile(t, filepath.Join(root, "devstack.workspace.yaml"), `version: 1
+workspace:
+  name: navexa
+  repoDiscovery:
+    mode: explicit
+    repos:
+      - ./api
+`)
+	writeAt(t, filepath.Join(root, "api", "devstack.service.yaml"), fmt.Sprintf(`version: 1
+service:
+  name: api
+runtime:
+  run:
+    command: go run .
+ports:
+  http: %d
+`, declaredAPI))
 
-	baseAPI, stackAPI := servingPort(t), servingPort(t)
+	stackAPI := servingPort(t)
 	serveDaemon(t, fmt.Sprintf(`{"uiResources":[
-		{"metadata":{"name":"navexa:api"},"status":{"runtimeStatus":"ok","endpointLinks":[{"url":"http://localhost:%d"}]}},
 		{"metadata":{"name":"navexa:api:agent"},"status":{"runtimeStatus":"ok","endpointLinks":[{"url":"http://localhost:%d"}]}}
-	]}`, baseAPI, stackAPI))
+	]}`, stackAPI))
 	record := stubSSH(t)
 
 	dir := workspace.DataDir("navexa")
@@ -198,18 +211,18 @@ func TestPushAsBaseBindsBasePortOnTheFarEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "stacks.json"),
-		[]byte(`[{"name":"agent","base":"navexa","overlay":["api"],"worktrees":{},"ports":{}}]`), 0644); err != nil {
+		[]byte(fmt.Sprintf(`[{"name":"agent","base":"navexa","members":["api"],"worktrees":{},"ports":{"api/http":%d}}]`, stackAPI)), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	resetTunnelFlags()
 	tunnelAsBaseFlag = "agent"
 	if err := runTunnelForward(tunnel.ModePush, []string{"testhost"}); err != nil {
-		t.Fatalf("push --as-base: %v", err)
+		t.Fatalf("push --as-declared-ports: %v", err)
 	}
 
 	args := string(mustRead(t, record))
-	if want := fmt.Sprintf("-R %d:localhost:%d", baseAPI, stackAPI); !strings.Contains(args, want) {
+	if want := fmt.Sprintf("-R %d:localhost:%d", declaredAPI, stackAPI); !strings.Contains(args, want) {
 		t.Errorf("ssh was not asked for %q: %s", want, args)
 	}
 	// The PID file is keyed on the local port, so several stacks can map onto
@@ -223,7 +236,7 @@ func TestPushAsBaseBindsBasePortOnTheFarEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	if saved.TunnelLast == nil || saved.TunnelLast.AsBase != "agent" {
-		t.Errorf("recorded %+v, want the mapping onto base", saved.TunnelLast)
+		t.Errorf("recorded %+v, want the mapping onto the declared ports", saved.TunnelLast)
 	}
 
 	for _, port := range tunnel.TrackedPorts("navexa") {

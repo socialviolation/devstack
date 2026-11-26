@@ -14,6 +14,7 @@ import (
 	"github.com/socialviolation/devstack/internal/otel"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/tunnel"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -44,18 +45,18 @@ By default devstack forwards only this workspace's base service ports. The two
 stack modes do different things, and you can not combine them:
 
   devstack tunnel push my-box.ts.net --stacks          # every stack, each on its own port
-  devstack tunnel push my-box.ts.net --as-base agent   # one stack, on base's ports
+  devstack tunnel push my-box.ts.net --as-declared-ports agent   # one stack, on declared ports
 
 Pass --otel to forward the observability UI too. The remote then reads this
 machine's traces at the same address that you use here:
 
   devstack tunnel push my-box.ts.net --otel
 
---as-base puts one stack on the ports that base normally serves. The far end then
-reaches that stack at the address it already knows, and nothing over there needs
-new configuration:
+--as-declared-ports puts one stack on the ports that its service manifests
+declare. The far end then reaches that stack at the address it already knows,
+and nothing over there needs new configuration. --as-base is the old name:
 
-  devstack tunnel push my-box.ts.net --as-base agent
+  devstack tunnel push my-box.ts.net --as-declared-ports agent
   # far end :4200 → here :20006, far end :63290 → here :20005`,
 }
 
@@ -91,8 +92,8 @@ func init() {
 
 With no flags, this command repeats the last successful push or pull. It uses the
 same direction, the same services and the same stack mapping, and it says what it
-repeats. Without that record, a restart after 'push --as-base agent' puts base
-back on those ports and says nothing. Without that record, a restart on the
+repeats. Without that record, a restart after 'push --as-declared-ports agent'
+drops the stack from those ports and says nothing. Without that record, a restart on the
 machine you ran 'pull' from reverses the direction.
 
 A flag that you pass overrides the saved one:
@@ -165,11 +166,13 @@ kill it. To narrow the ports, pass --service.
 		c.Flags().BoolVar(&tunnelReclaimFlag, "reclaim", false,
 			"DESTRUCTIVE: before it forwards, devstack kills whatever already holds these ports on the far host. What it kills can belong to a colleague, or to another stack. devstack reclaims only the ports it forwards, so narrow the blast radius with --service. To see what holds them first, run: devstack tunnel check <host>")
 		c.Flags().BoolVar(&tunnelStacksFlag, "stacks", false,
-			"Also forward every active feature stack, each on its OWN allocated port. You can not combine it with --as-base.")
+			"Also forward every active feature stack, each on its OWN allocated port. You can not combine it with --as-declared-ports.")
 	}
 	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, tunnelStatusCmd} {
-		c.Flags().StringVar(&tunnelAsBaseFlag, "as-base", "",
-			"Put ONE feature stack on base's ports. The far end then reaches that stack at the addresses base normally uses. You can not combine it with --stacks.")
+		c.Flags().StringVar(&tunnelAsBaseFlag, "as-declared-ports", "",
+			"Put ONE stack on the ports that its service manifests declare. The far end then reaches that stack at the usual addresses. You can not combine it with --stacks.")
+		c.Flags().StringVar(&tunnelAsBaseFlag, "as-base", "", "Old name of --as-declared-ports.")
+		_ = c.Flags().MarkDeprecated("as-base", "use --as-declared-ports")
 	}
 	for _, c := range []*cobra.Command{pushCmd, pullCmd, restartCmd, tunnelStatusCmd} {
 		c.Flags().BoolVar(&tunnelOtelFlag, "otel", false,
@@ -222,7 +225,7 @@ var errTunnelDaemon = errors.New("dev daemon unreachable")
 // honouring the --service filter. Results are sorted by port for stable output.
 func discoverTunnelServices(ws *workspace.Workspace) ([]tunnel.Service, error) {
 	if tunnelAsBaseFlag != "" && tunnelStacksFlag {
-		return nil, fmt.Errorf("--as-base and --stacks ask for different things. --as-base %s puts that one stack on base's ports. --stacks forwards every stack on its own ports. Pick one", tunnelAsBaseFlag)
+		return nil, fmt.Errorf("--as-declared-ports and --stacks ask for different things. --as-declared-ports %s puts that one stack on its declared ports. --stacks forwards every stack on its own ports. Pick one", tunnelAsBaseFlag)
 	}
 
 	view, err := tilt.NewClient("localhost", ws.TiltPort).GetView()
@@ -236,9 +239,13 @@ func discoverTunnelServices(ws *workspace.Workspace) ([]tunnel.Service, error) {
 		}
 	}
 	if tunnelAsBaseFlag != "" {
-		mapped, unmapped, err := tunnel.StackOnBasePorts(view, filter, ws.Name, tunnelAsBaseFlag)
+		var declared config.PortBook
+		if rw, rerr := config.ResolveWorkspace(ws.Path); rerr == nil {
+			declared = config.BuildPortBook(rw)
+		}
+		mapped, unmapped, err := tunnel.StackOnDeclaredPorts(view, filter, ws.Name, tunnelAsBaseFlag, declared)
 		if len(unmapped) > 0 {
-			color.New(color.Faint).Printf("  not mapped (no base port to map onto): %s\n", strings.Join(unmapped, ", "))
+			color.New(color.Faint).Printf("  not mapped (no declared port to map onto): %s\n", strings.Join(unmapped, ", "))
 		}
 		return mapped, err
 	}
@@ -564,7 +571,7 @@ func resumeLastForward(cmd *cobra.Command, last *workspace.TunnelForward) (tunne
 	if last != nil {
 		// The two stack modes exclude each other, so naming either one means the
 		// caller is choosing between them and neither should be inherited.
-		stackModeGiven := cmd.Flags().Changed("stacks") || cmd.Flags().Changed("as-base")
+		stackModeGiven := cmd.Flags().Changed("stacks") || cmd.Flags().Changed("as-base") || cmd.Flags().Changed("as-declared-ports")
 		if modeStr == "" && last.Mode != "" {
 			modeStr = last.Mode
 			restored = append(restored, last.Mode)
@@ -579,7 +586,7 @@ func resumeLastForward(cmd *cobra.Command, last *workspace.TunnelForward) (tunne
 		}
 		if !stackModeGiven && last.AsBase != "" {
 			tunnelAsBaseFlag = last.AsBase
-			restored = append(restored, "--as-base "+last.AsBase)
+			restored = append(restored, "--as-declared-ports "+last.AsBase)
 		}
 		if !cmd.Flags().Changed("otel") && last.Otel {
 			tunnelOtelFlag = true

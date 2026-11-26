@@ -1664,7 +1664,7 @@ func resumeTunnelForward(asked workspace.TunnelForward, last *workspace.TunnelFo
 	}
 	if !stackModeGiven && last.AsBase != "" {
 		asked.AsBase = last.AsBase
-		restored = append(restored, "as_base="+last.AsBase)
+		restored = append(restored, "as_declared_ports="+last.AsBase)
 	}
 	if !asked.Otel && last.Otel {
 		asked.Otel = true
@@ -1702,9 +1702,11 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 		mcp.WithBoolean("reclaim",
 			mcp.Description("Push only. Before devstack forwards, it kills whatever already holds these ports on the remote. CAUTION: this is destructive. It tears down forwards that belong to other stacks. Leave it off until a push fails to bind and you know that the port is yours.")),
 		mcp.WithBoolean("stacks",
-			mcp.Description("Also forward every active feature stack. Each one uses its OWN allocated port. The far end reaches them at those ports, and not at the usual ones. The default is false. You can not combine this with as_base.")),
+			mcp.Description("Also forward every active feature stack. Each one uses its OWN allocated port. The far end reaches them at those ports, and not at the usual ones. The default is false. You can not combine this with as_declared_ports.")),
+		mcp.WithString("as_declared_ports",
+			mcp.Description("Put ONE stack on the ports that its service manifests declare. Name the stack. The far end then reaches that stack at the usual addresses, and nobody has to reconfigure anything over there. This is the answer to \"let them test my stack on the usual URLs\". You can not combine this with stacks.")),
 		mcp.WithString("as_base",
-			mcp.Description("Put ONE feature stack on base's ports. Name the stack. The far end then reaches that stack's copies at the addresses base usually serves, and nobody has to reconfigure anything over there. This is the answer to \"let them test my stack on the usual URLs\". You can not combine this with stacks.")),
+			mcp.Description("Deprecated. The old name of as_declared_ports.")),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithIdempotentHintAnnotation(false),
@@ -1728,7 +1730,7 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 		asked := workspace.TunnelForward{
 			Services: request.GetString("service", ""),
 			Stacks:   request.GetBool("stacks", false),
-			AsBase:   strings.TrimSpace(request.GetString("as_base", "")),
+			AsBase:   strings.TrimSpace(request.GetString("as_declared_ports", request.GetString("as_base", ""))),
 			Otel:     request.GetBool("otel", false),
 		}
 		var restored string
@@ -1750,19 +1752,23 @@ func registerTunnelTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, ws
 		asBase := asked.AsBase
 		wantStacks := asked.Stacks
 		if asBase != "" && wantStacks {
-			return mcp.NewToolResultError("as_base and stacks ask for different things: as_base puts that one stack on base's ports, stacks forwards every stack on its own ports. Pick one"), nil
+			return mcp.NewToolResultError("as_declared_ports and stacks ask for different things: as_declared_ports puts that one stack on its declared ports, stacks forwards every stack on its own ports. Pick one"), nil
 		}
 
 		var svcs []tunnel.Service
 		var otelNotePrefix string
 		if asBase != "" {
-			mapped, unmapped, aerr := tunnel.StackOnBasePorts(view, filter, ws.Name, asBase)
+			var declared config.PortBook
+			if rw, rerr := config.ResolveWorkspace(ws.Path); rerr == nil {
+				declared = config.BuildPortBook(rw)
+			}
+			mapped, unmapped, aerr := tunnel.StackOnDeclaredPorts(view, filter, ws.Name, asBase, declared)
 			if aerr != nil {
 				return mcp.NewToolResultError(aerr.Error()), nil
 			}
 			svcs = mapped
 			if len(unmapped) > 0 {
-				otelNotePrefix = fmt.Sprintf("not mapped (no base port to map onto): %s\n", strings.Join(unmapped, ", "))
+				otelNotePrefix = fmt.Sprintf("not mapped (no declared port to map onto): %s\n", strings.Join(unmapped, ", "))
 			}
 		} else {
 			svcs = tunnel.Discover(view, filter, ws.Name, wantStacks)
