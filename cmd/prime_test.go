@@ -177,6 +177,17 @@ func TestEnvironmentsBlockLabelsItsDescriptionColumn(t *testing.T) {
 	}
 }
 
+func TestPrimeListsTemplatesInOneLine(t *testing.T) {
+	rw := &config.ResolvedWorkspace{Manifest: &config.WorkspaceManifest{
+		Templates: map[string]config.StackTemplate{"agent": {Services: []string{"api"}}, "ui": {Services: []string{"web"}}},
+	}}
+	var b strings.Builder
+	writePrimeApplies(&b, &workspace.Workspace{Name: "navexa"}, rw)
+	if !strings.Contains(b.String(), "templates     agent, ui. Create a stack from one: devstack stack create <name> --template <t>") {
+		t.Errorf("prime must name the templates in one line:\n%s", b.String())
+	}
+}
+
 // The briefing is injected whole into a session and cannot be skimmed unless
 // its parts are named. THIS SERVICE is omitted outside a service directory,
 // because a heading with nothing under it reads as missing data.

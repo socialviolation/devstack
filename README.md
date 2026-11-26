@@ -116,6 +116,7 @@ The flags are in [Updating devstack](REFERENCE.md#updating-devstack).
 | Copy | One running process of a service. A shared service has one copy. Each stack that has a service as a member runs its own copy. |
 | Stop time | The time when devstack stops a stack. It is 24 hours after `stack create` or `stack up`. `devstack stack extend` pushes it back. devstack keeps the worktrees, and never removes the stack. |
 | Environment | A named set of configuration values (`environments:` in the workspace manifest). devstack applies it at workspace scope, service scope or stack scope. It sets where a service points. |
+| Stack template | A named recipe for a new stack (`templates:` in the workspace manifest). It names services, groups and an optional environment. It runs nothing. `stack create --template <t>` uses it. |
 | Hook | A shell command that devstack runs on a lifecycle event, for example a stack created or a service started. A disposable stack uses hooks to provision and de-provision the state that it needs outside this machine. |
 
 ## What else is here

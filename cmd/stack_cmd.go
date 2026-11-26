@@ -51,7 +51,7 @@ Never edit stacks.json, ports.json or a stack manifest by hand. Use
 }
 
 var stackCreateCmd = &cobra.Command{
-	Use:   "create <name> --repos a,b",
+	Use:   "create <name> [--repos a,b] [--template t]",
 	Short: "Create a feature stack",
 	Long: `Create a feature stack. devstack makes a git worktree and allocates a port for
 each service that you name. It does the same for each service that they need,
@@ -76,6 +76,11 @@ If a checkout holds uncommitted work, the command says so and carries on. It
 does the same if the checkout holds commits that the stack's ref does not have.
 That is a warning that this stack does not contain that work. It is not an
 error.
+
+--template names a recipe from the templates key in the workspace manifest.
+The template gives the services and groups, and --repos adds more. If the
+template names an environment, the stack uses it, as 'env use --stack' does.
+To list the templates, run 'devstack stack templates'.
 
 A new stack is down. Run 'devstack stack up <name>' to start it. Every stack
 stops 24 hours after create. 'stack up' sets a new stop time, 24 hours later.`,
@@ -385,11 +390,13 @@ func init() {
 	stackCmd.AddCommand(stackUpCmd)
 	stackCmd.AddCommand(stackDownCmd)
 	stackCmd.AddCommand(stackStatusCmd)
+	stackCmd.AddCommand(stackTemplatesCmd)
 
 	stackCreateCmd.Flags().String("repos", "", "Service or group names that this stack runs, separated by commas. A group expands to its members. devstack adds the services that they need")
 	stackCreateCmd.Flags().String("branch", "", "Branch for the changed repos (default: the stack name). devstack attaches to it if it already exists")
 	stackCreateCmd.Flags().Bool("detach", false, "Cut every worktree detached at the default branch tip, with no branch. Use it to run the default branch")
 	stackCreateCmd.Flags().String("from", "", "Ref that devstack cuts the worktrees from (default: each repo's default branch, origin's copy of it where there is one). Never what your checkout has checked out")
+	stackCreateCmd.Flags().String("template", "", "Template from the workspace manifest. It gives the services, the groups and the environment. --repos adds more services")
 	stackCreateCmd.Flags().String("note", "", "What this stack is for: a ticket URL, an issue key, or a sentence. 'devstack stack list' shows it")
 	stackAddCmd.Flags().String("from", "", "Ref that devstack cuts the new worktrees from (default: each repo's default branch, origin's copy of it where there is one)")
 	stackNoteCmd.Flags().String("add", "", "Append a dated entry that says where the work got to, instead of replacing the note")
@@ -402,8 +409,9 @@ func init() {
 func runStackCreate(cmd *cobra.Command, args []string) error {
 	reposFlag, _ := cmd.Flags().GetString("repos")
 	changed := splitCSV(reposFlag)
-	if len(changed) == 0 {
-		return fmt.Errorf("--repos is required. Name the service or services that this stack changes")
+	templateFlag, _ := cmd.Flags().GetString("template")
+	if len(changed) == 0 && templateFlag == "" {
+		return fmt.Errorf("--repos or --template is required. Name the service or services that this stack changes")
 	}
 
 	base, err := resolveWorkspace(viper.GetString("workspace"))
@@ -415,7 +423,7 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 	fromFlag, _ := cmd.Flags().GetString("from")
 	noteFlag, _ := cmd.Flags().GetString("note")
 	detachFlag, _ := cmd.Flags().GetBool("detach")
-	res, err := stack.Create(stack.CreateInput{Base: base, Name: args[0], Repos: changed, Branch: branchFlag, Detach: detachFlag, From: fromFlag, Note: noteFlag})
+	res, err := stack.Create(stack.CreateInput{Base: base, Name: args[0], Repos: changed, Branch: branchFlag, Detach: detachFlag, From: fromFlag, Note: noteFlag, Template: templateFlag})
 	if err != nil {
 		return err
 	}
@@ -423,6 +431,12 @@ func runStackCreate(cmd *cobra.Command, args []string) error {
 	defer herdr.Notify()
 
 	fmt.Printf("Workspace: %s (%s)\n", res.BaseName, res.BasePath)
+	if res.Template != "" {
+		fmt.Printf("Template: %s\n", res.Template)
+	}
+	if res.Env != "" {
+		fmt.Printf("Environment: %s\n", res.Env)
+	}
 	fmt.Printf("Members (the services you named, and the services they need):\n")
 	for _, m := range res.Members {
 		fmt.Printf("  %-16s %s\n", m.Service, m.Describe())
@@ -697,6 +711,9 @@ func runStackList(cmd *cobra.Command, args []string) error {
 		if s.AdoptedFrom != "" {
 			color.New(color.Faint).Printf("  adopted from %s\n", s.AdoptedFrom)
 		}
+		if s.Template != "" {
+			color.New(color.Faint).Printf("  template %s\n", s.Template)
+		}
 		for _, cov := range stack.CoverageOf(s.Groups, s.Services, baseGroups) {
 			color.New(color.Faint).Printf("  %s\n", cov.Sentence())
 		}
@@ -716,6 +733,44 @@ func runStackList(cmd *cobra.Command, args []string) error {
 	color.New(color.Faint).Println("STATUS up means registered, not running. Each service has its own state. Show it with: devstack status --stack <name>")
 	color.New(color.Faint).Println("\"covers group g (3/4). x is not in this stack\" is a group that devstack cut this stack to cover. The stack runs 3 of the 4 members. A group action reaches only the members the stack runs.")
 	color.New(color.Faint).Println("Set what a stack is for with: devstack stack note <name> \"...\". Record where the work got to with --add")
+	return nil
+}
+
+var stackTemplatesCmd = &cobra.Command{
+	Use:          "templates",
+	Short:        "List the stack templates of the workspace",
+	Long:         "List the templates in the workspace manifest. A template is a recipe for a new stack: services, groups and an optional environment. A template never runs anything. To use one, run 'devstack stack create <name> --template <template>'.",
+	Args:         cobra.NoArgs,
+	SilenceUsage: true,
+	RunE:         runStackTemplates,
+}
+
+func runStackTemplates(cmd *cobra.Command, args []string) error {
+	base, err := resolveWorkspace(viper.GetString("workspace"))
+	if err != nil {
+		return err
+	}
+	m, err := config.LoadWorkspaceManifest(base.Path)
+	if err != nil {
+		return err
+	}
+	names := m.TemplateNames()
+	if len(names) == 0 {
+		fmt.Printf("Workspace %q has no templates. Add them under templates in %s\n", base.Name, config.WorkspaceManifestFileName)
+		return nil
+	}
+	for _, n := range names {
+		t := m.Templates[n]
+		fmt.Printf("%s\n", n)
+		if t.Purpose != "" {
+			fmt.Printf("  %s\n", t.Purpose)
+		}
+		fmt.Printf("  services: %s\n", strings.Join(t.Services, ", "))
+		if t.Env != "" {
+			fmt.Printf("  env: %s\n", t.Env)
+		}
+	}
+	fmt.Println("\nCreate a stack from one: devstack stack create <name> --template <template>")
 	return nil
 }
 

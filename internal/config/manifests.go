@@ -38,12 +38,19 @@ type WorkspaceManifest struct {
 	Env           WorkspaceManifestEnv            `yaml:"env,omitempty"`
 	Shared        []string                        `yaml:"shared,omitempty"`
 	Groups        map[string][]string             `yaml:"groups,omitempty"`
+	Templates     map[string]StackTemplate        `yaml:"templates,omitempty"`
 	Dependencies  map[string][]string             `yaml:"dependencies,omitempty"`
 	Calls         map[string][]string             `yaml:"calls,omitempty"`
 	StartsAfter   map[string][]string             `yaml:"startsAfter,omitempty"`
 	Environments  map[string]WorkspaceEnvironment `yaml:"environments,omitempty"`
 	Hooks         []Hook                          `yaml:"hooks,omitempty"`
 	Partial       bool                            `yaml:"partial,omitempty"`
+}
+
+type StackTemplate struct {
+	Purpose  string   `yaml:"purpose,omitempty"`
+	Services []string `yaml:"services,omitempty"`
+	Env      string   `yaml:"env,omitempty"`
 }
 
 type WorkspaceManifestEnv struct {
@@ -539,6 +546,9 @@ func ResolveWorkspace(workspacePath string) (*ResolvedWorkspace, error) {
 			return nil, err
 		}
 		if err := rw.validateShared(); err != nil {
+			return nil, err
+		}
+		if err := rw.validateTemplates(); err != nil {
 			return nil, err
 		}
 		return rw, nil

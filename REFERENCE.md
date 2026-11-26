@@ -211,6 +211,8 @@ A feature stack runs the services that one feature needs. Each member gets a git
 ```bash
 devstack stack create <name> --repos <svc>[,<svc>]  # the named services and what they need
 devstack stack create main --repos <svc> --detach   # run the default branch, with no branch
+devstack stack create <name> --template <t>         # the services and environment of a stack template
+devstack stack templates                            # each stack template of the workspace
 devstack stack up <name>                            # fold it into the host daemon
 devstack stack down <name>                          # stop it, keep the worktrees
 devstack stack status <name>                        # its copies: state, ports, environment
@@ -234,6 +236,28 @@ The members of a stack are the services that you name in `--repos`, and every se
 If a member calls or references a service that is neither a member nor shared, `stack create` and `stack up` warn, and name `stack add`. They never refuse. The reference resolves to the declared port of that service, where nothing serves. You decide whether the change needs that service.
 
 `--repos` also takes a group name. devstack expands the group to its members, and records the group on the stack. `devstack stack list` then reports how much of that group the stack covers. A group action against a stack reaches only the members of the stack. devstack names the services of the group that are not in the stack.
+
+### Stack templates
+
+A stack template is a named recipe for a new stack, in the `templates:` key of the workspace manifest. A stack template never runs anything. It is not in the host daemon, in `status`, or in a group command.
+
+```yaml
+templates:
+  agent:
+    purpose: An nx-agent stack that uses prod RAG.
+    services: [navexa-api, navexa-frontend, nx-agent, nxmcp, agent-rag]
+    env: dev-agent-prod
+```
+
+- `services` names services, groups, or both. A group expands to its members.
+- `env` is optional. It must name an environment in `environments:`.
+- `purpose` says what the stack template is for. `stack templates` and the `environment` tool show it.
+
+devstack refuses to load the manifest if a stack template names an undeclared service, group or environment. It also refuses a stack template with the same name as a service or a group. devstack skips a shared service in `services`, as it does in a group.
+
+`devstack stack create <name> --template <t>` uses the stack template's services as the named services. `--repos` adds more. devstack then adds the services that they `need`, as for any stack. If the stack template has `env`, the stack uses that environment, as `devstack env use <env> --stack <name>` does. The stack record keeps the name of the stack template, and `stack list` shows it. If the stack template does not exist, devstack lists the stack templates.
+
+`devstack stack templates` lists each stack template with its purpose and services. Over MCP, `stack_create` takes `template`, and the `environment` tool lists the stack templates.
 
 ### Branches
 
@@ -604,6 +628,7 @@ stack_resync  stack_adopt   env_use       env_which     env_set
 | Tool | What it does |
 |---|---|
 | `shared` | Reads the shared set with `action="status"` or `action="path"`. `action="sync"` moves the replica to the default branch tip, and restarts the shared services that moved. |
+| `stack_create` | Creates a stack. `template` names a stack template, and `repos` adds services. Give `repos`, `template`, or both. |
 | `stack_extend` | Pushes back the stop time of a stack, by 24 hours at most in one call. |
 | `stack_adopt` | Hands an agent's stack to the owner. It clears the owner, and keeps the stop time. |
 | `stack_resync` | Fast-forwards the worktrees of a stack to origin, and restarts what moved. |
@@ -757,7 +782,7 @@ You cannot configure the port of the daemon. One daemon serves the machine on `:
 
 | Artifact | Location | Commit? | Why |
 |----------|----------|---------|-----|
-| `devstack.workspace.yaml` | workspace root | Yes | The source of truth: services, groups, the shared set and environments. It is portable and holds no machine paths. |
+| `devstack.workspace.yaml` | workspace root | Yes | The source of truth: services, groups, the shared set, environments and stack templates. It is portable and holds no machine paths. |
 | `devstack.service.yaml`, `devstack.<name>.yaml` | service repo | No | The service manifests of that directory. Machine-local: each one holds absolute tool paths. Gitignore them. |
 | `.mcp.json` | service repo | Yes | Generated, and it does not depend on the machine. |
 | `AGENTS.md` | service repo | Yes | Yours. devstack writes nothing in it. `devstack migrate` removes the block an older devstack wrote. |

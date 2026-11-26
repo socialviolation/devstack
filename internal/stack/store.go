@@ -43,6 +43,8 @@ type Record struct {
 	AdoptedAt   time.Time `json:"adopted_at,omitzero"`
 
 	Pane string `json:"pane,omitempty"`
+
+	Template string `json:"template,omitempty"`
 }
 
 const (

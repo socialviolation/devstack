@@ -68,6 +68,15 @@ groups: {}
   # backend: [my-api]
   # workers: [my-worker]
 
+# templates are recipes for a new stack: services, groups and an optional
+# environment. A template runs nothing. To use one, run:
+#   devstack stack create <name> --template <template>
+# templates:
+#   api-work:
+#     purpose: Work on the API and its workers.
+#     services: [my-api, workers]
+#     env: staging
+
 # Each service declares its edges in its own devstack.service.yaml, with needs
 # and calls. This file has no edge map.
 `

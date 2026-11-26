@@ -109,3 +109,24 @@ func RequireShared(rw *config.ResolvedWorkspace, services []string, how string) 
 	}
 	return nil
 }
+
+func applyTemplate(baseRW *config.ResolvedWorkspace, name string, repos []string) ([]string, string, error) {
+	if name == "" {
+		return repos, "", nil
+	}
+	t, ok := baseRW.Manifest.Templates[name]
+	if !ok {
+		known := baseRW.Manifest.TemplateNames()
+		if len(known) == 0 {
+			return nil, "", fmt.Errorf("the workspace declares no templates, so the template %q does not exist. Add it under templates in the workspace manifest", name)
+		}
+		return nil, "", fmt.Errorf("the workspace does not declare the template %q. Templates: %s", name, strings.Join(known, ", "))
+	}
+	var names []string
+	for _, s := range t.Services {
+		if !baseRW.IsShared(s) {
+			names = append(names, s)
+		}
+	}
+	return append(names, repos...), t.Env, nil
+}
