@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -89,10 +90,14 @@ func setupSharedFixture(t *testing.T) sharedFixture {
 		}
 		writeFile(t, path, content)
 	}
+	ports, err := workspace.AllocatePorts("shop--feat", []string{"api/http", "pg/db"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	legacyStore := `[{"name":"feat","base":"shop","root":"` + stackRoot + `","branch":"nick/feat",
 "overlay":["api","pg"],
 "worktrees":{"api":"` + filepath.Join(stackRoot, "api") + `","pg":"` + filepath.Join(stackRoot, "pg") + `"},
-"ports":{"api/http":20100,"pg/db":20101},
+"ports":{"api/http":` + strconv.Itoa(ports["api/http"]) + `,"pg/db":` + strconv.Itoa(ports["pg/db"]) + `},
 "created_at":"2026-11-20T10:00:00Z"}]`
 	if err := os.MkdirAll(workspace.DataDir("shop"), 0755); err != nil {
 		t.Fatal(err)
@@ -264,8 +269,18 @@ func TestSharedStacksApplyConvertsTheWorkspace(t *testing.T) {
 	if !slices.Equal(rec.Members, []string{"api"}) {
 		t.Errorf("members = %v, want [api]", rec.Members)
 	}
-	if rec.Worktrees["pg"] == "" || rec.Ports["pg/db"] != 20101 || rec.Branch != "nick/feat" {
-		t.Errorf("the record lost a worktree, a port or the branch: %+v", rec)
+	if rec.Worktrees["pg"] == "" || rec.Ports["api/http"] == 0 || rec.Branch != "nick/feat" {
+		t.Errorf("the record lost a worktree, a member port or the branch: %+v", rec)
+	}
+	if _, ok := rec.Ports["pg/db"]; ok {
+		t.Errorf("the record still holds the port of the shared service pg: %v", rec.Ports)
+	}
+	ledger, err := workspace.LoadPorts("shop--feat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ledger["pg/db"]; ok || ledger["api/http"] == 0 {
+		t.Errorf("ledger = %v, want api/http kept and pg/db released", ledger)
 	}
 	if _, err := os.Stat(filepath.Join(f.stackRoot, "pg")); err != nil {
 		t.Errorf("the pg worktree is gone: %v", err)

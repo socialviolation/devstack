@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 type MigratedStack struct {
@@ -17,6 +19,7 @@ type MigratedStack struct {
 	After        []string
 	ManifestPath string
 	Wrote        bool
+	Released     []string
 	Err          error
 }
 
@@ -65,6 +68,18 @@ func ApplyMigration(workspaceName string, baseRW *config.ResolvedWorkspace, writ
 			m := MigratedStack{Name: rec.Name, Before: rec.Members, ManifestPath: config.WorkspaceManifestPath(rec.Root)}
 			rec.Members = withoutShared(rec.Members, shared)
 			m.After = rec.Members
+			ports := map[string]int{}
+			for k, v := range rec.Ports {
+				if svc, _, ok := splitPortKey(k); ok && shared[svc] {
+					m.Released = append(m.Released, k)
+					continue
+				}
+				ports[k] = v
+			}
+			if len(m.Released) > 0 {
+				sort.Strings(m.Released)
+				rec.Ports = ports
+			}
 			m.Wrote, m.Err = regenerateManifest(baseRW, rec, write)
 			out = append(out, m)
 		}
@@ -82,7 +97,18 @@ func ApplyMigration(workspaceName string, baseRW *config.ResolvedWorkspace, writ
 		if !write {
 			return nil
 		}
-		return saveStore(workspaceName, recs)
+		if err := saveStore(workspaceName, recs); err != nil {
+			return err
+		}
+		for i, m := range out {
+			if len(m.Released) == 0 {
+				continue
+			}
+			if _, err := workspace.ReleasePortKeys(recs[i].RuntimeKey(), m.Released); err != nil {
+				return fmt.Errorf("stack %q: devstack can not release the ports of its shared services: %w", m.Name, err)
+			}
+		}
+		return nil
 	})
 	return out, storeWrote, err
 }

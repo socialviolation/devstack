@@ -38,8 +38,8 @@ THE STEPS
   groups    devstack removes the shared services from each group.
   stacks    devstack removes the shared services from the members of each
             stack. It writes each record in the current schema, and it writes
-            each stack manifest again. It removes no worktree, record, branch
-            or port.
+            each stack manifest again. It releases the ports of the shared
+            services in each stack. It removes no worktree, record or branch.
   refs      devstack names each ${svc.*} reference to a stack service. It
             changes nothing for these.
 
@@ -523,6 +523,9 @@ func migrateSharedStacks(w io.Writer, ws *workspace.Workspace, opts sharedStacks
 			fmt.Fprintf(w, "  stack %s: %v\n", d.Name, d.Err)
 		case d.Wrote:
 			fmt.Fprintf(w, "  stack %s: devstack wrote %s\n", d.Name, d.ManifestPath)
+		}
+		if len(d.Released) > 0 {
+			fmt.Fprintf(w, "  stack %s: released the ports %s\n", d.Name, strings.Join(d.Released, ", "))
 		}
 	}
 	printStackSummary(w, done)
