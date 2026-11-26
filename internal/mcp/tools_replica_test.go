@@ -85,7 +85,7 @@ func TestStatusDescriptionDoesNotCallTheCheckoutTheRunningCode(t *testing.T) {
 	if strings.Contains(desc, "this is the code the process is running") {
 		t.Errorf("status still claims the checkout's branch is what base executes: %s", desc)
 	}
-	if !strings.Contains(desc, "base runs a replica") {
-		t.Errorf("status must say a base row's PATH is not what base executes: %s", desc)
+	if !strings.Contains(desc, "A shared service runs from the replica") {
+		t.Errorf("status must say a shared row runs from the replica: %s", desc)
 	}
 }

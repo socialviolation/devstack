@@ -200,13 +200,13 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			"  SERVICE  the service name.\n"+
 			"  STATUS   one of running, starting, building, stopped, erroring, disabled, down, unknown.\n"+
 			"  PORT(S)  the ports this copy serves on.\n"+
-			"  PATH     the directory this copy runs from. For a stack that is the stack's own worktree. For base it is the replica worktree.\n"+
+			"  PATH     the directory this copy runs from. For a stack that is the stack's own worktree. For a shared service it is the replica worktree.\n"+
 			"  BRANCH   the git branch that this directory is on. A * marks uncommitted changes.\n"+
 			"  GROUP    the group the service belongs to.\n"+
 			"  ENV      the active config env this copy is pointed at, or blank.\n"+
 			"  RELOAD   auto when the service reloads on its own. manual when you must restart it after an edit.\n"+
 			"  ERROR    the last error.\n"+
-			"PATH and BRANCH name the code that the process runs. base runs a replica of the workspace, and not the user's checkout. So a base row's PATH is under a .devstack-base directory, and its BRANCH is detached at the default branch tip. The base tool (action=\"path\") prints that directory. Until devstack builds the replica, status shows the checkout in its place.\n"+
+			"PATH and BRANCH name the code that the process runs. A shared service runs from the replica, and not from the user's checkout. So its BRANCH is detached at the default branch tip. The shared tool (action=\"path\") prints that directory. Until devstack builds the replica, status shows the checkout in its place.\n"+
 			"Status values:\n"+
 			"  running   the process is up.\n"+
 			"  starting  the copy is on its way up.\n"+
@@ -216,8 +216,8 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			"  disabled  somebody switched the resource off in the daemon.\n"+
 			"  down      the copy is not registered in the daemon, because its stack is down. Bring the stack up with stack_up.\n"+
 			"  unknown   the daemon reported no state for it.\n"+
-			"status also shows a summary of the groups. To see a feature stack's copies, pass stack."),
-		mcp.WithString("stack", mcp.Description(stackParamDesc)),
+			"With no stack, status shows the shared set, then each stack. Pass stack to see one stack and a summary of its groups."),
+		mcp.WithString("stack", mcp.Description("Optional. The SHORT name of one stack to show. With no stack, status shows the shared set, then each stack.")),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -240,9 +240,6 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			return mcp.NewToolResultText(targetHeader(t.label) + "Tilt runs, and no services are loaded yet. Tilt can still be on its way up."), nil
 		}
 
-		// Build a map of service name -> status for the groups summary.
-		svcStatus := make(map[string]string, len(view.UiResources))
-
 		rw, _ := config.ResolveWorkspace(ws.Path)
 		wsEnv := ""
 		if rw != nil {
@@ -255,62 +252,39 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			}
 		}
 
-		checkouts := gitinfo.ReadAll(serviceDirs)
-
-		rows := [][]string{{"SERVICE", "STATUS", "PORT(S)", "PATH", "BRANCH", "GROUP", "ENV", "RELOAD", "ERROR"}}
-		var failures, waits []string
-		prefix := ws.Name + ":"
-		for _, r := range view.UiResources {
-			svc, stackNS, ok := splitHostResource(r.Metadata.Name, prefix)
-			if !ok || stackNS != t.namespace {
-				continue
-			}
-			name := svc
-			status := mcpServiceStatus(r)
-			svcStatus[name] = status
-			ports := mcpExtractPorts(r.Status.EndpointLinks)
-			lastError := ""
-			if len(r.Status.BuildHistory) > 0 {
-				lastError = r.Status.BuildHistory[0].Error
-			}
-			if len(lastError) > 50 {
-				lastError = lastError[:47] + "..."
-			}
-			if status == "erroring" {
-				if reason := t.client.FailureReason(r); len(reason) > 0 {
-					failures = append(failures, fmt.Sprintf("%s\n  %s", name, strings.Join(reason, "\n  ")))
-				}
-			} else if reason := tilt.StateReason(r, view.UiResources); reason != "" {
-				waits = append(waits, fmt.Sprintf("%s (%s)\n  %s", name, status, reason))
-			}
-			path := shortenPath(serviceDirs[svc])
-			group := serviceGroup(name, cfg)
-			svcEnv := ""
-			reload := coreReloadUnknown
-			if rw != nil {
-				if rs, ok := rw.Services[svc]; ok {
-					if rs.Manifest != nil {
-						svcEnv = rs.Manifest.Service.Env
-					}
-					reload = coreReloadMode(rs.Manifest, rs.RepoPath)
-				}
-			}
-			env := config.ActiveEnvName(wsEnv, svcEnv, stackEnv)
-			if env == "" {
-				env = "-"
-			}
-			branch := checkouts[svc].Label()
-			if branch == "" {
-				branch = "-"
-			}
-			rows = append(rows, []string{name, status, ports, path, branch, group, env, reload, lastError})
-		}
-
 		var sb strings.Builder
 		sb.WriteString(targetHeader(t.label))
 		sb.WriteString("Tilt is running.\n\n")
-		sb.WriteString(renderColumns(rows))
-		sb.WriteString("\nPATH and BRANCH are the directory this copy runs from. A * marks uncommitted changes.\nA branch that you did not expect means that the process does not hold the work you look for.\nFor base that directory is the replica, and not the checkout devstack built it from. An edit in the checkout reaches a running base copy after three steps: put it on the default branch, run the base tool (action=\"sync\"), then restart that copy (restart tool, stack=\"base\"). In a shell, `devstack workspace up` does all three.\nRELOAD auto means that an edit in the directory a copy runs from applies on its own. RELOAD manual means that you must restart that copy after an edit. If you do not restart it, the copy keeps the old code.\n")
+		if t.namespace == "" {
+			sb.WriteString("shared set:\n")
+		}
+		section := statusSection(t.client, view, ws.Name, t.namespace, serviceDirs, cfg, rw, wsEnv, stackEnv)
+		sb.WriteString(renderColumns(section.rows))
+		failures, waits := section.failures, section.waits
+
+		if t.namespace == "" {
+			if recs, err := stack.LoadStore(ws.Name); err == nil {
+				sort.Slice(recs, func(i, j int) bool { return recs[i].Name < recs[j].Name })
+				for _, rec := range recs {
+					fmt.Fprintf(&sb, "\nstack %s:\n", rec.Name)
+					if !rec.Active {
+						fmt.Fprintf(&sb, "  down. To bring it up, use stack_up (CLI: devstack stack up %s).\n", rec.Name)
+						continue
+					}
+					stackCfg, _ := config.Load(rec.Root)
+					if stackCfg == nil {
+						stackCfg = cfg
+					}
+					stackRW, _ := stack.ResolveWorktree(&rec)
+					st := statusSection(t.client, view, ws.Name, rec.Name, rec.Worktrees, stackCfg, stackRW, wsEnv, rec.Env)
+					sb.WriteString(renderColumns(st.rows))
+					failures = append(failures, st.failures...)
+					waits = append(waits, st.waits...)
+				}
+			}
+		}
+
+		sb.WriteString("\nPATH and BRANCH are the directory this copy runs from. A * marks uncommitted changes.\nA branch that you did not expect means that the process does not hold the work you look for.\nA shared service runs from the replica, and not from your checkout. An edit in the checkout reaches it after three steps: put it on the default branch, run the shared tool (action=\"sync\"), then restart that service. In a shell, `devstack workspace up` does all three.\nRELOAD auto means that an edit in the directory a copy runs from applies on its own. RELOAD manual means that you must restart that copy after an edit. If you do not restart it, the copy keeps the old code.\n")
 
 		if len(failures) > 0 {
 			sb.WriteString("\nwhy the erroring copies stopped. Each block gives the command the copy ran and the output before it stopped:\n")
@@ -326,14 +300,14 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			}
 		}
 
-		if len(cfg.Groups) > 0 {
+		if t.namespace != "" && len(cfg.Groups) > 0 {
 			sb.WriteString("\ngroups:\n")
 			for _, groupName := range sortedGroupKeys(cfg.Groups) {
 				members := cfg.Groups[groupName]
 				healthy := 0
 				parts := make([]string, 0, len(members))
 				for _, m := range members {
-					st := svcStatus[m]
+					st := section.status[m]
 					if st == "" {
 						st = "unknown"
 					}
@@ -350,32 +324,67 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			sb.WriteString("\n⚠ observability is enabled for this workspace, and the collector is NOT running. devstack captures no telemetry. To start the collector, run: devstack otel start\n")
 		}
 
-		if t.label == "" {
-			if footer := otherStacksFooter(ws); footer != "" {
-				sb.WriteString(footer)
-			}
-		}
-
 		return mcp.NewToolResultText(sb.String()), nil
 	})
 }
 
-// otherStacksFooter notes the workspace's in-flight feature stacks so an agent
-// working on the base sees that other versions exist. Empty when the workspace
-// has no stacks.
-func otherStacksFooter(ws *workspace.Workspace) string {
-	if ws == nil {
-		return ""
+type statusRows struct {
+	rows     [][]string
+	failures []string
+	waits    []string
+	status   map[string]string
+}
+
+func statusSection(client *tilt.Client, view *tilt.TiltView, wsName, namespace string, serviceDirs map[string]string, cfg *config.WorkspaceConfig, rw *config.ResolvedWorkspace, wsEnv, stackEnv string) statusRows {
+	out := statusRows{
+		rows:   [][]string{{"SERVICE", "STATUS", "PORT(S)", "PATH", "BRANCH", "GROUP", "ENV", "RELOAD", "ERROR"}},
+		status: map[string]string{},
 	}
-	stacks, err := stack.List(ws.Name)
-	if err != nil || len(stacks) == 0 {
-		return ""
+	checkouts := gitinfo.ReadAll(serviceDirs)
+	prefix := wsName + ":"
+	for _, r := range view.UiResources {
+		svc, stackNS, ok := splitHostResource(r.Metadata.Name, prefix)
+		if !ok || stackNS != namespace {
+			continue
+		}
+		status := mcpServiceStatus(r)
+		out.status[svc] = status
+		ports := mcpExtractPorts(r.Status.EndpointLinks)
+		lastError := ""
+		if len(r.Status.BuildHistory) > 0 {
+			lastError = r.Status.BuildHistory[0].Error
+		}
+		if len(lastError) > 50 {
+			lastError = lastError[:47] + "..."
+		}
+		if status == "erroring" {
+			if reason := client.FailureReason(r); len(reason) > 0 {
+				out.failures = append(out.failures, fmt.Sprintf("%s\n  %s", svc, strings.Join(reason, "\n  ")))
+			}
+		} else if reason := tilt.StateReason(r, view.UiResources); reason != "" {
+			out.waits = append(out.waits, fmt.Sprintf("%s (%s)\n  %s", svc, status, reason))
+		}
+		svcEnv := ""
+		reload := coreReloadUnknown
+		if rw != nil {
+			if rs, ok := rw.Services[svc]; ok {
+				if rs.Manifest != nil {
+					svcEnv = rs.Manifest.Service.Env
+				}
+				reload = coreReloadMode(rs.Manifest, rs.RepoPath)
+			}
+		}
+		env := config.ActiveEnvName(wsEnv, svcEnv, stackEnv)
+		if env == "" {
+			env = "-"
+		}
+		branch := checkouts[svc].Label()
+		if branch == "" {
+			branch = "-"
+		}
+		out.rows = append(out.rows, []string{svc, status, ports, shortenPath(serviceDirs[svc]), branch, serviceGroup(svc, cfg), env, reload, lastError})
 	}
-	parts := make([]string, 0, len(stacks))
-	for _, s := range stacks {
-		parts = append(parts, fmt.Sprintf("%s(%s, base :%d)", s.Name, s.Status, s.BasePort))
-	}
-	return fmt.Sprintf("\nfeature stacks of %s: %s\n", ws.Name, strings.Join(parts, ", "))
+	return out
 }
 
 // maxColWidth caps how wide any one column may grow, so a single verbose cell
