@@ -156,6 +156,28 @@ func TestResyncReportsTheBranchInARepoOutsideTheStack(t *testing.T) {
 	}
 }
 
+func TestResyncSkipsARepoTheStackRunsAServiceFrom(t *testing.T) {
+	base := newMonoBase(t)
+	noDaemon(t)
+	created, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"agent-rag"}})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	addOrigin(t, filepath.Join(base.Path, "mono"))
+	git(t, worktreesByService(created)["agent-rag"].RepoPath, "push", "-q", "origin", "feat")
+	backend := addOrigin(t, filepath.Join(base.Path, "backend"))
+	pushTo(t, backend, "feat", map[string]string{"b.txt": "backend\n"})
+
+	res, err := Resync(base, "feat", (&fakeRestart{}).restart)
+	if err != nil {
+		t.Fatalf("Resync: %v", err)
+	}
+	want := []OutsideRepo{{Repo: "backend", Services: []string{"backend"}}}
+	if !reflect.DeepEqual(res.Outside, want) {
+		t.Errorf("Outside = %+v, want %+v", res.Outside, want)
+	}
+}
+
 func TestResyncNotesAFailingOriginAndGoesOn(t *testing.T) {
 	base, _, origin := newResyncStack(t)
 	tip := pushFeat(t, origin, "pushed.txt")
