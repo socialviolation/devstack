@@ -172,13 +172,12 @@ down, the command says so, and it prints the configuration that the copy would
 run with.
 
   --stack <name>  the stack's worktree of the service
-  --stack base    base's copy, read from the replica that base runs from
-  no --stack      the stack that holds the current directory. This command reads
-                  a stack worktree, so it refuses in a plain checkout. It does
-                  not fall back to base. For base, pass --stack base.
+  no --stack      the stack that holds the current directory. In a plain
+                  checkout, a shared service only. devstack reads it from the
+                  replica that the shared set runs from.
 
-For base, the replica is the truth, and not your checkout: base runs the replica
-worktrees. If devstack has built no replica yet, run 'devstack workspace up'.`,
+A service that is not shared runs only in a stack, so it needs --stack. If
+devstack has built no replica yet, run 'devstack workspace up'.`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackConfig,
@@ -343,7 +342,7 @@ func init() {
 	stackSweepCmd.Flags().Bool("dry-run", false, "Print the stacks past their stop time, and stop none")
 	stackGCCmd.Flags().Bool("dry-run", false, "Print the stacks past their stop time, and stop none")
 	stackRemoveCmd.Flags().Bool("force", false, "Remove worktrees even if they have uncommitted changes. This destroys that work. You can not recover it")
-	stackConfigCmd.Flags().String("stack", "", "Which copy to read: a stack name, or \"base\" for base's copy. Default: the stack that holds the current directory. In a plain checkout this command refuses, so pass \"base\" there")
+	stackConfigCmd.Flags().String("stack", "", "Which stack to read. Default: the stack that holds the current directory. In a plain checkout, devstack reads a shared service from the replica")
 }
 
 func runStackCreate(cmd *cobra.Command, args []string) error {
@@ -775,10 +774,6 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 	service := args[0]
 	stackName, _ := cmd.Flags().GetString("stack")
 
-	if stackName == "base" {
-		return runBaseConfig(service)
-	}
-
 	var rec *stack.Record
 	var err error
 	if stackName != "" {
@@ -789,8 +784,8 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 		rec, err = stack.Resolve(base.Name, stackName)
 	} else {
 		_, rec, err = stack.DetectFromCwd()
-		if err != nil {
-			return fmt.Errorf("this directory is not inside a feature stack. Pass --stack <name>, or --stack base for base")
+		if err != nil || rec == nil {
+			return runSharedConfig(service)
 		}
 	}
 	if err != nil {
@@ -843,25 +838,31 @@ func runStackConfig(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runBaseConfig is `stack config --stack base`. Base is not a stack and has no
-// record, so it resolves through the replica instead: base runs from the
-// replica worktrees, and the checkout is only the template they were built
-// from.
-func runBaseConfig(service string) error {
+func runSharedConfig(service string) error {
 	ws, err := resolveWorkspace(viper.GetString("workspace"))
 	if err != nil {
 		return err
 	}
+	template, err := config.ResolveWorkspace(ws.Path)
+	if err != nil {
+		return err
+	}
+	if _, ok := template.Services[service]; !ok {
+		return fmt.Errorf("service %q is not in workspace %q. Its services: %s", service, ws.Name, strings.Join(sortedServiceNames(template), ", "))
+	}
+	if err := stack.RequireShared(template, []string{service}, "--stack <name>"); err != nil {
+		return err
+	}
 	rw, err := replica.Resolve(ws)
 	if errors.Is(err, replica.ErrNotBuilt) {
-		return fmt.Errorf("devstack has not built the replica of workspace %q, and base runs from it. There is no configuration to read yet. To build the replica, run: devstack workspace up", ws.Name)
+		return fmt.Errorf("devstack has not built the replica of workspace %q. The shared set runs from it, so there is no configuration to read yet. To build the replica, run: devstack workspace up", ws.Name)
 	}
 	if err != nil {
-		return fmt.Errorf("base runs from the replica of workspace %q. The replica is stale or incomplete. To rebuild it, run: devstack workspace up. devstack could not read it: %w", ws.Name, err)
+		return fmt.Errorf("the shared set runs from the replica of workspace %q. The replica is stale or incomplete. To rebuild it, run: devstack workspace up. devstack could not read it: %w", ws.Name, err)
 	}
 	svc, ok := rw.Services[service]
 	if !ok {
-		return fmt.Errorf("service %q is not in workspace %q. Its services: %s", service, ws.Name, strings.Join(sortedServiceNames(rw), ", "))
+		return fmt.Errorf("the replica of workspace %q does not hold shared service %q. To rebuild it, run: devstack workspace up", ws.Name, service)
 	}
 
 	entries, err := svcconfig.EffectiveConfig(svc, ws.Name)
@@ -872,9 +873,9 @@ func runBaseConfig(service string) error {
 	tense := "the configuration it runs with"
 	if !ws.Active {
 		tense = "the configuration it would run with"
-		fmt.Printf("Base is down. Nothing runs with this configuration now. To start base, run: devstack workspace up\n")
+		fmt.Printf("The workspace is down, so the shared set does not run. To start it, run: devstack workspace up\n")
 	}
-	printConfigTable(service, "base", tense, entries)
+	printConfigTable(service, "the shared set", tense, entries)
 	fmt.Printf("\ndevstack reads this from the replica at %s. To change it, put the change on the default branch, then run: devstack workspace up\n", svc.RepoPath)
 	fmt.Printf("A secret value appears as %s.\n", svcconfig.MaskedValue)
 
@@ -1044,11 +1045,8 @@ func runStackDown(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// stackFlagRecord maps a --stack flag to the stack record it names. An absent
-// flag and the literal "base" both name base, which is not a stack and has no
-// record, so both return a nil record and no error.
 func stackFlagRecord(wsName, stackName string) (*stack.Record, error) {
-	if stackName == "" || stackName == "base" {
+	if stackName == "" {
 		return nil, nil
 	}
 	return stack.Resolve(wsName, stackName)

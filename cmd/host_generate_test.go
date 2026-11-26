@@ -54,11 +54,13 @@ func TestRegenerateHostTiltfilePrefixesActiveWorkspaceAndStack(t *testing.T) {
 	}
 	out := string(data)
 
-	if !strings.Contains(out, `"navexa:backend"`) {
-		t.Fatalf("host Tiltfile missing workspace-prefixed base resource navexa:backend:\n%s", out)
+	if !strings.Contains(out, `"navexa:db"`) {
+		t.Fatalf("host Tiltfile missing the shared resource navexa:db:\n%s", out)
 	}
-	if !strings.Contains(out, `"navexa:frontend"`) {
-		t.Fatalf("host Tiltfile missing workspace-prefixed base resource navexa:frontend:\n%s", out)
+	for _, unstacked := range []string{`"navexa:backend"`, `"navexa:frontend"`} {
+		if strings.Contains(out, unstacked) {
+			t.Fatalf("host Tiltfile runs stack service %s outside a stack:\n%s", unstacked, out)
+		}
 	}
 	if !strings.Contains(out, `"navexa:backend:feat"`) {
 		t.Fatalf("host Tiltfile missing prefixed+namespaced stack resource navexa:backend:feat:\n%s", out)
@@ -83,8 +85,8 @@ func TestRunGenerateWritesHostTiltfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runGenerate did not write host Tiltfile at %s: %v", hostPath, err)
 	}
-	if !strings.Contains(string(data), `"navexa:backend"`) {
-		t.Fatalf("host Tiltfile missing workspace-prefixed resource navexa:backend:\n%s", data)
+	if !strings.Contains(string(data), `"navexa:db"`) {
+		t.Fatalf("host Tiltfile missing the shared resource navexa:db:\n%s", data)
 	}
 }
 
@@ -99,7 +101,7 @@ func TestRegenerateHostTiltfileExcludesInactiveWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read host Tiltfile: %v", err)
 	}
-	if strings.Contains(string(data), "navexa:backend") {
+	if strings.Contains(string(data), "navexa:") {
 		t.Fatalf("inactive workspace leaked into host Tiltfile:\n%s", data)
 	}
 }
