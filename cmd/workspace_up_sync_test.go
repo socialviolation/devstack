@@ -102,10 +102,10 @@ func TestWorkspaceUpSyncsTheSharedSetAndThenStartsIt(t *testing.T) {
 	if !strings.Contains(body, "syncShared(ws, os.Stdout)") {
 		t.Error("'workspace up' does not move the replica, so the shared set falls behind the default branch")
 	}
-	if !strings.Contains(body, "startShared(os.Stdout, ws)") {
+	if !strings.Contains(body, "hostdaemon.StartShared(os.Stdout, ws)") {
 		t.Error("'workspace up' does not start the shared set")
 	}
-	if strings.Index(body, "syncShared(ws, os.Stdout)") > strings.Index(body, "startShared(os.Stdout, ws)") {
+	if strings.Index(body, "syncShared(ws, os.Stdout)") > strings.Index(body, "hostdaemon.StartShared(os.Stdout, ws)") {
 		t.Error("'workspace up' starts the shared set before it moves the replica")
 	}
 }

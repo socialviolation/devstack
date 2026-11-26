@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
@@ -78,4 +79,48 @@ func SyncShared(w io.Writer, ws *workspace.Workspace, restart func(string) (bool
 		fmt.Fprintf(w, "✓ Restarted: %s\n", strings.Join(res.Restarted, ", "))
 	}
 	return err
+}
+
+func StartShared(w io.Writer, ws *workspace.Workspace) error {
+	template, err := config.ResolveWorkspace(ws.Path)
+	if err != nil {
+		return err
+	}
+	names := template.SharedNames()
+	if len(names) == 0 {
+		return nil
+	}
+	client := tilt.NewClient("localhost", workspace.HostTiltPort)
+	for _, note := range SyncAndReload(client, ScopeAll()) {
+		fmt.Fprintln(w, note)
+	}
+	view, err := client.GetView()
+	if err != nil {
+		return fmt.Errorf("devstack can not reach the host daemon, so it starts no shared service: %w", err)
+	}
+	byName := map[string]tilt.UIResource{}
+	for _, r := range view.UiResources {
+		byName[r.Metadata.Name] = r
+	}
+	var started []string
+	for _, n := range names {
+		rn := stack.ResourceName(ws.Name, n, "")
+		r, ok := byName[rn]
+		if !ok || runningResource(r) {
+			continue
+		}
+		if r.Status.DisableStatus != nil && r.Status.DisableStatus.State == "Disabled" {
+			if out, err := client.RunCLI("enable", rn); err != nil {
+				return fmt.Errorf("devstack can not enable %s: %v\n%s", rn, err, out)
+			}
+		}
+		if out, err := client.RunCLI("trigger", rn); err != nil {
+			return fmt.Errorf("devstack can not start %s: %v\n%s", rn, err, out)
+		}
+		started = append(started, n)
+	}
+	if len(started) > 0 {
+		fmt.Fprintf(w, "✓ Started the shared services: %s\n", strings.Join(started, ", "))
+	}
+	return nil
 }

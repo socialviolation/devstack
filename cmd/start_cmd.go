@@ -148,7 +148,7 @@ func bringWorkspaceUp() (*workspace.Workspace, error) {
 	if err := syncShared(ws, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
-	if err := startShared(os.Stdout, ws); err != nil {
+	if err := hostdaemon.StartShared(os.Stdout, ws); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 

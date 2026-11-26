@@ -419,11 +419,7 @@ func runStackAdd(cmd *cobra.Command, args []string) error {
 	if len(res.Added) > 0 {
 		fmt.Printf("Added to stack %q (branch %s):\n", res.StackName, res.Branch)
 		for _, m := range res.Added {
-			note := "pulled in (calls an added service)"
-			if m.Reason == "changed" {
-				note = "added"
-			}
-			fmt.Printf("  %-16s %s\n", m.Service, note)
+			fmt.Printf("  %-16s %s\n", m.Service, m.Describe())
 		}
 	}
 	for _, wt := range res.Worktrees {
@@ -944,12 +940,23 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 	}
 	herdr.Bind(base.Name, rec.Name)
 	defer herdr.Notify()
+	if !config.HasWorkspaceManifest(replica.Root(base)) {
+		if _, err := ensureReplica(base); err != nil {
+			return err
+		}
+	}
+	for _, w := range stack.RecordWarnings(rec) {
+		fmt.Fprintf(os.Stderr, "WARNING: %s\n", w)
+	}
 
 	if _, _, err := regenerateHostTiltfileScope(hostdaemon.ScopeStack(base.Name, rec.Name)); err != nil {
 		return fmt.Errorf("can not generate the host Tiltfile again: %w", err)
 	}
 	if err := ensureHostDaemon(); err != nil {
 		return err
+	}
+	if err := hostdaemon.StartShared(os.Stdout, base); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 
 	tiltClient := tilt.NewClient("localhost", workspace.HostTiltPort)

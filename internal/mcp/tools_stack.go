@@ -15,6 +15,7 @@ import (
 	"github.com/socialviolation/devstack/internal/hooks"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/mcp/auth"
+	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -246,11 +247,7 @@ func registerStackAddTool(mcpServer *server.MCPServer, ws *workspace.Workspace) 
 			fmt.Fprintf(&sb, "Added %s to stack %q (branch %s).\n", strings.Join(added, ", "), res.StackName, res.Branch)
 		}
 		for _, m := range res.Added {
-			reason := "calls an added service"
-			if m.Reason == "changed" {
-				reason = "added"
-			}
-			fmt.Fprintf(&sb, "  %-16s %s\n", m.Service, reason)
+			fmt.Fprintf(&sb, "  %-16s %s\n", m.Service, m.Describe())
 		}
 		sb.WriteString("\nNew worktrees:\n")
 		for _, wt := range res.Worktrees {
@@ -660,6 +657,12 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 		}
 		bindPane(ctx, ws, rec.Name)
 		defer herdr.Notify()
+		var sharedOut strings.Builder
+		if !config.HasWorkspaceManifest(replica.Root(ws)) {
+			if err := sharedReplicaBuild(ws, &sharedOut); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+		}
 		_, genWarnings, _, err := hostdaemon.RegenerateScope(hostdaemon.ScopeStack(ws.Name, rec.Name))
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("can not generate the host Tiltfile again: %v", err)), nil
@@ -669,8 +672,14 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		for _, w := range genWarnings {
+		for _, w := range append(genWarnings, stack.RecordWarnings(rec)...) {
 			daemonMsg += "\nWARNING: " + w
+		}
+		if err := hostdaemon.StartShared(&sharedOut, ws); err != nil {
+			daemonMsg += "\nWARNING: " + err.Error()
+		}
+		if out := strings.TrimSpace(sharedOut.String()); out != "" {
+			daemonMsg += "\n" + out
 		}
 
 		tiltClient := tilt.NewClient("localhost", workspace.HostTiltPort)
