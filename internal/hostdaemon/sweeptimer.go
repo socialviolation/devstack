@@ -49,7 +49,16 @@ func InstallSweepTimer(bin string) (installed bool, err error) {
 		}
 	}
 	if same {
-		return false, nil
+		if systemctlUser("is-enabled", SweepUnit+".timer") == nil && systemctlUser("is-active", SweepUnit+".timer") == nil {
+			return false, nil
+		}
+		if err := systemctlUser("daemon-reload"); err != nil {
+			return false, err
+		}
+		if err := systemctlUser("enable", "--now", SweepUnit+".timer"); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return false, fmt.Errorf("can not create %s: %w", dir, err)

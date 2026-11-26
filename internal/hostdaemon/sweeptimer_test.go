@@ -1,6 +1,7 @@
 package hostdaemon
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,9 +44,10 @@ func TestInstallSweepTimerWritesBothUnitsOnce(t *testing.T) {
 
 	*calls = nil
 	installed, err = InstallSweepTimer("/opt/bin/devstack")
-	if err != nil || installed || len(*calls) != 0 {
-		t.Errorf("second install = %v, %v with calls %v; want a skip", installed, err, *calls)
+	if got := strings.Join(*calls, "; "); err != nil || installed || got != "is-enabled devstack-sweep.timer; is-active devstack-sweep.timer" {
+		t.Errorf("second install = %v, %v with calls %q; want a check and a skip", installed, err, got)
 	}
+	*calls = nil
 
 	installed, err = InstallSweepTimer("/usr/local/bin/devstack")
 	if err != nil || !installed || len(*calls) != 2 {
@@ -53,5 +55,34 @@ func TestInstallSweepTimerWritesBothUnitsOnce(t *testing.T) {
 	}
 	if service, _ := os.ReadFile(filepath.Join(dir, "devstack-sweep.service")); !strings.Contains(string(service), "ExecStart=/usr/local/bin/devstack tick\n") {
 		t.Errorf("service unit after the move = %q", service)
+	}
+}
+
+func TestInstallSweepTimerEnablesATimerThatIsNotEnabled(t *testing.T) {
+	for _, check := range []string{"is-enabled", "is-active"} {
+		t.Run(check, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			calls := fakeSystemctl(t)
+			if _, err := InstallSweepTimer("/opt/bin/devstack"); err != nil {
+				t.Fatal(err)
+			}
+			*calls = nil
+			ok := systemctlUser
+			systemctlUser = func(args ...string) error {
+				_ = ok(args...)
+				if args[0] == check {
+					return errors.New("disabled")
+				}
+				return nil
+			}
+
+			installed, err := InstallSweepTimer("/opt/bin/devstack")
+			if err != nil || !installed {
+				t.Errorf("install = %v, %v; want installed", installed, err)
+			}
+			if got := strings.Join(*calls, "; "); !strings.HasSuffix(got, "daemon-reload; enable --now devstack-sweep.timer") {
+				t.Errorf("systemctl calls = %q, want a reload and an enable", got)
+			}
+		})
 	}
 }
