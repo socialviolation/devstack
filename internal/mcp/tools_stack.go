@@ -91,7 +91,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		mcp.WithBoolean("detach",
 			mcp.Description("If true, devstack cuts every worktree detached at the default branch tip, with no branch. Use it to run the default branch. Do not combine it with branch.")),
 		mcp.WithString("from",
-			mcp.Description("The git ref that devstack cuts the worktrees from, for example 'origin/release-2' or a commit SHA. The default is each repo's default branch, as origin has it. The default is never whatever the user's checkout has checked out, because that checkout is a template and it can hold parked work. This applies only where devstack creates the branch. Where the branch already exists, the worktree attaches to it with the history it already has.")),
+			mcp.Description("The git ref that devstack cuts the worktrees from, for example 'origin/release-2' or a commit SHA. The default is each repo's default branch, as origin has it. The default is never whatever the user's checkout has checked out, because that checkout is the source and it can hold parked work. This applies only where devstack creates the branch. Where the branch already exists, the worktree attaches to it with the history it already has.")),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),

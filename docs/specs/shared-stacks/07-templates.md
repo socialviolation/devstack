@@ -1,4 +1,4 @@
-# 07 — Stack templates
+# 07 — Templates
 
 Status: implemented. Date: 2026-11-27.
 
@@ -11,7 +11,7 @@ Status: implemented. Date: 2026-11-27.
 
 ## Change
 
-The workspace manifest takes a `templates:` key. A stack template is a
+The workspace manifest takes a `templates:` key. A template is a
 named recipe for a new stack. It never runs anything. It is not in Tilt,
 in `status`, or in a group command.
 
@@ -33,7 +33,7 @@ devstack refuses to load the manifest if:
 
 - a name in `services` is not a service and not a group;
 - `env` is not in `environments:`;
-- a stack template has the same name as a service or a group;
+- a template has the same name as a service or a group;
 - `services` is empty.
 
 A shared service in `services` is skipped, not refused, as in a group.
@@ -60,6 +60,5 @@ members = named ∪ needs-closure(named) − shared
 
 ## Term
 
-README already uses "template" for the owner's checkout. Docs say
-"stack template" for this feature. The manifest key and the flag say
-`template`.
+"Template" means only this feature. The owner's checkout, which docs
+once called the template, is now the "source".

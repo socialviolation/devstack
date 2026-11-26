@@ -738,7 +738,7 @@ func runStackList(cmd *cobra.Command, args []string) error {
 
 var stackTemplatesCmd = &cobra.Command{
 	Use:          "templates",
-	Short:        "List the stack templates of the workspace",
+	Short:        "List the templates of the workspace",
 	Long:         "List the templates in the workspace manifest. A template is a recipe for a new stack: services, groups and an optional environment. A template never runs anything. To use one, run 'devstack stack create <name> --template <template>'.",
 	Args:         cobra.NoArgs,
 	SilenceUsage: true,

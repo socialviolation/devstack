@@ -19,7 +19,7 @@ const workspaceManifestTemplate = `# devstack workspace manifest. This file is t
 # manifests, then run 'devstack workspace up' or 'devstack workspace generate' to
 # write the Tiltfile again.
 #
-# This directory is the TEMPLATE. Nothing runs here. 'devstack workspace up'
+# This directory is the SOURCE. Nothing runs here. 'devstack workspace up'
 # builds a REPLICA from it: one git worktree for each repository that holds a
 # shared service, at its default branch tip, in a .devstack-base directory beside
 # this one. The shared set runs there. Every other service runs only in a stack.

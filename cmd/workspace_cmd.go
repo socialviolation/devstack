@@ -33,7 +33,7 @@ machine-wide collector.
 The daemon does not run your checkouts. The shared set runs from a replica that
 devstack builds beside the workspace: one git worktree for each repository that
 holds a shared service, at its default branch tip. Every other service runs
-only in a stack, from the stack's own worktrees. Your checkout is the template.
+only in a stack, from the stack's own worktrees. Your checkout is the source.
 'devstack workspace up' builds the replica, and it moves each worktree to the
 current default branch tip.
 

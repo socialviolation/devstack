@@ -51,15 +51,15 @@ func TestStackCreateSaysWhereWorktreesAreCutFrom(t *testing.T) {
 }
 
 // service_env writes files in a checkout. For base that checkout is the
-// template, so a write there does not reach the running copy on a restart alone
+// source, so a write there does not reach the running copy on a restart alone
 // — the description has to say what does.
 func TestServiceEnvSaysABaseWriteNeedsASync(t *testing.T) {
 	tool := listEnvStackTools(t)["service_env"]
 	if !strings.Contains(tool.Description, "devstack workspace up") {
 		t.Errorf("service_env must say how a base write reaches the running copy: %s", tool.Description)
 	}
-	if desc := tool.InputSchema.Properties["stack"].Description; !strings.Contains(desc, "template") {
-		t.Errorf("the stack parameter must name the base checkout as the template: %s", desc)
+	if desc := tool.InputSchema.Properties["stack"].Description; !strings.Contains(desc, "source") {
+		t.Errorf("the stack parameter must name the base checkout as the source: %s", desc)
 	}
 }
 
