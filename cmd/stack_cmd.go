@@ -92,8 +92,9 @@ services that it runs keep their ports.
 
 Each named service gets a worktree on the stack's branch. The services that it
 needs come in too, in the same way that 'stack create' brings them in. A name that
-is already in the stack is reported, and that is not an error. If you name
-nothing new at all, that is an error.
+is already in the stack on its branch is reported, and that is not an error. A
+named member on a detached HEAD moves to the stack's branch, so you can commit
+in it. If you name nothing new at all, that is an error.
 
 The stack stays exactly as up, or as down, as it was. If the stack is up, the
 added services become resources in the host daemon, and devstack does not start

@@ -69,7 +69,8 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 	tool := mcp.NewTool("stack_create",
 		mcp.WithDescription("Create a feature stack in THIS workspace. A stack runs only the services you name, the members of the groups you name, and the services they need. Each one runs in its own git worktree, on a port devstack allocates. Use this tool for the request 'I need a stack to work on X in services A and B'.\n"+
 			"A 'needs' edge in devstack.service.yaml pulls a service in. A 'calls' edge does not. devstack never pulls in the services that call a member. If a member calls or references a service that the stack does not run, devstack warns and names stack_add. Decide if the change needs that service. "+
-			"A shared service is never in a stack. Every stack uses the one shared set.\n"+
+			"A shared service is never in a stack. Every stack uses the one shared set. "+
+			"A named service gets the stack's branch. A service that comes in through needs is detached at the default branch tip. To commit in one, name it with stack_add.\n"+
 			"devstack cuts each worktree from that repo's DEFAULT BRANCH as origin has it, and not from whatever the user's checkout has checked out. So a stack starts from what the team shipped, and half-finished work parked in a checkout is not dragged into it. To override this, use the 'from' parameter. To run the default branch with no branch of your own, use detach=true.\n"+
 			"Creation does not start the stack. A new stack is down, and stack_up is what runs it.\n"+
 			"Every stack stops 24 hours after create. stack_up sets the stop time to 24 hours from then. stack_extend adds up to 24 hours. devstack only stops a stack at its stop time. It never removes one.\n"+
@@ -80,7 +81,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		mcp.WithString("repos", mcp.Required(),
 			mcp.Description("Comma-separated exact service OR group names that this stack changes (for example 'frontend,backend' or 'core'). A group expands to its members. devstack adds the services that they need. A service that they only call does not come in, and devstack warns about it. A shared service is refused.")),
 		mcp.WithString("note",
-			mcp.Description("What this stack is for, in the author's words: a ticket URL, an issue key, or a sentence. devstack never derives this: the branch says what changed, and the note says why. stack_list shows it. It is optional, and you can edit it later with the CLI: devstack stack note <name> \"...\"")),
+			mcp.Description("What this stack is for, in the author's words: a ticket URL, an issue key, or a sentence. devstack never derives this: the branch says what changed, and the note says why. stack_list shows it. It is optional. To edit it later, call stack_note.")),
 		mcp.WithString("branch",
 			mcp.Description("Git branch for the worktrees of the changed repos. devstack creates it where it is absent, and attaches to it where it already exists. The default is the stack name.")),
 		mcp.WithBoolean("detach",
@@ -181,8 +182,8 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 func registerStackAddTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_add",
 		mcp.WithDescription("Add services to a feature stack of THIS workspace that already exists. Use this tool for 'the stack needs service C as well'. The alternative is stack_rm plus stack_create, and that throws away the stack's branches, its worktrees, and any uncommitted work in them.\n"+
-			"Each named service gets its own git worktree on the stack's existing branch, and its own allocated port. devstack also adds the services they need, exactly as stack_create does. It never adds the services that call them. Everything already in the stack is left alone: the same worktrees, the same branch tips, and the same ports its services already serve on.\n"+
-			"The stack stays as up, or as down, as it was. If it is up, the added services become resources in the host daemon, and devstack does NOT start them. Start them with the start tool, or report the command to the user. A service already in the stack is reported as already present, and it is not an error. If every name you give is already there, the call fails, because there is nothing to add.\n"+
+			"Each named service gets its own git worktree on the stack's existing branch, and its own allocated port. devstack also adds the services they need, exactly as stack_create does. It never adds the services that call them. Everything already in the stack is left alone: the same worktrees, the same branch tips, and the same ports its services already serve on. The one exception: a named member on a detached HEAD moves to the stack's branch, so you can commit in it.\n"+
+			"The stack stays as up, or as down, as it was. If it is up, the added services become resources in the host daemon, and devstack does NOT start them. Start them with the start tool, or report the command to the user. A service already in the stack on its branch is reported as already present, and it is not an error. If every name you give is already there, the call fails, because there is nothing to add.\n"+
 			"This workspace can declare lifecycle HOOKS: shell commands that devstack runs on its own. Here they are scoped to the ADDED services only, so devstack re-provisions nothing that is already in the stack. stack.create fires for them, and stack.up fires too when the stack is up. Their output is in the result below. A hook failure is returned as an error, and it means that the services were added and are NOT fully provisioned. Do not report success. See the hooks tool. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(requiredStackNameDesc)),

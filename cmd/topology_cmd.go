@@ -13,7 +13,7 @@ var topologyCmd = &cobra.Command{
 	Use:   "topology [service]",
 	Short: "Explain the workspace, or one service's resolved configuration",
 	Long: `With no arguments, devstack shows the resolved workspace and environment. It
-also shows the service graph: the groups, the dependencies and the dependents.
+also shows the service graph: the groups, and what each service needs and calls.
 
 With a service name, devstack shows that service's fully resolved configuration.
 It also shows where each value comes from.`,

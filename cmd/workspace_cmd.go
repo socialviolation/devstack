@@ -43,7 +43,7 @@ SUBCOMMANDS
   devstack workspace down       stop the shared set and every stack, and the daemon if no workspace needs it
   devstack workspace add        register a directory as a workspace
   devstack workspace remove     remove a workspace from the registry
-  devstack workspace topology   the service graph: groups, dependencies, dependents
+  devstack workspace topology   the service graph: groups, needs, calls
   devstack workspace doctor     examine the manifests and the topology for problems
   devstack workspace generate   rebuild the host daemon's Tiltfile from the manifests
   devstack workspace open       open the dev daemon dashboard in the browser`,

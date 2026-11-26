@@ -29,8 +29,8 @@ var upgradeCmd = &cobra.Command{
      'devstack migrate' through the devstack that was just installed, and never
      through this one.
   3. Transform the running state. devstack regenerates the daemon's Tiltfile and
-     restarts each copy that runs now, so that what runs comes from the replica
-     and not from your checkout.
+     restarts each shared service that runs now, so that it runs from the
+     replica. It restarts no copy in a stack.
 
 An upgrade is explicit on purpose. devstack manages a daemon that runs services
 right now. If you replace the binary under a live MCP server, the running process
@@ -41,8 +41,8 @@ An MCP server reads its tool descriptions once, when it starts. A session that
 already runs therefore keeps the old tool list. Restart that session after the
 upgrade.
 
-CAUTION: Step 3 restarts services that serve right now. devstack restarts only
-the copies that were already running. It starts no copy that is stopped, and it
+CAUTION: Step 3 restarts shared services that serve right now. Every stack
+uses them. devstack restarts only the copies that were already running. It starts no copy that is stopped, and it
 starts no daemon. Each replica worktree is a new checkout, so a service can need
 its own dependency install before it serves again. This step is slow.
 

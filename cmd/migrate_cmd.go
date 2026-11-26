@@ -94,8 +94,8 @@ Run this command again at any time. A second run changes nothing.
 
 A stack worktree is on a feature branch. devstack removes the block there, and it
 stages nothing and commits nothing. Read that change and commit it. If you leave
-it, the branch keeps the block, and a merge returns the block to your base. An
-uncommitted change also stops 'devstack stack rm'.`,
+it, the branch keeps the block, and a merge returns the block to your default
+branch. An uncommitted change also stops 'devstack stack rm'.`,
 	SilenceUsage: true,
 	RunE:         runMigrate,
 }

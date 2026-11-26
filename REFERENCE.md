@@ -58,7 +58,7 @@ devstack shared path [svc]    # the replica root, or one shared service's worktr
 devstack status --all         # the DIR column: the directory each copy runs from
 ```
 
-The MCP `shared` tool gives an agent the same three actions: `action="status"`, `action="path"` and `action="sync"`. `devstack base` is a hidden old name for `devstack shared`. It prints a warning.
+The MCP `shared` tool has the same three actions: `action="status"`, `action="path"` and `action="sync"`. An agent can call only `action="path"`. `devstack base` is a hidden old name for `devstack shared`. It prints a warning.
 
 Every stack reads and writes the same shared data. A migration that one stack runs changes the database for every stack.
 
@@ -83,7 +83,7 @@ devstack workspace remove <name>
 devstack workspace up         # start the daemon and the shared set
 devstack workspace down       # stop the shared set and every stack; the daemon stops if nothing else needs it
 devstack workspace doctor     # check manifests and topology integrity
-devstack workspace topology   # the service graph: groups, dependencies, dependents
+devstack workspace topology   # the service graph: groups, needs, calls
 devstack workspace generate   # rebuild the daemon's Tiltfile from the manifests
 devstack workspace open       # dev daemon dashboard
 ```
@@ -93,7 +93,7 @@ devstack workspace open       # dev daemon dashboard
 ## Services
 
 ```bash
-devstack service start   [name] --stack <name>     # and its old-map dependencies
+devstack service start   [name] --stack <name>     # and the services it needs
 devstack service restart [name] --stack <name>     # the target alone
 devstack service stop    [name] --stack <name>
 devstack group   start|stop|restart <group>       # every service in the group
@@ -103,7 +103,7 @@ devstack workspace topology [service]
 
 Commands are noun first: `devstack <noun> <action> [target]`. A name can be both a service and a group, so the noun says which one you mean. devstack never guesses. If you name nothing after `service`, devstack works out the service from your working directory.
 
-`start` brings up first the services that the old workspace `dependencies:` map lists for the target. If the dev daemon is down, `start` also boots it. `restart` acts on the target alone. `status` collapses the groups and stacks that run nothing. To see them, pass `--all`.
+`start` brings up first the services that the target `needs`. If the dev daemon is down, `start` also boots it. `restart` acts on the target alone. `status` collapses the groups and stacks that run nothing. To see them, pass `--all`.
 
 Each of `start`, `stop` and `restart` changes what is running, so each one acts on one copy. Read [Naming the copy](#naming-the-copy).
 
@@ -267,7 +267,7 @@ devstack stack remove <name> <service> [service...]
 
 ### The stop time
 
-Every stack has a stop time. `stack create` sets it to the create time plus 24 hours. `stack up` sets it to now plus 24 hours. The MCP tool `stack_extend` pushes it back: to the later of the stop time and now, plus the hours you give. One call adds 24 hours at most. `DEVSTACK_STOP_AFTER` changes the 24-hour window.
+Every stack has a stop time. `stack create` sets it to the create time plus 24 hours. `stack up` sets it to now plus 24 hours. `devstack stack extend` (MCP: `stack_extend`) pushes it back: to the later of the stop time and now, plus the hours you give. One call adds 24 hours at most. `DEVSTACK_STOP_AFTER` changes the 24-hour window.
 
 `devstack stack sweep` stops each stack that is up and past its stop time, in every workspace of this machine. A stop is the same as `stack down`: the `stack.down` hooks fire, and the host daemon drops the stack. devstack keeps the worktrees, the ports and the record. The sweep never removes a stack. `stack list` shows the stop time of each stack that is up, and when the sweep stopped a stack.
 
@@ -747,6 +747,7 @@ If an older file still carries `DEVSTACK_WORKSPACE` or `TILT_PORT`, refresh it w
 | `DEVSTACK_DEFAULT_SERVICE` | — | Service used when a command or tool is given no name |
 | `DEVSTACK_DAEMON_HOST` | `localhost` | Host daemon host. Legacy alias: `TILT_HOST` |
 | `OTELCOL_BIN` | found on `$PATH` | Path to the `otelcol-contrib` binary |
+| `DEVSTACK_STOP_AFTER` | `24h` | Time from `stack create` or `stack up` to the stop time. `~/.devstack/config.json` takes `stop_after` too |
 
 You cannot configure the port of the daemon. One daemon serves the machine on `:10300`, and every command reaches the daemon there.
 
@@ -754,7 +755,7 @@ You cannot configure the port of the daemon. One daemon serves the machine on `:
 
 | Artifact | Location | Commit? | Why |
 |----------|----------|---------|-----|
-| `devstack.workspace.yaml` | workspace root | Yes | The source of truth: services, groups, dependencies and environments. It is portable and holds no machine paths. |
+| `devstack.workspace.yaml` | workspace root | Yes | The source of truth: services, groups, the shared set and environments. It is portable and holds no machine paths. |
 | `devstack.service.yaml`, `devstack.<name>.yaml` | service repo | No | The service manifests of that directory. Machine-local: each one holds absolute tool paths. Gitignore them. |
 | `.mcp.json` | service repo | Yes | Generated, and it does not depend on the machine. |
 | `AGENTS.md` | service repo | Yes | Yours. devstack writes nothing in it. `devstack migrate` removes the block an older devstack wrote. |
@@ -799,7 +800,7 @@ devstack status               # make sure that the daemon and the services still
 
 1. It installs the current devstack. It refuses to move a local build backwards. To install anyway, give `--force`.
 2. It runs each pending migration. A migration is one-off: devstack records it, and it never runs a second time. To skip this step, give `--no-migrate`.
-3. It transforms the running state. devstack regenerates the daemon's Tiltfile and restarts each copy that runs now, so that what runs comes from the replica and not from your checkout. To skip this step, give `--no-restart`.
+3. It transforms the running state. devstack regenerates the daemon's Tiltfile and restarts each shared service that runs now, so that it runs from the replica. It restarts no copy in a stack. To skip this step, give `--no-restart`.
 
 CAUTION: Step 3 restarts services that serve right now. devstack restarts only the copies that were already running. It starts no copy that is stopped, and it starts no daemon. Each replica worktree is a new checkout, so a service can need its own dependency install before it serves again. This step is slow.
 

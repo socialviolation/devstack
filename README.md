@@ -10,7 +10,7 @@ Devstack runs on [Tilt](https://tilt.dev). One daemon serves the whole machine. 
 
 Your services live in many repositories. To run one, you first run the ones that it depends on. You hold that map in your head.
 
-devstack holds the map. Then it gives you three things:
+devstack holds the map. Then it gives you four things:
 
 - **Two features at one time.** A [feature stack](REFERENCE.md#feature-stacks) runs the services that a feature needs, from git worktrees, on its own ports. Databases and stores run once, as the [shared set](REFERENCE.md#the-shared-set-and-the-replica). Neither feature blocks the other.
 - **A stack that stops by itself.** Each stack stops 24 hours after you create it or bring it up. devstack keeps its worktrees, so `stack up` starts it again.
@@ -92,7 +92,7 @@ devstack status            # make sure that the daemon and the services still an
 
 Nothing upgrades on its own. devstack runs a daemon that serves right now, so an upgrade is explicit. The session briefing tells you when one is worth doing.
 
-`upgrade` installs the current devstack, runs each pending migration, then restarts each copy that runs now. To read what a migration does, and change nothing, run `devstack migrate --list`.
+`upgrade` installs the current devstack, runs each pending migration, then restarts each shared service that runs now. To read what a migration does, and change nothing, run `devstack migrate --list`.
 
 CAUTION: The restart step acts on services that serve right now. devstack restarts only the copies that were already running. This step is slow.
 
@@ -114,7 +114,7 @@ The flags are in [Updating devstack](REFERENCE.md#updating-devstack).
 | Replica | One git worktree for each repository that holds a shared service, under `<parent>/.devstack-base/<workspace>/`. devstack builds the replica from the template. Each worktree is detached at the default branch tip of its repository. |
 | Feature stack | The services that one feature needs, in git worktrees, on their own ports. Its members are the services that you name, and every service that they `need`. A service that a member only `calls` does not come in. Every service that is not shared runs only in a stack. |
 | Copy | One running process of a service. A shared service has one copy. Each stack that has a service as a member runs its own copy. |
-| Stop time | The time when devstack stops a stack. It is 24 hours after `stack create` or `stack up`. `stack_extend` pushes it back. devstack keeps the worktrees, and never removes the stack. |
+| Stop time | The time when devstack stops a stack. It is 24 hours after `stack create` or `stack up`. `devstack stack extend` pushes it back. devstack keeps the worktrees, and never removes the stack. |
 | Environment | A named set of configuration values (`environments:` in the workspace manifest). devstack applies it at workspace scope, service scope or stack scope. It sets where a service points. |
 | Hook | A shell command that devstack runs on a lifecycle event, for example a stack created or a service started. A disposable stack uses hooks to provision and de-provision the state that it needs outside this machine. |
 
