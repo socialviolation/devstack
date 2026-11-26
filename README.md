@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/logo.svg" alt="devstack" width="480"></p>
+<p align="center"><img src="docs/logo.png" alt="devstack" width="480"></p>
 
 <img width="1672" height="941" alt="ChatGPT Image Jul 22, 2026, 03_59_46 PM" src="https://github.com/user-attachments/assets/7b9c8b3e-5f8f-4298-9870-60073ee4f2db" />
 
