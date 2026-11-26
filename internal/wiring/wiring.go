@@ -34,9 +34,9 @@ type Link struct {
 	Stack    *Hop
 }
 
-func (l Link) Flag(stackLabel string) string {
+func (l Link) Flag(stackLabel string, isShared func(string) bool) string {
 	switch {
-	case l.Stack != nil && l.Stack.Target == "shared":
+	case l.Stack != nil && l.Stack.Target == "shared" && !isShared(l.To):
 		return fmt.Sprintf("stack %s %s → %s at its declared port", stackLabel, l.From, l.To)
 	case l.Base != nil && l.Base.Target != "" && l.Base.Target != "shared":
 		return fmt.Sprintf("%s with no stack → stack %s %s", l.From, l.Base.Target, l.To)

@@ -154,7 +154,7 @@ func renderWiring(m wiring.Map, edges map[[2]string]string, service string, stac
 				writeHop(&sb, label, l.Key, l.To, l.Stack, true, isShared)
 			}
 		}
-		if flag := l.Flag(label); flag != "" {
+		if flag := l.Flag(label, isShared); flag != "" {
 			fmt.Fprintf(&sb, "    ! %s\n", flag)
 		}
 	}

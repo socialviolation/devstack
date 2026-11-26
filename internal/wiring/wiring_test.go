@@ -121,6 +121,8 @@ func find(t *testing.T, m Map, from, key, to string) Link {
 	return Link{}
 }
 
+func noShared(string) bool { return false }
+
 func TestDeriveReferenceEdges(t *testing.T) {
 	services, deps, base, stack := copies(t)
 	m := Derive(services, deps, base, stack)
@@ -135,8 +137,11 @@ func TestDeriveReferenceEdges(t *testing.T) {
 	if l.Stack.Value != "http://localhost:5001/v1" || l.Stack.Target != "shared" {
 		t.Errorf("stack hop = %+v", l.Stack)
 	}
-	if got := l.Flag("feat"); got != "stack feat web → api at its declared port" {
+	if got := l.Flag("feat", noShared); got != "stack feat web → api at its declared port" {
 		t.Errorf("flag = %q", got)
+	}
+	if got := l.Flag("feat", func(s string) bool { return s == "api" }); got != "" {
+		t.Errorf("flag for an edge to the shared api = %q, want none", got)
 	}
 }
 
@@ -149,7 +154,7 @@ func TestDeriveStackSuffixFollowsTheStackCopy(t *testing.T) {
 	if l.Stack.Value != "orders-feat" || l.Stack.Target != "feat" {
 		t.Errorf("stack hop = %+v", l.Stack)
 	}
-	if got := l.Flag("feat"); got != "" {
+	if got := l.Flag("feat", noShared); got != "" {
 		t.Errorf("flag = %q, want none", got)
 	}
 }
@@ -161,7 +166,7 @@ func TestDeriveLiteralBasePortInAStackIsFlagged(t *testing.T) {
 	if l.Via != "literal port 5002" || l.Stack.Target != "shared" {
 		t.Errorf("link = %+v stack = %+v", l, l.Stack)
 	}
-	if got := l.Flag("feat"); got != "stack feat web → worker at its declared port" {
+	if got := l.Flag("feat", noShared); got != "stack feat web → worker at its declared port" {
 		t.Errorf("flag = %q", got)
 	}
 	for _, l := range m.Links {
@@ -177,7 +182,7 @@ func TestDeriveBaseReachingIntoAStackIsFlagged(t *testing.T) {
 	if l.Base.Target != "feat" || l.Stack != nil {
 		t.Errorf("base = %+v stack = %+v", l.Base, l.Stack)
 	}
-	if got := l.Flag("feat"); got != "web with no stack → stack feat worker" {
+	if got := l.Flag("feat", noShared); got != "web with no stack → stack feat worker" {
 		t.Errorf("flag = %q", got)
 	}
 }
