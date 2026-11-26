@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/herdr"
@@ -78,6 +79,20 @@ func TestASystemdHostDoesNotSweepBeforeACommand(t *testing.T) {
 	sweepIfDirect(start.Add(time.Hour))
 	if *n != 0 {
 		t.Errorf("a systemd host swept %d times before a command, want 0", *n)
+	}
+}
+
+func TestCommandsThatMoveTheStopTimeDoNotSweepFirst(t *testing.T) {
+	n := countDirectSweeps(t, false)
+	for _, c := range []*cobra.Command{stackExtendCmd, stackUpCmd} {
+		rootCmd.PersistentPreRun(c, nil)
+		if *n != 0 {
+			t.Fatalf("%s swept %d times before it ran, want 0", c.CommandPath(), *n)
+		}
+	}
+	rootCmd.PersistentPreRun(stackListCmd, nil)
+	if *n != 1 {
+		t.Errorf("stack list swept %d times before it ran, want 1", *n)
 	}
 }
 

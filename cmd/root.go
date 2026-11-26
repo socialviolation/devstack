@@ -58,7 +58,7 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(initConfig)
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
-		if cmd != tickCmd && cmd != stackSweepCmd && cmd != stackGCCmd {
+		if cmd != tickCmd && cmd != stackSweepCmd && cmd != stackGCCmd && cmd != stackExtendCmd && cmd != stackUpCmd {
 			sweepIfDirect(time.Now())
 		}
 	}
