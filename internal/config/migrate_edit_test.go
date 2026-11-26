@@ -48,6 +48,28 @@ calls:
 	}
 }
 
+func TestRemoveLegacyEdgeMapsKeepsTheCommentOfTheNextKey(t *testing.T) {
+	for name, gap := range map[string]string{"no blank line": "", "blank line": "\n"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeManifest(t, dir, "version: 2\nworkspace:\n  name: w\n  repoDiscovery:\n    repos: [./a]\n"+
+				"# start order\ndependencies:\n  a: [b]\n  c: [d]\n# hooks run on events\n"+gap+"environments:\n  dev: {}\n")
+
+			if err := RemoveLegacyEdgeMaps(dir); err != nil {
+				t.Fatal(err)
+			}
+
+			out := readManifest(t, dir)
+			if !strings.Contains(out, "# hooks run on events\nenvironments:") {
+				t.Errorf("the comment above environments is gone:\n%s", out)
+			}
+			if strings.Contains(out, "dependencies") || strings.Contains(out, "# start order") {
+				t.Errorf("the dependencies map or its comment is still there:\n%s", out)
+			}
+		})
+	}
+}
+
 func TestSetSharedGoesAboveGroups(t *testing.T) {
 	dir := t.TempDir()
 	writeManifest(t, dir, "version: 2\nworkspace:\n  name: w\n  repoDiscovery:\n    repos: [./a]\ngroups:\n  core: [a]\n")

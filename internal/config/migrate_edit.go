@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -38,7 +39,7 @@ func RemoveLegacyEdgeMaps(workspacePath string) error {
 				if root.Content[i].Value != key {
 					continue
 				}
-				foot := trailingFootComment(root.Content[i+1])
+				foot := trailingFootComment(root.Content[i], root.Content[i+1])
 				root.Content = append(root.Content[:i], root.Content[i+2:]...)
 				if foot != "" && i < len(root.Content) {
 					next := root.Content[i]
@@ -55,22 +56,19 @@ func RemoveLegacyEdgeMaps(workspacePath string) error {
 	})
 }
 
-func trailingFootComment(n *yaml.Node) string {
-	foot := n.FootComment
-	if n.Kind == yaml.MappingNode && len(n.Content) >= 2 {
-		k, v := n.Content[len(n.Content)-2], n.Content[len(n.Content)-1]
-		for _, c := range []string{v.FootComment, k.FootComment} {
-			if c == "" {
-				continue
-			}
-			if foot == "" {
-				foot = c
-			} else {
-				foot = c + "\n" + foot
-			}
+func trailingFootComment(key, value *yaml.Node) string {
+	nodes := []*yaml.Node{}
+	if value.Kind == yaml.MappingNode && len(value.Content) >= 2 {
+		nodes = append(nodes, value.Content[len(value.Content)-2], value.Content[len(value.Content)-1])
+	}
+	nodes = append(nodes, value, key)
+	var parts []string
+	for _, n := range nodes {
+		if n.FootComment != "" {
+			parts = append(parts, n.FootComment)
 		}
 	}
-	return foot
+	return strings.Join(parts, "\n")
 }
 
 func AddServiceEdges(manifestPath string, calls, needs []string) error {
