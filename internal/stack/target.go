@@ -7,9 +7,6 @@ import (
 )
 
 func ResolveTarget(ws *workspace.Workspace, name string) (string, error) {
-	if name == "base" {
-		return "", nil
-	}
 	if name != "" {
 		return name, nil
 	}

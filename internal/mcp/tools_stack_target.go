@@ -20,14 +20,15 @@ const stackParamDesc = "Optional. Name a feature stack to act on instead of base
 	"Those copies run in the one host daemon as <workspace>:<service>:<stack> resources. The tool also reads that stack's worktree config. " +
 	"On THIS tool, absent means base."
 
-// Separate from stackParamDesc because the working directory decides first on a
-// mutating tool: base runs from a replica, not from the checkouts, so an agent
-// that omits this parameter must know which copy the directory selects.
-const mutatingStackParamDesc = "Which copy to act on: a feature stack's SHORT name (for example 'import-review'), or the literal \"base\". " + baseTermDesc +
+const mutatingStackParamDesc = "Which stack to act on: the stack's SHORT name (for example 'import-review'). " +
+	"If you omit this parameter, the server's working directory decides. A stack worktree selects that stack. " +
+	"Every other directory selects no stack. Then only a shared service resolves: a service in the workspace \"shared:\" list. " +
+	"A service that is not shared runs only in a stack, so the call fails and asks for this parameter. " +
+	"Every stack uses a shared service. If you restart or stop one, you restart or stop the copy that every stack uses."
+
+const envStackParamDesc = "Which copy to act on: a feature stack's SHORT name (for example 'import-review'), or the literal \"base\". " + baseTermDesc +
 	"If you omit this parameter, the server's working directory decides the copy. A stack worktree selects that stack. base's replica selects base. " +
-	"Every other directory selects base, which is the fallback. " +
-	"This tool changes what runs. Every stack and every engineer shares base. If you act on base, you restart or stop the copy they all use. " +
-	"So name the copy: write the stack's short name. If you intend base, write \"base\"."
+	"Every other directory selects base, which is the fallback."
 
 // resolveStackRecord looks up a feature stack by short name within the bound
 // (base) workspace, returning a clear error that lists the available stack names
@@ -88,7 +89,7 @@ type localTarget struct {
 // clear error (never a hang) when the stack is unknown, base's daemon is down, or
 // the stack is not active.
 func resolveLocalTarget(ws *workspace.Workspace, base localTarget, stackName string) (localTarget, error) {
-	if stackName == "" || stackName == "base" {
+	if stackName == "" {
 		return base, nil
 	}
 	rec, err := resolveStackRecord(ws, stackName)
@@ -252,4 +253,15 @@ func onTarget(label, msg string) string {
 		return msg
 	}
 	return msg + " [" + label + "]"
+}
+
+func requireSharedNoStack(ws *workspace.Workspace, t localTarget, services []string) error {
+	if t.namespace != "" || ws == nil {
+		return nil
+	}
+	rw, err := config.ResolveWorkspace(ws.Path)
+	if err != nil {
+		return nil
+	}
+	return stack.RequireShared(rw, services, `stack="<name>"`)
 }

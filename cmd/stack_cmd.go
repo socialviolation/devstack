@@ -26,23 +26,19 @@ import (
 
 var stackCmd = &cobra.Command{
 	Use:   "stack",
-	Short: "Create and manage feature stacks that overlay a base workspace",
-	Long: `A feature stack runs some of a base workspace's services from their own git
-worktrees. For every other service the stack uses base's copy.
+	Short: "Create and manage feature stacks",
+	Long: `A feature stack runs the services that a feature needs, from their own git
+worktrees, on their own ports. Its members are the services that you name and
+the services that they need. A service that a member only calls does not come
+in.
 
-Only the services that you change get a worktree and an allocated port. The
-services that call them get one too. All the other services resolve to base's
-copies.
+A shared service is a service in the workspace "shared:" list. It runs once for
+the workspace, and never in a stack. Every stack uses it. Every other service
+runs only in a stack.
 
-"base" is the workspace that runs with no stack. Base does not run from your
-checkouts. Base runs from a replica that devstack keeps: one git worktree for
-each service, at the default branch tip. Your checkout is the template, and
-devstack builds the replica from it.
-
-Base is not a stack, and no stack can carry the name "base". A command that
-starts, stops or writes takes --stack base to act on base. With no --stack, it
-acts on the stack or the replica that your directory is in, and on base anywhere
-else.
+No stack can carry the name "base". A command that starts, stops or writes a
+service that is not shared takes --stack <name>. With no --stack, it acts on the
+stack that your directory is in.
 
 The telemetry queries are the exception. 'devstack otel traces' with no --stack
 searches base alone. Pass --stack <name> for one stack, or --stack all for base
@@ -54,10 +50,16 @@ Never edit stacks.json, ports.json or a stack manifest by hand; use stack add/re
 
 var stackCreateCmd = &cobra.Command{
 	Use:   "create <name> --repos a,b",
-	Short: "Create a feature stack overlaying the base workspace",
+	Short: "Create a feature stack",
 	Long: `Create a feature stack. devstack makes a git worktree and allocates a port for
-each service that you name. It does the same for the services that call them.
-Every other service resolves to base's copy.
+each service that you name. It does the same for each service that they need,
+and prints the needs chain that pulled it in. A shared service is never a member.
+If a member calls a service that is not in the stack, devstack warns. To add
+that service, run 'devstack stack add'.
+
+A named service gets the stack's branch. A service that comes in through needs
+is detached at the default branch tip. With --detach, every worktree is
+detached, and the stack has no branch. Use it to run the default branch.
 
 A stack starts from what the team shipped. devstack cuts each worktree from that
 repo's default branch. Where the repo has a remote, devstack uses origin's copy
@@ -84,8 +86,8 @@ var stackAddCmd = &cobra.Command{
 The worktrees that the stack has keep their branches and their work. The copies
 that it runs keep their ports.
 
-Each named service gets a worktree on the stack's branch. The services that call
-it come in too, in the same way that 'stack create' brings them in. A name that
+Each named service gets a worktree on the stack's branch. The services that it
+needs come in too, in the same way that 'stack create' brings them in. A name that
 is already in the stack is reported, and that is not an error. If you name
 nothing new at all, that is an error.
 
@@ -325,7 +327,7 @@ func init() {
 	stackCmd.AddCommand(stackDownCmd)
 	stackCmd.AddCommand(stackStatusCmd)
 
-	stackCreateCmd.Flags().String("repos", "", "Service or group names that this stack changes, separated by commas. A group expands to its members")
+	stackCreateCmd.Flags().String("repos", "", "Service or group names that this stack runs, separated by commas. A group expands to its members. devstack adds the services that they need")
 	stackCreateCmd.Flags().String("branch", "", "Branch for the changed repos (default: the stack name). devstack attaches to it if it already exists")
 	stackCreateCmd.Flags().Bool("detach", false, "Cut every worktree detached at the default branch tip, with no branch. Use it to run the default branch")
 	stackCreateCmd.Flags().String("from", "", "Ref that devstack cuts the worktrees from (default: each repo's default branch, origin's copy of it where there is one). Never what your checkout has checked out")
@@ -656,7 +658,7 @@ func runStackList(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	color.New(color.Faint).Println("SERVICES is the overlay: the services this stack runs its own copy of. It uses base's copy of every other service.")
 	color.New(color.Faint).Println("STATUS up means registered, not running. Each copy has its own state. Show it with: devstack status --stack <name>")
-	color.New(color.Faint).Println("\"covers group g (3/4 — x serves from base)\" is a group this stack was cut to cover. The stack overlays 3 of the 4 members. x is base's copy, and everybody shares it. A group action reaches only the members the stack overlays.")
+	color.New(color.Faint).Println("\"covers group g (3/4). x is not in this stack\" is a group this stack was cut to cover. The stack runs 3 of the 4 members. A group action reaches only the members the stack runs.")
 	color.New(color.Faint).Println("Set what a stack is for with: devstack stack note <name> \"...\". Record where the work got to with --add")
 	return nil
 }
@@ -1039,7 +1041,7 @@ func stackFlagRecord(wsName, stackName string) (*stack.Record, error) {
 // root. A stack is operable only when the host daemon is up and the stack is active
 // (its resources are in the host Tiltfile).
 func resolveStackTarget(base *workspace.Workspace, stackName string) (port int, namespace string, root string, label string, err error) {
-	if stackName == "" || stackName == "base" {
+	if stackName == "" {
 		return workspace.HostTiltPort, "", base.Path, "", nil
 	}
 	rec, err := stack.Resolve(base.Name, stackName)

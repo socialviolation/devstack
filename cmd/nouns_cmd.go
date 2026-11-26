@@ -43,11 +43,10 @@ start, stop and restart change what runs, so they also name the copy to act on:
 --stack <name>, or --stack base. With no flag they use the copy whose directory
 you are in, and base anywhere else.
 
-A stack rarely overlays a whole group. With --stack <name>, the action reaches
-only the members that the stack runs its own copy of. devstack names the members
-that still serve from base. If no member of the group is in the stack, devstack
-refuses. It does not narrow the group without a word to you. To act on the
-members that stay on base, run the same command with --stack base.`,
+A stack rarely runs a whole group. With --stack <name>, the action reaches
+only the members that the stack runs. devstack names the members that are not
+in this stack. If no member of the group is in the stack, devstack refuses. It
+does not narrow the group without a word to you.`,
 	RunE: runGroupsList,
 }
 

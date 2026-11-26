@@ -88,7 +88,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description("Short stack name (for example 'import-review'). The full stack identity becomes '<base>--<name>'. Every stack parameter across these tools takes the short name.")),
 		mcp.WithString("repos", mcp.Required(),
-			mcp.Description("Comma-separated exact service OR group names that this stack changes (for example 'frontend,backend' or 'core'). A group expands to its members. devstack pulls the services that call any of them into the overlay. A group reaches only as far as the overlay does. A member that devstack does not pull in keeps serving from base, and stack_list reports the shortfall.")),
+			mcp.Description("Comma-separated exact service OR group names that this stack changes (for example 'frontend,backend' or 'core'). A group expands to its members. devstack adds the services that they need. A service that they only call does not come in, and devstack warns about it. A shared service is refused.")),
 		mcp.WithString("note",
 			mcp.Description("What this stack is for, in the author's words: a ticket URL, an issue key, or a sentence. devstack never derives this: the branch says what changed, and the note says why. stack_list shows it. It is optional, and you can edit it later with the CLI: devstack stack note <name> \"...\"")),
 		mcp.WithString("branch",
@@ -197,7 +197,7 @@ func registerStackAddTool(mcpServer *server.MCPServer, ws *workspace.Workspace) 
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(requiredStackNameDesc)),
 		mcp.WithString("services", mcp.Required(),
-			mcp.Description("Comma-separated exact service OR group names to add (for example 'billing' or 'core'). A group expands to its members, and devstack records the group on the stack. devstack pulls the services that call any of them into the overlay.")),
+			mcp.Description("Comma-separated exact service OR group names to add (for example 'billing' or 'core'). A group expands to its members, and devstack records the group on the stack. devstack adds the services that they need. A shared service is refused.")),
 		mcp.WithString("from",
 			mcp.Description("The git ref that devstack cuts the NEW worktrees from, for example 'origin/release-2' or a commit SHA. The default is each repo's default branch, as origin has it. This applies only where the stack's branch does not yet exist in that repo. Where it does exist, the worktree attaches to it with the history it already has. It never affects the worktrees the stack already has.")),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -411,7 +411,7 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			"A status of up means that devstack folded the stack's resources into the host daemon. A status of down means that the worktrees and the record exist, and that nothing of the stack is registered. So the tools that act on running services error \"not up\" for it.\n"+
 			"A stack that is up can still hold copies that do not run. \"up\" is about the stack, and each copy has its own state: running, starting, building, erroring, stopped, disabled, down, or unknown. Read those states with status.\n"+
 			"Telemetry and daemon resources name a stack by its full identity '<base>--<name>'. This tool prints the short '<name>' half, and every stack parameter across these tools takes that short half.\n"+
-			"A 'covers group ...' line appears for each group the stack was cut to cover. 'covers group core (3/4 — importer serves from base)' means that the stack overlays three of that group's four members. The fourth is base's copy, which everybody shares. A group action against the stack reaches only the members it overlays. "+serviceLinksDesc),
+			"A 'covers group ...' line appears for each group the stack was cut to cover. 'covers group core (3/4). importer is not in this stack' means that the stack runs three of that group's four members. A group action against the stack reaches only the members it runs. "+serviceLinksDesc),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -472,7 +472,7 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 				fmt.Fprintf(&sb, "  links:    %s\n", strings.Join(links, " "))
 			}
 		}
-		sb.WriteString("\noverlays are the services this stack runs its own copy of. It borrows every other service from base.\n")
+		sb.WriteString("\nThe members are the services this stack runs. It uses the shared services of the workspace. It runs no other service.\n")
 		return mcp.NewToolResultText(sb.String()), nil
 	})
 }

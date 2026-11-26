@@ -45,8 +45,8 @@ func TestResolveTarget(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "explicit stack beats the directory", flag: "feat", dir: replicaDir, want: "feat"},
-		{name: "explicit base beats the directory", flag: "base", dir: worktree, want: ""},
-		{name: "base is base, not a stack called base", flag: "base", dir: checkout, want: ""},
+		{name: "the name base is passed on for the stack lookup to reject", flag: "base", dir: worktree, want: "base"},
+		{name: "base names no workspace copy any more", flag: "base", dir: checkout, want: "base"},
 		{name: "a stack worktree is that stack", dir: worktree, want: "feat"},
 		{name: "the replica is base", dir: replicaDir, want: ""},
 		{name: "an unknown name is left for the copy lookup to reject", flag: "nope", dir: checkout, want: "nope"},

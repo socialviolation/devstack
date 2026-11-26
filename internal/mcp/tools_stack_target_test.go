@@ -387,7 +387,15 @@ func TestMutatingToolsDocumentThatAbsentIsNotBase(t *testing.T) {
 	registerEnvTools(s, ws, ws.Path)
 
 	tools := listTools(t, s)
-	for _, name := range []string{"start", "stop", "restart", "env_use"} {
+	for _, name := range []string{"start", "stop", "restart"} {
+		desc := tools[name].InputSchema.Properties["stack"].Description
+		for _, want := range []string{"working directory decides", "shared", "the call fails"} {
+			if !strings.Contains(desc, want) {
+				t.Errorf("%s's stack parameter must state %q: %s", name, want, desc)
+			}
+		}
+	}
+	for _, name := range []string{"env_use"} {
 		desc := tools[name].InputSchema.Properties["stack"].Description
 		if !strings.Contains(desc, "working directory decides") {
 			t.Errorf("%s's stack parameter must say the directory decides: %s", name, desc)

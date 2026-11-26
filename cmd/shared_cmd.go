@@ -13,6 +13,7 @@ import (
 	"github.com/socialviolation/devstack/internal/gitinfo"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/replica"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
@@ -265,4 +266,15 @@ func startShared(w io.Writer, ws *workspace.Workspace) error {
 		fmt.Fprintf(w, "✓ Started the shared services: %s\n", strings.Join(started, ", "))
 	}
 	return nil
+}
+
+func requireSharedWithoutStack(ws *workspace.Workspace, namespace string, services []string) error {
+	if namespace != "" {
+		return nil
+	}
+	rw, err := config.ResolveWorkspace(ws.Path)
+	if err != nil {
+		return err
+	}
+	return stack.RequireShared(rw, services, "--stack <name>")
 }

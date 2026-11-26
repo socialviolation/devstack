@@ -122,7 +122,9 @@ func runEnvUse(cmd *cobra.Command, args []string) error {
 
 	stackName, _ := cmd.Flags().GetString("stack")
 	svcName, _ := cmd.Flags().GetString("service")
-	if svcName == "" {
+	if stackName == "base" {
+		stackName = ""
+	} else if svcName == "" {
 		if stackName, err = stack.ResolveTarget(ws, stackName); err != nil {
 			return err
 		}

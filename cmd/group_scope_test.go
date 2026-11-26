@@ -46,7 +46,7 @@ groups:
 
 // A stack half-covering a group resolves to that half and says nothing, so
 // "start core" reads as three services started when it started one.
-func TestGroupActionInAStackNamesWhatStaysOnBase(t *testing.T) {
+func TestGroupActionInAStackNamesWhatIsNotInIt(t *testing.T) {
 	ws := baseWithCore(t)
 	stackCfg := &config.WorkspaceConfig{Groups: map[string][]string{"core": {"api"}}}
 
@@ -62,7 +62,7 @@ func TestGroupActionInAStackNamesWhatStaysOnBase(t *testing.T) {
 
 	// The wording is Coverage.Sentence, the one formatter every shortfall
 	// notice shares. A second hand-rolled sentence here drifted from it.
-	for _, want := range []string{"(1/3)", "feat", "frontend", "orbit", "base"} {
+	for _, want := range []string{"(1/3)", "feat", "frontend", "orbit", "not in this stack"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("shortfall notice must mention %q, got: %s", want, out)
 		}

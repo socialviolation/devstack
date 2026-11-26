@@ -100,3 +100,12 @@ func RecordWarnings(rec *Record) []string {
 	}
 	return OutsideWarnings(baseRW, rec.Members)
 }
+
+func RequireShared(rw *config.ResolvedWorkspace, services []string, how string) error {
+	for _, svc := range services {
+		if _, ok := rw.Services[svc]; ok && !rw.IsShared(svc) {
+			return fmt.Errorf("%q is not a shared service, so it runs only in a stack. Name the stack: %s", svc, how)
+		}
+	}
+	return nil
+}

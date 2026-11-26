@@ -701,6 +701,9 @@ func registerRestartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, d
 			}
 			members = []string{name}
 		}
+		if err := requireSharedNoStack(ws, t, members); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 		targets := make([]string, 0, len(members))
 		for _, svc := range members {
 			targets = append(targets, resourceName(ws.Name, svc, t.namespace))
@@ -862,6 +865,9 @@ func registerStartTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, def
 			}
 			seeds = []string{name}
 		}
+		if err := requireSharedNoStack(ws, t, seeds); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		ordered, err := coreStartOrder(cfg, seeds)
 		if err != nil {
@@ -987,6 +993,11 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 				return mcp.NewToolResultError("no service specified, and this repo has no default service. Pass service, group, or all=true to stop every service"), nil
 			}
 		}
+		if name != "" {
+			if err := requireSharedNoStack(ws, t, []string{name}); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+		}
 
 		view, err := tiltClient.GetView()
 		if err != nil {
@@ -997,6 +1008,9 @@ func registerStopTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, defa
 		if groupName != "" {
 			members, groupNote, err := targetGroupMembers(ws, t, groupName)
 			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			if err := requireSharedNoStack(ws, t, members); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 
@@ -1232,6 +1246,11 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		// Only apply defaultService when no group is specified.
 		if name == "" && groupName == "" {
 			name = defaultService
+		}
+		if name != "" {
+			if err := requireSharedNoStack(ws, t, []string{name}); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 		}
 
 		lines := int(request.GetFloat("lines", 100))

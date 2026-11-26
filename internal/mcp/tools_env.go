@@ -37,7 +37,7 @@ func registerEnvUseTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 		mcp.WithString("service",
 			mcp.Description("Exact service name to point at the env. This selects the service scope. You can not combine it with stack.")),
 		mcp.WithString("stack",
-			mcp.Description(mutatingStackParamDesc+" A stack name points that stack at the env, which is the stack scope. \"base\" sets the workspace default. You can not combine this with service. service selects the service scope, and it names no copy.")),
+			mcp.Description(envStackParamDesc+" A stack name points that stack at the env, which is the stack scope. \"base\" sets the workspace default. You can not combine this with service. service selects the service scope, and it names no copy.")),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -57,7 +57,9 @@ func registerEnvUseTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 		if svcName != "" && stackName != "" {
 			return mcp.NewToolResultError("specify either service or stack, not both"), nil
 		}
-		if svcName == "" {
+		if stackName == "base" {
+			stackName = ""
+		} else if svcName == "" {
 			resolved, err := stack.ResolveTarget(ws, stackName)
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
