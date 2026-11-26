@@ -3,12 +3,15 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/migrate"
+	"github.com/socialviolation/devstack/internal/stack"
 )
 
 // exitMigrateRefused is the status of a migration that stopped before it wrote.
@@ -53,6 +56,11 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(initConfig)
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		if cmd != tickCmd && cmd != stackSweepCmd && cmd != stackGCCmd {
+			sweepIfDirect(time.Now())
+		}
+	}
 
 	rootCmd.Version = versionLine()
 	rootCmd.SetVersionTemplate("devstack {{.Version}}\n")
@@ -91,6 +99,7 @@ func initConfig() {
 	viper.BindEnv("tilt.host", "DEVSTACK_DAEMON_HOST", "TILT_HOST")
 	viper.BindEnv("default_service", "DEVSTACK_DEFAULT_SERVICE")
 	viper.BindEnv("workspace", "DEVSTACK_WORKSPACE")
+	viper.BindEnv("stop_after", "DEVSTACK_STOP_AFTER")
 	viper.BindEnv("agents.max_stacks", "DEVSTACK_AGENT_MAX_STACKS")
 	viper.BindEnv("agents.ttl", "DEVSTACK_AGENT_TTL")
 
@@ -99,4 +108,28 @@ func initConfig() {
 	if err := viper.ReadInConfig(); err == nil {
 		fmt.Fprintln(os.Stderr, "Using configuration file:", viper.ConfigFileUsed())
 	}
+
+	stack.StopAfter = stopAfter(viper.GetViper(), os.Stderr)
 }
+
+func stopAfter(v *viper.Viper, warn io.Writer) time.Duration {
+	if v.IsSet("agents.max_stacks") {
+		fmt.Fprintln(warn, "Warning: DEVSTACK_AGENT_MAX_STACKS and agents.max_stacks are deprecated. devstack has no agent quota, and ignores them.")
+	}
+	raw := v.GetString("stop_after")
+	if raw == "" && v.IsSet("agents.ttl") {
+		fmt.Fprintln(warn, "Warning: DEVSTACK_AGENT_TTL and agents.ttl are deprecated. Use DEVSTACK_STOP_AFTER or stop_after.")
+		raw = v.GetString("agents.ttl")
+	}
+	if raw == "" {
+		return defaultStopAfter
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		fmt.Fprintf(warn, "Warning: the stop window %q is not a positive duration, such as 24h. devstack uses %s.\n", raw, defaultStopAfter)
+		return defaultStopAfter
+	}
+	return d
+}
+
+const defaultStopAfter = 24 * time.Hour

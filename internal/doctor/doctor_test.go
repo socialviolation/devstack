@@ -269,17 +269,6 @@ func TestStackBehindOriginSuggestsResync(t *testing.T) {
 	}
 }
 
-func TestExpiredStackNotYetCollected(t *testing.T) {
-	f := newFixture(t)
-	f.store(
-		stack.Record{Name: "agent-a", Base: "navexa", Root: f.stackDir("agent-a"), Owner: "alice", ExpiresAt: now.Add(-time.Minute)},
-		stack.Record{Name: "agent-b", Base: "navexa", Root: f.stackDir("agent-b"), Owner: "alice", ExpiresAt: now.Add(time.Hour)},
-	)
-	if p := only(t, f.check(""), KindStackExpired, Tidy); p.Subject != "stack agent-a" || p.Fix != "devstack stack gc" {
-		t.Errorf("got %+v", p)
-	}
-}
-
 func TestRunningCopyWithNoTailnetAddress(t *testing.T) {
 	f := newFixture(t)
 	f.store(stack.Record{Name: "perf", Base: "navexa", Root: f.stackDir("perf"), Active: true, Overlay: []string{"api"}})

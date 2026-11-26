@@ -71,6 +71,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	installSweepTimer()
 	return fireHooks(ws, "", config.EventWorkspaceUp, nil)
 }
 

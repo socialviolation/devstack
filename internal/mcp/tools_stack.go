@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -128,12 +127,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			From:   strings.TrimSpace(request.GetString("from", "")),
 		}
 		if caller := auth.CallerFrom(ctx); caller.Scope != auth.ScopeOwner {
-			limits := agentLimitsFrom(ctx)
-			if err := agentQuota(ws.Name, limits.MaxStacks); err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
 			in.Owner = caller.Name
-			in.TTL = limits.TTL
 		}
 		res, err := stack.Create(in)
 		if err != nil {
@@ -453,8 +447,8 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			if s.Owner != "" {
 				fmt.Fprintf(&sb, "  owner:    %s\n", s.Owner)
 			}
-			if !s.Expires.IsZero() {
-				fmt.Fprintf(&sb, "  expires:  %s\n", s.Expires.Local().Format(time.RFC3339))
+			if d := s.Deadline(stack.Now()); d != "" {
+				fmt.Fprintf(&sb, "  state:    %s\n", d)
 			}
 			if s.AdoptedFrom != "" {
 				fmt.Fprintf(&sb, "  adopted:  from %s\n", s.AdoptedFrom)
@@ -658,7 +652,7 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 		if err := workspace.SetWorkspaceActive(ws.Name, true); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("can not mark the base workspace active: %v", err)), nil
 		}
-		if err := stack.SetActive(ws.Name, rec.Name, true); err != nil {
+		if err := stack.MarkUp(ws.Name, rec.Name); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		_, genWarnings, _, err := hostdaemon.RegenerateScope(hostdaemon.ScopeStack(ws.Name, rec.Name))
@@ -728,11 +722,11 @@ func registerStackDownTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 		if name == "" {
 			return mcp.NewToolResultError("name must not be empty"), nil
 		}
-		return stackDown(ws, name), nil
+		return stackDown(ws, name, stack.StoppedByUser), nil
 	})
 }
 
-func stackDown(ws *workspace.Workspace, name string) *mcp.CallToolResult {
+func stackDown(ws *workspace.Workspace, name, by string) *mcp.CallToolResult {
 	rec, err := stack.Resolve(ws.Name, name)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error())
@@ -741,7 +735,7 @@ func stackDown(ws *workspace.Workspace, name string) *mcp.CallToolResult {
 	var hookOut strings.Builder
 	hookErr := hooks.Fire(ws, rec.Name, config.EventStackDown, nil, &hookOut)
 
-	if err := stack.SetActive(ws.Name, rec.Name, false); err != nil {
+	if err := stack.MarkDown(ws.Name, rec.Name, by); err != nil {
 		return mcp.NewToolResultError(err.Error())
 	}
 	_, genWarnings, kept, err := hostdaemon.RegenerateScope(hostdaemon.ScopeStack(ws.Name, rec.Name))

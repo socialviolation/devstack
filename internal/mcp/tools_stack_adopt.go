@@ -18,7 +18,7 @@ import (
 
 func registerStackAdoptTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_adopt",
-		mcp.WithDescription("Hand an agent's feature stack to the owner. devstack clears the stack's owner and expiry, so gc never removes it and no agent may act on it. "+
+		mcp.WithDescription("Hand an agent's feature stack to the owner. devstack clears the stack's owner, so no agent may act on it. The stop time stays as it is. "+
 			"The record keeps the agent's name as adopted-from, and stack_list shows it. "+
 			"The result names the stack, each worktree with its branch, whether the stack is up, and its tailnet addresses. "+
 			"A stack that already belongs to the owner is left as it is. "+
@@ -57,7 +57,7 @@ func AdoptStack(ctx context.Context, ws *workspace.Workspace, name string) (stri
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Adopted stack %q from %s. gc never removes it, and agents may not act on it.\n", rec.Name, rec.AdoptedFrom)
+	fmt.Fprintf(&sb, "Adopted stack %q from %s. Agents may not act on it.\n", rec.Name, rec.AdoptedFrom)
 	status := stack.StatusDown
 	if rec.Active {
 		status = stack.StatusUp

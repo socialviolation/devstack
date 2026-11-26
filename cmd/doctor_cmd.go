@@ -16,8 +16,8 @@ var doctorCmd = &cobra.Command{
 
 doctor checks the host daemon (down, or still bound to 0.0.0.0), each copy in
 error or missing from an up stack, ports a foreign process holds, stacks whose
-worktree is gone, stack branches gone from origin or behind it, expired stacks,
-copies with no tailnet address, the replica, and orphans: port allocations,
+worktree is gone, stack branches gone from origin or behind it, copies with no
+tailnet address, the replica, and orphans: port allocations,
 directories and git worktrees that belong to no stack.
 
 It groups the problems as broken, degraded or tidy-up, one line each, with the

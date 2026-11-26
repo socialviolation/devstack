@@ -211,32 +211,43 @@ var stackDownCmd = &cobra.Command{
 	RunE:         runStackDown,
 }
 
-var stackGCCmd = &cobra.Command{
-	Use:   "gc",
-	Short: "Remove the stacks whose expiry has passed",
-	Long: `Remove every stack of this workspace whose expiry has passed. Only a stack
-that an agent created over MCP has an expiry. A stack that you create has
-none, and gc never removes it.
+var stackSweepCmd = &cobra.Command{
+	Use:   "sweep",
+	Short: "Stop every stack that is up and past its stop time",
+	Long: `Stop every stack that is up and past its stop time, in every workspace of
+this machine. A stop is the same as 'devstack stack down': stack.down hooks
+fire, and the host daemon drops the stack. devstack keeps the worktrees, the
+ports and the record. The sweep never removes a stack.
 
-gc brings an expired stack down if it is up, then removes it the same way the
-stack_rm tool does. stack.destroy hooks fire first. A worktree with
-uncommitted changes makes gc refuse that stack and keep it.
+Every stack gets a stop time when you create it or bring it up: that time plus
+DEVSTACK_STOP_AFTER (default 24h). 'stack extend' pushes the stop time back.
 
-The HTTP MCP server runs gc every 10 minutes on its own.
+A systemd user timer runs the sweep every 10 minutes. 'devstack workspace up'
+installs the timer. On a host without systemd, devstack runs the sweep before a
+command, at most once in 10 minutes.
 
-  --dry-run  print the stacks gc would remove, and remove none.`,
+  --dry-run  print the stacks the sweep would stop, and stop none.`,
 	Args:         cobra.NoArgs,
 	SilenceUsage: true,
-	RunE:         runStackGC,
+	RunE:         runStackSweep,
 }
 
-func runStackGC(cmd *cobra.Command, args []string) error {
+var stackGCCmd = &cobra.Command{
+	Use:          "gc",
+	Hidden:       true,
+	Short:        "Old name of 'stack sweep'",
+	Args:         cobra.NoArgs,
+	SilenceUsage: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Fprintln(os.Stderr, "Warning: 'devstack stack gc' is deprecated. Use 'devstack stack sweep'.")
+		return runStackSweep(cmd, args)
+	},
+}
+
+func runStackSweep(cmd *cobra.Command, args []string) error {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	base, err := resolveWorkspace(viper.GetString("workspace"))
-	if err != nil {
-		return err
-	}
-	return nvxmcp.CollectExpired(base, time.Now(), dryRun, os.Stdout)
+	_, err := nvxmcp.Sweep(dryRun, os.Stdout)
+	return err
 }
 
 var stackResyncCmd = &cobra.Command{
@@ -269,10 +280,10 @@ func runStackResync(cmd *cobra.Command, args []string) error {
 
 var stackAdoptCmd = &cobra.Command{
 	Use:   "adopt <name>",
-	Short: "Take over an agent's stack: gc never removes it, and agents lose access",
-	Long: `Hand an agent's feature stack to you. devstack clears the stack's owner and
-expiry, so gc never removes it and no agent may act on it. The record keeps
-the agent's name as adopted-from.
+	Short: "Take over an agent's stack, so agents lose access to it",
+	Long: `Hand an agent's feature stack to you. devstack clears the stack's owner, so
+no agent may act on it. The stop time stays as it is. The record keeps the
+agent's name as adopted-from.
 
 devstack prints the stack's worktrees, the branch of each, whether it is up,
 and its tailnet addresses. A stack that is already yours is left as it is.`,
@@ -296,6 +307,7 @@ func runStackAdopt(cmd *cobra.Command, args []string) error {
 
 func init() {
 	rootCmd.AddCommand(stackCmd)
+	stackCmd.AddCommand(stackSweepCmd)
 	stackCmd.AddCommand(stackGCCmd)
 	stackCmd.AddCommand(stackResyncCmd)
 	stackCmd.AddCommand(stackAdoptCmd)
@@ -316,7 +328,8 @@ func init() {
 	stackCreateCmd.Flags().String("note", "", "What this stack is for: a ticket URL, an issue key, or a sentence. 'devstack stack list' shows it")
 	stackAddCmd.Flags().String("from", "", "Ref that devstack cuts the new worktrees from (default: each repo's default branch, origin's copy of it where there is one)")
 	stackNoteCmd.Flags().String("add", "", "Append a dated entry that says where the work got to, instead of replacing the note")
-	stackGCCmd.Flags().Bool("dry-run", false, "Print the expired stacks, and remove none")
+	stackSweepCmd.Flags().Bool("dry-run", false, "Print the stacks past their stop time, and stop none")
+	stackGCCmd.Flags().Bool("dry-run", false, "Print the stacks past their stop time, and stop none")
 	stackRemoveCmd.Flags().Bool("force", false, "Remove worktrees even if they have uncommitted changes. This destroys that work. You can not recover it")
 	stackConfigCmd.Flags().String("stack", "", "Which copy to read: a stack name, or \"base\" for base's copy. Default: the stack that holds the current directory. In a plain checkout this command refuses, so pass \"base\" there")
 }
@@ -615,6 +628,9 @@ func runStackList(cmd *cobra.Command, args []string) error {
 			truncateCell(s.Branch, 30), stackAge(s.Created))
 		if s.Note != "" {
 			color.New(color.Faint).Printf("  %s\n", s.Note)
+		}
+		if d := s.Deadline(stack.Now()); d != "" {
+			color.New(color.Faint).Printf("  %s\n", d)
 		}
 		if s.AdoptedFrom != "" {
 			color.New(color.Faint).Printf("  adopted from %s\n", s.AdoptedFrom)
@@ -917,7 +933,7 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 	if err := workspace.SetWorkspaceActive(base.Name, true); err != nil {
 		return fmt.Errorf("can not mark the base workspace active: %w", err)
 	}
-	if err := stack.SetActive(base.Name, rec.Name, true); err != nil {
+	if err := stack.MarkUp(base.Name, rec.Name); err != nil {
 		return err
 	}
 
@@ -982,7 +998,7 @@ func runStackDown(cmd *cobra.Command, args []string) error {
 
 	fireTeardownHooks(base, rec.Name, config.EventStackDown, nil)
 
-	if err := stack.SetActive(base.Name, rec.Name, false); err != nil {
+	if err := stack.MarkDown(base.Name, rec.Name, stack.StoppedByUser); err != nil {
 		return err
 	}
 

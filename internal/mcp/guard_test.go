@@ -40,7 +40,7 @@ func guardStore(t *testing.T, recs ...stack.Record) *workspace.Workspace {
 
 func allToolsServer(t *testing.T, ws *workspace.Workspace) *server.MCPServer {
 	t.Helper()
-	s := server.NewMCPServer("test", "0.0.0", append([]server.ServerOption{server.WithToolCapabilities(true)}, GuardOptions(ws, DefaultAgentLimits)...)...)
+	s := server.NewMCPServer("test", "0.0.0", append([]server.ServerOption{server.WithToolCapabilities(true)}, GuardOptions(ws)...)...)
 	RegisterTools(s, nil, "", nil, ws.Name, ws.Path, ws, nil)
 	registerInvestigateTool(s, nil, "", nil, "", ws.Path, ws)
 	registerTunnelTool(s, nil, ws)
@@ -159,7 +159,7 @@ func callAs(t *testing.T, s *server.MCPServer, c auth.Caller, tool, args string)
 
 func TestGuardDeniesAgentAndPassesOwner(t *testing.T) {
 	ws := guardStore(t)
-	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws, DefaultAgentLimits)...)
+	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws)...)
 	ran := 0
 	s.AddTool(mcp.NewTool("restart", mcp.WithString("stack")), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		ran++
@@ -234,7 +234,7 @@ func TestAgentToolsListHidesDeniedTools(t *testing.T) {
 
 func TestEnvironmentListsOnlyToolsTheAgentMaySee(t *testing.T) {
 	ws := guardStore(t)
-	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws, DefaultAgentLimits)...)
+	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws)...)
 	registerEnvironmentTool(s, "http://localhost:5080", ws.Name, ws.Path, "", ws)
 
 	toolsLine := func(c auth.Caller) string {

@@ -44,21 +44,25 @@
 
 ### Where the sweep runs
 
-- A systemd user timer, `devstack-sweep.timer`, runs `devstack stack sweep`
-  every 10 min. This is new: `devstack-tilt` is a transient
+- A systemd user timer, `devstack-sweep.timer`, runs the hidden command
+  `devstack tick` every 10 min. Each tick runs the sweep. This is new: `devstack-tilt` is a transient
   `systemd-run --collect` unit with no unit file
   (`hostdaemon.go:558-560`). `workspace up` writes
   `devstack-sweep.service` and `.timer` to `~/.config/systemd/user/`, runs
-  `daemon-reload`, and enables the timer. It skips this when both exist.
+  `daemon-reload`, and enables the timer. It skips this when both exist
+  with the same content.
 - A host without systemd (direct mode, `hostdaemon.go:400-403`) gets no
   timer. There, every devstack CLI and MCP call runs the sweep first, at
   most once per 10 min (a timestamp file in the data dir).
 - The HTTP serve loop stops sweeping. One sweeper, one place.
-- The same timer runs `devstack shared sync` once per hour (01).
+- `devstack tick` also runs `devstack shared sync` once per hour (01).
+  Step 2 adds this job to the tick.
 
 ### Expiry fields
 
 - `ExpiresAt` is removed. Migration copies it into `StopAt`.
+- A record with no `StopAt` and no `ExpiresAt` gets `StopAt = CreatedAt +
+  24h` when devstack reads it. So the first sweep stops old up stacks.
 - `stack_adopt` clears `Owner` only. It no longer touches the deadline.
 - The 72h `MaxLifetime` cap is removed.
 

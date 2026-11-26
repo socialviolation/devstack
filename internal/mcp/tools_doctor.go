@@ -20,7 +20,7 @@ func registerDoctorTools(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 func registerDoctorTool(mcpServer *server.MCPServer, ws *workspace.Workspace, host func(*workspace.Workspace) doctor.Host) {
 	tool := mcp.NewTool("doctor",
 		mcp.WithDescription("Find what is broken in this workspace, and name the fix for each problem. Call it when a service will not start, a stack acts strangely, or before you report that the environment is broken. "+
-			"It checks the host daemon (down, or still bound to 0.0.0.0), each copy in error or missing from an up stack, ports a foreign process holds, stacks whose worktree is gone, stack branches gone from origin or behind it, expired stacks, copies with no tailnet address, the replica, and orphans: port allocations, directories and git worktrees that belong to no stack. "+
+			"It checks the host daemon (down, or still bound to 0.0.0.0), each copy in error or missing from an up stack, ports a foreign process holds, stacks whose worktree is gone, stack branches gone from origin or behind it, copies with no tailnet address, the replica, and orphans: port allocations, directories and git worktrees that belong to no stack. "+
 			"The answer groups problems as broken, degraded or tidy-up. Each problem is one line, with the fix under it. A healthy workspace gives one line. It reads state only, and changes nothing. It prints no env value. "+
 			"This tool mirrors 'devstack doctor'."),
 		mcp.WithString("stack",

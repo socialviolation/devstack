@@ -96,7 +96,7 @@ workspace:
 
 func wiringServer(t *testing.T, ws *workspace.Workspace) *server.MCPServer {
 	t.Helper()
-	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws, DefaultAgentLimits)...)
+	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws)...)
 	registerWiringTool(s, ws, ws.Path)
 	return s
 }

@@ -34,7 +34,6 @@ const (
 	KindWorktreeMissing  = "worktree-missing"
 	KindBranchGone       = "branch-gone"
 	KindBranchBehind     = "branch-behind"
-	KindStackExpired     = "stack-expired"
 	KindUnpublished      = "unpublished"
 	KindOrphanPorts      = "orphan-ports"
 	KindOrphanDir        = "orphan-dir"
@@ -344,13 +343,6 @@ func checkRecord(rec stack.Record, h Host) []Problem {
 				Fix:   "devstack stack resync " + rec.Name, Tool: fmt.Sprintf("stack_resync(name=%q)", rec.Name),
 			})
 		}
-	}
-	if !rec.ExpiresAt.IsZero() && !h.Now().Before(rec.ExpiresAt) {
-		out = append(out, Problem{
-			Kind: KindStackExpired, Severity: Tidy, Subject: subject,
-			Plain: fmt.Sprintf("The stack expired at %s, and gc has not removed it yet.", rec.ExpiresAt.Local().Format(time.RFC3339)),
-			Fix:   "devstack stack gc", Tool: fmt.Sprintf("stack_rm(name=%q)", rec.Name),
-		})
 	}
 	return out
 }

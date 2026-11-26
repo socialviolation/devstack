@@ -11,8 +11,8 @@ import (
 )
 
 func TestStackAdoptDeniesAnAgent(t *testing.T) {
-	ws := guardStore(t, stack.Record{Name: "agent-mine", Base: "navexa", Owner: "alice", ExpiresAt: time.Now().Add(time.Hour)})
-	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws, DefaultAgentLimits)...)
+	ws := guardStore(t, stack.Record{Name: "agent-mine", Base: "navexa", Owner: "alice", StopAt: time.Now().Add(time.Hour)})
+	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws)...)
 	registerStackAdoptTool(s, ws)
 
 	out := callAs(t, s, alice, "stack_adopt", `{"name":"agent-mine"}`)
@@ -30,7 +30,7 @@ func TestStackAdoptDeniesAnAgent(t *testing.T) {
 
 func TestStackAdoptOwnerStackIsANoOp(t *testing.T) {
 	ws := guardStore(t, stack.Record{Name: "perf", Base: "navexa"})
-	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws, DefaultAgentLimits)...)
+	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws)...)
 	registerStackAdoptTool(s, ws)
 
 	out := callAs(t, s, owner, "stack_adopt", `{"name":"perf"}`)
@@ -41,7 +41,7 @@ func TestStackAdoptOwnerStackIsANoOp(t *testing.T) {
 
 func TestStackAdoptUnknownNameErrors(t *testing.T) {
 	ws := guardStore(t, stack.Record{Name: "agent-a", Base: "navexa", Owner: "alice"})
-	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws, DefaultAgentLimits)...)
+	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws)...)
 	registerStackAdoptTool(s, ws)
 
 	out := callAs(t, s, owner, "stack_adopt", `{"name":"agent-gone"}`)

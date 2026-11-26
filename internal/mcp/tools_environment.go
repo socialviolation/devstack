@@ -152,11 +152,15 @@ func stacksSummary(ws *workspace.Workspace) string {
 	anyDown := false
 	for _, s := range stacks {
 		short := strings.TrimPrefix(s.Name, s.BaseName+"--")
+		state := s.Status
+		if d := s.Deadline(stack.Now()); d != "" {
+			state = d
+		}
 		if s.Status == stack.StatusUp {
-			parts = append(parts, fmt.Sprintf("%s (%s, base :%d)", short, stack.StatusUp, s.BasePort))
+			parts = append(parts, fmt.Sprintf("%s (%s, base :%d)", short, state, s.BasePort))
 		} else {
 			anyDown = true
-			parts = append(parts, fmt.Sprintf("%s (%s)", short, s.Status))
+			parts = append(parts, fmt.Sprintf("%s (%s)", short, state))
 		}
 	}
 	line := fmt.Sprintf("workspace: %s — base + %d feature stack(s) in flight: %s — those are the short names every 'stack' parameter takes (full identity is %s--<name>)\n", ws.Name, len(stacks), strings.Join(parts, ", "), ws.Name)

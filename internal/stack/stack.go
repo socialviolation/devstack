@@ -30,7 +30,6 @@ type CreateInput struct {
 	From  string
 	Note  string
 	Owner string
-	TTL   time.Duration
 }
 
 type OverlayMember struct {
@@ -79,22 +78,45 @@ type RemoveResult struct {
 }
 
 type StackInfo struct {
-	Name     string
-	BaseName string
-	BasePort int
-	Status   string
-	Ports    map[string]int
-	Services []string
-	Branch   string
-	Env      string
-	Note     string
-	Log      []NoteEntry
-	Groups   []string
-	Created  time.Time
-	Owner    string
-	Expires  time.Time
+	Name      string
+	BaseName  string
+	BasePort  int
+	Status    string
+	Ports     map[string]int
+	Services  []string
+	Branch    string
+	Env       string
+	Note      string
+	Log       []NoteEntry
+	Groups    []string
+	Created   time.Time
+	Owner     string
+	StopAt    time.Time
+	StoppedBy string
+	StoppedAt time.Time
 
 	AdoptedFrom string
+}
+
+func (s StackInfo) Deadline(now time.Time) string {
+	switch {
+	case s.Status == StatusUp && !s.StopAt.IsZero():
+		return "up — stops " + whenFrom(s.StopAt.Local(), now.Local())
+	case s.Status != StatusUp && s.StoppedBy == StoppedBySweep:
+		return "stopped by devstack " + s.StoppedAt.Local().Format("2006-01-02 15:04")
+	}
+	return ""
+}
+
+func whenFrom(t, now time.Time) string {
+	const day = "2006-01-02"
+	switch now.Format(day) {
+	case t.Format(day):
+		return t.Format("15:04") + " today"
+	case t.AddDate(0, 0, -1).Format(day):
+		return t.Format("15:04") + " tomorrow"
+	}
+	return t.Format("2006-01-02 15:04")
 }
 
 func StacksRoot(base *workspace.Workspace) string {
@@ -287,11 +309,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 	}
 	overlayNames := make([]string, len(overlay))
 	copy(overlayNames, overlay)
-	now := time.Now()
-	var expires time.Time
-	if in.TTL > 0 {
-		expires = now.Add(in.TTL)
-	}
+	now := Now()
 	if err := upsertStack(Record{
 		Name:      in.Name,
 		Base:      base.Name,
@@ -304,7 +322,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 		Ports:     res.Ports,
 		CreatedAt: now,
 		Owner:     in.Owner,
-		ExpiresAt: expires,
+		StopAt:    now.Add(StopAfter),
 	}); err != nil {
 		unwind()
 		return nil, fmt.Errorf("can not record the stack: %w", err)
@@ -538,20 +556,22 @@ func List(workspaceName string) ([]StackInfo, error) {
 			ports = rec.Ports
 		}
 		stacks = append(stacks, StackInfo{
-			Name:     rec.FullName(),
-			BaseName: rec.Base,
-			BasePort: basePort,
-			Status:   stackStatus(rec),
-			Ports:    ports,
-			Services: rec.Overlay,
-			Branch:   rec.Branch,
-			Env:      rec.Env,
-			Note:     rec.Note,
-			Log:      rec.Log,
-			Groups:   rec.Groups,
-			Created:  rec.CreatedAt,
-			Owner:    rec.Owner,
-			Expires:  rec.ExpiresAt,
+			Name:      rec.FullName(),
+			BaseName:  rec.Base,
+			BasePort:  basePort,
+			Status:    stackStatus(rec),
+			Ports:     ports,
+			Services:  rec.Overlay,
+			Branch:    rec.Branch,
+			Env:       rec.Env,
+			Note:      rec.Note,
+			Log:       rec.Log,
+			Groups:    rec.Groups,
+			Created:   rec.CreatedAt,
+			Owner:     rec.Owner,
+			StopAt:    rec.StopAt,
+			StoppedBy: rec.StoppedBy,
+			StoppedAt: rec.StoppedAt,
 
 			AdoptedFrom: rec.AdoptedFrom,
 		})
