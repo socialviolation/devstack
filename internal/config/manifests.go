@@ -425,7 +425,7 @@ func warnLegacyEdges(path string, m *WorkspaceManifest) {
 	if _, seen := legacyEdgeWarned.LoadOrStore(path, true); seen {
 		return
 	}
-	fmt.Fprintf(legacyEdgeWarnings, "warning: %s uses the old workspace maps %s. devstack reads them as calls. To move them onto each service, run devstack migrate.\n", path, strings.Join(used, ", "))
+	fmt.Fprintf(legacyEdgeWarnings, "warning: %s uses the old workspace maps %s. devstack reads them as calls. To move them onto each service, run devstack migrate shared-stacks.\n", path, strings.Join(used, ", "))
 }
 
 func (m *WorkspaceManifest) Validate() error {
