@@ -21,7 +21,8 @@ const mutatingStackParamDesc = "Which stack to act on: the stack's SHORT name (f
 	"If you omit this parameter, the server's working directory decides. A stack worktree selects that stack. " +
 	"Every other directory selects no stack. Then only a shared service resolves: a service in the workspace \"shared:\" list. " +
 	"A service that is not shared runs only in a stack, so the call fails and asks for this parameter. " +
-	"Every stack uses a shared service. If you restart or stop one, you restart or stop the copy that every stack uses."
+	"Every stack uses a shared service. If you restart or stop one, you restart or stop the copy that every stack uses. " +
+	"An agent can not start, restart or stop a shared service. devstack refuses the call."
 
 func resolveStackRecord(ws *workspace.Workspace, name string) (*stack.Record, error) {
 	if ws == nil {

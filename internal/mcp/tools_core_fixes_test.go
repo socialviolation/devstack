@@ -55,6 +55,16 @@ func listCoreTools(t *testing.T) map[string]listedTool {
 	return tools
 }
 
+func TestStartRestartStopStackParamSaysAgentsCanNotTouchASharedService(t *testing.T) {
+	tools := listCoreTools(t)
+	for _, name := range []string{"start", "restart", "stop"} {
+		desc := tools[name].InputSchema.Properties["stack"].Description
+		if !strings.Contains(desc, "An agent can not start, restart or stop a shared service") {
+			t.Errorf("the %s stack parameter does not say an agent can not act on a shared service:\n%s", name, desc)
+		}
+	}
+}
+
 func TestCoreToolAnnotationsAreHonest(t *testing.T) {
 	tools := listCoreTools(t)
 
