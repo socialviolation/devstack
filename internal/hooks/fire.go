@@ -36,7 +36,7 @@ func Context(ws *workspace.Workspace, stackName, event string, services []string
 	}
 	rw := baseRW
 
-	if stackName != "" && stackName != "base" {
+	if stackName != "" {
 		rec, err := stack.Resolve(ws.Name, stackName)
 		if err != nil {
 			return Event{}, Source{}, err

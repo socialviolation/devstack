@@ -137,6 +137,14 @@ func TestWiringHidesBaseValuesFromAgents(t *testing.T) {
 	}
 }
 
+func TestWiringRefusesStackBase(t *testing.T) {
+	ws := seedWiringWorkspace(t)
+	out := callAs(t, wiringServer(t, ws), owner, "wiring", `{"stack":"base"}`)
+	if !strings.Contains(out, `"isError":true`) || !strings.Contains(out, "is not in workspace") {
+		t.Errorf("stack base names no stack, and wiring must refuse it:\n%s", out)
+	}
+}
+
 func TestWiringNamesTheEdgeKindAndVia(t *testing.T) {
 	ws := seedWiringWorkspace(t)
 	if out := callAs(t, wiringServer(t, ws), owner, "wiring", `{}`); !strings.Contains(out, "web → api  (calls)") {

@@ -67,7 +67,7 @@ func init() {
 	hooksCmd.AddCommand(hooksRunCmd)
 
 	for _, c := range []*cobra.Command{hooksCmd, hooksListCmd, hooksRunCmd} {
-		c.Flags().String("stack", "", "Resolve against a feature stack's copies and allocated ports. Default: base")
+		c.Flags().String("stack", "", "Resolve against a stack's services and allocated ports. Default: the workspace and its shared set")
 	}
 	hooksListCmd.Flags().String("event", "", "Only show the hooks that fire on this event")
 	hooksRunCmd.Flags().String("services", "", "Comma-separated services for the event. Default: the stack's overlay, or every service")
@@ -109,8 +109,8 @@ func runHooksList(cmd *cobra.Command, args []string) error {
 		events = []string{eventFilter}
 	}
 
-	target := "base"
-	if stackName != "" && stackName != "base" {
+	target := "workspace"
+	if stackName != "" {
 		target = "stack " + stackName
 	}
 	fmt.Printf("Hooks for workspace %s (%s)\n\n", ws.Name, target)

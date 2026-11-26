@@ -37,7 +37,7 @@ func registerHooksTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 			mcp.Enum(config.HookEvents()...),
 			mcp.Description("Event name. Required for action=\"run\". Optional filter for action=\"list\".")),
 		mcp.WithString("stack",
-			mcp.Description("Feature stack SHORT name to resolve against, so that a hook's ${self...} references resolve to THAT stack's allocated ports, and not to base's pinned ones. For the base workspace, omit this parameter or pass \"base\".")),
+			mcp.Description("Stack SHORT name to resolve against, so that a hook's ${self...} references resolve to THAT stack's allocated ports. Omit it for the workspace and its shared set, which use the pinned ports.")),
 		mcp.WithString("services",
 			mcp.Description("Comma-separated service names that form the event's service set, for action=\"run\". The default is the stack's overlay, or every service in the workspace.")),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -80,8 +80,8 @@ func hooksList(ws *workspace.Workspace, stackName, eventFilter string) (*mcp.Cal
 		events = []string{eventFilter}
 	}
 
-	target := "base"
-	if stackName != "" && stackName != "base" {
+	target := "workspace"
+	if stackName != "" {
 		target = "stack " + stackName
 	}
 

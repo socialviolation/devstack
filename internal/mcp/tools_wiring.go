@@ -88,7 +88,7 @@ func wiringReport(ws *workspace.Workspace, workspacePath, stackName, service str
 	}
 
 	var stackCopy *wiring.Copy
-	if stackName != "" && !strings.EqualFold(stackName, "base") {
+	if stackName != "" {
 		rec, err := resolveStackRecord(ws, stackName)
 		if err != nil {
 			return "", err
