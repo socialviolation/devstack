@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -757,25 +758,38 @@ func registerStackDownTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			return mcp.NewToolResultError("name must not be empty"), nil
 		}
 		defer herdr.Notify()
-		return stackDown(ws, name, stack.StoppedByUser), nil
+		res, _ := stackDown(ws, name, stack.StoppedByUser, time.Time{})
+		return res, nil
 	})
 }
 
-func stackDown(ws *workspace.Workspace, name, by string) *mcp.CallToolResult {
+func stackDown(ws *workspace.Workspace, name, by string, dueBy time.Time) (*mcp.CallToolResult, bool) {
 	rec, err := stack.Resolve(ws.Name, name)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error())
+		return mcp.NewToolResultError(err.Error()), true
+	}
+	if !dueBy.IsZero() && !rec.DueAt(dueBy) {
+		return nil, false
 	}
 
 	var hookOut strings.Builder
 	hookErr := hooks.Fire(ws, rec.Name, config.EventStackDown, nil, &hookOut)
 
-	if err := stack.MarkDown(ws.Name, rec.Name, by); err != nil {
-		return mcp.NewToolResultError(err.Error())
+	if dueBy.IsZero() {
+		err = stack.MarkDown(ws.Name, rec.Name, by)
+	} else {
+		var due bool
+		due, err = stack.MarkDownIfDue(ws.Name, rec.Name, by, dueBy)
+		if err == nil && !due {
+			return nil, false
+		}
+	}
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), true
 	}
 	_, genWarnings, kept, err := hostdaemon.RegenerateScope(hostdaemon.ScopeStack(ws.Name, rec.Name))
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("can not generate the host Tiltfile again: %v", err))
+		return mcp.NewToolResultError(fmt.Sprintf("can not generate the host Tiltfile again: %v", err)), true
 	}
 
 	var sb strings.Builder
@@ -790,7 +804,7 @@ func stackDown(ws *workspace.Workspace, name, by string) *mcp.CallToolResult {
 		"Stack %q is now down. The host daemon will drop its resources. devstack keeps the worktrees and the record (remove them with stack_rm %s).\n"+
 			"While it is down, status, process_logs, restart, stop and configure against it error \"not up\". "+
 			"service_env still reads and writes its worktree config. investigate returns only what the stack emitted while it was up.",
-		rec.Name, rec.Name))
+		rec.Name, rec.Name)), true
 }
 
 func sortedPortKeys(m map[string]int) []string {

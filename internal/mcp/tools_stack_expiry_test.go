@@ -182,6 +182,58 @@ func TestSweepDryRunChangesNothing(t *testing.T) {
 	}
 }
 
+func TestSweepDoesNotStopAStackExtendedAfterTheScan(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	fixStackClock(t, now)
+	registerStore(t, "navexa",
+		stack.Record{Name: "extended", Base: "navexa", Active: true, StopAt: now.Add(time.Hour)},
+		stack.Record{Name: "down", Base: "navexa", StopAt: now.Add(-time.Hour)},
+	)
+	ws, err := workspace.FindByName("navexa")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"extended", "down"} {
+		if res, stopped := stackDown(ws, name, stack.StoppedBySweep, now); stopped {
+			t.Errorf("%s: the sweep stopped it: %s", name, toolResultText(res))
+		}
+		rec, err := stack.FindStack("navexa", name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.StoppedBy != "" || !rec.StoppedAt.IsZero() {
+			t.Errorf("%s: by=%q at=%v, want untouched", name, rec.StoppedBy, rec.StoppedAt)
+		}
+	}
+	if rec, _ := stack.FindStack("navexa", "extended"); !rec.Active {
+		t.Error("the sweep marked the extended stack down")
+	}
+}
+
+func TestMarkDownIfDueSkipsAStackThatIsNotDue(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	fixStackClock(t, now)
+	registerStore(t, "navexa",
+		stack.Record{Name: "late", Base: "navexa", Active: true, StopAt: now.Add(-time.Minute)},
+		stack.Record{Name: "fresh", Base: "navexa", Active: true, StopAt: now.Add(time.Hour)},
+	)
+	for _, c := range []struct {
+		name string
+		due  bool
+	}{{"late", true}, {"fresh", false}} {
+		due, err := stack.MarkDownIfDue("navexa", c.name, stack.StoppedBySweep, now)
+		if err != nil || due != c.due {
+			t.Errorf("%s: MarkDownIfDue = %v, %v; want %v", c.name, due, err, c.due)
+		}
+		if rec, _ := stack.FindStack("navexa", c.name); rec.Active == c.due {
+			t.Errorf("%s: active=%v after MarkDownIfDue", c.name, rec.Active)
+		}
+	}
+}
+
 func TestStackListShowsOwnerAndStopTime(t *testing.T) {
 	now := time.Date(2026, 11, 26, 9, 0, 0, 0, time.Local)
 	fixStackClock(t, now)

@@ -86,7 +86,12 @@ func Sweep(dryRun bool, w io.Writer) (int, error) {
 				continue
 			}
 			fmt.Fprintf(w, "stopping %s (stop time %s)\n", rec.FullName(), stopAt)
-			res := stackDown(ws, rec.Name, stack.StoppedBySweep)
+			res, stopped := stackDown(ws, rec.Name, stack.StoppedBySweep, now)
+			if !stopped {
+				found--
+				fmt.Fprintf(w, "devstack does not stop %s. It is down now, or its stop time moved.\n", rec.FullName())
+				continue
+			}
 			fmt.Fprintln(w, toolResultText(res))
 			if res.IsError {
 				failed = append(failed, rec.FullName())

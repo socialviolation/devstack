@@ -322,6 +322,24 @@ func MarkDown(base, name, by string) error {
 	})
 }
 
+func MarkDownIfDue(base, name, by string, now time.Time) (bool, error) {
+	due := false
+	err := updateStack(base, name, func(r *Record) {
+		if !r.DueAt(now) {
+			return
+		}
+		due = true
+		r.Active = false
+		r.StoppedBy = by
+		r.StoppedAt = Now()
+	})
+	return due, err
+}
+
+func (r Record) DueAt(now time.Time) bool {
+	return r.Active && !r.StopAt.IsZero() && !now.Before(r.StopAt)
+}
+
 func SetPane(base, name, pane string) error {
 	return updateStack(base, name, func(r *Record) { r.Pane = pane })
 }
@@ -418,7 +436,7 @@ func Due(workspaceName string, now time.Time) ([]Record, error) {
 	}
 	var out []Record
 	for _, r := range recs {
-		if r.Active && !r.StopAt.IsZero() && !now.Before(r.StopAt) {
+		if r.DueAt(now) {
 			out = append(out, r)
 		}
 	}
