@@ -262,10 +262,16 @@ worktree to it.
 
 It refuses a repo whose worktree has uncommitted changes, and names the files.
 It refuses a repo whose worktree and origin diverged, and names both commits.
-It never merges or rebases. A detached caller repo stays where it is.
+It never merges or rebases. For each detached repo, devstack fetches origin's
+default branch and fast-forwards the worktree to it, with the same refusals.
 
 If the stack is up, devstack restarts the services of each repo that moved,
-and every service of the stack that depends on them.`,
+and every service of the stack that depends on them.
+
+devstack does not add services. It reports each repo outside the stack that
+has the stack's branch on origin. It reports each service that a member now
+needs and the stack does not run. If the new commits change a service's
+migrations directory, devstack says so. Resync runs no migration.`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackResync,
@@ -973,6 +979,13 @@ func runStackUp(cmd *cobra.Command, args []string) error {
 	fmt.Printf("✓ Stack %q started: %s\n", rec.Name, strings.Join(started, ", "))
 	for _, k := range sortedKeys(rec.Ports) {
 		fmt.Printf("  %-24s http://localhost:%d\n", stackPortLabel(k), rec.Ports[k])
+	}
+	behind, notes := stack.BehindWarnings(rec)
+	for _, w := range behind {
+		fmt.Fprintf(os.Stderr, "WARNING: %s\n", w)
+	}
+	for _, n := range notes {
+		fmt.Fprintf(os.Stderr, "note: %s\n", n)
 	}
 
 	if err := fireHooks(base, rec.Name, config.EventStackUp, started); err != nil {

@@ -136,7 +136,9 @@ type ServiceManifest struct {
 	Tasks     map[string]ServiceTask `yaml:"tasks,omitempty"`
 	Needs     []ServiceEdge          `yaml:"needs,omitempty"`
 	Calls     []ServiceEdge          `yaml:"calls,omitempty"`
-	Dev       map[string]any         `yaml:"dev,omitempty"`
+	// Migrations is a path relative to the service directory.
+	Migrations string         `yaml:"migrations,omitempty"`
+	Dev        map[string]any `yaml:"dev,omitempty"`
 }
 
 type ServiceEdge struct {

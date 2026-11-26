@@ -625,6 +625,7 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_up",
 		mcp.WithDescription("Bring a feature stack up. devstack marks the stack up, marks its base workspace active, and folds its <base>:<service>:<stack> resources into the one host Tilt daemon. It then enables and triggers them, so that the stack's services start. A resource that is only registered does not run.\n"+
 			"The tool reports which services it started. They are starting, and not started, so read status before you draw a conclusion. This tool mirrors 'devstack stack up'.\n"+
+			"devstack checks each worktree against origin: a repo on the stack's branch against that branch, and a detached repo against the default branch. If a worktree is behind, the result names stack_resync. stack_up does not resync.\n"+
 			"This is the remedy when another tool reports that the stack is not up. status, process_logs, restart, start, stop and configure all refuse a stack that is down, rather than fall through to base.\n"+
 			"There is no daemon per stack. A stack's services run on their own ports inside the host daemon. The tool returns the stack's allocated service links and the daemon status.\n"+
 			"This workspace can declare lifecycle HOOKS: shell commands that devstack runs on its own for this action. They can change state outside this machine. They fire on their own, and their output is in the result. A hook failure is returned as an error, and it means that the action succeeded and the stack is NOT fully provisioned. Do not report success. Retry with the hooks tool (action=\"run\"). If you do not know what this workspace fires, call the hooks tool with action=\"list\" first. "+serviceLinksDesc),
@@ -705,6 +706,13 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 		}
 		for _, k := range sortedPortKeys(rec.Ports) {
 			fmt.Fprintf(&sb, "  %-24s http://localhost:%d\n", k, rec.Ports[k])
+		}
+		behind, notes := stack.BehindWarnings(rec)
+		for _, w := range behind {
+			fmt.Fprintf(&sb, "WARNING: %s\n", w)
+		}
+		for _, n := range notes {
+			fmt.Fprintf(&sb, "note: %s\n", n)
 		}
 		appendHookOutput(&sb, config.EventStackUp, hookOut.String(), hookErr)
 		if hookErr != nil {
