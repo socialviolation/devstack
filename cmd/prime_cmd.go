@@ -93,7 +93,7 @@ func inferWorkingStack(ws *workspace.Workspace, service, branch string) *working
 	}
 	var candidates []*stack.Record
 	for i := range recs {
-		if containsString(recs[i].Overlay, service) {
+		if containsString(recs[i].Members, service) {
 			candidates = append(candidates, &recs[i])
 		}
 	}
@@ -156,7 +156,7 @@ func buildPrime() (string, error) {
 		branch = gitinfo.ReadAll(map[string]string{repo: repo})[repo].Label()
 	}
 
-	here := "base"
+	here := ""
 	inReplica := false
 	var hereRec *stack.Record
 	siblings := map[string]string{}
@@ -182,10 +182,11 @@ func buildPrime() (string, error) {
 	var b strings.Builder
 	writePrimeTask(&b, service, here, working, siblings, rw.Manifest.Observability.IsEnabled(), inReplica, candidates)
 	writePrimeWhatThisIs(&b)
+	writePrimeHerdr(&b, os.Getenv("HERDR_PANE_ID"))
 	writePrimeTerms(&b)
 
 	section(&b, "WHERE YOU ARE")
-	writePrimeIdentity(&b, ws, service, here, inReplica)
+	writePrimeIdentity(&b, ws, service, here, inReplica, len(rw.SharedNames()) > 0)
 
 	switch {
 	case service != "":
@@ -222,14 +223,14 @@ func writePrimeTask(b *strings.Builder, service, here string, working *workingSt
 
 func writePrimeStackTask(b *strings.Builder, rec *stack.Record, service string, siblings map[string]string, telemetry bool) {
 	fmt.Fprintf(b, "stack %s", rec.Name)
-	if len(rec.Overlay) > 0 {
-		fmt.Fprintf(b, " · %s", strings.Join(rec.Overlay, ", "))
+	if len(rec.Members) > 0 {
+		fmt.Fprintf(b, " · %s", strings.Join(rec.Members, ", "))
 	}
 	b.WriteString("\n")
 	writePrimeStackNote(b, rec)
 
 	b.WriteString("\n")
-	if len(rec.Overlay) == 0 {
+	if len(rec.Members) == 0 {
 		fmt.Fprintf(b, "1. This stack runs no service yet. Add the one this feature changes: devstack stack add %s <service>\n", rec.Name)
 	} else {
 		b.WriteString("1. Change code in these directories, and in no others:\n")
@@ -240,17 +241,34 @@ func writePrimeStackTask(b *strings.Builder, rec *stack.Record, service string, 
 	writePrimeReadStep(b, rec.Name, telemetry)
 	fmt.Fprintf(b, "4. Record where you got to: devstack stack note %s --add \"what you found\"\n", rec.Name)
 	writePrimeCloseOut(b, rec.Branch)
-	b.WriteString("Every commit you make here goes on the branch of this stack, and not on base.\n")
-	b.WriteString("Everything else runs from base. The user and every other stack share base, and devstack\n")
-	b.WriteString("keeps base current. Do not change base to finish this feature.\n")
-	fmt.Fprintf(b, "To make this stack run one more service, add it: devstack stack add %s <service>\n", rec.Name)
+	b.WriteString("Every commit you make here goes on the branch of this stack.\n")
+	b.WriteString("This stack runs only its members. Every stack uses the shared set. Do not change a shared\n")
+	b.WriteString("service to finish this feature.\n")
+	b.WriteString("If a member calls a service that this stack does not run, devstack warns. If the change needs\n")
+	fmt.Fprintf(b, "that service, add it: devstack stack add %s <service>\n", rec.Name)
+	writePrimeStopTime(b, rec)
+}
+
+func writePrimeStopTime(b *strings.Builder, rec *stack.Record) {
+	switch {
+	case rec.Active && !rec.StopAt.IsZero():
+		fmt.Fprintf(b, "devstack stops this stack at %s. To push that back, call the stack_extend tool.\n", rec.StopAt.Local().Format("2006-01-02 15:04"))
+	case rec.StoppedBy == stack.StoppedBySweep:
+		fmt.Fprintf(b, "This stack stopped because its stop time passed. To start it again: devstack stack up %s\n", rec.Name)
+	default:
+		fmt.Fprintf(b, "devstack stops a stack %s after `stack up`. To push that back, call the stack_extend tool.\n", stopWindowText())
+	}
+}
+
+func stopWindowText() string {
+	return strings.TrimSuffix(strings.TrimSuffix(stack.StopAfter.String(), "0s"), "0m")
 }
 
 func writePrimeOtherStackTask(b *strings.Builder, working *workingStack, service string) {
 	rec := working.Rec
 	fmt.Fprintf(b, "stack %s · a guess: %s\n", rec.Name, working.Reason)
-	if len(rec.Overlay) > 0 {
-		fmt.Fprintf(b, "services %s\n", strings.Join(rec.Overlay, ", "))
+	if len(rec.Members) > 0 {
+		fmt.Fprintf(b, "services %s\n", strings.Join(rec.Members, ", "))
 	}
 	writePrimeStackNote(b, rec)
 
@@ -264,8 +282,7 @@ func writePrimeOtherStackTask(b *strings.Builder, working *workingStack, service
 	fmt.Fprintf(b, "3. Restart the copy you changed: devstack service restart %s --stack %s\n", taskService(rec, service), rec.Name)
 	fmt.Fprintf(b, "4. Record where you got to: devstack stack note %s --add \"what you found\"\n", rec.Name)
 	writePrimeCloseOut(b, rec.Branch)
-	b.WriteString("Everything else runs from base. The user and every other stack share base, and devstack\n")
-	b.WriteString("keeps base current. Do not change base to finish this feature.\n")
+	b.WriteString("Every stack uses the shared set. Do not change a shared service to finish this feature.\n")
 }
 
 func writePrimeNoStackTask(b *strings.Builder, inReplica bool, candidates []stack.Record) {
@@ -277,10 +294,10 @@ func writePrimeNoStackTask(b *strings.Builder, inReplica bool, candidates []stac
 	b.WriteString("   Then work in the directory that command prints.\n")
 	b.WriteString("3. See what runs now, and where: devstack status\n")
 	if inReplica {
-		b.WriteString("This directory is devstack's own copy of base, and `devstack workspace up` overwrites it. Do not edit here.\n")
+		b.WriteString("This directory is the replica of the shared set. Every hour devstack overwrites it. Do not edit here.\n")
 		return
 	}
-	b.WriteString("A change you make here reaches base only on the default branch, after `devstack workspace up`.\n")
+	b.WriteString("A stack runs from its own worktrees. A change you make in this checkout reaches no stack.\n")
 }
 
 const primeCandidateRows = 5
@@ -365,12 +382,12 @@ func writePrimeStackNote(b *strings.Builder, rec *stack.Record) {
 
 func writePrimeOverlayDirs(b *strings.Builder, rec *stack.Record) {
 	width := 0
-	for _, svc := range rec.Overlay {
+	for _, svc := range rec.Members {
 		if len(svc) > width {
 			width = len(svc)
 		}
 	}
-	for _, svc := range rec.Overlay {
+	for _, svc := range rec.Members {
 		if path := rec.Worktrees[svc]; path != "" {
 			fmt.Fprintf(b, "     %-*s  %s\n", width, svc, path)
 		}
@@ -383,38 +400,33 @@ func writePrimeSiblingCaution(b *strings.Builder, siblings map[string]string) {
 		return
 	}
 	fmt.Fprintf(b, "   The worktrees also hold the code of: %s. This stack runs no copy of them.\n", strings.Join(names, ", "))
-	b.WriteString("   base runs its own copy of each, from its own directory elsewhere. A change you make to\n")
-	b.WriteString("   one here goes on the branch of this stack, and no process runs it.\n")
+	b.WriteString("   A change you make to one here goes on the branch of this stack, and no process runs it.\n")
 }
 
 func taskService(rec *stack.Record, service string) string {
 	if service != "" {
 		return service
 	}
-	if len(rec.Overlay) > 0 {
-		return rec.Overlay[0]
+	if len(rec.Members) > 0 {
+		return rec.Members[0]
 	}
 	return "<service>"
 }
 
-// git cuts a worktree of a whole repository and never of a subdirectory, so a
-// stack that overlays one service of a repository gets the code of every other
-// service in that repository too. Nothing runs that code: base runs its own copy
-// from its own directory.
 func stackSiblings(rw *config.ResolvedWorkspace, rec *stack.Record) map[string]string {
-	overlay := map[string]bool{}
-	for _, s := range rec.Overlay {
-		overlay[s] = true
+	members := map[string]bool{}
+	for _, s := range rec.Members {
+		members[s] = true
 	}
 
 	out := map[string]string{}
-	for _, s := range rec.Overlay {
+	for _, s := range rec.Members {
 		repoDir, top := splitStackWorktree(rec.Root, rec.Worktrees[s], rw.Services[s].RepoPath)
 		if repoDir == "" {
 			continue
 		}
 		for name, svc := range rw.Services {
-			if overlay[name] || out[name] != "" {
+			if members[name] || out[name] != "" {
 				continue
 			}
 			rel, err := filepath.Rel(top, svc.RepoPath)
@@ -467,14 +479,13 @@ func writePrimeStackDirectory(b *strings.Builder, rec *stack.Record, here, cwd s
 	svc := siblingAt(siblings, cwd)
 	if svc == "" {
 		fmt.Fprintf(b, "This directory is in the worktree of stack %s. devstack can not name a service in it.\n", here)
-		fmt.Fprintf(b, "The stack runs its own copy of these services only: %s.\n", strings.Join(rec.Overlay, ", "))
+		fmt.Fprintf(b, "The stack runs its own copy of these services only: %s.\n", strings.Join(rec.Members, ", "))
 		b.WriteString("A change you make here goes on the branch of this stack. Before you change code here,\n")
 		b.WriteString("run `devstack status`. It names the copy that runs this code.\n")
 		return
 	}
 	fmt.Fprintf(b, "This directory holds the code of %s, on the branch of stack %s.\n", svc, here)
-	fmt.Fprintf(b, "This stack runs no copy of %s. It runs its own copy of: %s.\n", svc, strings.Join(rec.Overlay, ", "))
-	fmt.Fprintf(b, "base runs its own copy of %s, from its own directory elsewhere.\n", svc)
+	fmt.Fprintf(b, "This stack runs no copy of %s. It runs its own copy of: %s.\n", svc, strings.Join(rec.Members, ", "))
 	b.WriteString("A change you make here runs nowhere. No copy serves it, and no test executes it.\n")
 	fmt.Fprintf(b, "To make this stack run %s, run: devstack stack add %s %s\n", svc, here, svc)
 }
@@ -499,26 +510,29 @@ func siblingAt(siblings map[string]string, cwd string) string {
 }
 
 func inTemplateCheckout(ws *workspace.Workspace, here string, inReplica bool) bool {
-	return here == "base" && !inReplica && config.HasWorkspaceManifest(replica.Root(ws))
+	return here == "" && !inReplica && config.HasWorkspaceManifest(replica.Root(ws))
 }
 
-func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, here string, inReplica bool) {
+func writePrimeIdentity(b *strings.Builder, ws *workspace.Workspace, service, here string, inReplica, hasShared bool) {
 	fmt.Fprintf(b, "workspace %s", ws.Name)
 	if service != "" {
 		fmt.Fprintf(b, " · service %s", service)
 	}
 	switch {
-	case here != "base":
+	case here != "":
 		fmt.Fprintf(b, " · stack %s\n", here)
 	case inReplica:
-		b.WriteString(" · base replica (not a stack)\n")
-		b.WriteString("  devstack generates this directory. `devstack workspace up` overwrites it, so do not edit here.\n")
+		b.WriteString(" · replica of the shared set (not a stack)\n")
+		b.WriteString("  devstack generates this directory and overwrites it every hour, so do not edit here.\n")
 	case inTemplateCheckout(ws, here, inReplica):
-		b.WriteString(" · template checkout (not a stack, and not what base runs)\n")
-		fmt.Fprintf(b, "  Nothing runs here. base runs a replica of this workspace at %s.\n", replica.Root(ws))
+		b.WriteString(" · checkout (not a stack)\n")
+		fmt.Fprintf(b, "  Nothing runs here. The shared set runs from the replica at %s.\n", replica.Root(ws))
+	case hasShared:
+		b.WriteString(" · checkout (not a stack)\n")
+		fmt.Fprintf(b, "  devstack has built no replica yet, so the shared set runs from this checkout.\n  `devstack workspace up` builds the replica at %s. After that, nothing here runs.\n", replica.Root(ws))
 	default:
-		b.WriteString(" · base (not a stack)\n")
-		fmt.Fprintf(b, "  No replica is built yet, so base runs this checkout. `devstack workspace up` builds one\n  at %s, and after that nothing here runs.\n", replica.Root(ws))
+		b.WriteString(" · checkout (not a stack)\n")
+		b.WriteString("  Nothing runs here. A service of this workspace runs only in a stack.\n")
 	}
 }
 
@@ -568,9 +582,9 @@ func writePrimeApplies(b *strings.Builder, ws *workspace.Workspace, rw *config.R
 		lines = append(lines,
 			"  telemetry     every copy sends traces and logs. Query them with `devstack otel traces` and `devstack otel logs`,",
 			"                or with the investigate tool over MCP. The attribute devstack.stack identifies each copy.",
-			"                `devstack otel traces` with no --stack returns base alone. To get one stack, give `--stack <name>`.",
-			"                To get base and every stack together, give `--stack all`. `devstack otel logs` has no --stack:",
-			"                use `--trace <id>` to get the logs of one execution.")
+			"                `devstack otel traces` with no --stack returns every stack and the shared set. To get one",
+			"                stack, give `--stack <name>`. `devstack otel logs` has no --stack: use `--trace <id>` to get",
+			"                the logs of one execution.")
 	}
 
 	if len(lines) == 0 {
@@ -615,18 +629,31 @@ func writePrimeWhatThisIs(b *strings.Builder) {
 
 func writePrimeTerms(b *strings.Builder) {
 	section(b, "TERMS")
-	b.WriteString("  stack  a group of services you cut for one feature. It has its own branch, its own directories and\n")
-	b.WriteString("         its own ports. It is local, and it does not last: you stand it up, and you tear it down\n")
-	b.WriteString("  copy   one running process of a service. base runs one copy, and each stack runs another copy. Each\n")
-	b.WriteString("         copy has a different port. Run `devstack status` before you decide that a service is down\n")
-	b.WriteString("  base   every service no stack replaces. base runs a replica: one worktree per service at the default\n")
-	b.WriteString("         branch tip. Your own checkout is a template, and it runs nothing. An edit there reaches base\n")
-	b.WriteString("         only on the default branch, after `devstack workspace up`\n")
-	b.WriteString("A command that starts, stops or restarts a copy names it with `--stack <name>`, or `--stack base` for base.\n")
-	b.WriteString("With no flag it acts on the stack or replica your directory is in, and the default is base anywhere else.\n")
-	b.WriteString("Each command names the copy it changed. A base copy has no :stack suffix, so read that line to confirm it.\n")
-	b.WriteString("Never edit stacks.json, ports.json or a stack manifest by hand; use stack add/remove.\n")
+	b.WriteString("  stack       the services you cut for one feature: the services you name, and the services they need.\n")
+	b.WriteString("              It has its own branch, its own worktrees and its own ports. It runs no caller of a member\n")
+	b.WriteString("  needs       a service edge in devstack.service.yaml. A stack runs each service its members need.\n")
+	b.WriteString("              A `calls` edge pulls in nothing: if the stack does not run the callee, devstack warns\n")
+	b.WriteString("  shared set  the services every stack uses, for example databases. They run once per workspace, from\n")
+	b.WriteString("              the replica: worktrees at the default branch tip. devstack refreshes it every hour.\n")
+	b.WriteString("              An edit in your checkout reaches the shared set only through the default branch\n")
+	b.WriteString("  copy        one running process of a service. Each stack runs its own copy, on its own port. Run\n")
+	b.WriteString("              `devstack status` before you decide that a service is down\n")
+	fmt.Fprintf(b, "devstack stops a stack %s after `stack create` or `stack up`, and keeps its worktrees. To push the\n", stopWindowText())
+	b.WriteString("stop time back, call the stack_extend tool. To start a stopped stack, run `devstack stack up <name>`.\n")
+	b.WriteString("A command that starts, stops or restarts a stack service names the stack with `--stack <name>`.\n")
+	b.WriteString("With no flag it uses the stack your directory is in. Outside a stack, it acts only on a shared service.\n")
+	b.WriteString("An agent can read a shared service. It can not start, stop or restart one, because every stack uses it.\n")
+	b.WriteString("Each command names the copy it changed. A shared copy has no :stack suffix, so read that line to confirm it.\n")
+	b.WriteString("Never edit stacks.json, ports.json or a stack manifest by hand. Use stack add and stack remove.\n")
 	writePrimeStates(b)
+}
+
+func writePrimeHerdr(b *strings.Builder, pane string) {
+	if pane == "" {
+		return
+	}
+	fmt.Fprintf(b, "This is herdr pane %s. A stack you create, bring up, resync or adopt here shows in the herdr\n", pane)
+	b.WriteString("sidebar: its name, its state, its stop time and its tailnet URL.\n")
 }
 
 func writePrimeStates(b *strings.Builder) {
@@ -648,7 +675,7 @@ func writePrimeLiveCount(b *strings.Builder, ws *workspace.Workspace) {
 		b.WriteString("  daemon        not started. To start it, run: `devstack workspace up`\n")
 		return
 	}
-	base, stacked := 0, 0
+	shared, stacked := 0, 0
 	for _, r := range view.UiResources {
 		name := r.Metadata.Name
 		if !strings.HasPrefix(name, ws.Name+":") || serviceStatus(r) != "running" {
@@ -657,11 +684,11 @@ func writePrimeLiveCount(b *strings.Builder, ws *workspace.Workspace) {
 		if strings.Count(name, ":") > 1 {
 			stacked++
 		} else {
-			base++
+			shared++
 		}
 	}
-	fmt.Fprintf(b, "  live          %s now, on daemon port %d: %d in base, %d in stacks\n",
-		pluralCopyRunning(base+stacked), workspace.HostTiltPort, base, stacked)
+	fmt.Fprintf(b, "  live          %s now, on daemon port %d: %d in the shared set, %d in stacks\n",
+		pluralCopyRunning(shared+stacked), workspace.HostTiltPort, shared, stacked)
 	writePrimeBuild(b)
 }
 
@@ -691,9 +718,11 @@ func writePrimeReload(b *strings.Builder, rw *config.ResolvedWorkspace, service,
 		return
 	}
 
-	target := service + " --stack base"
+	target := service + " --stack <name>"
 	switch {
-	case here != "base":
+	case rw.IsShared(service):
+		target = service
+	case here != "":
 		target = service + " --stack " + here
 	case working != nil && working.Certain:
 		target = service + " --stack " + working.Rec.Name
@@ -712,9 +741,9 @@ func writePrimeReload(b *strings.Builder, rw *config.ResolvedWorkspace, service,
 		fmt.Fprintf(b, "                If the table above shows that copy as stopped, disabled or down, restart does not\n")
 		fmt.Fprintf(b, "                apply. Start it: devstack service start %s\n", target)
 	}
-	if here == "base" && !inReplica && replicaBuilt {
-		b.WriteString("                Neither applies to an edit you make here: base runs the replica, so your change\n")
-		b.WriteString("                reaches it only via the default branch and `devstack workspace up`.\n")
+	if here == "" && !inReplica && replicaBuilt {
+		b.WriteString("                Neither applies to an edit you make here: no copy runs your checkout. A shared service\n")
+		b.WriteString("                runs from the replica, and a stack service runs from the worktrees of its stack.\n")
 	}
 	b.WriteString("                If you change the configuration or an environment variable, you must restart the service.\n")
 }
@@ -743,27 +772,35 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 		return
 	}
 
-	type instance struct{ name, port, state, branch, dir, note string }
-
-	baseState := states[service]
-	if baseState == "" {
-		baseState = "down"
+	type instance struct {
+		name, port, state, branch, dir, note string
+		shared                               bool
 	}
-	rows := []instance{{name: "base", port: "-", state: baseState}}
+
+	shared := rw.IsShared(service)
+	var rows []instance
 	replicaBuilt := false
-	if svc, ok := rw.Services[service]; ok {
-		rows[0].dir, replicaBuilt = replicaDir(ws, service, svc.RepoPath)
-		if svc.Manifest != nil {
-			if p, ok := svc.Manifest.Ports["http"]; ok {
-				rows[0].port = fmt.Sprintf(":%d", p)
+	if shared {
+		state := states[service]
+		if state == "" {
+			state = "down"
+		}
+		row := instance{name: "shared", port: "-", state: state, shared: true}
+		if svc, ok := rw.Services[service]; ok {
+			row.dir, replicaBuilt = replicaDir(ws, service, svc.RepoPath)
+			if svc.Manifest != nil {
+				if p, ok := svc.Manifest.Ports["http"]; ok {
+					row.port = fmt.Sprintf(":%d", p)
+				}
 			}
 		}
+		rows = append(rows, row)
 	}
 
 	recs, _ := stack.LoadStore(ws.Name)
 	sort.Slice(recs, func(i, j int) bool { return recs[i].Name < recs[j].Name })
 	for _, rec := range recs {
-		if !containsString(rec.Overlay, service) {
+		if !containsString(rec.Members, service) {
 			continue
 		}
 		row := instance{name: rec.Name, port: "-", state: "down", note: firstLine(rec.Note, 74)}
@@ -777,10 +814,12 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 		rows = append(rows, row)
 	}
 
-	// The branch is read from each checkout rather than taken from the stack
-	// record: a service pulled into an overlay because it calls a changed one is
-	// detached at HEAD, not on the branch of the stack, and telling an agent
-	// otherwise sends it to commit somewhere that does not exist.
+	if len(rows) == 0 {
+		fmt.Fprintf(b, "No stack runs %s, and it is not a shared service. To run it, cut a stack:\n", service)
+		fmt.Fprintf(b, "  devstack stack create <name> --repos %s\n", service)
+		return
+	}
+
 	dirs := map[string]string{}
 	for _, r := range rows {
 		if r.dir != "" {
@@ -800,11 +839,13 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 		suggested = working.Rec.Name
 	}
 
+	marked := ""
 	for _, r := range rows {
 		marker := " "
 		switch {
-		case r.name == here && !template:
+		case !template && ((r.shared && here == "") || (!r.shared && r.name == here)):
 			marker = "▸"
+			marked = r.name
 		case r.name == suggested:
 			marker = "?"
 		}
@@ -816,23 +857,27 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 			fmt.Fprintf(b, "      %s\n", r.note)
 		}
 	}
-	if template {
-		b.WriteString("  No marker ▸ is on this table. You are in the template checkout, which is no copy.\n")
-	} else {
-		fmt.Fprintf(b, "  The marker ▸ shows the copy that you are in now: %s.\n", here)
+	switch {
+	case template:
+		b.WriteString("  No marker ▸ is on this table. You are in your checkout, which runs no copy.\n")
+	case marked != "":
+		fmt.Fprintf(b, "  The marker ▸ shows the copy that you are in now: %s.\n", marked)
+	default:
+		b.WriteString("  No marker ▸ is on this table. You are in the directory of no copy.\n")
 	}
 	if suggested != "" {
 		fmt.Fprintf(b, "  The marker ? shows a guess. %s is the only stack that runs %s, but you are not in it.\n  Ask the user before you work on it.\n", suggested, service)
 	}
-	if replicaBuilt {
-		b.WriteString("  The directory under each copy is the directory that copy RUNS. base runs the replica, not your checkout.\n")
-	} else {
-		b.WriteString("  The directory under each copy is the directory that copy RUNS. base has no replica built yet, so for now\n")
-		b.WriteString("  it runs your checkout. `devstack workspace up` builds one, and after that your checkout runs nothing.\n")
+	b.WriteString("  The directory under each copy is the directory that copy RUNS.\n")
+	if shared {
+		if replicaBuilt {
+			b.WriteString("  The shared copy runs from the replica, not from your checkout. It takes no --stack.\n")
+		} else {
+			b.WriteString("  devstack has built no replica yet, so the shared copy runs your checkout. It takes no --stack.\n")
+		}
 	}
-	b.WriteString("  To start, stop or restart one, name it: `--stack <name>`, or `--stack base`.\n")
-	b.WriteString("  With no flag the command uses the copy whose directory you are in: a stack worktree, or the replica.\n")
-	b.WriteString("  In a plain checkout it uses base. Each command names the copy it changed, so read that line.\n")
+	b.WriteString("  To start, stop or restart a stack copy, name it: `--stack <name>`. With no flag the command\n")
+	b.WriteString("  uses the stack whose worktree you are in. Each command names the copy it changed, so read that line.\n")
 	b.WriteString("  To reach a copy over the network, use its port.\n")
 }
 

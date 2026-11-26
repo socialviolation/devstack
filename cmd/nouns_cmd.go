@@ -22,13 +22,15 @@ var serviceCmd = &cobra.Command{
 
 With no name, devstack finds the service from the working directory.
 
-These actions change what runs, so they also name the copy to act on. Pass
---stack <name> for a feature stack, or --stack base for base. Base runs from the
-replica that devstack keeps, not from your checkout.
+These actions change what runs, so they also name the stack to act on. Pass
+--stack <name> for a feature stack. With no flag, devstack uses the stack whose
+worktree you are in.
 
-With no flag, devstack acts on the copy whose directory you are in. Anywhere
-else it acts on base. Each action names the copy it changed: a base copy has no
-:stack suffix.`,
+Outside a stack worktree, only a shared service resolves. A shared service is a
+service in the workspace "shared:" list. It runs once, from the replica, and
+every stack uses it. A service that is not shared runs only in a stack, so the
+command asks for --stack. Each action names what it changed: a shared service
+has no :stack suffix.`,
 }
 
 var groupCmd = &cobra.Command{
@@ -39,15 +41,14 @@ group, devstack starts every service in it, in dependency order.
 
 The name must be a group. To act on one service, run 'devstack service <action> <name>'.
 
-start, stop and restart change what runs, so they also name the copy to act on:
---stack <name>, or --stack base. With no flag they use the copy whose directory
-you are in, and base anywhere else.
+start, stop and restart change what runs, so they also name the stack to act on:
+--stack <name>. With no flag they use the stack whose worktree you are in.
+Outside a stack worktree, they reach only the shared services.
 
-A stack rarely overlays a whole group. With --stack <name>, the action reaches
-only the members that the stack runs its own copy of. devstack names the members
-that still serve from base. If no member of the group is in the stack, devstack
-refuses. It does not narrow the group without a word to you. To act on the
-members that stay on base, run the same command with --stack base.`,
+A stack rarely runs a whole group. With --stack <name>, the action reaches
+only the members that the stack runs. devstack names the members that are not
+in this stack. If no member of the group is in the stack, devstack refuses. It
+does not narrow the group without a word to you.`,
 	RunE: runGroupsList,
 }
 
@@ -74,11 +75,11 @@ func groupAction(use, short string, run func(*cobra.Command, []string) error) *c
 }
 
 var (
-	serviceStartCmd   = serviceAction("start [service]", "Start a service and all the services it depends on", runEnable, cobra.MaximumNArgs(1))
+	serviceStartCmd   = serviceAction("start [service]", "Start a service and every service it needs", runEnable, cobra.MaximumNArgs(1))
 	serviceStopCmd    = serviceAction("stop [service]", "Stop a service", runStop, cobra.MaximumNArgs(1))
 	serviceRestartCmd = serviceAction("restart [service]", "Restart a service, but not the services it depends on", runRestart, cobra.MaximumNArgs(1))
 
-	groupStartCmd   = groupAction("start <group>", "Start every service in a group, in dependency order", runEnable)
+	groupStartCmd   = groupAction("start <group>", "Start every service in a group, after the services they need", runEnable)
 	groupStopCmd    = groupAction("stop <group>", "Stop every service in a group", runStop)
 	groupRestartCmd = groupAction("restart <group>", "Restart every service in a group", runRestart)
 )
@@ -95,6 +96,6 @@ func init() {
 		serviceStartCmd, serviceStopCmd, serviceRestartCmd,
 		groupStartCmd, groupStopCmd, groupRestartCmd,
 	} {
-		c.Flags().String("stack", "", "The copy to act on: a feature stack name, or \"base\" for the replica that base runs from. Default: the copy your directory is in, or base")
+		c.Flags().String("stack", "", "The stack to act on, by short name. Default: the stack whose worktree you are in. Outside a stack, only a shared service resolves")
 	}
 }

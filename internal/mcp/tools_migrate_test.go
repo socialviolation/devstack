@@ -53,7 +53,7 @@ func migrateFixture(t *testing.T) (*server.MCPServer, string, *int) {
 	}
 
 	s := server.NewMCPServer("test", "0.0.0")
-	registerMigrateTool(s, []migrate.Patch{patch})
+	registerMigrateTool(s, nil, []migrate.Patch{patch})
 	return s, touched, &ran
 }
 

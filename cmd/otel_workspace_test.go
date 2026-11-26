@@ -89,16 +89,16 @@ func TestOtelSubcommandFlagBeatsTheEnvVar(t *testing.T) {
 // there, so a human and an agent comparing notes disagreed about what they had
 // searched. Both surfaces now quote one sentence, and base only is the narrower
 // reading of the two.
-func TestOtelTracesDefaultsToBaseAlone(t *testing.T) {
+func TestOtelTracesDefaultsToEveryStackAndTheSharedSet(t *testing.T) {
 	usage := otelTracesCmd.Flags().Lookup("stack").Usage
 	if !strings.Contains(usage, observability.StackScopeDesc) {
 		t.Errorf("--stack must state the shared default %q; got %q", observability.StackScopeDesc, usage)
 	}
-	if !strings.Contains(otelTracesCmd.Long, "base alone") || !strings.Contains(otelTracesCmd.Long, "--stack all") {
+	if !strings.Contains(otelTracesCmd.Long, "every stack and the shared set") {
 		t.Errorf("the command help must state the default and how to widen it:\n%s", otelTracesCmd.Long)
 	}
 
-	cases := map[string]string{"": "base", "  ": "base", "all": "", "*": ""}
+	cases := map[string]string{"": "", "  ": "", "all": "", "*": "", "shared": "shared", "base": "shared"}
 	for in, want := range cases {
 		got, err := resolveStackFlag(otelSubcommand(t, ""), in)
 		if err != nil {
@@ -107,5 +107,25 @@ func TestOtelTracesDefaultsToBaseAlone(t *testing.T) {
 		if got != want {
 			t.Errorf("resolveStackFlag(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestOtelStackSharedSkipsTheStackLookup(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := workspace.Register(workspace.Workspace{Name: "alpha", Path: t.TempDir(), TiltPort: 10350}); err != nil {
+		t.Fatalf("register alpha: %v", err)
+	}
+	t.Chdir(t.TempDir())
+	initConfig()
+	useWorkspaceKey(t, nil)
+
+	for _, in := range []string{"shared", "base"} {
+		got, err := resolveStackFlag(otelSubcommand(t, "alpha"), in)
+		if err != nil || got != "shared" {
+			t.Errorf("resolveStackFlag(%q) = %q, %v; want shared", in, got, err)
+		}
+	}
+	if _, err := resolveStackFlag(otelSubcommand(t, "alpha"), "nope"); err == nil {
+		t.Error("resolveStackFlag(nope) must refuse a stack that does not exist")
 	}
 }

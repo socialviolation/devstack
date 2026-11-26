@@ -55,6 +55,16 @@ func listCoreTools(t *testing.T) map[string]listedTool {
 	return tools
 }
 
+func TestStartRestartStopStackParamSaysAgentsCanNotTouchASharedService(t *testing.T) {
+	tools := listCoreTools(t)
+	for _, name := range []string{"start", "restart", "stop"} {
+		desc := tools[name].InputSchema.Properties["stack"].Description
+		if !strings.Contains(desc, "An agent can not start, restart or stop a shared service") {
+			t.Errorf("the %s stack parameter does not say an agent can not act on a shared service:\n%s", name, desc)
+		}
+	}
+}
+
 func TestCoreToolAnnotationsAreHonest(t *testing.T) {
 	tools := listCoreTools(t)
 
@@ -137,8 +147,8 @@ func TestStopDescriptionStatesStackScoping(t *testing.T) {
 	for _, want := range []string{
 		"stops the default service for this repo",
 		"Stopping everything requires all=true",
-		"never base's",
-		"touches only that stack's copies",
+		"never the shared set",
+		"touches only that stack's services",
 	} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("stop description missing %q; got %s", want, desc)
@@ -149,7 +159,7 @@ func TestStopDescriptionStatesStackScoping(t *testing.T) {
 func TestInvestigateDescribesPerModeFiltering(t *testing.T) {
 	tools := listCoreTools(t)
 	desc := tools["investigate"].Description
-	if !strings.Contains(desc, "every other filter is ignored, including service, stack, since_minutes, limit and errors_only") {
+	if !strings.Contains(desc, "the tool ignores every other filter, including service, stack, since_minutes, limit and errors_only") {
 		t.Errorf("investigate description does not state that mode 1 ignores the other filters; got %s", desc)
 	}
 
@@ -207,7 +217,7 @@ func TestCoreLogEmptyNoteNamesFiltersAndWidening(t *testing.T) {
 		"since_restart=false",
 		"errors_only=false",
 		"drop grep",
-		"omit stack to read base",
+		"omit stack to read the shared set",
 	} {
 		if !strings.Contains(note, want) {
 			t.Errorf("note missing %q; got:\n%s", want, note)
@@ -216,10 +226,10 @@ func TestCoreLogEmptyNoteNamesFiltersAndWidening(t *testing.T) {
 
 	base := coreLogEmptyNote(coreLogFilters{Lines: 100})
 	if !strings.Contains(base, "scope=every service of this target") {
-		t.Errorf("unscoped note should say it covered every service of the one target, not of base and every stack; got:\n%s", base)
+		t.Errorf("unscoped note should say it covered every service of the one target, not of the shared set and every stack; got:\n%s", base)
 	}
-	if !strings.Contains(base, "stack=base") {
-		t.Errorf("unscoped note should name the base stack scope; got:\n%s", base)
+	if !strings.Contains(base, "stack=none (the shared set)") {
+		t.Errorf("unscoped note should name the shared set scope; got:\n%s", base)
 	}
 	if strings.Contains(base, "drop grep") {
 		t.Errorf("note should not suggest dropping a grep that was not set; got:\n%s", base)
@@ -230,20 +240,20 @@ func TestCoreInvestigateEmptyNoteNamesFiltersAndWidening(t *testing.T) {
 	note := coreInvestigateEmptyNote(coreInvestigateFilters{
 		Service:       "api-service",
 		ServiceSource: "this repo's default service, not asked for",
-		Stack:         "base",
+		Stack:         "perf",
 		SinceMinutes:  5,
 		Limit:         3,
 		ErrorsOnly:    false,
 	})
 	for _, want := range []string{
 		"NOT that the service is healthy, idle or uninstrumented",
-		"stack=base only",
+		"stack=stack perf only",
 		"service=api-service (this repo's default service, not asked for)",
 		"window=last 5 minute(s)",
 		"limit=3",
 		"errors_only=false",
 		"raise since_minutes above 5",
-		"stack='all'",
+		"omit stack",
 		"observability tool's status action",
 	} {
 		if !strings.Contains(note, want) {
@@ -261,7 +271,7 @@ func TestCoreInvestigateEmptyNoteNamesFiltersAndWidening(t *testing.T) {
 	if !strings.Contains(withErrors, "7 execution(s) matched everything except errors_only") {
 		t.Errorf("note should report what errors_only discarded; got:\n%s", withErrors)
 	}
-	if !strings.Contains(withErrors, "stack=base and every feature stack") {
+	if !strings.Contains(withErrors, "stack=every stack and the shared set") {
 		t.Errorf("note should say an empty stack filter means every copy; got:\n%s", withErrors)
 	}
 	if !strings.Contains(withErrors, "service=(none — every service)") {
@@ -271,7 +281,7 @@ func TestCoreInvestigateEmptyNoteNamesFiltersAndWidening(t *testing.T) {
 
 func TestCoreStartOrderPutsDependenciesFirst(t *testing.T) {
 	cfg := &config.WorkspaceConfig{
-		Deps: map[string][]string{
+		Needs: map[string][]string{
 			"api":     {"db", "cache"},
 			"cache":   {"db"},
 			"web":     {"api"},
@@ -312,7 +322,7 @@ func TestCoreStartOrderPutsDependenciesFirst(t *testing.T) {
 		}
 	}
 
-	cycle := &config.WorkspaceConfig{Deps: map[string][]string{"a": {"b"}, "b": {"a"}}}
+	cycle := &config.WorkspaceConfig{Needs: map[string][]string{"a": {"b"}, "b": {"a"}}}
 	if _, err := coreStartOrder(cycle, []string{"a"}); err == nil {
 		t.Error("coreStartOrder must reject a dependency cycle")
 	}
@@ -334,7 +344,7 @@ func TestCoreRenderTopology(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"workspace: navexa", "Groups:", "core: api, db", "- api", "dependencies: db", "dependents: api", "called by: api", "something odd", "declared configuration, not runtime state"} {
+	for _, want := range []string{"workspace: navexa", "Groups:", "core: api, db", "- api", "needs: db", "needed by: api", "called by: api", "something odd", "declared configuration, not runtime state"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("topology output missing %q; got:\n%s", want, all)
 		}

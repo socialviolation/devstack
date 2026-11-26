@@ -13,28 +13,29 @@ import (
 var depsCmd = &cobra.Command{
 	Use:     "dependencies",
 	Aliases: []string{"deps"},
-	Short:   "Declare startup dependencies between services",
-	Long: `A dependency tells devstack which services must run before a given service can
-start. When you run 'devstack service start api --stack base', devstack resolves
-the full dependency graph. It then starts every service in the correct order.
+	Short:   "Edit the old dependencies: map of the workspace manifest",
+	Long: `These commands edit the old "dependencies:" map in
+<workspace>/devstack.workspace.yaml. devstack loads that map as "calls" edges.
+A calls edge does not pull a service into a stack, and the host daemon does
+not wait for it.
 
-devstack stores the dependencies in <workspace>/devstack.workspace.yaml.
-'devstack group list' and 'devstack status' show them in their output.
+To declare an edge, use "needs" or "calls" in devstack.service.yaml. A needs
+edge pulls the service into a stack, and the host daemon starts it first.
+'devstack service start' and 'devstack group start' also start it first.
+They do not read this map.
 
-Example: if 'api' depends on 'postgres' and 'redis':
+Example:
   devstack dependencies add api postgres
-  devstack dependencies add api redis
-  devstack service start api --stack base   ← starts postgres, redis, then api
 
 SUBCOMMANDS
-  devstack dependencies add <svc> <dep>    declare that svc needs dep to run first
-  devstack dependencies remove <svc> <dep> remove a declared dependency
-  devstack dependencies list <svc>         show the full resolved startup sequence for a service`,
+  devstack dependencies add <svc> <dep>    add dep to the list of svc in the old map
+  devstack dependencies remove <svc> <dep> remove dep from the list of svc
+  devstack dependencies list <svc>         show the order that the old map gives svc`,
 }
 
 var depsAddCmd = &cobra.Command{
 	Use:   "add <service> <dep>",
-	Short: "Declare that <service> depends on <dep> (dep starts first)",
+	Short: "Add <dep> to the dependencies of <service> in the old map",
 	Args:  cobra.ExactArgs(2),
 	RunE:  runDepsAdd,
 }
@@ -49,12 +50,11 @@ var depsRemoveCmd = &cobra.Command{
 var depsOrderCmd = &cobra.Command{
 	Use:     "list <service>",
 	Aliases: []string{"order"},
-	Short:   "Show the full resolved startup sequence for a service",
-	Long: `devstack resolves the complete dependency graph for a service and prints the
-startup order. That is the sequence devstack uses when you run
-'devstack service start <service>' and name the copy to start.
-
-Use this command to make sure that the dependencies are correct.`,
+	Short:   "Show the order that the old dependencies: map gives a service",
+	Long: `devstack resolves the old dependencies: map for a service and prints the
+order that it gives. devstack does not start services in this order.
+'devstack service start' and 'stack up' start what each service needs.
+To move the old map onto each service, run 'devstack migrate shared-stacks'.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runDepsOrder,
 }

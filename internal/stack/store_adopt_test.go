@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-func TestAdoptClearsOwnerAndExpiry(t *testing.T) {
+func TestAdoptClearsOwnerAndKeepsTheStopTime(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
-	if err := upsertStack(Record{Name: "agent-x", Base: "navexa", Owner: "alice", ExpiresAt: now.Add(time.Hour)}); err != nil {
+	if err := upsertStack(Record{Name: "agent-x", Base: "navexa", Owner: "alice", StopAt: now.Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -25,31 +25,12 @@ func TestAdoptClearsOwnerAndExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, r := range []Record{rec, *stored} {
-		if r.Owner != "" || !r.ExpiresAt.IsZero() {
-			t.Errorf("adopted stack kept owner %q and expiry %v", r.Owner, r.ExpiresAt)
+		if r.Owner != "" || !r.StopAt.Equal(now.Add(time.Hour)) {
+			t.Errorf("adopted stack has owner %q and stop time %v, want no owner and the same stop time", r.Owner, r.StopAt)
 		}
 		if r.AdoptedFrom != "alice" || !r.AdoptedAt.Equal(now) {
 			t.Errorf("adopted stack records from %q at %v, want alice at %v", r.AdoptedFrom, r.AdoptedAt, now)
 		}
-	}
-}
-
-func TestExpiredSkipsAnAdoptedStack(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
-	if err := upsertStack(Record{Name: "agent-x", Base: "navexa", Owner: "alice", ExpiresAt: now.Add(-time.Hour)}); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := Adopt("navexa", "agent-x", now); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := Expired("navexa", now.Add(1000*time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 0 {
-		t.Errorf("Expired = %v, want none after adopt", got)
 	}
 }
 

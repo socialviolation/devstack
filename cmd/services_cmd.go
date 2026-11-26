@@ -37,7 +37,7 @@ open when one of its services is erroring, starting or building. Pass --all to
 list every group and stack, and to show the directory that each copy runs from.
 
 That directory, and the BRANCH beside it, are the code that the process runs:
-the replica worktree for base, and the stack's own worktree for a stack. It is
+the replica worktree for a shared service, and the stack's own worktree for a stack. It is
 never your checkout. If you do not expect that branch there, the copy does not
 contain the work that you look for.
 
@@ -59,7 +59,7 @@ Copy states:
 
 func init() {
 	rootCmd.AddCommand(statusCmd)
-	statusCmd.Flags().String("stack", "", "Show a feature stack's copies (<ws>:<svc>:<stack>) instead of base's")
+	statusCmd.Flags().String("stack", "", "Show one stack's services (<ws>:<svc>:<stack>) instead of the shared set and every stack")
 	statusCmd.Flags().Bool("all", false, "Show the full table for every group and stack, including ones with nothing running")
 }
 
@@ -236,24 +236,9 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 		resourceMap = hostResourceMap(view.UiResources, ws.Name, "")
 	}
 
-	// Collect all known service names
-	allServices := make(map[string]bool)
-	for name := range resourceMap {
-		allServices[name] = true
-	}
-	for _, members := range cfg.Groups {
-		for _, m := range members {
-			allServices[m] = true
-		}
-	}
-	for svc, deps := range cfg.Deps {
-		allServices[svc] = true
-		for _, d := range deps {
-			allServices[d] = true
-		}
-	}
-
 	rw, _ := config.ResolveWorkspace(ws.Path)
+	allServices := sharedStatusNames(rw, resourceMap)
+
 	svcEnvNames := resolveActiveEnvs(rw, allServices, "")
 
 	// Count running
@@ -324,75 +309,28 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 
 	printServiceOrientation(ws, rw, view)
 
-	// Sorted group names
-	groupNames := make([]string, 0, len(cfg.Groups))
-	for g := range cfg.Groups {
-		groupNames = append(groupNames, g)
-	}
-	sort.Strings(groupNames)
-
-	// Build service → group color map for cross-group dep highlighting
-	svcGroupColor := make(map[string]*color.Color)
-	for i, groupName := range groupNames {
-		gc := groupPalette[i%len(groupPalette)]
-		for _, member := range cfg.Groups[groupName] {
-			svcGroupColor[member] = gc
-		}
-	}
-
-	// Track which services belong to at least one group
-	inGroup := make(map[string]bool)
-	for _, members := range cfg.Groups {
-		for _, m := range members {
-			inGroup[m] = true
-		}
-	}
-
-	sections := make([]serviceSection, 0, len(groupNames)+1)
-	for i, groupName := range groupNames {
-		members := append([]string(nil), cfg.Groups[groupName]...)
-		if len(members) == 0 {
-			continue
-		}
-		sort.Strings(members)
-		groupRunning := countRunning(members, resourceMap)
-		sections = append(sections, serviceSection{
-			label:     groupName,
-			members:   members,
-			deps:      cfg.Deps,
-			resources: resourceMap,
-			envs:      svcEnvNames,
-			dirs:      serviceDirs,
-			color:     groupPalette[i%len(groupPalette)],
-			running:   groupRunning,
-			tag:       fmt.Sprintf("[%d/%d]", groupRunning, len(members)),
-			all:       view.UiResources,
-		})
-	}
-
-	ungrouped := make([]string, 0)
+	sections := make([]serviceSection, 0, 1)
+	shared := make([]string, 0, len(allServices))
 	for svc := range allServices {
-		if !inGroup[svc] {
-			ungrouped = append(ungrouped, svc)
-		}
+		shared = append(shared, svc)
 	}
-	sort.Strings(ungrouped)
-	if len(ungrouped) > 0 {
-		ungroupedRunning := countRunning(ungrouped, resourceMap)
+	sort.Strings(shared)
+	if len(shared) > 0 {
+		sharedRunning := countRunning(shared, resourceMap)
 		sections = append(sections, serviceSection{
-			label:     ungroupedLabel,
-			members:   ungrouped,
+			label:     "shared",
+			members:   shared,
 			deps:      cfg.Deps,
 			resources: resourceMap,
 			envs:      svcEnvNames,
 			dirs:      serviceDirs,
-			color:     color.New(color.Faint, color.Bold),
-			running:   ungroupedRunning,
-			tag:       fmt.Sprintf("[%d/%d]", ungroupedRunning, len(ungrouped)),
+			color:     groupPalette[0],
+			running:   sharedRunning,
+			tag:       fmt.Sprintf("[%d/%d]", sharedRunning, len(shared)),
 			all:       view.UiResources,
 		})
 	}
-	sections = append(sections, stackSections(ws, view, cfg.Deps, len(groupNames))...)
+	sections = append(sections, stackSections(ws, view, cfg.Deps, 1)...)
 
 	table, condensed := partitionSections(sections, expand)
 	if rows := assembleRows(table); len(rows) > 0 {
@@ -407,7 +345,7 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 	fmt.Println()
 
 	color.New(color.Faint).Printf("  within a group, top-to-bottom = startup order   ·   blank ENV = no env   ·   erroring? read its log with the process_logs tool, or `devstack workspace open`\n")
-	color.New(color.Faint).Printf("  devstack service start <service> --stack base   ·   devstack group start <group> --stack base\n")
+	color.New(color.Faint).Printf("  devstack service start <shared service>   ·   devstack service start <service> --stack <name>\n")
 	color.New(color.Faint).Printf("  devstack stack up <name>   ·   devstack stack config <svc> --stack <name>\n")
 	color.New(color.Faint).Printf("  devstack condenses a group with nothing running, starting, building or erroring   ·   devstack status --all shows every one\n")
 
@@ -418,6 +356,17 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 // sections, reading each stack's <ws>:<svc>:<stack> resources out of the host
 // view already fetched for the base workspace. colorOffset continues the group
 // palette so a stack's rows stay distinguishable from the base groups'.
+func sharedStatusNames(rw *config.ResolvedWorkspace, resources map[string]tilt.UIResource) map[string]bool {
+	names := make(map[string]bool)
+	for name := range resources {
+		names[name] = true
+	}
+	for _, name := range rw.SharedNames() {
+		names[name] = true
+	}
+	return names
+}
+
 func stackSections(ws *workspace.Workspace, view *tilt.TiltView, baseDeps map[string][]string, colorOffset int) []serviceSection {
 	recs, err := stack.LoadStore(ws.Name)
 	if err != nil || len(recs) == 0 {
@@ -435,7 +384,7 @@ func stackSections(ws *workspace.Workspace, view *tilt.TiltView, baseDeps map[st
 		}
 
 		services := map[string]bool{}
-		for _, svc := range rec.Overlay {
+		for _, svc := range rec.Members {
 			services[svc] = true
 		}
 		for svc := range resourceMap {
@@ -606,7 +555,7 @@ func printServiceOrientation(ws *workspace.Workspace, rw *config.ResolvedWorkspa
 
 	var rows []serviceOrientation
 	for _, rec := range recs {
-		if !containsString(rec.Overlay, service) {
+		if !containsString(rec.Members, service) {
 			continue
 		}
 		row := serviceOrientation{
@@ -630,11 +579,9 @@ func printServiceOrientation(ws *workspace.Workspace, rw *config.ResolvedWorkspa
 	sort.Slice(rows, func(i, j int) bool { return rows[i].stack < rows[j].stack })
 
 	faint := color.New(color.Faint)
-	// Not "base": base runs from its replica, and naming this directory base was
-	// read as "the code here is the code base runs".
 	where := "template checkout"
 	if _, rerr := replica.DetectFromCwd(); rerr == nil {
-		where = "base replica"
+		where = "replica of the shared set"
 	}
 	if hereStack != "" {
 		where = "stack " + hereStack

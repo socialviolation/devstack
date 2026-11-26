@@ -56,7 +56,7 @@ type AddResult struct {
 func Add(in AddInput) (*AddResult, error) {
 	base := in.Base
 	if base == nil {
-		return nil, fmt.Errorf("devstack can not resolve the base workspace")
+		return nil, fmt.Errorf("devstack can not resolve the workspace")
 	}
 	rec, err := FindStack(base.Name, in.Name)
 	if err != nil {
@@ -68,13 +68,13 @@ func Add(in AddInput) (*AddResult, error) {
 
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return nil, fmt.Errorf("can not resolve the base workspace: %w", err)
+		return nil, fmt.Errorf("can not resolve the workspace: %w", err)
 	}
 	topo, err := config.BuildTopology(base.Path)
 	if err != nil {
 		return nil, err
 	}
-	named, groups, err := expandGroups(topo, base.Name, in.Members)
+	named, groups, _, _, err := planMembers(baseRW, topo, base.Name, in.Members)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func Add(in AddInput) (*AddResult, error) {
 		return nil, err
 	}
 
-	present := stringSet(rec.Overlay)
+	present := stringSet(rec.Members)
 	var changed, already, promote []string
 	for _, s := range named {
 		if !present[s] {
@@ -102,23 +102,18 @@ func Add(in AddInput) (*AddResult, error) {
 		promote = append(promote, s)
 	}
 	if len(changed) == 0 && len(promote) == 0 {
-		return nil, fmt.Errorf("stack %q already overlays %s on branch %s, so there is nothing to add\nto see what it runs, run: devstack stack list", rec.Name, strings.Join(already, ", "), rec.Branch)
+		return nil, fmt.Errorf("stack %q already runs %s on branch %s, so there is nothing to add\nto see what it runs, run: devstack stack list", rec.Name, strings.Join(already, ", "), rec.Branch)
 	}
 
 	var adding []string
 	changedSet := stringSet(changed)
-	if len(changed) > 0 {
-		pulled, err := config.OverlaySet(topo, changed)
-		if err != nil {
-			return nil, err
-		}
-		for _, s := range pulled {
-			if !present[s] {
-				adding = append(adding, s)
-			}
+	pulled, chains := topo.NeedsClosure(changed, baseRW.SharedSet())
+	for _, s := range pulled {
+		if !present[s] {
+			adding = append(adding, s)
 		}
 	}
-	overlay := append(append([]string(nil), rec.Overlay...), adding...)
+	overlay := append(append([]string(nil), rec.Members...), adding...)
 	sort.Strings(overlay)
 
 	res := &AddResult{
@@ -132,13 +127,7 @@ func Add(in AddInput) (*AddResult, error) {
 		Active:         rec.Active,
 		Ports:          map[string]int{},
 	}
-	for _, s := range adding {
-		reason := "caller"
-		if changedSet[s] {
-			reason = "changed"
-		}
-		res.Added = append(res.Added, OverlayMember{Service: s, Reason: reason})
-	}
+	res.Added = memberReasons(adding, changedSet, chains)
 
 	worktreePaths := map[string]string{}
 	for s, p := range rec.Worktrees {
@@ -249,10 +238,10 @@ func Add(in AddInput) (*AddResult, error) {
 	}
 	sort.Slice(res.Worktrees, func(i, j int) bool { return res.Worktrees[i].Service < res.Worktrees[j].Service })
 	if len(leftBehind) > 0 {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack cut the worktrees from %s, not from the base checkout. This stack does not have the uncommitted work in the checkout. This stack does not have the commits that the checkout holds beyond that ref.",
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack cut the worktrees from %s, not from the checkout. This stack does not have the uncommitted work in the checkout. This stack does not have the commits that the checkout holds beyond that ref.",
 			strings.Join(leftBehind, ", ")))
 	}
-	res.Warnings = append(res.Warnings, sharedRepoWarnings(baseRW, repos, overlay, rec.Name)...)
+	res.Warnings = append(res.Warnings, OutsideWarnings(baseRW, overlay)...)
 
 	manifest, err := config.GenerateStackManifest(baseRW, rec.FullName(), overlay, func(s string) string { return worktreePaths[s] })
 	if err != nil {
@@ -284,7 +273,7 @@ func Add(in AddInput) (*AddResult, error) {
 		res.Ports[k] = ports[k]
 	}
 
-	rec.Overlay = overlay
+	rec.Members = overlay
 	rec.Worktrees = worktreePaths
 	rec.Ports = ports
 	rec.Groups = mergeGroups(rec.Groups, groups)
@@ -314,7 +303,7 @@ func readHeldWorktrees(rec *Record, baseRW *config.ResolvedWorkspace) (*heldWork
 		inRoot: map[string][]string{},
 		dirs:   map[string]bool{},
 	}
-	for _, s := range rec.Overlay {
+	for _, s := range rec.Members {
 		path := rec.Worktrees[s]
 		if path == "" {
 			return nil, fmt.Errorf("stack %q has no worktree recorded for the service %q. The record is incomplete, so devstack can not add to it. Remove the stack and create it again", rec.Name, s)

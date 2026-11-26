@@ -19,17 +19,17 @@ var envCmd = &cobra.Command{
 	Short: "Manage the named environments of a workspace",
 	Long: `An environment is a named set of configuration values in the workspace manifest.
 The values can be database URLs, feature flags or endpoints. devstack defines
-every environment once, in the base workspace manifest.
+every environment once, in the workspace manifest. Every stack inherits them.
 
 The set subcommand writes values, and it creates the environment when it does not
 exist yet. The remove subcommand deletes one. The use subcommand points a scope at
 one. The show and which subcommands read them. devstack status shows the
-environment that each copy points at.
+environment that each service points at.
 
 The use subcommand writes, so it acts on one scope. There are three scopes, and
 the most specific one wins. A stack beats a service, and a service beats the
-workspace default. Pass --service <svc>, or --stack <name>, or --stack base for
-the workspace default. With no flag, the working directory decides the scope. A
+workspace default. Pass --service <svc>, or --stack <name>, or --workspace-default
+for the workspace default. With no flag, the working directory decides the scope. A
 stack worktree selects that stack. Every other directory selects the workspace
 default.
 
@@ -114,7 +114,7 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("\nTo see the values, run: devstack env show <name>\n")
-	fmt.Printf("To point a scope at one, run: devstack env use <name> --stack base (or --stack <name>, or --service <svc>)\n")
+	fmt.Printf("To point a scope at one, run: devstack env use <name> --workspace-default (or --stack <name>, or --service <svc>)\n")
 	return nil
 }
 

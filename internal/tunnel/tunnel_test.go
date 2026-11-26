@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/tilt"
+	"github.com/socialviolation/devstack/internal/workspace"
 )
 
 func TestDiscover(t *testing.T) {
@@ -359,41 +361,36 @@ func TestLaunchMapsPortsPerMode(t *testing.T) {
 	}
 }
 
-// --as-base and --stacks name adjacent-looking modes with opposite effects, so
-// the mapping has to come back keyed to base's ports, not the stack's.
-func TestStackOnBasePortsMapsOntoBase(t *testing.T) {
+func TestStackOnDeclaredPortsMapsOntoTheManifestPorts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := workspace.DataDir("ws")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	store := `[{"name":"agent","base":"ws","members":["api","frontend","worker"],"worktrees":{},"ports":{"api/http":20005,"frontend/http":20006,"worker/http":20007}}]`
+	if err := os.WriteFile(filepath.Join(dir, "stacks.json"), []byte(store), 0644); err != nil {
+		t.Fatal(err)
+	}
 	view := &tilt.TiltView{UiResources: []tilt.UIResource{
-		res("ws:api", "ok", "http://localhost:63290"),
-		res("ws:frontend", "ok", "http://localhost:4200"),
+		res("ws:db", "ok", "http://localhost:5432"),
 		res("ws:api:agent", "ok", "http://localhost:20005"),
 		res("ws:frontend:agent", "ok", "http://localhost:20006"),
+		res("ws:worker:agent", "ok", "http://localhost:20007"),
 	}}
+	declared := config.PortBook{"api": {"http": 63290}, "frontend": {"http": 4200}, "db": {"pg": 5432}}
 
-	basePorts := map[string]int{}
-	for _, s := range Discover(view, nil, "ws", false) {
-		basePorts[s.Service] = s.Port
+	mapped, unmapped, err := StackOnDeclaredPorts(view, nil, "ws", "agent", declared)
+	if err != nil {
+		t.Fatalf("StackOnDeclaredPorts: %v", err)
 	}
-	if basePorts["api"] != 63290 || basePorts["frontend"] != 4200 {
-		t.Fatalf("base discovery wrong: %v", basePorts)
-	}
-
-	var mapped []Service
-	for _, s := range Discover(view, nil, "ws", true) {
-		if !strings.HasSuffix(s.Name, ":agent") {
-			continue
-		}
-		s.RemotePort = basePorts[s.Service]
-		mapped = append(mapped, s)
-	}
-	if len(mapped) != 2 {
-		t.Fatalf("got %d stack services, want 2: %+v", len(mapped), mapped)
-	}
+	got := map[int]int{}
 	for _, s := range mapped {
-		if !s.Mapped() {
-			t.Errorf("%s should map onto a base port: %+v", s.Name, s)
-		}
-		if s.Far() == s.Port {
-			t.Errorf("%s far port should differ from local: %+v", s.Name, s)
-		}
+		got[s.Port] = s.Far()
+	}
+	if len(got) != 2 || got[20005] != 63290 || got[20006] != 4200 {
+		t.Errorf("mapped %v, want 20005→63290 and 20006→4200", got)
+	}
+	if len(unmapped) != 1 || unmapped[0] != "worker" {
+		t.Errorf("unmapped = %v, want [worker]: it declares no port", unmapped)
 	}
 }

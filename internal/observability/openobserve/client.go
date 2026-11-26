@@ -177,7 +177,11 @@ func (c *Client) QueryTraces(ctx context.Context, req observability.TraceQuery) 
 		where = append(where, serviceFilter(req.Service, "traces"))
 	}
 	if req.Stack != "" {
-		where = append(where, fmt.Sprintf("%s = %s", attrColumn("devstack.stack", "traces"), quote(req.Stack)))
+		var values []string
+		for _, v := range observability.StackValues(req.Stack) {
+			values = append(values, quote(v))
+		}
+		where = append(where, fmt.Sprintf("%s IN (%s)", attrColumn("devstack.stack", "traces"), strings.Join(values, ", ")))
 	}
 	if req.Attribute != "" {
 		col := attrColumn(req.Attribute, "traces")

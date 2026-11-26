@@ -40,7 +40,7 @@ type DropResult struct {
 func Drop(in DropInput) (*DropResult, error) {
 	base := in.Base
 	if base == nil {
-		return nil, fmt.Errorf("devstack can not resolve the base workspace")
+		return nil, fmt.Errorf("devstack can not resolve the workspace")
 	}
 	rec, err := FindStack(base.Name, in.Name)
 	if err != nil {
@@ -50,17 +50,17 @@ func Drop(in DropInput) (*DropResult, error) {
 		return nil, fmt.Errorf("no services given: name the services to remove from stack %q", rec.Name)
 	}
 
-	present := stringSet(rec.Overlay)
+	present := stringSet(rec.Members)
 	removing := map[string]bool{}
 	for _, s := range in.Services {
 		if !present[s] {
-			return nil, fmt.Errorf("stack %q does not run %q. It runs: %s", rec.Name, s, strings.Join(rec.Overlay, ", "))
+			return nil, fmt.Errorf("stack %q does not run %q. It runs: %s", rec.Name, s, strings.Join(rec.Members, ", "))
 		}
 		removing[s] = true
 	}
 	var removed []string
 	remaining := []string{}
-	for _, s := range rec.Overlay {
+	for _, s := range rec.Members {
 		if removing[s] {
 			removed = append(removed, s)
 		} else {
@@ -70,7 +70,7 @@ func Drop(in DropInput) (*DropResult, error) {
 
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return nil, fmt.Errorf("can not resolve the base workspace: %w", err)
+		return nil, fmt.Errorf("can not resolve the workspace: %w", err)
 	}
 	topo, err := config.BuildTopology(base.Path)
 	if err != nil {
@@ -78,9 +78,9 @@ func Drop(in DropInput) (*DropResult, error) {
 	}
 	var blocked []string
 	for _, s := range remaining {
-		for _, d := range baseRW.Manifest.ResourceDeps(s) {
+		for _, d := range baseRW.ResourceDeps(s) {
 			if removing[d] {
-				blocked = append(blocked, fmt.Sprintf("%s depends on %s", s, d))
+				blocked = append(blocked, fmt.Sprintf("%s needs %s", s, d))
 			}
 		}
 	}
@@ -145,7 +145,7 @@ func Drop(in DropInput) (*DropResult, error) {
 		res.Kept = append(res.Kept, kept)
 	}
 
-	rec.Overlay = remaining
+	rec.Members = remaining
 	rec.Worktrees = worktreePaths
 	rec.Ports = ports
 	rec.Groups = groupsStillCovered(rec.Groups, topo.Groups, remaining)

@@ -93,6 +93,10 @@ workspace:
 	for _, r := range repos {
 		manifest += "      - ./" + r + "\n"
 	}
+	manifest += "shared:\n"
+	for _, r := range repos {
+		manifest += "  - " + r + "\n"
+	}
 	manifest += `environments:
   dev:
     values:

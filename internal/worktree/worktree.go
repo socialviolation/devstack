@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/socialviolation/devstack/internal/config"
@@ -39,10 +41,8 @@ func Create(repoPath, worktreePath, branch, from string, changed bool) (Result, 
 	cutFrom := from
 	var args []string
 	switch {
-	case !changed:
+	case !changed || branch == "":
 		args = []string{"worktree", "add", "--detach", worktreePath}
-	case branch == "":
-		return res, fmt.Errorf("the changed repo %s needs a branch name", repoPath)
 	default:
 		exists, err := branchExists(repoPath, branch)
 		if err != nil {
@@ -323,4 +323,83 @@ func FastForward(path, ref string) error {
 		return fmt.Errorf("git merge --ff-only %s in %s failed: %w\n%s", ref, path, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+type OriginState struct {
+	Repo    string
+	Gone    bool
+	Behind  bool
+	Commits int
+}
+
+// BehindOrigin compares the HEAD of the repo at dir with origin's branch. A
+// diverged HEAD counts as behind. Commits is 0 when git can not count them.
+func BehindOrigin(ctx context.Context, dir, branch string) (OriginState, error) {
+	top, err := Toplevel(dir)
+	if err != nil {
+		return OriginState{}, err
+	}
+	st := OriginState{Repo: top}
+	if _, err := gitCtx(ctx, top, "remote", "get-url", "origin"); err != nil {
+		return OriginState{}, nil
+	}
+	out, err := gitCtx(ctx, top, "ls-remote", "--heads", "origin", "refs/heads/"+branch)
+	if err != nil {
+		return OriginState{}, err
+	}
+	if out == "" {
+		_, tracked := gitCtx(ctx, top, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+branch)
+		st.Gone = tracked == nil
+		return st, nil
+	}
+	remote := strings.Fields(out)[0]
+	head, err := Head(top)
+	if err != nil || head == remote {
+		return st, err
+	}
+	if _, err := gitCtx(ctx, top, "cat-file", "-e", remote+"^{commit}"); err != nil {
+		st.Behind = true
+		if _, err := gitCtx(ctx, top, "fetch", "--quiet", "origin", "refs/heads/"+branch+":refs/remotes/origin/"+branch); err != nil {
+			return st, nil
+		}
+	}
+	if ahead, err := IsAncestor(top, remote, head); err != nil || ahead {
+		return st, nil
+	}
+	st.Behind = true
+	if n, err := gitCtx(ctx, top, "rev-list", "--count", head+".."+remote); err == nil {
+		st.Commits, _ = strconv.Atoi(n)
+	}
+	return st, nil
+}
+
+// ChangedPaths lists the files under pathspec that differ between two commits.
+// git reads pathspec relative to dir.
+func ChangedPaths(dir, from, to, pathspec string) ([]string, error) {
+	out, err := gitCtx(context.Background(), dir, "diff", "--name-only", from, to, "--", pathspec)
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+	return strings.Split(out, "\n"), nil
+}
+
+func gitCtx(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git %s in %s failed: %w", strings.Join(args, " "), dir, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func RemoteHasBranch(ctx context.Context, dir, branch string) (bool, error) {
+	if _, err := gitCtx(ctx, dir, "remote", "get-url", "origin"); err != nil {
+		return false, nil
+	}
+	out, err := gitCtx(ctx, dir, "ls-remote", "--heads", "origin", "refs/heads/"+branch)
+	return out != "", err
 }

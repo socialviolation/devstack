@@ -13,14 +13,18 @@ const waitingView = `{
    "status": {"runtimeStatus": "pending", "updateStatus": "pending",
     "disableStatus": {"enabledCount": 1, "disabledCount": 0, "state": "Enabled"},
     "waiting": {"reason": "waiting-for-dependencies",
-     "on": [{"group": "tilt.dev", "apiVersion": "v1alpha1", "kind": "UIResource", "name": "navexa:agent-rag:agent-prod"}]}}},
+     "on": [{"group": "tilt.dev", "apiVersion": "v1alpha1", "kind": "UIResource", "name": "navexa:agent-rag:agent-prod"},
+            {"group": "tilt.dev", "apiVersion": "v1alpha1", "kind": "UIResource", "name": "navexa:postgres"}]}}},
   {"metadata": {"name": "navexa:agent-rag:agent-prod"},
    "status": {"runtimeStatus": "none", "updateStatus": "none",
     "disableStatus": {"enabledCount": 0, "disabledCount": 1, "state": "Disabled"}}},
   {"metadata": {"name": "navexa:navexa-api"},
    "status": {"runtimeStatus": "error", "updateStatus": "error",
     "buildHistory": [{"error": "exit status 1\nmore detail", "startTime": "2026-10-27T04:05:22Z", "finishTime": "2026-10-27T04:05:23Z"}],
-    "disableStatus": {"state": "Enabled"}}}
+    "disableStatus": {"state": "Enabled"}}},
+  {"metadata": {"name": "navexa:postgres"},
+   "status": {"runtimeStatus": "none", "updateStatus": "none",
+    "disableStatus": {"enabledCount": 0, "disabledCount": 1, "state": "Disabled"}}}
  ]
 }`
 
@@ -40,6 +44,7 @@ func TestStateReasonNamesADisabledDependencyAndTheFix(t *testing.T) {
 		"waiting-for-dependencies navexa:agent-rag:agent-prod (disabled)",
 		"devstack service start agent-rag --stack agent-prod",
 		"devstack dependencies remove nx-agent agent-rag",
+		"Start it: devstack service start postgres, or",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("StateReason() = %q, want it to contain %q", got, want)

@@ -45,6 +45,7 @@ workspace:
       - ./backend
       - ./agent_local/agent-rag
       - ./agent_local/agent-psql
+shared: [backend, agent-rag, agent-psql]
 `)
 	ws := &workspace.Workspace{Name: "navexa", Path: root}
 
@@ -134,6 +135,7 @@ workspace:
     repos:
       - ./agent_local/agent-rag
       - ./agent_local/agent-psql
+shared: [agent-rag, agent-psql]
 `)
 	ws := &workspace.Workspace{Name: "navexa", Path: root}
 
@@ -173,6 +175,7 @@ workspace:
     repos:
       - ./agent_local/agent-rag
       - ./agent_local/agent-psql
+shared: [agent-rag, agent-psql]
 `)
 	ws := &workspace.Workspace{Name: "navexa", Path: root}
 	res, err := Ensure(ws)
@@ -219,6 +222,7 @@ workspace:
     repos:
       - ./one/shared
       - ./two/shared
+shared: [backend, frontend]
 `)
 	ws := &workspace.Workspace{Name: "navexa", Path: root}
 

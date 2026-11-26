@@ -12,11 +12,11 @@ import (
 // left with a worktree devstack moved for a stack it did not build.
 func TestAddPutsAPromotedWorktreeBackWhenItFailsPartWay(t *testing.T) {
 	base := newAddBase(t)
-	created := newStack(t, base, "api")
+	created := newStack(t, base, "web")
 
-	web := worktreesByService(created)["web"].Path
+	web := worktreesByService(created)["api"].Path
 	if got := gitOut(t, web, "rev-parse", "--abbrev-ref", "HEAD"); got != "HEAD" {
-		t.Fatalf("web worktree branch = %q, want a detached HEAD to promote", got)
+		t.Fatalf("api worktree branch = %q, want a detached HEAD to promote", got)
 	}
 	head := gitOut(t, web, "rev-parse", "HEAD")
 
@@ -24,7 +24,7 @@ func TestAddPutsAPromotedWorktreeBackWhenItFailsPartWay(t *testing.T) {
 	// has promoted web.
 	git(t, filepath.Join(base.Path, "billing"), "branch", "startpoint")
 
-	_, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"web", "money"}, From: "refs/heads/startpoint"})
+	_, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"api", "money"}, From: "refs/heads/startpoint"})
 	if err == nil {
 		t.Fatal("Add with a ref that one repository does not have = nil, want an error")
 	}
@@ -42,7 +42,7 @@ func TestAddPutsAPromotedWorktreeBackWhenItFailsPartWay(t *testing.T) {
 // worktrees the unwind has just removed.
 func TestAddPutsTheStackManifestBackWhenItFailsPartWay(t *testing.T) {
 	base := newAddBase(t)
-	created := newStack(t, base, "api")
+	created := newStack(t, base, "web")
 
 	manifestPath := filepath.Join(created.StackRoot, "devstack.workspace.yaml")
 	before, err := os.ReadFile(manifestPath)

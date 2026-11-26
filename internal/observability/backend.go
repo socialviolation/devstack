@@ -12,32 +12,40 @@ type TraceQuery struct {
 	SpanID    string        // If set, find the trace containing this span (TraceID takes precedence)
 	Workspace string        // devstack.workspace filter; set for you by ScopedTo
 	Service   string        // Optional service filter
-	Stack     string        // Optional devstack.stack resource-attribute filter ("base" for base workspace)
+	Stack     string        // Optional devstack.stack resource-attribute filter ("shared" for the shared set)
 	Attribute string        // Optional attribute key (paired with Value)
 	Value     string        // Optional attribute value to match
 	Since     time.Duration // Lookback window (default: 5 minutes)
 	Limit     int           // Max traces to return (default: 3)
 }
 
-// StackScopeDesc states what a telemetry query covers when the caller names no
-// stack. The CLI flag and the MCP parameter both quote it, because a human and
-// an agent that compared notes on an unqualified query had each been told a
-// different answer.
-const StackScopeDesc = "The default is base only. Pass a stack's short name for that stack alone, or \"all\" for base and every stack together."
+const StackScopeDesc = "The default is every stack and the shared set. Pass \"shared\" for the shared set alone. Pass a stack's short name for that stack alone."
 
-// ResolveStackFilter maps what a caller wrote to a TraceQuery.Stack value. An
-// absent value is "base", which is the narrower of the two readings: a query
-// that silently spans every stack invites a wrong conclusion. "all" (or "*")
-// clears the filter. Any other value is a stack's short name.
+const SharedStack = "shared"
+
+// Spans emitted before the shared set was renamed carry devstack.stack=base.
+const legacySharedStack = "base"
+
 func ResolveStackFilter(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "":
-		return "base"
-	case "all", "*":
+	case "", "all", "*":
 		return ""
+	case SharedStack, legacySharedStack:
+		return SharedStack
 	default:
 		return raw
 	}
+}
+
+func StackValues(filter string) []string {
+	if filter == SharedStack {
+		return []string{SharedStack, legacySharedStack}
+	}
+	return []string{filter}
+}
+
+func IsSharedStack(value string) bool {
+	return value == "" || value == SharedStack || value == legacySharedStack
 }
 
 // LogQuery parameters for querying logs.
@@ -59,7 +67,7 @@ type ServiceVariant struct {
 	// Devstack is the name devstack knows it by, which is what a caller stands
 	// in and filters on. It often differs from Service.
 	Devstack string
-	// Stack is the feature stack ("base" for the base workspace).
+	// Stack is the feature stack ("shared" for the shared set).
 	Stack string
 	// Env is the config env the variant runs under, when one is selected.
 	Env string

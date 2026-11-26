@@ -25,18 +25,24 @@ type CreateInput struct {
 	Name   string
 	Repos  []string
 	Branch string
+	Detach bool
 	// From is the ref every worktree is cut from. Empty resolves each service
 	// repo's default branch instead, origin's copy of it when there is one.
 	From  string
 	Note  string
 	Owner string
-	TTL   time.Duration
 }
 
 type OverlayMember struct {
 	Service string
 	Reason  string
+	Chain   []string
 }
+
+const (
+	ReasonNamed = "named"
+	ReasonNeeds = "needs"
+)
 
 // WorktreeResult is where one service of a stack lives. The worktree is cut per
 // repository, so Repo and RepoPath name the worktree, and Path names the
@@ -60,7 +66,7 @@ type CreateResult struct {
 	BaseName     string
 	BasePath     string
 	Groups       []string
-	Overlay      []OverlayMember
+	Members      []OverlayMember
 	Worktrees    []WorktreeResult
 	ManifestPath string
 	Ports        map[string]int
@@ -79,22 +85,45 @@ type RemoveResult struct {
 }
 
 type StackInfo struct {
-	Name     string
-	BaseName string
-	BasePort int
-	Status   string
-	Ports    map[string]int
-	Services []string
-	Branch   string
-	Env      string
-	Note     string
-	Log      []NoteEntry
-	Groups   []string
-	Created  time.Time
-	Owner    string
-	Expires  time.Time
+	Name      string
+	BaseName  string
+	BasePort  int
+	Status    string
+	Ports     map[string]int
+	Services  []string
+	Branch    string
+	Env       string
+	Note      string
+	Log       []NoteEntry
+	Groups    []string
+	Created   time.Time
+	Owner     string
+	StopAt    time.Time
+	StoppedBy string
+	StoppedAt time.Time
 
 	AdoptedFrom string
+}
+
+func (s StackInfo) Deadline(now time.Time) string {
+	switch {
+	case s.Status == StatusUp && !s.StopAt.IsZero():
+		return "up — stops " + whenFrom(s.StopAt.Local(), now.Local())
+	case s.Status != StatusUp && s.StoppedBy == StoppedBySweep:
+		return "stopped by devstack " + s.StoppedAt.Local().Format("2006-01-02 15:04")
+	}
+	return ""
+}
+
+func whenFrom(t, now time.Time) string {
+	const day = "2006-01-02"
+	switch now.Format(day) {
+	case t.Format(day):
+		return t.Format("15:04") + " today"
+	case t.AddDate(0, 0, -1).Format(day):
+		return t.Format("15:04") + " tomorrow"
+	}
+	return t.Format("2006-01-02 15:04")
 }
 
 func StacksRoot(base *workspace.Workspace) string {
@@ -104,30 +133,30 @@ func StacksRoot(base *workspace.Workspace) string {
 func Create(in CreateInput) (*CreateResult, error) {
 	base := in.Base
 	if base == nil {
-		return nil, fmt.Errorf("devstack can not resolve the base workspace")
+		return nil, fmt.Errorf("devstack can not resolve the workspace")
+	}
+	if strings.EqualFold(in.Name, "shared") || strings.EqualFold(in.Name, "base") {
+		return nil, fmt.Errorf("no stack can have the name %q. devstack uses that name for the shared set. Choose a different name", in.Name)
 	}
 	if _, err := FindStack(base.Name, in.Name); err == nil {
 		return nil, fmt.Errorf("stack %q already exists in workspace %q", in.Name, base.Name)
 	}
-	changed := in.Repos
-	if len(changed) == 0 {
-		return nil, fmt.Errorf("no services given: name the services that this stack changes")
+	if len(in.Repos) == 0 {
+		return nil, fmt.Errorf("no services given: name the services that this stack runs")
+	}
+	if in.Detach && in.Branch != "" {
+		return nil, fmt.Errorf("give a branch or detach, not both")
 	}
 
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return nil, fmt.Errorf("can not resolve the base workspace: %w", err)
+		return nil, fmt.Errorf("can not resolve the workspace: %w", err)
 	}
 	topo, err := config.BuildTopology(base.Path)
 	if err != nil {
 		return nil, err
 	}
-	changed, groups, err := expandGroups(topo, base.Name, changed)
-	if err != nil {
-		return nil, err
-	}
-
-	overlay, err := config.OverlaySet(topo, changed)
+	changed, groups, overlay, chains, err := planMembers(baseRW, topo, base.Name, in.Repos)
 	if err != nil {
 		return nil, err
 	}
@@ -139,20 +168,14 @@ func Create(in CreateInput) (*CreateResult, error) {
 		Groups:   groups,
 		Ports:    map[string]int{},
 	}
-	for _, s := range overlay {
-		reason := "caller"
-		if changedSet[s] {
-			reason = "changed"
-		}
-		res.Overlay = append(res.Overlay, OverlayMember{Service: s, Reason: reason})
-	}
+	res.Members = memberReasons(overlay, changedSet, chains)
 
 	// The workspace name is in the path because two workspaces can share a
 	// parent directory. Without it, a stack name taken in one workspace blocks
 	// the same name in the other.
 	stackRoot := filepath.Join(StacksRoot(base), in.Name)
 	if stackRoot == base.Path || strings.HasPrefix(stackRoot, base.Path+string(os.PathSeparator)) {
-		return nil, fmt.Errorf("devstack can not use the stack root %s. The root is under base %s, and a nested root breaks workspace detection", stackRoot, base.Path)
+		return nil, fmt.Errorf("devstack can not use the stack root %s. The root is under the workspace %s, and a nested root breaks workspace detection", stackRoot, base.Path)
 	}
 	res.StackRoot = stackRoot
 
@@ -187,7 +210,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 	}
 
 	branch := in.Branch
-	if branch == "" {
+	if branch == "" && !in.Detach {
 		branch = in.Name
 	}
 	worktreePaths := map[string]string{}
@@ -227,7 +250,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 				Ref:      gitinfo.ShortRef(ref),
 				Dirty:    wt.SourceDirty,
 			}
-			if changedRepo {
+			if changedRepo && branch != "" {
 				wr.Branch = branch
 			} else {
 				wr.Detached = true
@@ -245,10 +268,10 @@ func Create(in CreateInput) (*CreateResult, error) {
 	}
 	sort.Slice(res.Worktrees, func(i, j int) bool { return res.Worktrees[i].Service < res.Worktrees[j].Service })
 	if len(leftBehind) > 0 {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack cut the worktrees from %s, not from the base checkout. This stack does not have the uncommitted work in the checkout. This stack does not have the commits that the checkout holds beyond that ref.",
+		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack cut the worktrees from %s, not from the checkout. This stack does not have the uncommitted work in the checkout. This stack does not have the commits that the checkout holds beyond that ref.",
 			strings.Join(leftBehind, ", ")))
 	}
-	res.Warnings = append(res.Warnings, sharedRepoWarnings(baseRW, repos, overlay, in.Name)...)
+	res.Warnings = append(res.Warnings, OutsideWarnings(baseRW, overlay)...)
 
 	manifest, err := config.GenerateStackManifest(baseRW, stackName, overlay, func(s string) string { return worktreePaths[s] })
 	if err != nil {
@@ -287,11 +310,7 @@ func Create(in CreateInput) (*CreateResult, error) {
 	}
 	overlayNames := make([]string, len(overlay))
 	copy(overlayNames, overlay)
-	now := time.Now()
-	var expires time.Time
-	if in.TTL > 0 {
-		expires = now.Add(in.TTL)
-	}
+	now := Now()
 	if err := upsertStack(Record{
 		Name:      in.Name,
 		Base:      base.Name,
@@ -299,20 +318,15 @@ func Create(in CreateInput) (*CreateResult, error) {
 		Branch:    branch,
 		Note:      in.Note,
 		Groups:    groups,
-		Overlay:   overlayNames,
+		Members:   overlayNames,
 		Worktrees: worktrees,
 		Ports:     res.Ports,
 		CreatedAt: now,
 		Owner:     in.Owner,
-		ExpiresAt: expires,
+		StopAt:    now.Add(StopAfter),
 	}); err != nil {
 		unwind()
 		return nil, fmt.Errorf("can not record the stack: %w", err)
-	}
-
-	if !daemonReachable(workspace.HostTiltPort) {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("devstack can not reach the host daemon on port %d. A stack uses the services that base runs. Start base first: (cd %s && devstack workspace up)",
-			workspace.HostTiltPort, base.Path))
 	}
 
 	return res, nil
@@ -334,58 +348,6 @@ func requireEmptyRoot(stackRoot string) error {
 	sort.Strings(names)
 	return fmt.Errorf("the stack root %s already holds %s. An earlier create did not finish.\nRemove the directory, then create the stack again:\n  rm -rf %s\nIf git still records a worktree there, run 'git worktree prune' in the source repository",
 		stackRoot, strings.Join(names, ", "), stackRoot)
-}
-
-// sharedRepoWarnings names the services that share a repository with the
-// overlay but stay on base.
-//
-// A repository holds one checkout and one branch, so a stack that overlays one
-// service of a repository gets the code of every other service in it. devstack
-// does NOT put those services in the overlay: the overlay is what the stack
-// runs, and it takes a port, a resource and a hook for each member. A service
-// nobody named must not start running a second copy. Base keeps serving it, and
-// this warning says so, because the code in the worktree makes the opposite
-// look true.
-func sharedRepoWarnings(baseRW *config.ResolvedWorkspace, repos []worktree.Repo, overlay []string, stackName string) []string {
-	inOverlay := stringSet(overlay)
-	byToplevel := make(map[string]string, len(repos))
-	for _, r := range repos {
-		byToplevel[r.Toplevel] = r.Dir
-	}
-
-	others := map[string][]string{}
-	names := make([]string, 0, len(baseRW.Services))
-	for n := range baseRW.Services {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		if inOverlay[n] {
-			continue
-		}
-		top, err := worktree.Toplevel(baseRW.Services[n].RepoPath)
-		if err != nil {
-			continue
-		}
-		if dir, ok := byToplevel[top]; ok {
-			others[dir] = append(others[dir], n)
-		}
-	}
-	if len(others) == 0 {
-		return nil
-	}
-
-	dirs := make([]string, 0, len(others))
-	for d := range others {
-		dirs = append(dirs, d)
-	}
-	sort.Strings(dirs)
-	out := make([]string, 0, len(dirs))
-	for _, d := range dirs {
-		out = append(out, fmt.Sprintf("The repository %s holds more services than this stack overlays: %s. The worktree holds their code. Base runs them, and this stack does not run them. To run them in this stack, run: devstack stack add %s %s",
-			d, strings.Join(others[d], ", "), stackName, strings.Join(others[d], " ")))
-	}
-	return out
 }
 
 // stackWorktreeRoots lists the worktree of every service in a stack, once for
@@ -429,7 +391,7 @@ func CheckRemovable(base *workspace.Workspace, name string, force bool) error {
 		return nil
 	}
 	if base == nil {
-		return fmt.Errorf("devstack can not resolve the base workspace")
+		return fmt.Errorf("devstack can not resolve the workspace")
 	}
 	rec, err := FindStack(base.Name, name)
 	if err != nil {
@@ -474,7 +436,7 @@ func worktreePaths(rec *Record) ([]string, error) {
 
 func Remove(base *workspace.Workspace, name string, force bool) (*RemoveResult, error) {
 	if base == nil {
-		return nil, fmt.Errorf("devstack can not resolve the base workspace")
+		return nil, fmt.Errorf("devstack can not resolve the workspace")
 	}
 	rec, err := FindStack(base.Name, name)
 	if err != nil {
@@ -538,20 +500,22 @@ func List(workspaceName string) ([]StackInfo, error) {
 			ports = rec.Ports
 		}
 		stacks = append(stacks, StackInfo{
-			Name:     rec.FullName(),
-			BaseName: rec.Base,
-			BasePort: basePort,
-			Status:   stackStatus(rec),
-			Ports:    ports,
-			Services: rec.Overlay,
-			Branch:   rec.Branch,
-			Env:      rec.Env,
-			Note:     rec.Note,
-			Log:      rec.Log,
-			Groups:   rec.Groups,
-			Created:  rec.CreatedAt,
-			Owner:    rec.Owner,
-			Expires:  rec.ExpiresAt,
+			Name:      rec.FullName(),
+			BaseName:  rec.Base,
+			BasePort:  basePort,
+			Status:    stackStatus(rec),
+			Ports:     ports,
+			Services:  rec.Members,
+			Branch:    rec.Branch,
+			Env:       rec.Env,
+			Note:      rec.Note,
+			Log:       rec.Log,
+			Groups:    rec.Groups,
+			Created:   rec.CreatedAt,
+			Owner:     rec.Owner,
+			StopAt:    rec.StopAt,
+			StoppedBy: rec.StoppedBy,
+			StoppedAt: rec.StoppedAt,
 
 			AdoptedFrom: rec.AdoptedFrom,
 		})
@@ -571,18 +535,14 @@ func splitPortKey(qualified string) (service, key string, ok bool) {
 	return qualified[:i], qualified[i+1:], true
 }
 
-// GenerateOptions builds the tiltgen options for a feature stack: the
-// overlay-first merged PortBook (base's pinned ports with the stack's allocated
-// ports layered over its overlay services) and the OTEL export env pointed at the
-// base's collector, since a stack never runs its own.
 func GenerateOptions(rec *Record, names []string) (tiltgen.Options, error) {
 	base, err := workspace.FindByName(rec.Base)
 	if err != nil {
-		return tiltgen.Options{}, fmt.Errorf("stack %q: devstack can not find the base workspace %q in the registry: %w", rec.FullName(), rec.Base, err)
+		return tiltgen.Options{}, fmt.Errorf("stack %q: devstack can not find the workspace %q in the registry: %w", rec.FullName(), rec.Base, err)
 	}
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return tiltgen.Options{}, fmt.Errorf("can not resolve the base workspace %q at %s: %w", base.Name, base.Path, err)
+		return tiltgen.Options{}, fmt.Errorf("can not resolve the workspace %q at %s: %w", base.Name, base.Path, err)
 	}
 
 	allocated, err := workspace.LoadPorts(rec.RuntimeKey())
@@ -606,6 +566,7 @@ func GenerateOptions(rec *Record, names []string) (tiltgen.Options, error) {
 		Book:       config.MergeStackBook(config.BuildPortBook(baseRW), overlay),
 		StackEnv:   rec.Env,
 		Stack:      config.StackScope{Name: rec.Name, Services: names},
+		Shared:     baseRW.SharedSet(),
 	}, nil
 }
 
@@ -619,11 +580,11 @@ func GenerateOptions(rec *Record, names []string) (tiltgen.Options, error) {
 func ResolveWorktree(rec *Record) (*config.ResolvedWorkspace, error) {
 	base, err := workspace.FindByName(rec.Base)
 	if err != nil {
-		return nil, fmt.Errorf("stack %q: devstack can not find the base workspace %q in the registry: %w", rec.FullName(), rec.Base, err)
+		return nil, fmt.Errorf("stack %q: devstack can not find the workspace %q in the registry: %w", rec.FullName(), rec.Base, err)
 	}
 	baseRW, err := config.ResolveWorkspace(base.Path)
 	if err != nil {
-		return nil, fmt.Errorf("can not resolve the base workspace %q at %s: %w", base.Name, base.Path, err)
+		return nil, fmt.Errorf("can not resolve the workspace %q at %s: %w", base.Name, base.Path, err)
 	}
 	rw, err := config.ResolveWorkspace(rec.Root)
 	if err != nil {

@@ -67,6 +67,7 @@ workspace:
     mode: explicit
     repos:
       - ./api
+shared: [api]
 `)
 
 	stackRoot := filepath.Join(home, "stacks", "feat")
@@ -124,8 +125,8 @@ func TestStackConfigMasksSecrets(t *testing.T) {
 	s := stackConfigServer(t, ws)
 
 	for name, args := range map[string]map[string]any{
-		"base":  {"service": "api", "stack": "base"},
-		"stack": {"service": "api", "stack": "feat"},
+		"shared": {"service": "api"},
+		"stack":  {"service": "api", "stack": "feat"},
 	} {
 		out := safetyCallTool(t, s, "stack_config", args)
 		for _, leaked := range []string{"sk-live-PLAINTEXT", "hunter2"} {
@@ -142,10 +143,7 @@ func TestStackConfigMasksSecrets(t *testing.T) {
 	}
 }
 
-// The read-only tools take base when the stack parameter is absent, and they
-// never read the working directory. stack_config follows that convention: an
-// absent stack must report exactly what stack="base" reports.
-func TestStackConfigAbsentStackIsBase(t *testing.T) {
+func TestStackConfigAbsentStackReadsTheSharedSet(t *testing.T) {
 	ws := seedConfigWorkspace(t)
 	if _, err := replica.Ensure(ws); err != nil {
 		t.Fatalf("replica.Ensure: %v", err)
@@ -153,15 +151,32 @@ func TestStackConfigAbsentStackIsBase(t *testing.T) {
 	s := stackConfigServer(t, ws)
 
 	absent := safetyCallTool(t, s, "stack_config", map[string]any{"service": "api"})
-	named := safetyCallTool(t, s, "stack_config", map[string]any{"service": "api", "stack": "base"})
-	if absent != named {
-		t.Errorf("an absent stack must read base.\nabsent:\n%s\nstack=base:\n%s", absent, named)
-	}
-	if !strings.Contains(absent, "in base") || !strings.Contains(absent, replica.Root(ws)) {
-		t.Errorf("base's report must name base and the replica it was read from:\n%s", absent)
+	if !strings.Contains(absent, "in the shared set") || !strings.Contains(absent, replica.Root(ws)) {
+		t.Errorf("the report must name the shared set and the replica it was read from:\n%s", absent)
 	}
 	if !strings.Contains(safetyCallTool(t, s, "stack_config", map[string]any{"service": "api", "stack": "feat"}), "in stack navexa--feat") {
 		t.Error("a named stack must be reported as that stack")
+	}
+	if got := safetyCallTool(t, s, "stack_config", map[string]any{"service": "api", "stack": "base"}); !strings.Contains(got, `is not in workspace`) {
+		t.Errorf("base is not a stack, and the tool must refuse the name:\n%s", got)
+	}
+}
+
+func TestStackConfigAbsentStackRefusesAStackService(t *testing.T) {
+	ws := seedConfigWorkspace(t)
+	writeFile(t, filepath.Join(ws.Path, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: navexa
+  repoDiscovery:
+    mode: explicit
+    repos:
+      - ./api
+`)
+	s := stackConfigServer(t, ws)
+
+	got := safetyCallTool(t, s, "stack_config", map[string]any{"service": "api"})
+	if !strings.Contains(got, "not a shared service") || !strings.Contains(got, "Name the stack: stack=") {
+		t.Errorf("a stack service with no stack must be refused, and the stack parameter named:\n%s", got)
 	}
 }
 
@@ -172,7 +187,7 @@ func TestStackConfigReadsTheStackWorktree(t *testing.T) {
 	s := stackConfigServer(t, ws)
 
 	out := safetyCallTool(t, s, "stack_config", map[string]any{"service": "api", "stack": "feat"})
-	if !strings.Contains(out, "is down") || !strings.Contains(out, "would run with") {
+	if !strings.Contains(out, "is down") || !strings.Contains(out, "the configuration it starts with") {
 		t.Errorf("a stack that is down must be reported as down:\n%s", out)
 	}
 	if !strings.Contains(out, "serve_env ladder") {

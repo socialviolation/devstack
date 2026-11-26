@@ -626,7 +626,11 @@ func runStatusAll() error {
 		)
 		if stacks, serr := stack.List(r.ws.Name); serr == nil {
 			for _, s := range stacks {
-				fmt.Printf("  └ %-14s %-36s %-8d %s\n", s.Name, "", s.BasePort, s.Status)
+				state := s.Status
+				if d := s.Deadline(stack.Now()); d != "" {
+					state = d
+				}
+				fmt.Printf("  └ %-14s %-36s %-8d %s\n", s.Name, "", s.BasePort, state)
 			}
 		}
 	}

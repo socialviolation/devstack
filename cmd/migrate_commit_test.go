@@ -215,11 +215,7 @@ func TestTheUncommittedCheckAnswersFalseOutsideARepository(t *testing.T) {
 	}
 }
 
-// `base` is the repair for a replica, and the replica report named only
-// `workspace up`. Somebody reading this line had no way to reach the command
-// that builds a replica and restarts nothing, or the help that says what a
-// replica is.
-func TestTheDoctorNamesBaseInTheReplicaReport(t *testing.T) {
+func TestTheDoctorNamesSharedInTheReplicaReport(t *testing.T) {
 	ws, _ := setupCommittableWorkspace(t)
 
 	var b strings.Builder
@@ -229,7 +225,7 @@ func TestTheDoctorNamesBaseInTheReplicaReport(t *testing.T) {
 	if !strings.Contains(got, "no replica") {
 		t.Fatalf("the fixture has a replica, so this checks nothing:\n%s", got)
 	}
-	for _, want := range []string{"devstack workspace up", "devstack base sync", "devstack base --help"} {
+	for _, want := range []string{"devstack workspace up", "devstack shared sync", "devstack shared --help"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the replica report never names %q:\n%s", want, got)
 		}

@@ -124,7 +124,7 @@ func TestClarityStacksSummaryDefinesDown(t *testing.T) {
 	got := stacksSummary(&workspace.Workspace{Name: "navexa"})
 	for _, want := range []string{
 		"down =",
-		"error \"not up\" instead of falling through to base",
+		"error \"not up\"",
 		"service_env still reads and writes its worktree config",
 	} {
 		if !strings.Contains(got, want) {
@@ -208,15 +208,13 @@ func TestClaritySetNamesRestartNotGenerate(t *testing.T) {
 	}
 }
 
-// A stack's overlay is the answer to "what is actually running in here", and it
-// was recorded from the start but never shown.
-func TestClarityStackListShowsOverlayBranchAndNote(t *testing.T) {
+func TestClarityStackListShowsMembersBranchAndNote(t *testing.T) {
 	ws, _ := clarityWorkspace(t)
 	s := server.NewMCPServer("test", "0.0.0")
 	registerStackTools(s, ws)
 	listing := clarityToolListing(t, s)
 
-	for _, want := range []string{"overlays", "branch", "note"} {
+	for _, want := range []string{"members", "branch", "note"} {
 		if !strings.Contains(strings.ToLower(listing), want) {
 			t.Errorf("stack_list should say it reports %q", want)
 		}

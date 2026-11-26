@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
@@ -16,27 +17,15 @@ func newEnvTestCmd(stackName, service string) *cobra.Command {
 	c.Flags().String("service", service, "")
 	c.Flags().Bool("shadowed", false, "")
 	c.Flags().Bool("reveal", false, "")
+	c.Flags().Bool("workspace-default", false, "")
 	return c
 }
 
-func noTargetRefusal(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "no copy named")
+func notSharedRefusal(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "not a shared service")
 }
 
-func TestServiceRestartInTheCheckoutUsesBase(t *testing.T) {
-	buildStackScenario(t)
-	base, err := workspace.FindByName("navexa")
-	if err != nil {
-		t.Fatalf("find base: %v", err)
-	}
-	t.Chdir(base.Path)
-
-	if err := runRestart(newEnableTestCmd("navexa", ""), []string{"backend"}); noTargetRefusal(err) {
-		t.Errorf("a restart in the checkout must resolve to base, got: %v", err)
-	}
-}
-
-func TestServiceStartAndStopUseBaseInTheCheckout(t *testing.T) {
+func TestServiceCommandsInTheCheckoutResolveOnlyASharedService(t *testing.T) {
 	buildStackScenario(t)
 	base, err := workspace.FindByName("navexa")
 	if err != nil {
@@ -45,16 +34,20 @@ func TestServiceStartAndStopUseBaseInTheCheckout(t *testing.T) {
 	t.Chdir(base.Path)
 
 	for name, run := range map[string]func(*cobra.Command, []string) error{
-		"start": runEnable,
-		"stop":  runStop,
+		"start":   runEnable,
+		"stop":    runStop,
+		"restart": runRestart,
 	} {
-		if err := run(newEnableTestCmd("navexa", ""), []string{"backend"}); noTargetRefusal(err) {
-			t.Errorf("%s in the checkout must resolve to base, got: %v", name, err)
+		if err := run(newEnableTestCmd("navexa", ""), []string{"db"}); notSharedRefusal(err) {
+			t.Errorf("%s db in the checkout must resolve to the shared service, got: %v", name, err)
+		}
+		if err := run(newEnableTestCmd("navexa", ""), []string{"backend"}); !notSharedRefusal(err) {
+			t.Errorf("%s backend in the checkout must ask for --stack, got: %v", name, err)
 		}
 	}
 }
 
-func TestEnvUseDefaultsToBase(t *testing.T) {
+func TestEnvUseDefaultsToTheWorkspace(t *testing.T) {
 	buildStackScenario(t)
 	base, err := workspace.FindByName("navexa")
 	if err != nil {
@@ -66,10 +59,67 @@ func TestEnvUseDefaultsToBase(t *testing.T) {
 	t.Chdir(base.Path)
 
 	if err := runEnvUse(newEnvTestCmd("", ""), []string{"dev"}); err != nil {
-		t.Errorf("env use with no --stack must apply to base: %v", err)
+		t.Errorf("env use with no --stack must apply to the workspace: %v", err)
 	}
 	if err := runEnvUse(newEnvTestCmd("", "backend"), []string{"dev"}); err != nil {
 		t.Errorf("env use --service names its own scope and must still work: %v", err)
+	}
+}
+
+func TestEnvUseWorkspaceDefaultWinsOverAStackWorktree(t *testing.T) {
+	rec, _ := buildStackScenario(t)
+	base, err := workspace.FindByName("navexa")
+	if err != nil {
+		t.Fatalf("find base: %v", err)
+	}
+	if err := config.SetEnvValue(base.Path, "dev", "LOG_LEVEL", "debug"); err != nil {
+		t.Fatalf("define env: %v", err)
+	}
+	t.Chdir(rec.Worktrees["backend"])
+
+	c := newEnvTestCmd("", "")
+	if err := c.Flags().Set("workspace-default", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runEnvUse(c, []string{"dev"}); err != nil {
+		t.Fatalf("env use --workspace-default: %v", err)
+	}
+	m, err := config.LoadWorkspaceManifest(base.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Workspace.Env != "dev" {
+		t.Errorf("workspace.env = %q, want dev", m.Workspace.Env)
+	}
+	got, err := stack.Resolve("navexa", rec.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Env != "" {
+		t.Errorf("stack env = %q, want it untouched", got.Env)
+	}
+}
+
+func TestEnvUseRefusesBadScopes(t *testing.T) {
+	buildStackScenario(t)
+	base, err := workspace.FindByName("navexa")
+	if err != nil {
+		t.Fatalf("find base: %v", err)
+	}
+	if err := config.SetEnvValue(base.Path, "dev", "LOG_LEVEL", "debug"); err != nil {
+		t.Fatalf("define env: %v", err)
+	}
+	t.Chdir(base.Path)
+
+	withDefault := newEnvTestCmd("feat", "")
+	if err := withDefault.Flags().Set("workspace-default", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runEnvUse(withDefault, []string{"dev"}); err == nil {
+		t.Error("--workspace-default with --stack must refuse")
+	}
+	if err := runEnvUse(newEnvTestCmd("base", ""), []string{"dev"}); err == nil {
+		t.Error("--stack base names no stack and must refuse")
 	}
 }
 

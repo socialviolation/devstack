@@ -28,7 +28,7 @@ func collectLinks(snap Snapshot) []link {
 	add("machine", snap.Infra)
 	for _, ws := range snap.Workspaces {
 		add("containers", ws.Infra)
-		add("base", ws.Base)
+		add("shared", ws.Shared)
 		for _, st := range ws.Stacks {
 			add(st.Name, st.Services)
 		}

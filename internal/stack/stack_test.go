@@ -29,6 +29,7 @@ service:
 runtime:
   run:
     command: npm run dev
+needs: [backend]
 env:
   values:
     BACKEND_URL: "${backend.url}"
@@ -104,7 +105,7 @@ func TestCreateOverlayWorktreesAndPorts(t *testing.T) {
 	daemonReachable = func(int) bool { return false }
 	defer func() { daemonReachable = orig }()
 
-	res, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"backend"}})
+	res, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"frontend"}})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -114,14 +115,14 @@ func TestCreateOverlayWorktreesAndPorts(t *testing.T) {
 	}
 
 	reason := map[string]string{}
-	for _, m := range res.Overlay {
-		reason[m.Service] = m.Reason
+	for _, m := range res.Members {
+		reason[m.Service] = m.Describe()
 	}
-	if reason["backend"] != "changed" {
-		t.Errorf("backend reason = %q, want changed", reason["backend"])
+	if reason["frontend"] != "named" {
+		t.Errorf("frontend reason = %q, want named", reason["frontend"])
 	}
-	if reason["frontend"] != "caller" {
-		t.Errorf("frontend reason = %q, want caller (transitive dependent)", reason["frontend"])
+	if reason["backend"] != "needed: frontend needs backend" {
+		t.Errorf("backend reason = %q, want the needs chain from frontend", reason["backend"])
 	}
 
 	wt := map[string]WorktreeResult{}
@@ -131,11 +132,11 @@ func TestCreateOverlayWorktreesAndPorts(t *testing.T) {
 			t.Errorf("worktree path %s not created: %v", w.Path, err)
 		}
 	}
-	if wt["backend"].Branch != "feat" || wt["backend"].Detached {
-		t.Errorf("backend worktree = %+v, want branch feat", wt["backend"])
+	if wt["frontend"].Branch != "feat" || wt["frontend"].Detached {
+		t.Errorf("frontend worktree = %+v, want branch feat", wt["frontend"])
 	}
-	if !wt["frontend"].Detached || wt["frontend"].Branch != "" {
-		t.Errorf("frontend worktree = %+v, want detached", wt["frontend"])
+	if !wt["backend"].Detached || wt["backend"].Branch != "" {
+		t.Errorf("backend worktree = %+v, want detached", wt["backend"])
 	}
 
 	port := res.Ports[QualifyPortKey("backend", "http")]
@@ -146,15 +147,10 @@ func TestCreateOverlayWorktreesAndPorts(t *testing.T) {
 		t.Errorf("frontend has no ports declared, should not be allocated one: %v", res.Ports)
 	}
 
-	// Base daemon is not running in the test, so a warning must be surfaced as data.
-	foundBaseWarning := false
 	for _, w := range res.Warnings {
-		if strings.Contains(w, "can not reach the host daemon") {
-			foundBaseWarning = true
+		if strings.Contains(w, "host daemon") {
+			t.Errorf("a stack needs no base, so create must not warn about the daemon: %v", res.Warnings)
 		}
-	}
-	if !foundBaseWarning {
-		t.Errorf("expected a base-not-running warning in result data, got %v", res.Warnings)
 	}
 
 	stacks, err := List(base.Name)

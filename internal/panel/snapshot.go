@@ -52,7 +52,7 @@ type Workspace struct {
 	Name   string
 	Path   string
 	Infra  []Service
-	Base   []Service
+	Shared []Service
 	Stacks []Stack
 }
 
@@ -69,7 +69,7 @@ type Snapshot struct {
 func (s Snapshot) Services() []Service {
 	var out []Service
 	for _, ws := range s.Workspaces {
-		out = append(out, ws.Base...)
+		out = append(out, ws.Shared...)
 		for _, st := range ws.Stacks {
 			out = append(out, st.Services...)
 		}
@@ -124,11 +124,11 @@ func takeWorkspace(ws *workspace.Workspace, view *tilt.TiltView, links urls.Map)
 	for name := range resources {
 		names[name] = true
 	}
-	for name := range groups {
-		names[name] = true
-	}
 
 	rw, _ := config.ResolveWorkspace(ws.Path)
+	for _, name := range rw.SharedNames() {
+		names[name] = true
+	}
 	envs := activeEnvs(rw, names, "")
 	dirs := baseDirs(ws, cfg)
 
@@ -137,7 +137,7 @@ func takeWorkspace(ws *workspace.Workspace, view *tilt.TiltView, links urls.Map)
 		svc.Group = groups[name]
 		svc.Env = envs[name]
 		svc.Dir = dirs[name]
-		out.Base = append(out.Base, svc)
+		out.Shared = append(out.Shared, svc)
 	}
 
 	out.Stacks = takeStacks(ws, view, links, groups)
@@ -171,7 +171,7 @@ func takeStacks(ws *workspace.Workspace, view *tilt.TiltView, links urls.Map, gr
 	for _, rec := range recs {
 		resources := tilt.ResourceMap(view.UiResources, ws.Name, rec.Name)
 		names := map[string]bool{}
-		for _, svc := range rec.Overlay {
+		for _, svc := range rec.Members {
 			names[svc] = true
 		}
 		for name := range resources {
@@ -312,7 +312,7 @@ func readBranches(ws *Workspace) {
 			}
 		}
 	}
-	collect(ws.Base)
+	collect(ws.Shared)
 	for _, st := range ws.Stacks {
 		collect(st.Services)
 	}
@@ -323,7 +323,7 @@ func readBranches(ws *Workspace) {
 			services[i].Branch = labels[services[i].Dir]
 		}
 	}
-	apply(ws.Base)
+	apply(ws.Shared)
 	for i := range ws.Stacks {
 		apply(ws.Stacks[i].Services)
 	}

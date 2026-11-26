@@ -63,10 +63,10 @@ func buildRows(snap Snapshot, showAll bool) []row {
 		}
 
 		out = append(out, row{
-			kind: rowGroup, workspace: ws.Name, label: "base", up: true,
-			running: countRunning(ws.Base), total: len(ws.Base),
+			kind: rowGroup, workspace: ws.Name, label: "shared", up: true,
+			running: countRunning(ws.Shared), total: len(ws.Shared),
 		})
-		for _, svc := range keepInteresting(ws.Base, showAll) {
+		for _, svc := range keepInteresting(ws.Shared, showAll) {
 			out = append(out, row{kind: rowService, workspace: ws.Name, service: svc})
 		}
 

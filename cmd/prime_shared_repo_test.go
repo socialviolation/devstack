@@ -65,7 +65,7 @@ func TestTheBriefingFindsTheServicesTheWorktreeHoldsAndTheStackDoesNotRun(t *tes
 		t.Errorf("stackSiblings() = %v, want worker at %s", got, want)
 	}
 	if _, ok := got["web"]; ok {
-		t.Errorf("web is in the overlay, so the stack runs it: %v", got)
+		t.Errorf("web is a member, so the stack runs it: %v", got)
 	}
 }
 
@@ -122,7 +122,6 @@ func TestTheBriefingSaysWhatASiblingDirectoryIs(t *testing.T) {
 	for _, want := range []string{
 		"holds the code of worker",
 		"runs no copy of worker",
-		"base runs its own copy of worker",
 		"runs nowhere",
 		"devstack stack add feat worker",
 	} {

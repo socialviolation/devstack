@@ -34,10 +34,6 @@ func makeStackRepo(t *testing.T, dir, manifest string) {
 	gitCmd(t, dir, "commit", "-q", "-m", "init")
 }
 
-// buildStackScenario wires a base workspace (observability on, backend pinned to
-// 8080, frontend calling backend), then creates a real feature stack via
-// stack.Create (worktrees, generated manifest, allocated ports, stored record).
-// Returns the stack record and the allocated backend/http port.
 func buildStackScenario(t *testing.T) (*stack.Record, int) {
 	t.Helper()
 	tmpHome := t.TempDir()
@@ -66,8 +62,21 @@ env:
   values:
     BACKEND_URL: "${backend.url}"
 `
+	dbSvc := `version: 1
+service:
+  name: db
+runtime:
+  run:
+    command: postgres
+ports:
+  pg: 5432
+env:
+  values:
+    PGPORT: "${self.port.pg}"
+`
 	makeStackRepo(t, filepath.Join(baseRoot, "backend"), backendSvc)
 	makeStackRepo(t, filepath.Join(baseRoot, "frontend"), frontendSvc)
+	makeStackRepo(t, filepath.Join(baseRoot, "db"), dbSvc)
 
 	writeFile(t, filepath.Join(baseRoot, "devstack.workspace.yaml"), `version: 1
 workspace:
@@ -77,6 +86,8 @@ workspace:
     repos:
       - ./backend
       - ./frontend
+      - ./db
+shared: [db]
 observability:
   enabled: true
 calls:

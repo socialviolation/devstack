@@ -86,7 +86,7 @@ func TestExpandGroupsEmptyGroup(t *testing.T) {
 // A stack overlays what it changes plus the callers of that, so naming a group
 // does not guarantee the group came with it. The count alone reads as success;
 // the shortfall has to name where the rest actually run.
-func TestCoverageNamesWhatStaysOnBase(t *testing.T) {
+func TestCoverageNamesWhatIsNotInTheStack(t *testing.T) {
 	base := map[string][]string{"core": {"api", "frontend", "orbit"}}
 
 	cov := CoverageOf([]string{"core"}, []string{"api"}, base)
@@ -100,7 +100,7 @@ func TestCoverageNamesWhatStaysOnBase(t *testing.T) {
 		t.Errorf("Label() = %q, want core 1/3", got)
 	}
 	got := cov[0].Sentence()
-	for _, want := range []string{"1/3", "frontend", "orbit", "base"} {
+	for _, want := range []string{"1/3", "frontend", "orbit", "not in this stack"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("Sentence() = %q, want it to mention %q", got, want)
 		}

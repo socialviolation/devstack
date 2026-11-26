@@ -3,19 +3,16 @@ package cmd
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/socialviolation/devstack/internal/stack"
 )
 
-// A stack overlays a few services and borrows the rest from base. An agent sent
-// to finish the feature reads the whole workspace as its subject unless the
-// task block draws the edge, and the services outside the overlay are base's
-// copies — shared with the user and with every other stack.
 func TestBriefingNamesTheServicesTheStackOwns(t *testing.T) {
 	rec := &stack.Record{
 		Name:    "fx-rates",
 		Base:    "navexa",
-		Overlay: []string{"navexa-api", "nxPriceService"},
+		Members: []string{"navexa-api", "nxPriceService"},
 		Worktrees: map[string]string{
 			"navexa-api":     "/home/nick/dev/.devstack-stacks/navexa/fx-rates/Navexa",
 			"nxPriceService": "/home/nick/dev/.devstack-stacks/navexa/fx-rates/nxPriceService",
@@ -30,12 +27,32 @@ func TestBriefingNamesTheServicesTheStackOwns(t *testing.T) {
 		"stack fx-rates · navexa-api, nxPriceService",
 		"1. Change code in these directories, and in no others:",
 		"/home/nick/dev/.devstack-stacks/navexa/fx-rates/Navexa",
-		"every other stack share base",
+		"Every stack uses the shared set",
+		"If a member calls a service that this stack does not run, devstack warns",
 		"devstack stack add fx-rates",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the task block must state %q, got:\n%s", want, got)
 		}
+	}
+}
+
+func TestTheTaskBlockStatesTheStopTimeAndHowToPushItBack(t *testing.T) {
+	stopAt := time.Date(2026, 11, 27, 14, 20, 0, 0, time.Local)
+	rec := &stack.Record{Name: "perf", Active: true, StopAt: stopAt, Members: []string{"api"}}
+
+	var b strings.Builder
+	writePrimeStackTask(&b, rec, "api", nil, false)
+
+	if got := b.String(); !strings.Contains(got, "devstack stops this stack at 2026-11-27 14:20") || !strings.Contains(got, "stack_extend") {
+		t.Errorf("the task block must state the stop time and name stack_extend, got:\n%s", got)
+	}
+
+	rec = &stack.Record{Name: "perf", StoppedBy: stack.StoppedBySweep, Members: []string{"api"}}
+	b.Reset()
+	writePrimeStackTask(&b, rec, "api", nil, false)
+	if got := b.String(); !strings.Contains(got, "its stop time passed") || !strings.Contains(got, "devstack stack up perf") {
+		t.Errorf("a swept stack must say why it stopped and how to start it, got:\n%s", got)
 	}
 }
 
@@ -46,7 +63,7 @@ func TestTheTaskBlockIsTheLoopWithRealNames(t *testing.T) {
 	rec := &stack.Record{
 		Name:      "fx-rates",
 		Branch:    "nick/fx",
-		Overlay:   []string{"navexa-api", "nxPriceService"},
+		Members:   []string{"navexa-api", "nxPriceService"},
 		Worktrees: map[string]string{"navexa-api": "/tmp/fx-rates/navexa-api"},
 	}
 
@@ -70,7 +87,7 @@ func TestTheTaskBlockIsTheLoopWithRealNames(t *testing.T) {
 // task block that always names it sends half the workspaces to a tool that is
 // not there.
 func TestTheTaskBlockNamesTheTraceToolOnlyWhereThereIsTelemetry(t *testing.T) {
-	rec := &stack.Record{Name: "perf", Overlay: []string{"api"}, Worktrees: map[string]string{"api": "/tmp/perf/api"}}
+	rec := &stack.Record{Name: "perf", Members: []string{"api"}, Worktrees: map[string]string{"api": "/tmp/perf/api"}}
 
 	var b strings.Builder
 	writePrimeStackTask(&b, rec, "api", nil, false)
@@ -83,7 +100,7 @@ func TestTheTaskBlockNamesTheTraceToolOnlyWhereThereIsTelemetry(t *testing.T) {
 // The restart step has to name a service even in a directory that names none —
 // the sibling directory of a shared repository is one.
 func TestTheTaskBlockRestartsAServiceTheStackRuns(t *testing.T) {
-	rec := &stack.Record{Name: "feat", Overlay: []string{"web"}, Worktrees: map[string]string{"web": "/tmp/feat/web"}}
+	rec := &stack.Record{Name: "feat", Members: []string{"web"}, Worktrees: map[string]string{"web": "/tmp/feat/web"}}
 
 	var b strings.Builder
 	writePrimeStackTask(&b, rec, "", nil, false)
@@ -97,7 +114,7 @@ func TestTheTaskBlockRestartsAServiceTheStackRuns(t *testing.T) {
 // genuinely needs another service. Without that, an agent that needs one either
 // stops or edits base.
 func TestBriefingSaysHowToWidenTheStack(t *testing.T) {
-	rec := &stack.Record{Name: "perf", Overlay: []string{"api"}, Worktrees: map[string]string{"api": "/tmp/perf/api"}}
+	rec := &stack.Record{Name: "perf", Members: []string{"api"}, Worktrees: map[string]string{"api": "/tmp/perf/api"}}
 
 	var b strings.Builder
 	writePrimeStackTask(&b, rec, "api", nil, false)
@@ -115,12 +132,12 @@ func TestTheTaskBlockAsksBeforeItActsOnAGuessedStack(t *testing.T) {
 	rec := &stack.Record{
 		Name:      "bybit",
 		Branch:    "nick/bybit",
-		Overlay:   []string{"nxFileProcessor"},
+		Members:   []string{"nxFileProcessor"},
 		Worktrees: map[string]string{"nxFileProcessor": "/tmp/bybit/nxFileProcessor"},
 	}
 
 	var b strings.Builder
-	writePrimeTask(&b, "nxFileProcessor", "base", &workingStack{Rec: rec, Reason: "this is the only stack that runs nxFileProcessor"}, nil, false, false, nil)
+	writePrimeTask(&b, "nxFileProcessor", "", &workingStack{Rec: rec, Reason: "this is the only stack that runs nxFileProcessor"}, nil, false, false, nil)
 	got := b.String()
 
 	for _, want := range []string{
@@ -142,7 +159,7 @@ func TestTheTaskBlockAsksBeforeItActsOnAGuessedStack(t *testing.T) {
 // to run at all. Naming a stack here would be a guess with no evidence.
 func TestTheTaskBlockAsksWhenThereIsNoStack(t *testing.T) {
 	var b strings.Builder
-	writePrimeTask(&b, "api", "base", nil, nil, false, false, nil)
+	writePrimeTask(&b, "api", "", nil, nil, false, false, nil)
 	got := b.String()
 
 	for _, want := range []string{
@@ -156,26 +173,24 @@ func TestTheTaskBlockAsksWhenThereIsNoStack(t *testing.T) {
 	}
 }
 
-// In the replica, "your change reaches base on the default branch" is the wrong
-// warning: this directory IS what base runs, and `workspace up` overwrites it.
 func TestTheTaskBlockSaysTheReplicaIsOverwritten(t *testing.T) {
 	var b strings.Builder
-	writePrimeTask(&b, "api", "base", nil, nil, false, true, nil)
+	writePrimeTask(&b, "api", "", nil, nil, false, true, nil)
 
-	if got := b.String(); !strings.Contains(got, "overwrites it. Do not edit here.") {
+	if got := b.String(); !strings.Contains(got, "replica of the shared set") || !strings.Contains(got, "overwrites it. Do not edit here.") {
 		t.Errorf("the task block must say an edit in the replica is overwritten:\n%s", got)
 	}
 }
 
-func TestBriefingListsNoDirectoriesForAStackWithNoOverlay(t *testing.T) {
+func TestBriefingListsNoDirectoriesForAStackWithNoMembers(t *testing.T) {
 	var b strings.Builder
 	writePrimeStackTask(&b, &stack.Record{Name: "empty"}, "", nil, false)
 	got := b.String()
 
 	if strings.Contains(got, "Change code in these directories") {
-		t.Errorf("a stack with no overlay has no directory to name, got:\n%s", got)
+		t.Errorf("a stack with no members has no directory to name, got:\n%s", got)
 	}
 	if !strings.Contains(got, "devstack stack add empty <service>") {
-		t.Errorf("a stack with no overlay must be told how to get one, got:\n%s", got)
+		t.Errorf("a stack with no members must be told how to get one, got:\n%s", got)
 	}
 }

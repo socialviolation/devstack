@@ -26,9 +26,9 @@ the configured backend of this workspace, and talks to it for you.
 With no argument, this command lists the recent root spans. With a trace ID, it
 prints the full span tree of that trace.
 
-With no --stack, the query covers base alone. Pass --stack <name> for one stack.
-Pass --stack all for base and every stack together. The investigate MCP tool has
-the same default, so the two surfaces cover the same copies.
+With no --stack, the query covers every stack and the shared set. Pass
+--stack <name> for one stack. The investigate MCP tool has the same default, so
+the two surfaces cover the same services.
 
 Examples:
   devstack otel traces
@@ -56,10 +56,11 @@ Examples:
 
 var otelServicesCmd = &cobra.Command{
 	Use:   "services",
-	Short: "List the copies that report telemetry (base, each stack, each environment)",
-	Long: `List every copy that reports telemetry, so it is obvious which one to query. The
-same service runs many times over — in the base workspace, in each feature stack,
-and under each environment. All of them report to the one shared backend.
+	Short: "List the services that report telemetry (the shared set, each stack, each environment)",
+	Long: `List every service that reports telemetry, so it is obvious which one to query.
+The same service can run many times over: in the shared set, in each feature
+stack, and under each environment. All of them report to the one shared backend.
+The stack value "shared" is the label of the shared set.
 
 A service can report itself under a name that differs from the name devstack
 knows it by. devstack then shows both names. The --service flag filters on the
@@ -122,26 +123,9 @@ func resolveQueryService(cmd *cobra.Command) string {
 	return identity.ServiceName
 }
 
-// resolveStackFlag maps --stack to the query's stack filter, and rejects a value
-// naming no stack of this workspace.
-//
-// An absent flag searches base alone, which is what the investigate MCP tool
-// does with an absent stack. The two used to default opposite ways, so a human
-// and an agent comparing notes on the same unqualified query disagreed about
-// what it had covered.
-//
-// A telemetry query used to accept any string and answer "No traces", so
-// --stack with a typo, the wrong case, or the '<base>--<name>' identity that
-// telemetry itself prints all returned a clean bill of health for a stack that
-// was never queried. `devstack status --stack` had always errored on the same
-// input; one flag behaving two ways is how a misspelling becomes "no errors".
-//
-// The name is canonicalised because lookup is case-insensitive while the stored
-// telemetry attribute is not: --stack Perf resolved to the perf record and then
-// filtered on "Perf", which matches nothing.
 func resolveStackFlag(cmd *cobra.Command, name string) (string, error) {
 	filter := observability.ResolveStackFilter(name)
-	if filter == "" || filter == "base" {
+	if filter == "" || filter == observability.SharedStack {
 		return filter, nil
 	}
 	ws, err := resolveOtelWorkspace(cmd)
@@ -163,11 +147,7 @@ func explainEmptyTraceResult(cmd *cobra.Command, stackName string) {
 	faint.Println("Empty means nothing matched — not that the service is healthy.")
 
 	if stackName == "" {
-		faint.Println("  This query covered every copy, base and stacks. To narrow it, pass --stack <name>, or --stack base.")
-		return
-	}
-	if stackName == "base" {
-		faint.Println("  This query covered base alone, which is the default. To include the stacks, pass --stack all, or --stack <name> for one.")
+		faint.Println("  This query covered every stack and the shared set. To narrow it, pass --stack <name>.")
 		return
 	}
 	ws, err := resolveOtelWorkspace(cmd)
@@ -363,7 +343,9 @@ func runOtelServices(cmd *cobra.Command, args []string) error {
 			faint.Printf("  (devstack: %s)", v.Devstack)
 		}
 		var qualifiers []string
-		if v.Stack != "" {
+		if v.Stack != "" && observability.IsSharedStack(v.Stack) {
+			qualifiers = append(qualifiers, "stack="+observability.SharedStack)
+		} else if v.Stack != "" {
 			qualifiers = append(qualifiers, "stack="+v.Stack)
 		}
 		if v.Env != "" {

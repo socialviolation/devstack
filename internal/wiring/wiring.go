@@ -34,12 +34,12 @@ type Link struct {
 	Stack    *Hop
 }
 
-func (l Link) Flag(stackLabel string) string {
+func (l Link) Flag(stackLabel string, isShared func(string) bool) string {
 	switch {
-	case l.Stack != nil && l.Stack.Target == "base":
-		return fmt.Sprintf("stack %s %s → base %s", stackLabel, l.From, l.To)
-	case l.Base != nil && l.Base.Target != "" && l.Base.Target != "base":
-		return fmt.Sprintf("base %s → stack %s %s", l.From, l.Base.Target, l.To)
+	case l.Stack != nil && l.Stack.Target == "shared" && !isShared(l.To):
+		return fmt.Sprintf("stack %s %s → %s at its declared port", stackLabel, l.From, l.To)
+	case l.Base != nil && l.Base.Target != "" && l.Base.Target != "shared":
+		return fmt.Sprintf("%s with no stack → stack %s %s", l.From, l.Base.Target, l.To)
 	}
 	return ""
 }
@@ -165,7 +165,7 @@ func Derive(services []string, deps map[string][]string, base Copy, stack *Copy)
 		undeclared[pair] = true
 		issues = append(issues, Issue{
 			Severity: "note", Code: "undeclared-edge", From: l.From, To: l.To,
-			Message: fmt.Sprintf("%s reaches %s through %s, and the workspace manifest declares no edge from %s to %s", l.From, l.To, l.Key, l.From, l.To),
+			Message: fmt.Sprintf("%s reaches %s through %s, and no needs or calls edge goes from %s to %s", l.From, l.To, l.Key, l.From, l.To),
 		})
 	}
 	for _, from := range services {
@@ -242,7 +242,7 @@ func findRefs(raw, self string, known map[string]bool, base Copy, stack *Copy) (
 }
 
 func resolveHop(c *Copy, from, raw string, r ref, base Copy, stackLabel string) *Hop {
-	hop := &Hop{Target: "base"}
+	hop := &Hop{Target: "shared"}
 	value, err := config.ResolveStackRefs(raw, from, c.Book, c.Scope)
 	if err != nil {
 		hop.Err = err.Error()

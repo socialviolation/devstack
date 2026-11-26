@@ -370,8 +370,8 @@ func runInitOnboard(cmd *cobra.Command, claudeHook bool) error {
 	if group != "" {
 		fmt.Printf("  devstack group add %s %s\n", group, name)
 	}
-	fmt.Printf("  devstack dependencies add %s <dep>   # declare dependencies\n", name)
-	fmt.Printf("  devstack service start %s --stack base   # start it\n", name)
+	fmt.Printf("  add needs: and calls: to %s   # declare what it needs and calls\n", manifestPath)
+	fmt.Printf("  devstack stack create <name> --repos %s   # run it in a stack\n", name)
 
 	return nil
 }

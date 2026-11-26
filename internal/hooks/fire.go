@@ -16,8 +16,8 @@ import (
 // actually on. Workspace-level hooks always come from the base manifest: a stack
 // inherits them, exactly as it inherits base's environments.
 //
-// An empty services list defaults to the stack's overlay, or to every service in
-// the workspace when there is no stack.
+// An empty services list defaults to the stack's overlay. With no stack it
+// defaults to the shared set for workspace.up, and to every service otherwise.
 func Context(ws *workspace.Workspace, stackName, event string, services []string) (Event, Source, error) {
 	if ws == nil {
 		return Event{}, Source{}, fmt.Errorf("devstack can not resolve the workspace")
@@ -36,7 +36,7 @@ func Context(ws *workspace.Workspace, stackName, event string, services []string
 	}
 	rw := baseRW
 
-	if stackName != "" && stackName != "base" {
+	if stackName != "" {
 		rec, err := stack.Resolve(ws.Name, stackName)
 		if err != nil {
 			return Event{}, Source{}, err
@@ -61,11 +61,15 @@ func Context(ws *workspace.Workspace, stackName, event string, services []string
 			ev.EnvName = rec.Env
 		}
 		if len(services) == 0 {
-			services = append([]string(nil), rec.Overlay...)
+			services = append([]string(nil), rec.Members...)
 		}
 	}
 
-	if len(services) == 0 {
+	switch {
+	case len(services) > 0:
+	case stackName == "" && event == config.EventWorkspaceUp:
+		services = baseRW.SharedNames()
+	default:
 		for n := range rw.Services {
 			services = append(services, n)
 		}

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,9 +28,6 @@ func gitAt(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// A replica that devstack builds one time and never moves falls behind the
-// default branch, silently, for as long as the machine is up. That is the whole
-// reason the `base` noun existed. 'workspace up' moves it instead.
 func TestWorkspaceUpMovesAStaleReplicaToTheDefaultBranchTip(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -38,10 +36,20 @@ func TestWorkspaceUpMovesAStaleReplicaToTheDefaultBranchTip(t *testing.T) {
 	repo := filepath.Join(root, "api")
 	gitRepoWith(t, repo, map[string]string{".": "api"})
 	ws := workspaceAt(t, root, "shop", "api")
+	shareServices(t, root, "api")
 	if err := workspace.Register(*ws); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	useWorkspaceKey(t, ws.Name)
+	var restarted []string
+	orig := sharedRestarter
+	sharedRestarter = func(io.Writer, string) func(string) (bool, error) {
+		return func(svc string) (bool, error) {
+			restarted = append(restarted, svc)
+			return true, nil
+		}
+	}
+	t.Cleanup(func() { sharedRestarter = orig })
 
 	if _, err := replica.Ensure(ws); err != nil {
 		t.Fatalf("replica.Ensure() = %v", err)
@@ -54,8 +62,11 @@ func TestWorkspaceUpMovesAStaleReplicaToTheDefaultBranchTip(t *testing.T) {
 	gitAt(t, repo, "commit", "-q", "-m", "later")
 	tip := gitAt(t, repo, "rev-parse", "HEAD")
 
-	if err := syncBase(ws); err != nil {
-		t.Fatalf("syncBase() = %v", err)
+	if err := syncShared(ws, io.Discard); err != nil {
+		t.Fatalf("syncShared() = %v", err)
+	}
+	if strings.Join(restarted, ",") != "api" {
+		t.Errorf("restarted = %v, want the shared service whose repository moved", restarted)
 	}
 
 	after := gitAt(t, worktree, "rev-parse", "HEAD")
@@ -70,10 +81,6 @@ func TestWorkspaceUpMovesAStaleReplicaToTheDefaultBranchTip(t *testing.T) {
 	}
 }
 
-// 'workspace up' moves the code under the copies that run, so it must restart
-// them. It must restart nothing else: a copy that somebody stopped stays
-// stopped, a stack runs its own worktree, and another workspace's replica did
-// not move.
 func TestWorkspaceUpRestartsOnlyTheRunningBaseCopiesOfThisWorkspace(t *testing.T) {
 	view := &tilt.TiltView{UiResources: []tilt.UIResource{
 		resourceWith("shop:api", "ok", false),
@@ -89,20 +96,16 @@ func TestWorkspaceUpRestartsOnlyTheRunningBaseCopiesOfThisWorkspace(t *testing.T
 	}
 }
 
-// The daemon call in the middle puts the whole sequence out of reach of a unit
-// test, so the wiring is pinned here. Without the sync, base falls behind the
-// default branch. Without the restart, base serves code that is no longer in
-// its worktree.
-func TestWorkspaceUpSyncsTheReplicaAndThenRestartsWhatRuns(t *testing.T) {
+func TestWorkspaceUpSyncsTheSharedSetAndThenStartsIt(t *testing.T) {
 	body := funcBody(t, "start_cmd.go", "bringWorkspaceUp")
 
-	if !strings.Contains(body, "syncBase(ws)") {
-		t.Error("'workspace up' does not move the replica, so base falls behind the default branch")
+	if !strings.Contains(body, "syncShared(ws, os.Stdout)") {
+		t.Error("'workspace up' does not move the replica, so the shared set falls behind the default branch")
 	}
-	if !strings.Contains(body, "transformRunningState(os.Stdout, ws.Name, nil)") {
-		t.Error("'workspace up' does not restart the copies that run, so they serve code that moved")
+	if !strings.Contains(body, "hostdaemon.StartShared(os.Stdout, ws)") {
+		t.Error("'workspace up' does not start the shared set")
 	}
-	if strings.Index(body, "syncBase(ws)") > strings.Index(body, "transformRunningState") {
-		t.Error("'workspace up' restarts the copies before it moves the replica")
+	if strings.Index(body, "syncShared(ws, os.Stdout)") > strings.Index(body, "hostdaemon.StartShared(os.Stdout, ws)") {
+		t.Error("'workspace up' starts the shared set before it moves the replica")
 	}
 }

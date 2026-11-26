@@ -39,6 +39,10 @@ func openURL(url string) error {
 	return nil
 }
 
+func OpenURL(url string) error {
+	return openURL(url)
+}
+
 var clipboardTools = [][]string{
 	{"wl-copy"},
 	{"pbcopy"},
@@ -134,28 +138,23 @@ func runDevstack(args ...string) (string, error) {
 	if err != nil {
 		self = "devstack"
 	}
-	out, err := exec.Command(self, args...).CombinedOutput()
+	cmd := exec.Command(self, args...)
+	cmd.Dir = os.TempDir()
+	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
-// stackFlag names the copy a service command acts on. base is a stack name that
-// every devstack command accepts, and leaving the flag out would act on the
-// copy of the working directory instead.
-func stackFlag(stack string) string {
-	if stack == "" {
-		return "base"
-	}
-	return stack
-}
-
 func serviceCommand(action string, r row) []string {
-	return []string{"service", action, r.service.Name,
-		"--stack", stackFlag(r.stack), "--workspace", r.workspace}
+	args := []string{"service", action, r.service.Name}
+	if r.stack != "" {
+		args = append(args, "--stack", r.stack)
+	}
+	return append(args, "--workspace", r.workspace)
 }
 
 func groupCommand(action string, r row) ([]string, error) {
 	if r.stack == "" {
-		return nil, fmt.Errorf("base does not go up or down from the panel. Run: devstack workspace up")
+		return nil, fmt.Errorf("the shared set does not go up or down from the panel. Run: devstack workspace up")
 	}
 	verb := "up"
 	if action == "stop" {

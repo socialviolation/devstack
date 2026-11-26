@@ -150,7 +150,7 @@ func only(t *testing.T, r Report, kind string, sev Severity) Problem {
 func TestHealthyWorkspaceIsOneLine(t *testing.T) {
 	f := newFixture(t)
 	root := f.stackDir("perf")
-	f.store(stack.Record{Name: "perf", Base: "navexa", Root: root, Active: true, Overlay: []string{"api"}})
+	f.store(stack.Record{Name: "perf", Base: "navexa", Root: root, Active: true, Members: []string{"api"}})
 	f.view.UiResources = []tilt.UIResource{resource("navexa:api", "ok", 4000), resource("navexa:api:perf", "ok", 20011)}
 
 	if got := f.check("").Render(false); got != "healthy: 2 copies, 1 stacks checked\n" {
@@ -178,7 +178,7 @@ func TestDaemonStillBoundToAllInterfaces(t *testing.T) {
 
 func TestCopyInErrorNamesTheRestart(t *testing.T) {
 	f := newFixture(t)
-	f.store(stack.Record{Name: "agent-x", Base: "navexa", Root: f.stackDir("agent-x"), Active: true, Overlay: []string{"api"}})
+	f.store(stack.Record{Name: "agent-x", Base: "navexa", Root: f.stackDir("agent-x"), Active: true, Members: []string{"api"}})
 	f.view.UiResources = []tilt.UIResource{resource("navexa:web", "error", 0), resource("navexa:api:agent-x", "error", 0)}
 
 	r := f.check("")
@@ -186,7 +186,7 @@ func TestCopyInErrorNamesTheRestart(t *testing.T) {
 		t.Fatalf("got %v", kinds(r))
 	}
 	base, stk := r.Problems[0], r.Problems[1]
-	if base.Fix != "devstack service restart web --stack base" || base.Tool != "" {
+	if base.Fix != "devstack service restart web" || base.Tool != "" {
 		t.Errorf("base fix = %q, tool = %q", base.Fix, base.Tool)
 	}
 	if stk.Fix != "devstack service restart api --stack agent-x" || stk.Tool != `restart(service="api", stack="agent-x")` {
@@ -196,7 +196,7 @@ func TestCopyInErrorNamesTheRestart(t *testing.T) {
 
 func TestUpStackWithNoCopyInTheDaemon(t *testing.T) {
 	f := newFixture(t)
-	f.store(stack.Record{Name: "perf", Base: "navexa", Root: f.stackDir("perf"), Active: true, Overlay: []string{"api"}})
+	f.store(stack.Record{Name: "perf", Base: "navexa", Root: f.stackDir("perf"), Active: true, Members: []string{"api"}})
 	p := only(t, f.check(""), KindCopyMissing, Broken)
 	if p.Subject != "perf:api" || p.Fix != "devstack stack up perf" {
 		t.Errorf("got %+v", p)
@@ -269,20 +269,9 @@ func TestStackBehindOriginSuggestsResync(t *testing.T) {
 	}
 }
 
-func TestExpiredStackNotYetCollected(t *testing.T) {
-	f := newFixture(t)
-	f.store(
-		stack.Record{Name: "agent-a", Base: "navexa", Root: f.stackDir("agent-a"), Owner: "alice", ExpiresAt: now.Add(-time.Minute)},
-		stack.Record{Name: "agent-b", Base: "navexa", Root: f.stackDir("agent-b"), Owner: "alice", ExpiresAt: now.Add(time.Hour)},
-	)
-	if p := only(t, f.check(""), KindStackExpired, Tidy); p.Subject != "stack agent-a" || p.Fix != "devstack stack gc" {
-		t.Errorf("got %+v", p)
-	}
-}
-
 func TestRunningCopyWithNoTailnetAddress(t *testing.T) {
 	f := newFixture(t)
-	f.store(stack.Record{Name: "perf", Base: "navexa", Root: f.stackDir("perf"), Active: true, Overlay: []string{"api"}})
+	f.store(stack.Record{Name: "perf", Base: "navexa", Root: f.stackDir("perf"), Active: true, Members: []string{"api"}})
 	f.view.UiResources = []tilt.UIResource{resource("navexa:api", "ok", 4000), resource("navexa:api:perf", "ok", 20011), resource("navexa:db", "ok", 5432)}
 	f.host.Published = func() (map[int]bool, error) { return map[int]bool{4000: true}, nil }
 
@@ -365,7 +354,7 @@ func TestReplicaMissingAndDrift(t *testing.T) {
 	f.host.Replica = func() (bool, []Drift) {
 		return true, []Drift{{"web", "the replica declares this service, and the workspace does not: /r/web"}}
 	}
-	if p := only(t, f.check(""), KindReplicaDrift, Degraded); p.Fix != "devstack base sync" {
+	if p := only(t, f.check(""), KindReplicaDrift, Degraded); p.Fix != "devstack shared sync" {
 		t.Errorf("got %+v", p)
 	}
 }
@@ -373,8 +362,8 @@ func TestReplicaMissingAndDrift(t *testing.T) {
 func TestStackScopeChecksOnlyThatStack(t *testing.T) {
 	f := newFixture(t)
 	f.store(
-		stack.Record{Name: "agent-a", Base: "navexa", Root: f.stackDir("agent-a"), Active: true, Overlay: []string{"api"}},
-		stack.Record{Name: "perf", Base: "navexa", Root: f.stackDir("perf"), Active: true, Overlay: []string{"api"}},
+		stack.Record{Name: "agent-a", Base: "navexa", Root: f.stackDir("agent-a"), Active: true, Members: []string{"api"}},
+		stack.Record{Name: "perf", Base: "navexa", Root: f.stackDir("perf"), Active: true, Members: []string{"api"}},
 	)
 	f.stackDir("lost")
 	f.host.Replica = func() (bool, []Drift) { return false, nil }

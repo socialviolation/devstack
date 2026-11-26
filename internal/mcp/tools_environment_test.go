@@ -36,10 +36,10 @@ func TestStacksSummaryListsInFlightStacks(t *testing.T) {
 	}
 }
 
-func TestStacksSummaryBaseOnly(t *testing.T) {
+func TestStacksSummarySharedOnly(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	got := stacksSummary(&workspace.Workspace{Name: "navexa"})
-	if !strings.Contains(got, "base only") {
-		t.Errorf("a workspace with no stacks should say base only; got %q", got)
+	if !strings.Contains(got, "shared set only") {
+		t.Errorf("a workspace with no stacks should say shared set only; got %q", got)
 	}
 }

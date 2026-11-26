@@ -14,13 +14,12 @@ import (
 
 func TestResolveInvestigateStack(t *testing.T) {
 	cases := map[string]string{
-		"":     "base",
-		"  ":   "base",
+		"":     "",
+		"  ":   "",
 		"all":  "",
 		"ALL":  "",
 		"*":    "",
 		"perf": "perf",
-		"base": "base",
 	}
 	for in, want := range cases {
 		if got := observability.ResolveStackFilter(in); got != want {
@@ -89,7 +88,7 @@ func TestInvestigateStatesTheSharedStackDefault(t *testing.T) {
 	if !strings.Contains(desc, observability.StackScopeDesc) {
 		t.Errorf("investigate's stack parameter must state the shared default %q; got %q", observability.StackScopeDesc, desc)
 	}
-	if !strings.Contains(observability.StackScopeDesc, "base only") || !strings.Contains(observability.StackScopeDesc, "\"all\"") {
+	if !strings.Contains(observability.StackScopeDesc, "every stack and the shared set") {
 		t.Errorf("the shared sentence must state the default and how to widen it: %q", observability.StackScopeDesc)
 	}
 }

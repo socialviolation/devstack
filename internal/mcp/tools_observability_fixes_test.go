@@ -19,7 +19,7 @@ func TestRenderVariantsNamesStackEnvAndReportedName(t *testing.T) {
 	})
 
 	for _, want := range []string{
-		"Navexa.API (devstack: navexa-api) stack=base env=local spans=12",
+		"Navexa.API (devstack: navexa-api) stack=shared env=local spans=12",
 		"navexa-web stack=feat-x spans=3",
 	} {
 		if !strings.Contains(got, want) {
@@ -33,7 +33,7 @@ func TestRenderVariantsNamesStackEnvAndReportedName(t *testing.T) {
 
 func TestRenderVariantsEmpty(t *testing.T) {
 	got := renderVariants(nil)
-	if !strings.Contains(got, "No copy reported telemetry") {
+	if !strings.Contains(got, "No service reported telemetry") {
 		t.Errorf("unexpected empty rendering: %q", got)
 	}
 }

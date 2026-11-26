@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,8 +30,6 @@ func baseGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// baseWorkspace lays down a one-service workspace whose service repo is a real
-// git checkout, under a HOME of its own. The replica is not built yet.
 func baseWorkspace(t *testing.T) (*workspace.Workspace, string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -54,6 +53,7 @@ workspace:
     mode: explicit
     repos:
       - ./api
+shared: [api]
 `)
 	return &workspace.Workspace{Name: "navexa", Path: root}, repo
 }
@@ -61,25 +61,23 @@ workspace:
 func baseToolServer(t *testing.T, ws *workspace.Workspace) *server.MCPServer {
 	t.Helper()
 	s := server.NewMCPServer("test", "0.0.0")
-	registerBaseTool(s, ws)
+	registerSharedTool(s, ws)
 	return s
 }
 
-// path is the tool an agent reaches for to answer "where does base actually run
-// from", so it has to name the replica and not the checkout it was built from.
-func TestBaseToolPathReturnsTheReplicaNotTheCheckout(t *testing.T) {
+func TestSharedToolPathReturnsTheReplicaNotTheCheckout(t *testing.T) {
 	ws, repo := baseWorkspace(t)
 	if _, err := replica.Ensure(ws); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
 	s := baseToolServer(t, ws)
 
-	out := callTool(t, s, "base", map[string]string{"action": "path"})
+	out := callTool(t, s, "shared", map[string]string{"action": "path"})
 	if !strings.Contains(out, replica.Root(ws)) {
 		t.Errorf("action=path must print the replica root %q; got %s", replica.Root(ws), out)
 	}
 
-	svc := callTool(t, s, "base", map[string]string{"action": "path", "service": "api"})
+	svc := callTool(t, s, "shared", map[string]string{"action": "path", "service": "api"})
 	if !strings.Contains(svc, filepath.Join(replica.Root(ws), "api")) {
 		t.Errorf("action=path service=api must print that service's worktree; got %s", svc)
 	}
@@ -87,37 +85,44 @@ func TestBaseToolPathReturnsTheReplicaNotTheCheckout(t *testing.T) {
 		t.Errorf("action=path must not print the checkout %q; got %s", repo, svc)
 	}
 
-	unknown := callTool(t, s, "base", map[string]string{"action": "path", "service": "nope"})
-	if !strings.Contains(unknown, "not in workspace") || !strings.Contains(unknown, "api") {
+	unknown := callTool(t, s, "shared", map[string]string{"action": "path", "service": "nope"})
+	if !strings.Contains(unknown, "is not a shared service") || !strings.Contains(unknown, "api") {
 		t.Errorf("an unknown service must be refused and the real ones listed; got %s", unknown)
 	}
 }
 
-// Before 'devstack workspace up' there is no replica at all, and an agent told
-// only "failed" would go looking for the wrong thing.
-func TestBaseToolSaysWhenNoReplicaIsBuilt(t *testing.T) {
+func TestSharedToolSaysWhenNoReplicaIsBuilt(t *testing.T) {
 	ws, _ := baseWorkspace(t)
 	s := baseToolServer(t, ws)
 
-	out := callTool(t, s, "base", map[string]string{"action": "path"})
+	out := callTool(t, s, "shared", map[string]string{"action": "path"})
 	if !strings.Contains(out, "has not built the replica") || !strings.Contains(out, "devstack workspace up") {
 		t.Errorf("action=path must say no replica is built and how to build one; got %s", out)
 	}
 }
 
-// sync is the step that carries a merged commit into what base runs, and the
-// before/after SHAs are how an agent knows it moved. Nothing is restarted, so
-// the result has to say the running copy is still on the old code.
-func TestBaseToolSyncMovesTheReplicaAndSaysNothingRestarted(t *testing.T) {
+func TestSharedToolSyncMovesTheReplicaAndRestartsOnlyWhatMoved(t *testing.T) {
 	ws, repo := baseWorkspace(t)
 	if _, err := replica.Ensure(ws); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
+	var restarted []string
+	orig := sharedRestarter
+	sharedRestarter = func(io.Writer, string) func(string) (bool, error) {
+		return func(svc string) (bool, error) {
+			restarted = append(restarted, svc)
+			return true, nil
+		}
+	}
+	t.Cleanup(func() { sharedRestarter = orig })
 	s := baseToolServer(t, ws)
 
 	before := baseGit(t, filepath.Join(replica.Root(ws), "api"), "rev-parse", "--short", "HEAD")
-	if out := callTool(t, s, "base", map[string]string{"action": "sync"}); !strings.Contains(out, "Nothing moved") {
+	if out := callTool(t, s, "shared", map[string]string{"action": "sync"}); !strings.Contains(out, "Nothing moved") {
 		t.Errorf("a replica already at the tip must report that nothing moved; got %s", out)
+	}
+	if len(restarted) != 0 {
+		t.Errorf("a sync that moved nothing restarted %v", restarted)
 	}
 
 	writeFile(t, filepath.Join(repo, "next.txt"), "second commit\n")
@@ -125,21 +130,18 @@ func TestBaseToolSyncMovesTheReplicaAndSaysNothingRestarted(t *testing.T) {
 	baseGit(t, repo, "commit", "-q", "-m", "second")
 	after := baseGit(t, repo, "rev-parse", "--short", "HEAD")
 
-	out := callTool(t, s, "base", map[string]string{"action": "sync"})
+	out := callTool(t, s, "shared", map[string]string{"action": "sync"})
 	if !strings.Contains(out, before) || !strings.Contains(out, after) {
 		t.Errorf("sync must report the move %s → %s; got %s", before, after, out)
 	}
-	if !strings.Contains(out, "does not restart") && !strings.Contains(out, "Nothing was restarted") {
-		t.Errorf("sync must say the running copy still serves the old code; got %s", out)
-	}
-	if got := baseGit(t, filepath.Join(replica.Root(ws), "api"), "rev-parse", "--short", "HEAD"); got != after {
-		t.Errorf("the replica worktree is at %s, want the default branch tip %s", got, after)
+	if !strings.Contains(out, "Restarted: api") || strings.Join(restarted, ",") != "api" {
+		t.Errorf("sync must restart the shared service that moved; restarted %v, got %s", restarted, out)
 	}
 }
 
-func TestBaseToolRejectsAnUnknownAction(t *testing.T) {
+func TestSharedToolRejectsAnUnknownAction(t *testing.T) {
 	ws, _ := baseWorkspace(t)
-	out := callTool(t, baseToolServer(t, ws), "base", map[string]string{"action": "move"})
+	out := callTool(t, baseToolServer(t, ws), "shared", map[string]string{"action": "move"})
 	for _, want := range []string{"unknown action", "path", "sync"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("an unknown action must be refused and the real ones named (%q); got %s", want, out)
@@ -150,14 +152,11 @@ func TestBaseToolRejectsAnUnknownAction(t *testing.T) {
 	}
 }
 
-// sync is the one action that writes, so it has to answer the state where there
-// is no replica at all. An agent that found none had to leave the tool and go to
-// a terminal.
-func TestBaseToolSyncBuildsTheReplicaThatIsNotThere(t *testing.T) {
+func TestSharedToolSyncBuildsTheReplicaThatIsNotThere(t *testing.T) {
 	ws, _ := baseWorkspace(t)
 	s := baseToolServer(t, ws)
 
-	out := callTool(t, s, "base", map[string]string{"action": "sync"})
+	out := callTool(t, s, "shared", map[string]string{"action": "sync"})
 	if !strings.Contains(out, replica.Root(ws)) || !strings.Contains(out, "api") {
 		t.Errorf("sync must report the replica root and each worktree it cut; got %s", out)
 	}
@@ -167,11 +166,11 @@ func TestBaseToolSyncBuildsTheReplicaThatIsNotThere(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(replica.Root(ws), "api", ".git")); err != nil {
 		t.Fatalf("sync must leave a real worktree at %s: %v", filepath.Join(replica.Root(ws), "api"), err)
 	}
-	if path := callTool(t, s, "base", map[string]string{"action": "path"}); strings.Contains(path, "has not built the replica") {
+	if path := callTool(t, s, "shared", map[string]string{"action": "path"}); strings.Contains(path, "has not built the replica") {
 		t.Errorf("after sync, action=path must resolve; got %s", path)
 	}
 
-	again := callTool(t, s, "base", map[string]string{"action": "sync"})
+	again := callTool(t, s, "shared", map[string]string{"action": "sync"})
 	if strings.Contains(again, "no replica yet") {
 		t.Errorf("a second sync must not build again; got %s", again)
 	}
@@ -180,18 +179,16 @@ func TestBaseToolSyncBuildsTheReplicaThatIsNotThere(t *testing.T) {
 	}
 }
 
-// sync writes, so the tool cannot claim to be read-only; the description is
-// where the split between the two actions is stated.
-func TestBaseToolIsAnnotatedForTheActionThatWrites(t *testing.T) {
+func TestSharedToolIsAnnotatedForTheActionThatWrites(t *testing.T) {
 	ws, _ := baseWorkspace(t)
-	tool := listTools(t, baseToolServer(t, ws))["base"]
+	tool := listTools(t, baseToolServer(t, ws))["shared"]
 
 	if tool.Annotations.ReadOnlyHint == nil || *tool.Annotations.ReadOnlyHint {
-		t.Error("base must not be annotated read-only: sync moves the code base runs")
+		t.Error("shared must not be annotated read-only: sync moves the code the shared set runs")
 	}
-	for _, want := range []string{"action=\"path\" reads only", "action=\"sync\" builds the replica and moves what base runs", "devstack base sync", "it restarts nothing"} {
+	for _, want := range []string{"action=\"path\" reads only", "action=\"sync\" writes", "devstack shared sync"} {
 		if !strings.Contains(tool.Description, want) {
-			t.Errorf("base's description must state %q: %s", want, tool.Description)
+			t.Errorf("shared's description must state %q: %s", want, tool.Description)
 		}
 	}
 }

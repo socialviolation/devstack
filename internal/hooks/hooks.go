@@ -41,7 +41,7 @@ type Source struct {
 
 // Event is one lifecycle trigger and the context its hooks resolve against.
 // Services is the event's service set: the overlay for a stack event, the
-// started services for service.start, every service for workspace.up.
+// started services for service.start, the shared set for workspace.up.
 type Event struct {
 	Name          string
 	WorkspaceName string
@@ -54,10 +54,10 @@ type Event struct {
 }
 
 // StackLabel is the stack an event ran against, spelled the way the CLI and the
-// OTEL resource attributes spell it: the short name, or "base".
+// OTEL resource attributes spell it: the short name, or "shared" for the shared set.
 func (e Event) StackLabel() string {
 	if strings.TrimSpace(e.Stack) == "" {
-		return "base"
+		return "shared"
 	}
 	return e.Stack
 }

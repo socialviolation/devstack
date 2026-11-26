@@ -34,8 +34,8 @@ func fakeDoctorHost(ws *workspace.Workspace) doctor.Host {
 }
 
 func TestDoctorToolGivesAnAgentToolCalls(t *testing.T) {
-	ws := guardStore(t, stack.Record{Name: "agent-mine", Base: "navexa", Owner: "alice", Root: t.TempDir(), Active: true, Overlay: []string{"api"}})
-	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws, DefaultAgentLimits)...)
+	ws := guardStore(t, stack.Record{Name: "agent-mine", Base: "navexa", Owner: "alice", Root: t.TempDir(), Active: true, Members: []string{"api"}})
+	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws)...)
 	registerDoctorTool(s, ws, fakeDoctorHost)
 
 	out := callAs(t, s, alice, "doctor", `{"stack":"agent-mine"}`)
@@ -54,7 +54,7 @@ func TestDoctorToolGivesAnAgentToolCalls(t *testing.T) {
 
 func TestCleanupToolIsADryRunByDefault(t *testing.T) {
 	ws := guardStore(t, stack.Record{Name: "old", Base: "navexa", Root: "/nowhere/old"})
-	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws, DefaultAgentLimits)...)
+	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws)...)
 	registerCleanupTool(s, ws, fakeDoctorHost)
 
 	out := callAs(t, s, owner, "cleanup", `{}`)

@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -64,7 +65,7 @@ runtime:
 	if err != nil {
 		t.Fatalf("find base: %v", err)
 	}
-	if _, err := stack.Create(stack.CreateInput{Base: base, Name: "feat", Repos: []string{"backend"}}); err != nil {
+	if _, err := stack.Create(stack.CreateInput{Base: base, Name: "feat", Repos: []string{"backend", "frontend"}}); err != nil {
 		t.Fatalf("stack.Create: %v", err)
 	}
 	rec, err := stack.Resolve("navexa", "feat")
@@ -191,7 +192,40 @@ hooks:
 	if err != nil {
 		t.Fatalf("resolve stack: %v", err)
 	}
-	if len(rec.Overlay) != 1 || rec.Overlay[0] != "backend" {
-		t.Errorf("Overlay = %v, want [backend]", rec.Overlay)
+	if len(rec.Members) != 1 || rec.Members[0] != "backend" {
+		t.Errorf("Overlay = %v, want [backend]", rec.Members)
+	}
+}
+
+func TestWorkspaceDownFiresStackDownForEachUpStack(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "stack-down")
+	base, _ := stackWithWorkspaceManifest(t, `version: 1
+workspace:
+  name: navexa
+  repoDiscovery:
+    mode: explicit
+    repos:
+      - ./backend
+      - ./frontend
+hooks:
+  - name: release
+    on: [stack.down]
+    run: echo "$DEVSTACK_STACK" >> `+marker+`
+`)
+	if _, err := stack.Create(stack.CreateInput{Base: base, Name: "idle", Repos: []string{"frontend"}}); err != nil {
+		t.Fatalf("stack.Create: %v", err)
+	}
+	if err := stack.SetActive(base.Name, "feat", true); err != nil {
+		t.Fatal(err)
+	}
+
+	fireStackDownHooks(base)
+
+	got, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("the stack.down hook did not run: %v", err)
+	}
+	if strings.Count(string(got), "\n") != 1 || !strings.Contains(string(got), "feat") {
+		t.Errorf("stack.down fired for %q, want the up stack feat alone", got)
 	}
 }

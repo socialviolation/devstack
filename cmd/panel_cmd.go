@@ -16,7 +16,7 @@ var panelCmd = &cobra.Command{
 	Long: `Watch what runs on this machine, and act on one service.
 
 The panel shows the workspace of the directory it opens in. Below the
-workspace, it shows base and each feature stack. From a directory outside every
+workspace, it shows the shared set and each feature stack. From a directory outside every
 workspace, the panel shows all the workspaces. To name a workspace yourself,
 pass --workspace. Each service shows its state, its port, and the tailnet
 address that reaches it. The panel reads the machine again every few seconds.

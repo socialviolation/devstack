@@ -62,7 +62,7 @@ func TestRestartRepeatsTheLastForward(t *testing.T) {
 			name:     "a mapped stack is re-established mapped",
 			last:     &workspace.TunnelForward{Mode: "push", AsBase: "agent"},
 			wantMode: tunnel.ModePush,
-			wantSaid: "push --as-base agent",
+			wantSaid: "push --as-declared-ports agent",
 			wantBase: "agent",
 		},
 		{
@@ -70,7 +70,7 @@ func TestRestartRepeatsTheLastForward(t *testing.T) {
 			last:     &workspace.TunnelForward{Mode: "pull", AsBase: "agent"},
 			flags:    map[string]string{"mode": "push"},
 			wantMode: tunnel.ModePush,
-			wantSaid: "--as-base agent",
+			wantSaid: "--as-declared-ports agent",
 			wantBase: "agent",
 		},
 		{
@@ -150,8 +150,8 @@ func TestRecordedForwardSurvivesWorkspaceResolution(t *testing.T) {
 	if mode != tunnel.ModePull {
 		t.Errorf("mode = %q, want pull", mode)
 	}
-	if said != "pull --as-base agent" {
-		t.Errorf("reported %q, want \"pull --as-base agent\"", said)
+	if said != "pull --as-declared-ports agent" {
+		t.Errorf("reported %q, want \"pull --as-declared-ports agent\"", said)
 	}
 	restartCommand(t)
 }

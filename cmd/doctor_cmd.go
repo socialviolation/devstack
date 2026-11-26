@@ -16,8 +16,8 @@ var doctorCmd = &cobra.Command{
 
 doctor checks the host daemon (down, or still bound to 0.0.0.0), each copy in
 error or missing from an up stack, ports a foreign process holds, stacks whose
-worktree is gone, stack branches gone from origin or behind it, expired stacks,
-copies with no tailnet address, the replica, and orphans: port allocations,
+worktree is gone, stack branches gone from origin or behind it, copies with no
+tailnet address, the replica, and orphans: port allocations,
 directories and git worktrees that belong to no stack.
 
 It groups the problems as broken, degraded or tidy-up, one line each, with the
@@ -38,8 +38,8 @@ directories and git worktrees under the stacks root with no stack, git worktree
 entries whose directory is gone, and the records of stacks whose directory is
 gone.
 
-cleanup never touches base, a stack whose directory exists, or a stack that is
-up. It keeps a worktree that holds uncommitted work, and says so. It ignores
+cleanup never touches the replica, a stack whose directory exists, or a stack
+that is up. It keeps a worktree that holds uncommitted work, and says so. It ignores
 anything younger than 10 minutes, because a stack that is being created looks
 like an orphan.
 
@@ -54,7 +54,7 @@ With no flag, cleanup lists what it would do and changes nothing.
 func init() {
 	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(cleanupCmd)
-	doctorCmd.Flags().String("stack", "", "Check one feature stack. Default: base, every stack and the orphans")
+	doctorCmd.Flags().String("stack", "", "Check one feature stack. Default: the shared set, every stack and the orphans")
 	cleanupCmd.Flags().Bool("apply", false, "Remove the orphans. Without it, cleanup only lists them")
 }
 

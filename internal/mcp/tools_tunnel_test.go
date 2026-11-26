@@ -223,7 +223,7 @@ func TestResumeTunnelForwardRestoresTheLastRun(t *testing.T) {
 	if got.Mode != "pull" || got.Services != "api" || got.AsBase != "agent" || !got.Otel {
 		t.Errorf("a bare restart must repeat the last run; got %+v", got)
 	}
-	for _, want := range []string{"pull", "service=api", "as_base=agent", "otel=true"} {
+	for _, want := range []string{"pull", "service=api", "as_declared_ports=agent", "otel=true"} {
 		if !strings.Contains(restored, want) {
 			t.Errorf("restart must say it restored %q; got %q", want, restored)
 		}

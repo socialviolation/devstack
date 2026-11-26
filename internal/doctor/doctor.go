@@ -34,7 +34,6 @@ const (
 	KindWorktreeMissing  = "worktree-missing"
 	KindBranchGone       = "branch-gone"
 	KindBranchBehind     = "branch-behind"
-	KindStackExpired     = "stack-expired"
 	KindUnpublished      = "unpublished"
 	KindOrphanPorts      = "orphan-ports"
 	KindOrphanDir        = "orphan-dir"
@@ -174,7 +173,7 @@ func checkCopies(ws *workspace.Workspace, stackName string, scoped []stack.Recor
 			continue
 		}
 		res := tilt.ResourceMap(view.UiResources, ws.Name, rec.Name)
-		for _, svc := range rec.Overlay {
+		for _, svc := range rec.Members {
 			r, ok := res[svc]
 			c := copyRef{stack: rec.Name, service: svc, res: r, found: ok}
 			all = append(all, c)
@@ -195,7 +194,7 @@ func checkCopies(ws *workspace.Workspace, stackName string, scoped []stack.Recor
 			p := Problem{
 				Kind: KindCopyError, Severity: Broken, Subject: copySubject(c),
 				Plain: "This copy is in error. Its logs say why.",
-				Fix:   fmt.Sprintf("devstack service restart %s --stack %s", c.service, stackOrBase(c.stack)),
+				Fix:   restartFix(c),
 			}
 			if c.stack != "" {
 				p.Tool = fmt.Sprintf("restart(service=%q, stack=%q)", c.service, c.stack)
@@ -345,13 +344,6 @@ func checkRecord(rec stack.Record, h Host) []Problem {
 			})
 		}
 	}
-	if !rec.ExpiresAt.IsZero() && !h.Now().Before(rec.ExpiresAt) {
-		out = append(out, Problem{
-			Kind: KindStackExpired, Severity: Tidy, Subject: subject,
-			Plain: fmt.Sprintf("The stack expired at %s, and gc has not removed it yet.", rec.ExpiresAt.Local().Format(time.RFC3339)),
-			Fix:   "devstack stack gc", Tool: fmt.Sprintf("stack_rm(name=%q)", rec.Name),
-		})
-	}
 	return out
 }
 
@@ -360,7 +352,7 @@ func checkReplica(h Host) []Problem {
 	if !built {
 		return []Problem{{
 			Kind: KindReplicaMissing, Severity: Degraded, Subject: "replica",
-			Plain: "devstack has built no replica, so base runs from your checkout.",
+			Plain: "devstack has built no replica, so the shared set runs from your checkout.",
 			Fix:   "devstack workspace up",
 		}}
 	}
@@ -369,7 +361,7 @@ func checkReplica(h Host) []Problem {
 		out = append(out, Problem{
 			Kind: KindReplicaDrift, Severity: Degraded, Subject: "replica:" + d.Name,
 			Plain: d.Detail + ".",
-			Fix:   "devstack base sync",
+			Fix:   "devstack shared sync",
 		})
 	}
 	return out
@@ -536,14 +528,17 @@ func (r Report) Broken() int {
 }
 
 func copySubject(c copyRef) string {
-	return stackOrBase(c.stack) + ":" + c.service
+	if c.stack == "" {
+		return "shared:" + c.service
+	}
+	return c.stack + ":" + c.service
 }
 
-func stackOrBase(name string) string {
-	if name == "" {
-		return "base"
+func restartFix(c copyRef) string {
+	if c.stack == "" {
+		return "devstack service restart " + c.service
 	}
-	return name
+	return fmt.Sprintf("devstack service restart %s --stack %s", c.service, c.stack)
 }
 
 func exists(path string) bool {

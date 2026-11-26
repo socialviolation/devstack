@@ -94,25 +94,24 @@ func waitForResources(client *tilt.Client, wanted []string) (*tilt.TiltView, err
 	}
 }
 
-// StartOrder lists a stack's services with each one's dependencies ahead of it,
-// falling back to name order when the stack's manifest cannot be read.
 func StartOrder(rec *Record) []string {
-	names := append([]string(nil), rec.Overlay...)
+	names := append([]string(nil), rec.Members...)
 	sort.Strings(names)
 
 	cfg, err := config.Load(rec.Root)
 	if err != nil {
 		return names
 	}
+	member := stringSet(rec.Members)
 	var ordered []string
 	seen := map[string]bool{}
 	for _, svc := range names {
-		resolved, err := config.ResolveDeps(cfg, svc)
+		resolved, err := config.ResolveNeeds(cfg, svc)
 		if err != nil {
 			resolved = []string{svc}
 		}
 		for _, r := range resolved {
-			if !seen[r] {
+			if member[r] && !seen[r] {
 				seen[r] = true
 				ordered = append(ordered, r)
 			}

@@ -112,7 +112,7 @@ func TestNoStacksAddsNothingToTheTaskBlock(t *testing.T) {
 
 func TestTheTaskBlockStillAsksWhenItHasCandidates(t *testing.T) {
 	var b strings.Builder
-	writePrimeTask(&b, "api", "base", nil, nil, false, false, []stack.Record{
+	writePrimeTask(&b, "api", "", nil, nil, false, false, []stack.Record{
 		{Name: "fx-rates", Active: true, Note: "NAV-412 daily value spike"},
 	})
 	got := b.String()

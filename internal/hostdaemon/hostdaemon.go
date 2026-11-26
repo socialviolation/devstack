@@ -41,6 +41,25 @@ func RegenerateScope(scope Scope) (string, []string, []string, error) {
 	return res.Path, res.Warnings, res.Kept, err
 }
 
+// Detach is what DetachStack did to the host Tiltfile. RegenErr is set when devstack marked the stack inactive but could not write the host Tiltfile again.
+type Detach struct {
+	Warnings []string
+	Kept     []string
+	RegenErr error
+}
+
+// DetachStack marks a stack inactive. If the host daemon is up, it writes the host Tiltfile again, so the daemon drops the stack's resources.
+func DetachStack(wsName, stackName string) (Detach, error) {
+	if err := stack.SetActive(wsName, stackName, false); err != nil {
+		return Detach{}, err
+	}
+	if !TiltReachable(fmt.Sprintf("http://localhost:%d/api/view", workspace.HostTiltPort)) {
+		return Detach{}, nil
+	}
+	_, warnings, kept, err := RegenerateScope(ScopeStack(wsName, stackName))
+	return Detach{Warnings: warnings, Kept: kept, RegenErr: err}, nil
+}
+
 // KeptNote tells the reader which resources devstack held at the definition on disk. It is empty when devstack held none.
 func KeptNote(kept []string) string {
 	if len(kept) == 0 {
@@ -204,28 +223,10 @@ func render() (string, []string, error) {
 	scopes := renderScopes()
 	for i := range active {
 		ws := active[i]
-		// One Tiltfile serves every workspace, so a workspace nobody has built a
-		// replica for yet runs from its checkout rather than taking the others down
-		// with it.
-		rw, err := replica.Resolve(&ws)
-		if err != nil {
-			// Any replica that will not resolve, not only one that was never
-			// built. One Tiltfile serves every workspace on this machine, so a
-			// replica devstack can not read would otherwise stop generation for
-			// every other workspace as well.
-			if errors.Is(err, replica.ErrNotBuilt) {
-				warnings = append(warnings, fmt.Sprintf("workspace %q has no replica, so it runs from your checkout. To build the replica, run devstack workspace up", ws.Name))
-			} else {
-				warnings = append(warnings, fmt.Sprintf("workspace %q has a replica that devstack can not read, so it runs from your checkout. To rebuild the replica, run devstack workspace up. The error was: %v", ws.Name, err))
-			}
-			rw, err = config.ResolveWorkspace(ws.Path)
-		}
+		rw, rwWarnings, err := sharedWorkspace(&ws)
+		warnings = append(warnings, rwWarnings...)
 		if err != nil {
 			return "", warnings, fmt.Errorf("workspace %q: can not resolve the manifests: %w", ws.Name, err)
-		}
-		names := make([]string, 0, len(rw.Services))
-		for name := range rw.Services {
-			names = append(names, name)
 		}
 		stackGens, err := ActiveStackGens(&ws)
 		if err != nil {
@@ -234,16 +235,38 @@ func render() (string, []string, error) {
 		for i := range stackGens {
 			stackGens[i].Options.SystemdScopes = scopes
 		}
-		gens = append(gens, tiltgen.WorkspaceGen{
-			Name:     ws.Name,
-			Base:     rw,
-			BaseOpts: tiltgen.Options{ManagedEnv: workspace.ManagedEnv(&ws, names, workspace.ActiveEnvNames(rw, "")), SystemdScopes: scopes},
-			Stacks:   stackGens,
-		})
+		gens = append(gens, hostWorkspaceGen(ws.Name, rw, workspace.ManagedEnv(&ws, rw.SharedNames(), workspace.ActiveEnvNames(rw, "")), stackGens, scopes))
 	}
 
 	out, genWarnings, err := tiltgen.GenerateHost(gens)
 	return out, append(warnings, genWarnings...), err
+}
+
+func hostWorkspaceGen(name string, rw *config.ResolvedWorkspace, managed map[string]map[string]string, stacks []tiltgen.StackGen, scopes bool) tiltgen.WorkspaceGen {
+	return tiltgen.WorkspaceGen{
+		Name:     name,
+		Base:     rw.SharedOnly(),
+		BaseOpts: tiltgen.Options{ManagedEnv: managed, SystemdScopes: scopes},
+		Stacks:   stacks,
+	}
+}
+
+func sharedWorkspace(ws *workspace.Workspace) (*config.ResolvedWorkspace, []string, error) {
+	template, err := config.ResolveWorkspace(ws.Path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(template.SharedNames()) == 0 {
+		return template, nil, nil
+	}
+	rw, err := replica.Resolve(ws)
+	if err == nil {
+		return rw, nil, nil
+	}
+	if errors.Is(err, replica.ErrNotBuilt) {
+		return template, []string{fmt.Sprintf("workspace %q has no replica, so its shared services run from your checkout. To build the replica, run devstack workspace up", ws.Name)}, nil
+	}
+	return template, []string{fmt.Sprintf("workspace %q has a replica that devstack can not read, so its shared services run from your checkout. To rebuild the replica, run devstack workspace up. The error was: %v", ws.Name, err)}, nil
 }
 
 // TiltfileReloadTimeout bounds how long SyncAndReload waits for the running

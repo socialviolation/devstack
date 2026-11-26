@@ -12,8 +12,8 @@ import (
 // printed beside it, which made the wrong claim look verified. An agent acting
 // on it edits a worktree nobody asked about.
 func TestMarkersSeparateWhereYouAreFromWhatIsInferred(t *testing.T) {
-	rows := []string{"base", "nvxa-1422"}
-	here := "base"
+	rows := []string{"shared", "nvxa-1422"}
+	here := "shared"
 	suggested := "nvxa-1422"
 
 	var marks []string
@@ -29,7 +29,7 @@ func TestMarkersSeparateWhereYouAreFromWhatIsInferred(t *testing.T) {
 	}
 
 	got := strings.Join(marks, ",")
-	if got != "▸base,?nvxa-1422" {
+	if got != "▸shared,?nvxa-1422" {
 		t.Fatalf("markers = %q, want the checkout marked ▸ and the guess marked ?", got)
 	}
 }

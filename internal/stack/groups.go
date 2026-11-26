@@ -6,10 +6,6 @@ import (
 	"strings"
 )
 
-// Coverage is how much of a group a stack actually runs. A stack overlays the
-// services it changes plus their callers, so naming a group at create time does
-// not guarantee the whole group came with it, and the rest keep serving from
-// base.
 type Coverage struct {
 	Group   string
 	In      []string
@@ -23,22 +19,17 @@ func (c Coverage) Label() string {
 	return fmt.Sprintf("%s %d/%d", c.Group, len(c.In), len(c.In)+len(c.Missing))
 }
 
-// Sentence names what is missing and where it runs instead, because "1/3" tells
-// a reader the count and not the consequence.
 func (c Coverage) Sentence() string {
 	if c.Complete() {
 		return fmt.Sprintf("covers group %s (%d/%d)", c.Group, len(c.In), len(c.In))
 	}
-	return fmt.Sprintf("covers group %s (%d/%d). %s serve%s from base",
-		c.Group, len(c.In), len(c.In)+len(c.Missing),
-		strings.Join(c.Missing, ", "), plural(len(c.Missing)))
-}
-
-func plural(n int) string {
-	if n == 1 {
-		return "s"
+	verb := "are"
+	if len(c.Missing) == 1 {
+		verb = "is"
 	}
-	return ""
+	return fmt.Sprintf("covers group %s (%d/%d). %s %s not in this stack",
+		c.Group, len(c.In), len(c.In)+len(c.Missing),
+		strings.Join(c.Missing, ", "), verb)
 }
 
 // CoverageOf reports, for each group in groups, which of its members this

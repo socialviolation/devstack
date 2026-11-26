@@ -28,17 +28,56 @@ type Record struct {
 	Note       string            `json:"note,omitempty"`        // what this stack is for, in the author's words
 	Log        []NoteEntry       `json:"log,omitempty"`         // dated entries: where the work got to
 	Groups     []string          `json:"groups,omitempty"`      // groups this stack was created to cover
-	Overlay    []string          `json:"overlay"`               // overlay service names, sorted
+	Members    []string          `json:"members"`               // service names the stack runs, sorted
 	Worktrees  map[string]string `json:"worktrees"`             // service -> worktree path
 	Ports      map[string]int    `json:"ports"`                 // service/portKey -> allocated port
 	Active     bool              `json:"active,omitempty"`      // folded into the base Tiltfile as namespaced resources
 	DaemonPort int               `json:"daemon_port,omitempty"` // legacy per-stack daemon port; unused, kept so old records still parse
 	CreatedAt  time.Time         `json:"created_at"`
 	Owner      string            `json:"owner,omitempty"`
-	ExpiresAt  time.Time         `json:"expires_at,omitzero"`
+	StopAt     time.Time         `json:"stop_at,omitzero"`
+	StoppedBy  string            `json:"stopped_by,omitempty"`
+	StoppedAt  time.Time         `json:"stopped_at,omitzero"`
 
 	AdoptedFrom string    `json:"adopted_from,omitempty"`
 	AdoptedAt   time.Time `json:"adopted_at,omitzero"`
+
+	Pane string `json:"pane,omitempty"`
+}
+
+const (
+	StoppedBySweep = "sweep"
+	StoppedByUser  = "user"
+)
+
+var (
+	Now       = time.Now
+	StopAfter = 24 * time.Hour
+)
+
+const MaxExtend = 24 * time.Hour
+
+func (r *Record) UnmarshalJSON(data []byte) error {
+	type plain Record
+	var v struct {
+		plain
+		ExpiresAt time.Time `json:"expires_at"`
+		Overlay   []string  `json:"overlay"`
+	}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	*r = Record(v.plain)
+	if r.Members == nil {
+		r.Members = v.Overlay
+	}
+	if r.StopAt.IsZero() {
+		r.StopAt = v.ExpiresAt
+	}
+	if r.StopAt.IsZero() && !r.CreatedAt.IsZero() {
+		r.StopAt = r.CreatedAt.Add(StopAfter)
+	}
+	return nil
 }
 
 type NoteEntry struct {
@@ -266,6 +305,69 @@ func SetActive(base, name string, active bool) error {
 	})
 }
 
+func MarkUp(base, name string) error {
+	return updateStack(base, name, func(r *Record) {
+		r.Active = true
+		r.StopAt = Now().Add(StopAfter)
+		r.StoppedBy = ""
+		r.StoppedAt = time.Time{}
+	})
+}
+
+func MarkDown(base, name, by string) error {
+	return updateStack(base, name, func(r *Record) {
+		r.Active = false
+		r.StoppedBy = by
+		r.StoppedAt = Now()
+	})
+}
+
+func MarkDownIfDue(base, name, by string, now time.Time) (bool, error) {
+	due := false
+	err := updateStack(base, name, func(r *Record) {
+		if !r.DueAt(now) {
+			return
+		}
+		due = true
+		r.Active = false
+		r.StoppedBy = by
+		r.StoppedAt = Now()
+	})
+	return due, err
+}
+
+func (r Record) DueAt(now time.Time) bool {
+	return r.Active && !r.StopAt.IsZero() && !now.Before(r.StopAt)
+}
+
+func SetPane(base, name, pane string) error {
+	return updateStack(base, name, func(r *Record) { r.Pane = pane })
+}
+
+func ClearPane(base, name, pane string) error {
+	return updateStack(base, name, func(r *Record) {
+		if r.Pane == pane {
+			r.Pane = ""
+		}
+	})
+}
+
+func updateStack(base, name string, fn func(*Record)) error {
+	return withStoreLock(base, func() error {
+		recs, err := LoadStore(base)
+		if err != nil {
+			return err
+		}
+		for i := range recs {
+			if strings.EqualFold(recs[i].Name, name) {
+				fn(&recs[i])
+				return saveStore(base, recs)
+			}
+		}
+		return fmt.Errorf("stack %q not found in workspace %q", name, base)
+	})
+}
+
 // AnyActive reports whether a base workspace has any stack marked active.
 func AnyActive(base string) (bool, error) {
 	recs, err := LoadStore(base)
@@ -327,16 +429,14 @@ func SetEnv(base, name, envName string) error {
 	})
 }
 
-const MaxLifetime = 72 * time.Hour
-
-func Expired(workspaceName string, now time.Time) ([]Record, error) {
+func Due(workspaceName string, now time.Time) ([]Record, error) {
 	recs, err := LoadStore(workspaceName)
 	if err != nil {
 		return nil, err
 	}
 	var out []Record
 	for _, r := range recs {
-		if !r.ExpiresAt.IsZero() && !now.Before(r.ExpiresAt) {
+		if r.DueAt(now) {
 			out = append(out, r)
 		}
 	}
@@ -347,36 +447,22 @@ func Extend(base, name string, by time.Duration, now time.Time) (time.Time, erro
 	if by <= 0 {
 		return time.Time{}, fmt.Errorf("extend by a positive duration")
 	}
-	var expires time.Time
-	err := withStoreLock(base, func() error {
-		recs, err := LoadStore(base)
-		if err != nil {
-			return err
+	if by > MaxExtend {
+		return time.Time{}, fmt.Errorf("extend by %d hours or less in one call", int(MaxExtend.Hours()))
+	}
+	var stopAt time.Time
+	err := updateStack(base, name, func(r *Record) {
+		from := r.StopAt
+		if now.After(from) {
+			from = now
 		}
-		for i := range recs {
-			if !strings.EqualFold(recs[i].Name, name) {
-				continue
-			}
-			if recs[i].ExpiresAt.IsZero() {
-				return fmt.Errorf("stack %q has no expiry. It lives until somebody removes it", recs[i].Name)
-			}
-			from := recs[i].ExpiresAt
-			if now.After(from) {
-				from = now
-			}
-			expires = from.Add(by)
-			if limit := recs[i].CreatedAt.Add(MaxLifetime); expires.After(limit) {
-				expires = limit
-			}
-			recs[i].ExpiresAt = expires
-			return saveStore(base, recs)
-		}
-		return fmt.Errorf("stack %q not found in workspace %q", name, base)
+		stopAt = from.Add(by)
+		r.StopAt = stopAt
 	})
 	if err != nil {
 		return time.Time{}, err
 	}
-	return expires, nil
+	return stopAt, nil
 }
 
 func Adopt(base, name string, now time.Time) (rec Record, adopted bool, err error) {
@@ -400,7 +486,6 @@ func Adopt(base, name string, now time.Time) (rec Record, adopted bool, err erro
 			recs[i].AdoptedFrom = recs[i].Owner
 			recs[i].AdoptedAt = now
 			recs[i].Owner = ""
-			recs[i].ExpiresAt = time.Time{}
 			rec = recs[i]
 			adopted = true
 			return saveStore(base, recs)

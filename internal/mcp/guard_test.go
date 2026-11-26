@@ -40,7 +40,7 @@ func guardStore(t *testing.T, recs ...stack.Record) *workspace.Workspace {
 
 func allToolsServer(t *testing.T, ws *workspace.Workspace) *server.MCPServer {
 	t.Helper()
-	s := server.NewMCPServer("test", "0.0.0", append([]server.ServerOption{server.WithToolCapabilities(true)}, GuardOptions(ws, DefaultAgentLimits)...)...)
+	s := server.NewMCPServer("test", "0.0.0", append([]server.ServerOption{server.WithToolCapabilities(true)}, GuardOptions(ws)...)...)
 	RegisterTools(s, nil, "", nil, ws.Name, ws.Path, ws, nil)
 	registerInvestigateTool(s, nil, "", nil, "", ws.Path, ws)
 	registerTunnelTool(s, nil, ws)
@@ -81,7 +81,7 @@ func TestAgentCalls(t *testing.T) {
 		{"process_logs", map[string]any{"stack": "base"}, "pass stack=agent-<name>"},
 		{"process_logs", nil, "pass stack=agent-<name>"},
 		{"process_logs", map[string]any{"stack": "agent-mine"}, ""},
-		{"investigate", map[string]any{"stack": "agent-mine"}, "may not call investigate"},
+		{"investigate", map[string]any{"stack": "agent-mine"}, "can not call investigate"},
 		{"start", map[string]any{"stack": "agent-mine"}, ""},
 		{"start", map[string]any{"stack": "AGENT-MINE"}, ""},
 		{"start", nil, "pass stack=agent-<name>"},
@@ -102,8 +102,8 @@ func TestAgentCalls(t *testing.T) {
 		{"env_which", nil, "pass stack=agent-<name>"},
 		{"service_env", map[string]any{"action": "get"}, "pass stack=agent-<name>"},
 		{"service_env", map[string]any{"action": "get", "stack": "agent-mine"}, ""},
-		{"service_env", map[string]any{"action": "set", "stack": "agent-mine"}, `may not call service_env with action="set"`},
-		{"service_env", map[string]any{"action": "bogus", "stack": "agent-mine"}, "may not call service_env"},
+		{"service_env", map[string]any{"action": "set", "stack": "agent-mine"}, `can not call service_env with action="set"`},
+		{"service_env", map[string]any{"action": "bogus", "stack": "agent-mine"}, "can not call service_env"},
 		{"hooks", nil, ""},
 		{"hooks", map[string]any{"action": "list"}, ""},
 		{"hooks", map[string]any{"action": "run", "event": "stack.up"}, "pass stack=agent-<name>"},
@@ -115,22 +115,66 @@ func TestAgentCalls(t *testing.T) {
 		{"wiring", map[string]any{"stack": "agent-mine"}, ""},
 		{"wiring", map[string]any{"stack": "perf"}, `"perf" is not an agent-* stack`},
 		{"observability", map[string]any{"action": "status"}, ""},
-		{"observability", map[string]any{"action": "config_on"}, "may not call observability"},
-		{"base", map[string]any{"action": "path"}, ""},
-		{"base", map[string]any{"action": "sync"}, "may not call base"},
-		{"migrate", map[string]any{"action": "list"}, "may not call migrate"},
-		{"configure", map[string]any{"stack": "agent-mine"}, "may not call configure"},
-		{"tunnel", nil, "may not call tunnel"},
-		{"env_set", nil, "may not call env_set"},
-		{"env_use", map[string]any{"stack": "agent-mine"}, "may not call env_use"},
+		{"observability", map[string]any{"action": "config_on"}, "can not call observability"},
+		{"shared", map[string]any{"action": "path"}, ""},
+		{"shared", map[string]any{"action": "sync"}, "can not call shared"},
+		{"migrate", map[string]any{"action": "list"}, "can not call migrate"},
+		{"configure", map[string]any{"stack": "agent-mine"}, "can not call configure"},
+		{"tunnel", nil, "can not call tunnel"},
+		{"env_set", nil, "can not call env_set"},
+		{"env_use", map[string]any{"stack": "agent-mine"}, "can not call env_use"},
 		{"doctor", nil, ""},
 		{"doctor", map[string]any{"stack": "  "}, ""},
 		{"doctor", map[string]any{"stack": "agent-mine"}, ""},
 		{"doctor", map[string]any{"stack": "agent-theirs"}, "belongs to bob"},
 		{"doctor", map[string]any{"stack": "base"}, "pass stack=agent-<name>"},
 		{"doctor", map[string]any{"stack": "perf"}, `"perf" is not an agent-* stack`},
-		{"cleanup", map[string]any{"dry_run": true}, "may not call cleanup"},
-		{"no_such_tool", nil, "may not call no_such_tool"},
+		{"cleanup", map[string]any{"dry_run": true}, "can not call cleanup"},
+		{"no_such_tool", nil, "can not call no_such_tool"},
+	}
+	for _, c := range cases {
+		req := mcp.CallToolRequest{}
+		req.Params.Name = c.tool
+		req.Params.Arguments = c.args
+		got := g.check(alice, req)
+		if c.want == "" && got != "" {
+			t.Errorf("%s %v: denied (%s), want allowed", c.tool, c.args, got)
+		}
+		if c.want != "" && !strings.Contains(got, c.want) {
+			t.Errorf("%s %v: got %q, want a denial containing %q", c.tool, c.args, got, c.want)
+		}
+	}
+}
+
+func TestAgentSharedServiceCalls(t *testing.T) {
+	ws := guardStore(t, stack.Record{Name: "agent-mine", Base: "navexa", Owner: "alice"})
+	writeFile(t, ws.Path+"/devstack.workspace.yaml", `version: 1
+workspace:
+  name: navexa
+  repoDiscovery:
+    mode: explicit
+    repos:
+      - ./db
+shared: [db]
+`)
+	g := &guard{ws: ws}
+
+	cases := []struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		{"status", map[string]any{"service": "db"}, ""},
+		{"process_logs", map[string]any{"service": "db"}, ""},
+		{"process_logs", map[string]any{"service": "api"}, "pass stack=agent-<name>"},
+		{"process_logs", map[string]any{"group": "data"}, "pass stack=agent-<name>"},
+		{"process_logs", map[string]any{"service": "db", "stack": "perf"}, `"perf" is not an agent-* stack`},
+		{"start", map[string]any{"service": "db"}, `can not call start on shared service "db"`},
+		{"stop", map[string]any{"service": "db"}, `can not call stop on shared service "db"`},
+		{"restart", map[string]any{"service": "db"}, `can not call restart on shared service "db"`},
+		{"restart", map[string]any{"service": "api"}, "pass stack=agent-<name>"},
+		{"restart", map[string]any{"service": "api", "stack": "agent-mine"}, ""},
+		{"stack_config", map[string]any{"service": "db"}, "pass stack=agent-<name>"},
 	}
 	for _, c := range cases {
 		req := mcp.CallToolRequest{}
@@ -159,7 +203,7 @@ func callAs(t *testing.T, s *server.MCPServer, c auth.Caller, tool, args string)
 
 func TestGuardDeniesAgentAndPassesOwner(t *testing.T) {
 	ws := guardStore(t)
-	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws, DefaultAgentLimits)...)
+	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws)...)
 	ran := 0
 	s.AddTool(mcp.NewTool("restart", mcp.WithString("stack")), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		ran++
@@ -221,7 +265,7 @@ func TestAgentToolsListHidesDeniedTools(t *testing.T) {
 			t.Errorf("agent tools/list shows %q: %s", hidden, agentSees)
 		}
 	}
-	for _, shown := range []string{"status", "start", "stack_create", "service_env", "base", "observability", "hooks", "doctor"} {
+	for _, shown := range []string{"status", "start", "stack_create", "service_env", "shared", "observability", "hooks", "doctor"} {
 		if !strings.Contains(","+agentSees+",", ","+shown+",") {
 			t.Errorf("agent tools/list hides %q: %s", shown, agentSees)
 		}
@@ -234,7 +278,7 @@ func TestAgentToolsListHidesDeniedTools(t *testing.T) {
 
 func TestEnvironmentListsOnlyToolsTheAgentMaySee(t *testing.T) {
 	ws := guardStore(t)
-	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws, DefaultAgentLimits)...)
+	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws)...)
 	registerEnvironmentTool(s, "http://localhost:5080", ws.Name, ws.Path, "", ws)
 
 	toolsLine := func(c auth.Caller) string {

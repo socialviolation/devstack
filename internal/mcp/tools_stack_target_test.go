@@ -387,7 +387,15 @@ func TestMutatingToolsDocumentThatAbsentIsNotBase(t *testing.T) {
 	registerEnvTools(s, ws, ws.Path)
 
 	tools := listTools(t, s)
-	for _, name := range []string{"start", "stop", "restart", "env_use"} {
+	for _, name := range []string{"start", "stop", "restart"} {
+		desc := tools[name].InputSchema.Properties["stack"].Description
+		for _, want := range []string{"working directory decides", "shared", "the call fails"} {
+			if !strings.Contains(desc, want) {
+				t.Errorf("%s's stack parameter must state %q: %s", name, want, desc)
+			}
+		}
+	}
+	for _, name := range []string{"env_use"} {
 		desc := tools[name].InputSchema.Properties["stack"].Description
 		if !strings.Contains(desc, "working directory decides") {
 			t.Errorf("%s's stack parameter must say the directory decides: %s", name, desc)
@@ -398,12 +406,9 @@ func TestMutatingToolsDocumentThatAbsentIsNotBase(t *testing.T) {
 		if strings.Contains(desc, "the call fails") || strings.Contains(desc, "NO implicit default") {
 			t.Errorf("%s's stack parameter promises a refusal that ResolveTarget no longer gives: %s", name, desc)
 		}
-		if !strings.Contains(desc, "replica") {
-			t.Errorf("%s's stack parameter must say what base runs from: %s", name, desc)
-		}
 	}
-	if desc := tools["status"].InputSchema.Properties["stack"].Description; !strings.Contains(desc, "Absent (or the literal \"base\")") {
-		t.Errorf("a read-only tool must keep its base default: %s", desc)
+	if desc := tools["status"].InputSchema.Properties["stack"].Description; !strings.Contains(desc, "the shared set, then each stack") {
+		t.Errorf("status must say what it shows with no stack: %s", desc)
 	}
 }
 
@@ -531,7 +536,7 @@ groups:
 		// The CLI prints Coverage.Sentence() for the same fact, so the tool has
 		// to quote it rather than word the shortfall its own way.
 		shared := stack.Coverage{Group: "core", In: []string{"api"}, Missing: []string{"frontend", "orbit"}}.Sentence()
-		for _, want := range []string{shared, `stack="base"`, "does not touch them"} {
+		for _, want := range []string{shared, "stack_add", "does not touch them"} {
 			if !strings.Contains(note, want) {
 				t.Errorf("the shortfall note must state %q; got %q", want, note)
 			}
@@ -550,7 +555,7 @@ groups:
 		if strings.Contains(err.Error(), "not found") {
 			t.Errorf("a group that exists on base must not read as a typo: %v", err)
 		}
-		for _, want := range []string{"runs entirely on base", "api, frontend, orbit", `stack="base"`} {
+		for _, want := range []string{"has no services in stack", "api, frontend, orbit", "stack_add"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("the refusal must state %q; got %v", want, err)
 			}

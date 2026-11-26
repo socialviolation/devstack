@@ -124,7 +124,7 @@ func TestServiceEnvDefinesItsTerms(t *testing.T) {
 func TestStackToolsStateShortNameRuleAndServiceLinks(t *testing.T) {
 	tools := listEnvStackTools(t)
 
-	if !strings.Contains(tools["stack_list"].Description, "<base>--<name>") {
+	if !strings.Contains(tools["stack_list"].Description, "<workspace>--<name>") {
 		t.Errorf("stack_list does not state the short-name vs identity rule: %s", tools["stack_list"].Description)
 	}
 	for _, name := range []string{"stack_up", "stack_down", "stack_rm"} {

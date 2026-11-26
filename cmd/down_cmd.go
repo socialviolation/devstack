@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/herdr"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/infra"
 	"github.com/socialviolation/devstack/internal/stack"
@@ -41,6 +42,7 @@ func init() {
 }
 
 func runDown(cmd *cobra.Command, args []string) error {
+	defer herdr.Notify()
 	all, _ := cmd.Flags().GetBool("all")
 	if all {
 		return runDownAll()
@@ -53,6 +55,7 @@ func runDown(cmd *cobra.Command, args []string) error {
 
 	fireTeardownHooks(ws, "", config.EventWorkspaceDown, nil)
 
+	fireStackDownHooks(ws)
 	deactivated, err := stack.DeactivateAll(ws.Name)
 	if err != nil {
 		return fmt.Errorf("can not deactivate the stacks of %s: %w", ws.Name, err)
@@ -188,6 +191,18 @@ func stopHostDaemon() error {
 	return nil
 }
 
+func fireStackDownHooks(ws *workspace.Workspace) {
+	recs, err := stack.LoadStore(ws.Name)
+	if err != nil {
+		return
+	}
+	for _, r := range recs {
+		if r.Active {
+			fireTeardownHooks(ws, r.Name, config.EventStackDown, nil)
+		}
+	}
+}
+
 func runDownAll() error {
 	workspaces, err := workspace.All()
 	if err != nil {
@@ -197,6 +212,7 @@ func runDownAll() error {
 	downed := make([]string, 0, len(workspaces))
 	for i := range workspaces {
 		downed = append(downed, workspaces[i].Name)
+		fireStackDownHooks(&workspaces[i])
 		if deactivated, err := stack.DeactivateAll(workspaces[i].Name); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to deactivate stacks for %s: %v\n", workspaces[i].Name, err)
 		} else if len(deactivated) > 0 {

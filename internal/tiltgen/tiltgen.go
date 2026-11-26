@@ -35,6 +35,8 @@ type Options struct {
 	// ${stack.suffix:...}. Base generation leaves it empty.
 	Stack config.StackScope
 
+	Shared map[string]bool
+
 	// SkipFreePorts names ports a service must not reclaim, keyed by service name.
 	// GenerateHost fills it for a reclaim that would kill another supervised
 	// resource, so the collision costs one service its reclaim instead of costing
@@ -196,13 +198,29 @@ func renderWorkspace(b *strings.Builder, rw *config.ResolvedWorkspace, opts Opti
 		if svc.Manifest == nil {
 			return fmt.Errorf("service %q has no manifest. devstack can not generate from a legacy .devstack.json", name)
 		}
-		block, err := renderService(svc, rw.Manifest, groupsOf[name], opts, book, prefix, namespace)
+		block, err := renderService(svc, rw, groupsOf[name], opts, book, prefix, namespace)
 		if err != nil {
 			return fmt.Errorf("service %q: %w", name, err)
 		}
 		b.WriteString(block)
 	}
 	return nil
+}
+
+func resourceDeps(rw *config.ResolvedWorkspace, svc string, shared map[string]bool, prefix, namespace string) []string {
+	var out []string
+	for _, d := range rw.ResourceDeps(svc) {
+		out = append(out, hostName(prefix, d, namespace))
+	}
+	seen := map[string]bool{}
+	for _, e := range rw.Needs(svc) {
+		if _, inRW := rw.Services[e.Service]; !inRW && shared[e.Service] && !seen[e.Service] {
+			seen[e.Service] = true
+			out = append(out, hostName(prefix, e.Service, ""))
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // hostName joins the non-empty of [prefix, name, suffix] with namespaceDelim.
@@ -221,7 +239,7 @@ func hostName(prefix, name, suffix string) string {
 	return strings.Join(parts, namespaceDelim)
 }
 
-func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, groups []string, opts Options, book config.PortBook, prefix, namespace string) (string, error) {
+func renderService(svc config.ResolvedService, rw *config.ResolvedWorkspace, groups []string, opts Options, book config.PortBook, prefix, namespace string) (string, error) {
 	m := svc.Manifest
 	if m.Runtime.Run.Command == "" {
 		return "", fmt.Errorf("runtime.run.command is required")
@@ -245,6 +263,7 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	}
 	if prep != "" {
 		fmt.Fprintf(&b, "    cmd=%s,\n", starStr(prep))
+		fmt.Fprintf(&b, "    dir=%s,\n", starStr(serveDir))
 	}
 
 	if opts.SystemdScopes {
@@ -253,7 +272,7 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	fmt.Fprintf(&b, "    serve_cmd=%s,\n", starStr(runCmd))
 	fmt.Fprintf(&b, "    serve_dir=%s,\n", starStr(serveDir))
 
-	layers, err := config.EnvLadder(serveDir, ws, m, opts.StackEnv, opts.ManagedEnv[svc.Name], svc.ManifestPath)
+	layers, err := config.EnvLadder(serveDir, rw.Manifest, m, opts.StackEnv, opts.ManagedEnv[svc.Name], svc.ManifestPath)
 	if err != nil {
 		return "", err
 	}
@@ -284,12 +303,8 @@ func renderService(svc config.ResolvedService, ws *config.WorkspaceManifest, gro
 	if len(labels) > 0 {
 		fmt.Fprintf(&b, "    labels=[%s],\n", starList(labels))
 	}
-	if deps := ws.ResourceDeps(svc.Name); len(deps) > 0 {
-		nsDeps := make([]string, len(deps))
-		for i, d := range deps {
-			nsDeps[i] = hostName(prefix, d, namespace)
-		}
-		fmt.Fprintf(&b, "    resource_deps=[%s],\n", starList(nsDeps))
+	if deps := resourceDeps(rw, svc.Name, opts.Shared, prefix, namespace); len(deps) > 0 {
+		fmt.Fprintf(&b, "    resource_deps=[%s],\n", starList(deps))
 	}
 	if len(m.Runtime.Watch) > 0 {
 		fmt.Fprintf(&b, "    deps=[%s],\n", starList(m.Runtime.Watch))

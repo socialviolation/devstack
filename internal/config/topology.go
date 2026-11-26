@@ -28,7 +28,19 @@ type ServiceTopology struct {
 	Dependents   []string
 	Calls        []string
 	CalledBy     []string
+	Via          map[string]string
 	Source       string
+}
+
+func (s *ServiceTopology) WithVia(names []string) []string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = n
+		if v := s.Via[n]; v != "" {
+			out[i] = n + " (" + v + ")"
+		}
+	}
+	return out
 }
 
 type TopologyGraph struct {
@@ -53,13 +65,26 @@ func BuildTopology(workspacePath string) (*TopologyGraph, error) {
 	}
 
 	for name, service := range resolved.Services {
-		graph.Services[name] = &ServiceTopology{
-			Name:         name,
-			Path:         service.RepoPath,
-			Dependencies: resolved.Manifest.ResourceDeps(name),
-			Calls:        unionSorted(resolved.Manifest.Calls[name]),
-			Source:       service.Source,
+		node := &ServiceTopology{
+			Name:   name,
+			Path:   service.RepoPath,
+			Via:    map[string]string{},
+			Source: service.Source,
 		}
+		for _, e := range resolved.Needs(name) {
+			node.Dependencies = append(node.Dependencies, e.Service)
+			if e.Via != "" {
+				node.Via[e.Service] = e.Via
+			}
+		}
+		for _, e := range resolved.CallEdges(name) {
+			node.Calls = append(node.Calls, e.Service)
+			if e.Via != "" {
+				node.Via[e.Service] = e.Via
+			}
+		}
+		node.Dependencies = unionSorted(node.Dependencies)
+		graph.Services[name] = node
 	}
 
 	for group, members := range graph.Groups {
@@ -88,7 +113,7 @@ func BuildTopology(workspacePath string) (*TopologyGraph, error) {
 				graph.Issues = append(graph.Issues, TopologyIssue{
 					Severity: TopologyIssueError,
 					Code:     "missing-dependency",
-					Message:  fmt.Sprintf("service %q depends on the unknown service %q", name, dep),
+					Message:  fmt.Sprintf("service %q needs the unknown service %q", name, dep),
 				})
 				continue
 			}
@@ -97,6 +122,11 @@ func BuildTopology(workspacePath string) (*TopologyGraph, error) {
 		for _, callee := range service.Calls {
 			calleeService, ok := graph.Services[callee]
 			if !ok {
+				graph.Issues = append(graph.Issues, TopologyIssue{
+					Severity: TopologyIssueError,
+					Code:     "missing-call",
+					Message:  fmt.Sprintf("service %q calls the unknown service %q", name, callee),
+				})
 				continue
 			}
 			calleeService.CalledBy = append(calleeService.CalledBy, name)
@@ -147,40 +177,6 @@ func (g *TopologyGraph) HasErrors() bool {
 		}
 	}
 	return false
-}
-
-// TransitiveCallers returns the set of services that directly or transitively
-// call name, walking CalledBy edges only (start-order edges are excluded, so a
-// shared start-order dependency does not inflate the closure). The result is
-// sorted and normally excludes name itself; a cyclic call graph can include it
-// because it genuinely calls itself transitively. Visited-set guarded, so it
-// terminates on call cycles even though tiltgen never validates them.
-func (g *TopologyGraph) TransitiveCallers(name string) []string {
-	result := map[string]bool{}
-	visited := map[string]bool{}
-
-	var visit func(string)
-	visit = func(n string) {
-		service, ok := g.Services[n]
-		if !ok {
-			return
-		}
-		for _, caller := range service.CalledBy {
-			result[caller] = true
-			if !visited[caller] {
-				visited[caller] = true
-				visit(caller)
-			}
-		}
-	}
-	visit(name)
-
-	callers := make([]string, 0, len(result))
-	for caller := range result {
-		callers = append(callers, caller)
-	}
-	sort.Strings(callers)
-	return callers
 }
 
 func detectTopologyCycles(services map[string]*ServiceTopology) []TopologyIssue {

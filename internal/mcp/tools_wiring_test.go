@@ -74,7 +74,7 @@ workspace:
 		Base:      "navexa",
 		Root:      stackRoot,
 		Owner:     "alice",
-		Overlay:   []string{"web"},
+		Members:   []string{"web"},
 		Worktrees: map[string]string{"web": worktree},
 	}})
 	if err != nil {
@@ -96,7 +96,7 @@ workspace:
 
 func wiringServer(t *testing.T, ws *workspace.Workspace) *server.MCPServer {
 	t.Helper()
-	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws, DefaultAgentLimits)...)
+	s := server.NewMCPServer("test", "0.0.0", GuardOptions(ws)...)
 	registerWiringTool(s, ws, ws.Path)
 	return s
 }
@@ -107,9 +107,9 @@ func TestWiringShowsBaseAndStackCopies(t *testing.T) {
 	for _, want := range []string{
 		"web → api",
 		"API_URL  via ${api.url}",
-		"base: http://localhost:5001/v1-base → base api",
-		"agent-mine: http://localhost:5001/v1-stack → base api",
-		"! stack agent-mine web → base api",
+		"no stack: http://localhost:5001/v1-base → api at its declared port",
+		"agent-mine: http://localhost:5001/v1-stack → api at its declared port",
+		"! stack agent-mine web → api at its declared port",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("owner output omits %q:\n%s", want, out)
@@ -125,7 +125,7 @@ func TestWiringHidesBaseValuesFromAgents(t *testing.T) {
 	if strings.Contains(out, "v1-base") {
 		t.Errorf("agent output shows a base value:\n%s", out)
 	}
-	if !strings.Contains(out, "base: → base api") || !strings.Contains(out, "v1-stack") {
+	if !strings.Contains(out, "no stack: → api at its declared port") || !strings.Contains(out, "v1-stack") {
 		t.Errorf("agent output must show the edge and its own stack's value:\n%s", out)
 	}
 
@@ -134,5 +134,35 @@ func TestWiringHidesBaseValuesFromAgents(t *testing.T) {
 		if !strings.Contains(out, "agents may only act on their own agent-* stacks") || strings.Contains(out, "v1-base") {
 			t.Errorf("agent wiring %s: want a refusal:\n%s", args, out)
 		}
+	}
+}
+
+func TestWiringRefusesStackBase(t *testing.T) {
+	ws := seedWiringWorkspace(t)
+	out := callAs(t, wiringServer(t, ws), owner, "wiring", `{"stack":"base"}`)
+	if !strings.Contains(out, `"isError":true`) || !strings.Contains(out, "is not in workspace") {
+		t.Errorf("stack base names no stack, and wiring must refuse it:\n%s", out)
+	}
+}
+
+func TestWiringNamesTheEdgeKindAndVia(t *testing.T) {
+	ws := seedWiringWorkspace(t)
+	if out := callAs(t, wiringServer(t, ws), owner, "wiring", `{}`); !strings.Contains(out, "web → api  (calls)") {
+		t.Errorf("a legacy dependency must show as calls:\n%s", out)
+	}
+
+	writeFile(t, filepath.Join(ws.Path, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: navexa
+  repoDiscovery:
+    mode: explicit
+    repos: [./api, ./web]
+`)
+	writeFile(t, filepath.Join(ws.Path, "web", config.ServiceManifestFileName), wiringWeb("v1-base")+`needs:
+  - service: api
+    via: http
+`)
+	if out := callAs(t, wiringServer(t, ws), owner, "wiring", `{}`); !strings.Contains(out, "web → api  (needs, via http)") {
+		t.Errorf("a needs edge must show its kind and via:\n%s", out)
 	}
 }

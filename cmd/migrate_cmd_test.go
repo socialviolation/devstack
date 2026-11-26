@@ -44,7 +44,7 @@ func setupWorkspaceWithStack(t *testing.T) (ws *workspace.Workspace, svcDir, sta
 	}
 	recs := []stack.Record{{
 		Name: "feat", Base: "navexa", Root: stackRoot, Branch: "nick/feat",
-		Overlay: []string{"api"}, Worktrees: map[string]string{"api": stackSvcDir},
+		Members: []string{"api"}, Worktrees: map[string]string{"api": stackSvcDir},
 	}}
 	data, err := json.MarshalIndent(recs, "", "  ")
 	if err != nil {
@@ -322,7 +322,7 @@ func setupNestedServiceWorkspace(t *testing.T) (ws *workspace.Workspace, repoRoo
 	}
 	recs := []stack.Record{{
 		Name: "feat", Base: "navexa", Root: stackRoot, Branch: "nick/feat",
-		Overlay:   []string{"orbit-api"},
+		Members:   []string{"orbit-api"},
 		Worktrees: map[string]string{"orbit-api": filepath.Join(stackRepoRoot, "api")},
 	}}
 	data, err := json.MarshalIndent(recs, "", "  ")

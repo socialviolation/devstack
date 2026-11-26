@@ -10,6 +10,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/socialviolation/devstack/internal/herdr"
 	"github.com/socialviolation/devstack/internal/panel"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -18,10 +19,10 @@ import (
 
 func registerStackAdoptTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_adopt",
-		mcp.WithDescription("Hand an agent's feature stack to the owner. devstack clears the stack's owner and expiry, so gc never removes it and no agent may act on it. "+
+		mcp.WithDescription("Hand an agent's feature stack to the owner. devstack clears the stack's owner, so no agent can act on it. The stop time stays as it is. "+
 			"The record keeps the agent's name as adopted-from, and stack_list shows it. "+
 			"The result names the stack, each worktree with its branch, whether the stack is up, and its tailnet addresses. "+
-			"A stack that already belongs to the owner is left as it is. "+
+			"If the stack already belongs to the owner, devstack does not change it. "+
 			"This tool mirrors 'devstack stack adopt'."),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(requiredStackNameDesc)),
@@ -33,7 +34,7 @@ func registerStackAdoptTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if ws == nil {
-			return mcp.NewToolResultError("no workspace resolved for stacks"), nil
+			return mcp.NewToolResultError("devstack resolved no workspace, so it can not manage stacks"), nil
 		}
 		name := strings.TrimSpace(request.GetString("name", ""))
 		if name == "" {
@@ -52,12 +53,14 @@ func AdoptStack(ctx context.Context, ws *workspace.Workspace, name string) (stri
 	if err != nil {
 		return "", err
 	}
+	bindPane(ctx, ws, rec.Name)
+	defer herdr.Notify()
 	if !adopted {
 		return fmt.Sprintf("Stack %q already belongs to the owner. devstack changed nothing.\n", rec.Name), nil
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Adopted stack %q from %s. gc never removes it, and agents may not act on it.\n", rec.Name, rec.AdoptedFrom)
+	fmt.Fprintf(&sb, "Adopted stack %q from %s. Agents can not act on it.\n", rec.Name, rec.AdoptedFrom)
 	status := stack.StatusDown
 	if rec.Active {
 		status = stack.StatusUp

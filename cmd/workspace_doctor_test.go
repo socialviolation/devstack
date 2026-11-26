@@ -94,7 +94,7 @@ func TestDoctorNamesAServiceOnlyTheReplicaDeclares(t *testing.T) {
 	if !strings.Contains(got, "ghost") || !strings.Contains(got, "the replica declares this service, and the workspace does not") {
 		t.Errorf("the doctor never names the service only the replica declares:\n%s", got)
 	}
-	if !strings.Contains(got, "devstack workspace up") || !strings.Contains(got, "devstack base sync") {
+	if !strings.Contains(got, "devstack workspace up") || !strings.Contains(got, "devstack shared sync") {
 		t.Errorf("the doctor names no repair for the drift:\n%s", got)
 	}
 }
@@ -103,6 +103,7 @@ func TestDoctorNamesAServiceOnlyTheReplicaDeclares(t *testing.T) {
 // built the replica again. Base runs without it.
 func TestDoctorNamesAServiceTheReplicaDoesNotHave(t *testing.T) {
 	ws := doctorDriftWorkspace(t, []string{"api", "web"}, []string{"api"})
+	shareServices(t, ws.Path, "web")
 
 	var b strings.Builder
 	reportWorkspaceDrift(&b, ws.Path)
@@ -113,6 +114,19 @@ func TestDoctorNamesAServiceTheReplicaDoesNotHave(t *testing.T) {
 	}
 	if !strings.Contains(got, "web") || !strings.Contains(got, "the workspace declares this service, and the replica does not") {
 		t.Errorf("the doctor never names the service the replica is missing:\n%s", got)
+	}
+}
+
+func TestDoctorIgnoresAServiceThatIsNotShared(t *testing.T) {
+	ws := doctorDriftWorkspace(t, []string{"api", "web"}, []string{"api"})
+	shareServices(t, ws.Path, "api")
+
+	var b strings.Builder
+	reportWorkspaceDrift(&b, ws.Path)
+	got := b.String()
+
+	if strings.Contains(got, "the workspace declares this service, and the replica does not") {
+		t.Errorf("the doctor reports a service that only runs in stacks:\n%s", got)
 	}
 }
 

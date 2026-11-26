@@ -37,6 +37,11 @@ func CallerFrom(ctx context.Context) Caller {
 	return Caller{Name: "local", Scope: ScopeOwner}
 }
 
+func OverHTTP(ctx context.Context) bool {
+	_, ok := ctx.Value(callerKey{}).(Caller)
+	return ok
+}
+
 type Token struct {
 	Caller Caller
 	Hash   []byte

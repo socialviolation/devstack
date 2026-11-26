@@ -43,6 +43,9 @@ func runRestart(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := requireSharedWithoutStack(ws, namespace, services); err != nil {
+		return err
+	}
 	if targetName == "" {
 		fmt.Printf("Auto-detected: %s\n", strings.Join(services, ", "))
 	}

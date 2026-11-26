@@ -113,32 +113,13 @@ func remoteState(dir, branch string) (RemoteState, error) {
 	if cur, err := worktree.CurrentBranch(dir); err != nil || cur != branch {
 		return RemoteState{}, err
 	}
-	top, err := worktree.Toplevel(dir)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	st, err := worktree.BehindOrigin(ctx, dir, branch)
 	if err != nil {
 		return RemoteState{}, err
 	}
-	st := RemoteState{Repo: top}
-	out, err := git(top, "ls-remote", "--heads", "origin", "refs/heads/"+branch)
-	if err != nil {
-		return RemoteState{}, err
-	}
-	if out == "" {
-		_, tracked := git(top, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+branch)
-		st.Gone = tracked == nil
-		return st, nil
-	}
-	remote := strings.Fields(out)[0]
-	head, err := worktree.Head(top)
-	if err != nil || head == remote {
-		return st, err
-	}
-	if _, err := git(top, "cat-file", "-e", remote+"^{commit}"); err != nil {
-		st.Behind = true
-		return st, nil
-	}
-	ahead, err := worktree.IsAncestor(top, remote, head)
-	st.Behind = err == nil && !ahead
-	return st, nil
+	return RemoteState{Repo: st.Repo, Gone: st.Gone, Behind: st.Behind}, nil
 }
 
 func baseRepos(ws *workspace.Workspace) []string {

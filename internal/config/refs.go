@@ -174,3 +174,44 @@ func stackSuffix(inner, list string, stack StackScope) (string, error) {
 	}
 	return "-" + stack.Name, nil
 }
+
+func RefServices(s string) []string {
+	var out []string
+	for _, m := range refPattern.FindAllStringSubmatch(s, -1) {
+		inner := m[1]
+		if strings.HasPrefix(inner, stackSuffixPrefix) {
+			continue
+		}
+		name, _, ok := strings.Cut(inner, ".")
+		if !ok || name == "" || name == "self" {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+func (rw *ResolvedWorkspace) RefTargets(svc string) []string {
+	s, ok := rw.Services[svc]
+	if !ok || s.Manifest == nil {
+		return nil
+	}
+	m := s.Manifest
+	texts := []string{m.Runtime.Run.Command, m.Runtime.Prep.Command, m.Runtime.Healthcheck.Command, m.Runtime.Healthcheck.URL}
+	for _, v := range m.Env.Values {
+		texts = append(texts, v)
+	}
+	for _, l := range m.Links {
+		texts = append(texts, l.URL)
+	}
+	if rw.Manifest != nil {
+		for _, v := range rw.Manifest.Env.Values {
+			texts = append(texts, v)
+		}
+	}
+	var names []string
+	for _, t := range texts {
+		names = append(names, RefServices(t)...)
+	}
+	return unionSorted(names)
+}

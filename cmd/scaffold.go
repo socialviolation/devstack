@@ -20,10 +20,11 @@ const workspaceManifestTemplate = `# devstack workspace manifest. This file is t
 # write the Tiltfile again.
 #
 # This directory is the TEMPLATE. Nothing runs here. 'devstack workspace up'
-# builds a REPLICA from it: one git worktree per repository at its default branch
-# tip, in a .devstack-base directory beside this one. The base workspace runs
-# there. To see that directory, run 'devstack status --all' and read the DIR
-# column. Work that you park in a checkout does not run, and it blocks nothing.
+# builds a REPLICA from it: one git worktree for each repository that holds a
+# shared service, at its default branch tip, in a .devstack-base directory beside
+# this one. The shared set runs there. Every other service runs only in a stack.
+# To see that directory, run 'devstack status --all' and read the DIR column.
+# Work that you park in a checkout does not run, and it blocks nothing.
 #
 # version is the version of this configuration. 'devstack migrate' moves it to
 # the version that your devstack needs, and it writes the new number here.
@@ -51,28 +52,30 @@ env:
     # DATABASE_HOST: localhost
     # DATABASE_PORT: "5432"
 
+# shared names the services that run once for the whole workspace, from the
+# replica: databases and stores. 'devstack workspace up' starts them. Every stack
+# uses them. A shared service can only need shared services.
+shared: []
+  # - my-db
+
 # groups BIND services into one unit that you operate together. start and stop
-# act on one copy: --stack base, or --stack <name> for a feature stack. With no
-# flag, they act on the stack that holds the current directory. Anywhere else
-# they act on base.
-#   devstack group start <group> --stack base   devstack status
+# act on one stack: --stack <name>. With no flag, they act on the stack that
+# holds the current directory. Anywhere else they act on the shared set.
+#   devstack group start <group> --stack <name>   devstack status
 # The daemon also labels its UI from the groups. A service can belong to many
 # groups.
 groups: {}
   # backend: [my-api]
   # workers: [my-worker]
 
-# dependencies define the START ORDER, and not the grouping. "A: [B]" means that
-# B must be up before A. If you start A, devstack starts B first. devstack writes
-# these as the resource_deps of the daemon.
-dependencies: {}
-  # my-worker: [my-api]
+# Each service declares its edges in its own devstack.service.yaml, with needs
+# and calls. This file has no edge map.
 `
 
 // serviceManifestTemplate is an educational devstack.service.yaml scaffold.
 // Args in order: name, name (OTEL), name (link label).
-const serviceManifestTemplate = `# devstack service manifest. This file says how devstack runs THIS service.
-# The grouping and the start order are in the workspace manifest, not here.
+const serviceManifestTemplate = `# devstack service manifest. This file says how devstack runs THIS service,
+# and the services it needs and calls. The groups are in the workspace manifest.
 version: 1
 
 service:
@@ -108,6 +111,37 @@ env:
 links:
   - url: http://localhost:8080
     label: %s
+
+# needs: the services that this service can not work without. devstack starts
+# them first, and a stack pulls them in. An entry is a name, or a map with
+# service and via.
+needs: []
+  # - my-db
+  # - service: my-api
+  #   via: http
+
+# calls: the services that this service talks to, but works without. A calls
+# edge starts nothing, and pulls nothing into a stack. wiring shows it.
+calls: []
+  # - service: my-worker
+  #   via: queue
+
+# migrations: the directory of this service's database migrations, relative to
+# this service's directory. If a stack resync changes files in it, devstack says
+# so. devstack runs no migration itself.
+# migrations: db/migrations
+
+# tasks: named commands that 'devstack task run' and the task_run tool run in a
+# stack's worktree of this service. run is required. workDir, timeout (default
+# 10m) and env are optional. run and env take references such as ${self.url}.
+# tasks:
+#   test:
+#     run: go test ./...
+#   seed:
+#     run: ./scripts/seed.sh
+#     timeout: 5m
+#     env:
+#       API_URL: ${self.url}
 `
 
 // scaffoldWorkspaceManifest writes an educational devstack.workspace.yaml at path

@@ -8,6 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/socialviolation/devstack/internal/herdr"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
@@ -19,7 +20,10 @@ func registerStackResyncTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		mcp.WithDescription("Move a feature stack to what you pushed. For each repo of the stack that is on the stack's branch, devstack fetches origin/<branch> and fast-forwards the worktree to it. "+
 			"It refuses a repo whose worktree has uncommitted changes, and names the files. It refuses a repo whose worktree and origin diverged, and names both commits. It never merges or rebases. "+
 			"If the stack is up, devstack then restarts the services of each repo that moved, and every service of the stack that depends on them. "+
-			"A detached caller repo stays where it is. The result lists each repo with its old and new commit, its status (updated, unchanged or refused) and the reason, then the services it restarted. "+
+			"For each detached repo of the stack, devstack fetches origin's default branch and fast-forwards the worktree to it, with the same refusals. "+
+			"The result lists each repo with its old and new commit, its status (updated, unchanged or refused) and the reason, then the services it restarted. "+
+			"devstack does not add services. It reports each repo outside the stack that has the stack's branch on origin, and each service that a member now needs and the stack does not run. Each report names `stack add`. "+
+			"If the new commits change a service's migrations directory, the result says so. A migration changes the shared database for every stack. Resync runs no migration. "+
 			"This tool mirrors 'devstack stack resync'."),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(requiredStackNameDesc)),
@@ -31,13 +35,15 @@ func registerStackResyncTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if ws == nil {
-			return mcp.NewToolResultError("no base workspace resolved for stacks"), nil
+			return mcp.NewToolResultError("devstack resolved no workspace, so it can not manage stacks"), nil
 		}
 		name := strings.TrimSpace(request.GetString("name", ""))
 		if name == "" {
 			return mcp.NewToolResultError("name must not be empty"), nil
 		}
-		out, err := ResyncStack(ws, name)
+		bindPane(ctx, ws, name)
+		defer herdr.Notify()
+		out, err := ResyncStack(ws, name, false)
 		if err != nil {
 			return mcp.NewToolResultError(out + err.Error()), nil
 		}
@@ -45,14 +51,22 @@ func registerStackResyncTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 	})
 }
 
-func ResyncStack(ws *workspace.Workspace, name string) (string, error) {
-	return resyncStack(ws, name, restartStackServices(ws))
+func ResyncStack(ws *workspace.Workspace, name string, cli bool) (string, error) {
+	return resyncStack(ws, name, restartStackServices(ws), cli)
 }
 
-func resyncStack(ws *workspace.Workspace, name string, restart stack.Restarter) (string, error) {
+func resyncStack(ws *workspace.Workspace, name string, restart stack.Restarter, cli bool) (string, error) {
 	res, err := stack.Resync(ws, name, restart)
 	if res == nil {
 		return "", err
+	}
+	return formatResync(res, err, cli)
+}
+
+func formatResync(res *stack.ResyncResult, err error, cli bool) (string, error) {
+	migrateFix := "Run the service's migration task with `task_run` when you are ready."
+	if cli {
+		migrateFix = "Run the service's migration task when you are ready."
 	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Stack %q resync:\n", res.Name)
@@ -67,6 +81,18 @@ func resyncStack(ws *workspace.Workspace, name string, restart stack.Restarter) 
 			fmt.Fprintf(&sb, ": %s", r.Reason)
 		}
 		sb.WriteString("\n")
+	}
+	for _, o := range res.Outside {
+		fmt.Fprintf(&sb, "Branch %s also changes %s, which this stack does not run. Run `stack add %s`.\n", res.Branch, o.Repo, strings.Join(o.Services, " "))
+	}
+	for _, m := range res.Missing {
+		fmt.Fprintf(&sb, "%s. This stack does not run %s. Run `stack add %s`.\n", strings.Join(m.Chain, " needs "), m.Service, m.Service)
+	}
+	for _, svc := range res.Migrations {
+		fmt.Fprintf(&sb, "The new commits change migrations in %s. A migration changes the shared database for every stack. %s\n", svc, migrateFix)
+	}
+	for _, n := range res.Notes {
+		fmt.Fprintf(&sb, "note: %s\n", n)
 	}
 	switch {
 	case len(res.Restart) == 0:

@@ -104,6 +104,10 @@ func Ensure(ws *workspace.Workspace) (*EnsureResult, error) {
 	}
 
 	root := Root(ws)
+	names := template.SharedNames()
+	if len(names) == 0 {
+		return &EnsureResult{Root: root}, nil
+	}
 	if root == ws.Path || strings.HasPrefix(root, ws.Path+string(os.PathSeparator)) {
 		return nil, fmt.Errorf("devstack can not use the replica root %s. The root is under workspace %s, and a nested root breaks workspace detection", root, ws.Path)
 	}
@@ -112,7 +116,6 @@ func Ensure(ws *workspace.Workspace) (*EnsureResult, error) {
 	}
 
 	res := &EnsureResult{Root: root}
-	names := serviceNames(template)
 	repos, err := plan(template, names)
 	if err != nil {
 		return nil, err
@@ -178,6 +181,13 @@ func Sync(ws *workspace.Workspace) (*SyncResult, error) {
 		return nil, fmt.Errorf("devstack can not resolve the workspace")
 	}
 	root := Root(ws)
+	template, err := config.ResolveWorkspace(ws.Path)
+	if err != nil {
+		return nil, fmt.Errorf("can not resolve the workspace %q at %s: %w", ws.Name, ws.Path, err)
+	}
+	if len(template.SharedNames()) == 0 {
+		return &SyncResult{Root: root}, nil
+	}
 	if !config.HasWorkspaceManifest(root) {
 		return nil, notBuilt(ws, root)
 	}
@@ -185,12 +195,8 @@ func Sync(ws *workspace.Workspace) (*SyncResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	template, err := config.ResolveWorkspace(ws.Path)
-	if err != nil {
-		return nil, fmt.Errorf("can not resolve the workspace %q at %s: %w", ws.Name, ws.Path, err)
-	}
 
-	repos, err := plan(template, serviceNames(template))
+	repos, err := plan(template, template.SharedNames())
 	if err != nil {
 		return nil, err
 	}
@@ -287,6 +293,7 @@ func Resolve(ws *workspace.Workspace) (*config.ResolvedWorkspace, error) {
 	rw.Manifest.Observability = template.Manifest.Observability
 	rw.Manifest.Runtime = template.Manifest.Runtime
 	rw.Manifest.Groups = template.Manifest.Groups
+	rw.Manifest.Shared = template.Manifest.Shared
 	rw.Manifest.Dependencies = template.Manifest.Dependencies
 	rw.Manifest.Calls = template.Manifest.Calls
 	rw.Manifest.StartsAfter = template.Manifest.StartsAfter
@@ -354,15 +361,6 @@ func shortSHA(path string) (string, error) {
 func hasOrigin(path string) bool {
 	_, err := git(path, "remote", "get-url", "origin")
 	return err == nil
-}
-
-func serviceNames(rw *config.ResolvedWorkspace) []string {
-	names := make([]string, 0, len(rw.Services))
-	for name := range rw.Services {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }
 
 // git says this when the destination is gone but its admin record is not. The

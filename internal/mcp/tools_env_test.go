@@ -97,20 +97,52 @@ func TestEnvWhichMasksOpaqueSecret(t *testing.T) {
 	}
 }
 
-// Every other tool takes stack="base" for base, and env_which refused it. Its
-// parameter description told agents to omit the word instead, which is the
-// opposite instruction from the rest of the surface.
-func TestEnvWhichTakesBaseAsTheStackName(t *testing.T) {
+func TestEnvWhichRefusesStackBase(t *testing.T) {
 	s, _ := newEnvToolWorkspace(t)
-	absent := callTool(t, s, "env_which", map[string]string{"service": "api"})
-	named := callTool(t, s, "env_which", map[string]string{"service": "api", "stack": "base"})
-
-	if named != absent {
-		t.Errorf("stack=\"base\" must report what an absent stack reports.\nabsent:\n%s\nbase:\n%s", absent, named)
+	out := callTool(t, s, "env_which", map[string]string{"service": "api", "stack": "base"})
+	if !strings.Contains(out, `"isError":true`) {
+		t.Errorf("stack=\"base\" names no stack, and env_which must refuse it:\n%s", out)
 	}
-	desc := listTools(t, s)["env_which"].InputSchema.Properties["stack"].Description
-	if strings.Contains(desc, "do not pass") {
-		t.Errorf("env_which must not tell an agent to avoid the word every other tool takes: %s", desc)
+}
+
+func TestEnvUseScopeWorkspaceSetsTheWorkspaceDefault(t *testing.T) {
+	s, root := newEnvToolWorkspace(t)
+	writeFile(t, filepath.Join(root, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: testws
+  repoDiscovery:
+    mode: explicit
+    repos:
+      - ./repos/api
+environments:
+  dev:
+    values:
+      LOG_LEVEL: debug
+`)
+	out := callTool(t, s, "env_use", map[string]string{"name": "dev", "scope": "workspace"})
+	if !strings.Contains(out, `workspace \"testws\" now uses env \"dev\"`) {
+		t.Fatalf("scope=workspace must set the workspace default:\n%s", out)
+	}
+	m, err := config.LoadWorkspaceManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Workspace.Env != "dev" {
+		t.Errorf("workspace.env = %q, want dev", m.Workspace.Env)
+	}
+}
+
+func TestEnvUseRefusesBadScopes(t *testing.T) {
+	s, _ := newEnvToolWorkspace(t)
+	for name, args := range map[string]map[string]string{
+		"scope and stack":   {"name": "dev", "scope": "workspace", "stack": "feat"},
+		"scope and service": {"name": "dev", "scope": "workspace", "service": "api"},
+		"unknown scope":     {"name": "dev", "scope": "stack"},
+		"stack base":        {"name": "dev", "stack": "base"},
+	} {
+		if out := callTool(t, s, "env_use", args); !strings.Contains(out, `"isError":true`) {
+			t.Errorf("%s: env_use must refuse:\n%s", name, out)
+		}
 	}
 }
 
@@ -130,7 +162,6 @@ func TestEnvSetRedactsConfirmation(t *testing.T) {
 		"name":  "dev",
 		"key":   "ConnectionStrings__Other",
 		"value": testDSN,
-		"stack": "base",
 	})
 
 	if strings.Contains(out, testDSNPassword) {
@@ -147,7 +178,6 @@ func TestEnvSetMasksOpaqueSecret(t *testing.T) {
 		"name":  "dev",
 		"key":   "OTHER_TOKEN",
 		"value": testOpaqueToken,
-		"stack": "base",
 	})
 
 	if strings.Contains(out, testOpaqueToken) {

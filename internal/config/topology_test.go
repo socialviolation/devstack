@@ -4,7 +4,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestBuildTopologyGroupsDependenciesAndDependents(t *testing.T) {
@@ -61,16 +60,16 @@ runtime:
 	}
 
 	frontend := graph.Services["frontend"]
-	if len(frontend.Dependencies) != 1 || frontend.Dependencies[0] != "api" {
-		t.Fatalf("frontend dependencies = %#v", frontend.Dependencies)
+	if len(frontend.Calls) != 1 || frontend.Calls[0] != "api" {
+		t.Fatalf("frontend calls = %#v", frontend.Calls)
 	}
 	if len(frontend.Groups) != 1 || frontend.Groups[0] != "frontend" {
 		t.Fatalf("frontend groups = %#v", frontend.Groups)
 	}
 
 	api := graph.Services["api"]
-	if len(api.Dependents) != 1 || api.Dependents[0] != "frontend" {
-		t.Fatalf("api dependents = %#v", api.Dependents)
+	if len(api.CalledBy) != 1 || api.CalledBy[0] != "frontend" {
+		t.Fatalf("api called by = %#v", api.CalledBy)
 	}
 	if len(api.Groups) != 1 || api.Groups[0] != "backend" {
 		t.Fatalf("api groups = %#v", api.Groups)
@@ -98,70 +97,6 @@ workspace:
     mode: explicit
     repos:`+repos+"\n"+edges)
 	return dir
-}
-
-func TestTransitiveCallersIgnoresStartOrderEdges(t *testing.T) {
-	dir := writeTopoWorkspace(t, []string{"frontend", "backend", "db", "logger"}, `calls:
-  frontend:
-    - backend
-  backend:
-    - db
-startsAfter:
-  logger:
-    - backend
-`)
-
-	graph, err := BuildTopology(dir)
-	if err != nil {
-		t.Fatalf("BuildTopology(): %v", err)
-	}
-	if graph.HasErrors() {
-		t.Fatalf("unexpected issues: %#v", graph.Issues)
-	}
-
-	if got := graph.Services["db"].CalledBy; len(got) != 1 || got[0] != "backend" {
-		t.Fatalf("db.CalledBy = %#v, want [backend]", got)
-	}
-	if got := graph.Services["backend"].CalledBy; len(got) != 1 || got[0] != "frontend" {
-		t.Fatalf("backend.CalledBy = %#v, want [frontend]", got)
-	}
-
-	if got := graph.Services["backend"].Dependents; !contains(got, "logger") {
-		t.Fatalf("backend.Dependents = %#v, want it to include logger (start-order edge)", got)
-	}
-	if got := graph.Services["backend"].CalledBy; contains(got, "logger") {
-		t.Fatalf("logger is a start-order dependent, not a caller; backend.CalledBy = %#v", got)
-	}
-
-	callers := graph.TransitiveCallers("db")
-	if len(callers) != 2 || callers[0] != "backend" || callers[1] != "frontend" {
-		t.Fatalf("TransitiveCallers(db) = %#v, want [backend frontend] and NOT logger", callers)
-	}
-}
-
-func TestTransitiveCallersTerminatesOnCycle(t *testing.T) {
-	dir := writeTopoWorkspace(t, []string{"a", "b"}, `calls:
-  a:
-    - b
-  b:
-    - a
-`)
-
-	graph, err := BuildTopology(dir)
-	if err != nil {
-		t.Fatalf("BuildTopology(): %v", err)
-	}
-
-	done := make(chan []string, 1)
-	go func() { done <- graph.TransitiveCallers("a") }()
-	select {
-	case callers := <-done:
-		if len(callers) != 2 || callers[0] != "a" || callers[1] != "b" {
-			t.Fatalf("TransitiveCallers(a) = %#v, want [a b]", callers)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("TransitiveCallers did not terminate on a cyclic call graph")
-	}
 }
 
 func TestBuildTopologyFlagsUnknownCall(t *testing.T) {
@@ -195,7 +130,7 @@ func contains(items []string, want string) bool {
 	return false
 }
 
-func TestBuildTopologyDetectsMissingReferencesAndCycles(t *testing.T) {
+func TestBuildTopologyDetectsMissingReferences(t *testing.T) {
 	workspaceDir := t.TempDir()
 	mustWriteFile(t, filepath.Join(workspaceDir, WorkspaceManifestFileName), `version: 1
 workspace:
@@ -247,8 +182,5 @@ runtime:
 	joined := strings.Join(messages, "\n")
 	if !strings.Contains(joined, `group "backend" references the unknown service "missing"`) {
 		t.Fatalf("missing group-member issue in %q", joined)
-	}
-	if !strings.Contains(joined, "are in a dependency cycle") {
-		t.Fatalf("missing cycle issue in %q", joined)
 	}
 }

@@ -40,12 +40,12 @@ var helpGroups = []helpGroup{
 	{"SET UP THIS MACHINE", []helpRow{
 		{"devstack workspace add <path>", "register the directory of your services"},
 		{"devstack init --name <svc> --path <dir> --cmd <cmd>", "register one service in it"},
-		{"devstack workspace up", "start the daemon, and base"},
+		{"devstack workspace up", "start the daemon, and the shared services"},
 		{"devstack upgrade", "install the current devstack, and migrate"},
 	}},
 }
 
-var moreRow = helpRow{"devstack help more", "otel, tunnel, ports, hooks, dependencies, base"}
+var moreRow = helpRow{"devstack help more", "otel, tunnel, ports, hooks, dependencies, shared"}
 
 // moreCommands are real and are needed now and then. They are not part of
 // learning the tool, so they leave the first screen and keep everything else.
@@ -53,12 +53,15 @@ var moreCommands = []helpRow{
 	{"otel", "traces and logs: query them, and run the collector"},
 	{"tunnel", "forward this workspace's ports over SSH"},
 	{"ports", "see which process holds a port, and take the port back"},
-	{"dependencies", "declare which service starts before another"},
+	{"dependencies", "edit the old dependencies: map of the workspace"},
 	{"hooks", "run an action when a stack or a service changes state"},
 	{"group", "act on a named set of services at one time"},
-	{"base", "the replica that base runs from: print its path, or build it again"},
+	{"shared", "the shared services: their replica, and a sync to the default branch"},
+	{"herdr", "show each stack in the herdr pane that binds it"},
 	{"doctor", "find what is broken, and the command that fixes it"},
 	{"cleanup", "remove orphaned ports, worktrees and stack records"},
+	{"task", "run a task that a service declares, in a stack's worktree"},
+	{"wiring", "show how each service reaches the services it talks to"},
 }
 
 var helpCmd = &cobra.Command{

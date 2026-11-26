@@ -19,16 +19,16 @@ import (
 
 func registerStackConfigTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_config",
-		mcp.WithDescription("Show the configuration that one copy of a service runs with. "+baseTermDesc+
+		mcp.WithDescription("Show the configuration that one service runs with, in the shared set or in a stack. "+stackTermDesc+
 			"The tool prints two tables. The first is the effective service configuration, and it names the source of each value. The second is the environment ladder, which is what the process receives.\n"+
 			"A star marks a value that the stack overrides, and devstack computes that value. devstack shows a secret value as "+svcconfig.MaskedValue+".\n"+
-			"This tool reads files. It does not ask the daemon what runs. If the copy is down, the tool says so, and it prints the configuration that the copy would run with.\n"+
-			"For base, devstack reads the replica that base runs from, and not your checkout. If devstack has built no replica, run 'devstack workspace up' first.\n"+
+			"This tool reads files. It does not ask the daemon what runs. If the service is down, the tool says so, and it prints the configuration that the service starts with.\n"+
+			"With no stack, the service must be shared. devstack reads it from the replica that the shared set runs from, and not your checkout. If devstack has built no replica, run 'devstack workspace up' first.\n"+
 			"This tool mirrors 'devstack stack config'."),
 		mcp.WithString("service", mcp.Required(),
-			mcp.Description("Exact service name, for example 'api-service'. The tool reads that service's copy. Other tools reject a partial match, and so does this one.")),
+			mcp.Description("Exact service name, for example 'api-service'. Other tools reject a partial match, and so does this one.")),
 		mcp.WithString("stack",
-			mcp.Description(stackParamDesc)),
+			mcp.Description("Optional. The SHORT name of the stack to read. A service that is not shared runs only in a stack, so it needs this parameter. With no stack, the tool reads a shared service.")),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -44,8 +44,8 @@ func registerStackConfigTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			return mcp.NewToolResultError("service is required. Name the service whose configuration you want to read"), nil
 		}
 		stackName := strings.TrimSpace(request.GetString("stack", ""))
-		if stackName == "" || stackName == "base" {
-			return stackConfigForBase(ws, service), nil
+		if stackName == "" {
+			return stackConfigForShared(ws, service), nil
 		}
 		rec, err := resolveStackRecord(ws, stackName)
 		if err != nil {
@@ -76,7 +76,7 @@ func stackConfigForStack(ws *workspace.Workspace, rec *stack.Record, service str
 	var sb strings.Builder
 	tense := "the configuration it runs with"
 	if !rec.Active {
-		tense = "the configuration it would run with"
+		tense = "the configuration it starts with"
 		fmt.Fprintf(&sb, "Stack %s is down. Nothing runs with this configuration now. To start the stack, use the stack_up tool (CLI: devstack stack up %s).\n\n", rec.FullName(), rec.Name)
 	}
 	stackConfigTable(&sb, service, "stack "+rec.FullName(), tense, entries)
@@ -85,20 +85,27 @@ func stackConfigForStack(ws *workspace.Workspace, rec *stack.Record, service str
 	return mcp.NewToolResultText(sb.String())
 }
 
-// stackConfigForBase reads base's copy out of the replica. base runs the replica
-// worktrees, and the checkout is only the template they were built from, so the
-// checkout is the wrong file to read.
-func stackConfigForBase(ws *workspace.Workspace, service string) *mcp.CallToolResult {
+func stackConfigForShared(ws *workspace.Workspace, service string) *mcp.CallToolResult {
+	template, err := config.ResolveWorkspace(ws.Path)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error())
+	}
+	if _, ok := template.Services[service]; !ok {
+		return mcp.NewToolResultError(fmt.Sprintf("service %q is not in workspace %q. Its services: %s", service, ws.Name, strings.Join(sortedServiceNames(template), ", ")))
+	}
+	if err := stack.RequireShared(template, []string{service}, `stack="<name>"`); err != nil {
+		return mcp.NewToolResultError(err.Error())
+	}
 	rw, err := replica.Resolve(ws)
 	if errors.Is(err, replica.ErrNotBuilt) {
-		return mcp.NewToolResultError(fmt.Sprintf("devstack has not built the replica of workspace %q, and base runs from it. There is no configuration to read yet. To build the replica, run: devstack workspace up", ws.Name))
+		return mcp.NewToolResultError(fmt.Sprintf("devstack has not built the replica of workspace %q. The shared set runs from it, so there is no configuration to read yet. To build the replica, run: devstack workspace up", ws.Name))
 	}
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("base runs from the replica of workspace %q. The replica is stale or incomplete. To rebuild it, run: devstack workspace up. devstack could not read it: %v", ws.Name, err))
+		return mcp.NewToolResultError(fmt.Sprintf("the shared set runs from the replica of workspace %q. The replica is stale or incomplete. To rebuild it, run: devstack workspace up. devstack can not read it: %v", ws.Name, err))
 	}
 	svc, ok := rw.Services[service]
 	if !ok {
-		return mcp.NewToolResultError(fmt.Sprintf("service %q is not in workspace %q. Its services: %s", service, ws.Name, strings.Join(sortedServiceNames(rw), ", ")))
+		return mcp.NewToolResultError(fmt.Sprintf("the replica of workspace %q does not hold shared service %q. To rebuild it, run: devstack workspace up", ws.Name, service))
 	}
 	entries, err := svcconfig.EffectiveConfig(svc, ws.Name)
 	if err != nil {
@@ -108,10 +115,10 @@ func stackConfigForBase(ws *workspace.Workspace, service string) *mcp.CallToolRe
 	var sb strings.Builder
 	tense := "the configuration it runs with"
 	if !ws.Active {
-		tense = "the configuration it would run with"
-		sb.WriteString("Base is down. Nothing runs with this configuration now. To start base, run: devstack workspace up\n\n")
+		tense = "the configuration it starts with"
+		sb.WriteString("The workspace is down, so the shared set does not run. To start it, run: devstack workspace up\n\n")
 	}
-	stackConfigTable(&sb, service, "base", tense, entries)
+	stackConfigTable(&sb, service, "the shared set", tense, entries)
 	fmt.Fprintf(&sb, "\ndevstack reads this from the replica at %s. To change it, put the change on the default branch, then run: devstack workspace up\n", svc.RepoPath)
 	fmt.Fprintf(&sb, "A secret value appears as %s.\n", svcconfig.MaskedValue)
 	stackConfigLadder(&sb, ws, rw, svc, nil)

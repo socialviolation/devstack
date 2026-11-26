@@ -45,16 +45,18 @@ func runEnable(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := requireSharedWithoutStack(ws, namespace, services); err != nil {
+		return err
+	}
 
 	if targetName == "" {
 		fmt.Printf("Auto-detected: %s\n", strings.Join(services, ", "))
 	}
 
-	// Expand deps for each resolved service, union the sets
 	var toTrigger []string
 	seen := map[string]bool{}
 	for _, svc := range services {
-		resolved, err := config.ResolveDeps(cfg, svc)
+		resolved, err := config.ResolveNeeds(cfg, svc)
 		if err != nil {
 			return err
 		}
@@ -104,7 +106,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 		}
 		view, err = tiltClient.GetView()
 		if err != nil {
-			return fmt.Errorf("the dev daemon started, but it does not answer yet. Try again: devstack service start %s --stack base\n(%w)", targetName, err)
+			return fmt.Errorf("the dev daemon started, but it does not answer yet. Try again: devstack service start %s\n(%w)", targetName, err)
 		}
 	}
 
@@ -120,7 +122,7 @@ func runEnable(cmd *cobra.Command, args []string) error {
 
 	here, inBase := splitByPresence(ws.Name, namespace, stackName, toTrigger, present)
 	for _, svc := range inBase {
-		fmt.Printf("  (the dependency %s runs in base, so devstack does not start it here)\n", svc)
+		fmt.Printf("  (the dependency %s is not a member of this stack, so devstack does not start it here)\n", svc)
 	}
 
 	for _, svc := range here {

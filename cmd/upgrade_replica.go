@@ -38,7 +38,7 @@ func ensureReplicas(w io.Writer) (error, []string) {
 		if config.HasWorkspaceManifest(replica.Root(ws)) {
 			continue
 		}
-		fmt.Fprintf(w, "\n%s: devstack builds the replica that base runs from.\n", ws.Name)
+		fmt.Fprintf(w, "\n%s: devstack builds the replica that the shared set runs from.\n", ws.Name)
 		fmt.Fprintln(w, "Each worktree is a new checkout, and it needs its own dependency install.")
 		lines, res, err := replicaReport(ws)
 		for _, l := range lines {
@@ -65,15 +65,17 @@ func writeDeprecations(w io.Writer) {
 	fmt.Fprint(w, `
 This release changes what these habits do:
 
-  You edit your checkout to change what base runs.
-    → Put the change on the default branch. Then run: devstack workspace up
+  You edit your checkout to change what a shared service runs.
+    → Put the change on the default branch. Then run: devstack shared sync
     → Or put the change in a stack, which runs your branch.
   You run: devstack service start|stop|restart <svc>
-    → Add --stack base, or run the command in the copy's directory.
+    → Add --stack <name>, or run the command in the stack's worktree.
+    → With no stack, only a shared service resolves.
   You run: devstack env use <name>
-    → Add --stack base, or run the command in the copy's directory.
+    → Add --stack <name>, --service <svc> or --workspace-default.
   You run git pull in your checkout, then restart the service.
-    → Run: devstack workspace up. It moves base, and it restarts what runs.
+    → Run: devstack workspace up. It moves the shared set, and it restarts
+      what runs.
   You started your agent session before this upgrade.
     → Restart the session. It holds the tool list from before the upgrade.
 `)

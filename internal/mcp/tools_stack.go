@@ -12,45 +12,33 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/socialviolation/devstack/internal/config"
+	"github.com/socialviolation/devstack/internal/herdr"
 	"github.com/socialviolation/devstack/internal/hooks"
 	"github.com/socialviolation/devstack/internal/hostdaemon"
 	"github.com/socialviolation/devstack/internal/mcp/auth"
+	"github.com/socialviolation/devstack/internal/replica"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/tilt"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
-// stackShortNameDesc states the short-name-vs-identity rule wherever a stack is
-// named: every parameter takes the short name, while telemetry prints the
-// identity. It is never used on its own — a parameter is required or optional,
-// and the two say opposite things about an omitted value.
-const stackShortNameDesc = "Feature stack SHORT name, for example 'import-review'. This is not the '<base>--<name>' full identity that telemetry and the host daemon resource names print. " +
-	baseTermDesc +
-	"So no stack is ever called \"base\". "
+const stackShortNameDesc = "Feature stack SHORT name, for example 'import-review'. It is not the '<workspace>--<name>' full identity that telemetry and the host daemon resource names print. " +
+	stackTermDesc +
+	"No stack can have the name \"shared\" or \"base\". "
 
-// requiredStackNameDesc is for a parameter that must name a stack. These tools
-// act on a stack and on nothing else, so an omitted value has no meaning here.
 const requiredStackNameDesc = stackShortNameDesc +
-	"This parameter is REQUIRED. Name a stack, and do not omit it. This tool takes a stack name only, and it refuses \"base\"."
+	"This parameter is REQUIRED. Name a stack, and do not omit it."
 
-// optionalStackNameDesc is for a parameter that may be omitted. Omitted means
-// base, and the literal "base" means the same thing.
 const optionalStackNameDesc = stackShortNameDesc +
-	"This parameter is OPTIONAL, and it defaults to base. To act on base, omit it, or write the literal \"base\"."
+	"This parameter is OPTIONAL. If you omit it, the tool uses no stack."
 
-// baseTermDesc is the one definition of "base". It is shared rather than
-// restated because the restatements disagreed: the same word was used for a
-// checkout, for a workspace, for a stack, and for the absence of a stack, and
-// the disagreeing paragraph was pasted into eight parameter descriptions.
-const baseTermDesc = "\"base\" is this workspace with no stack. base does not run from the user's checkouts. It runs from a managed replica of the workspace. " +
-	"That replica holds one git worktree per repository, detached at that repository's default branch tip, under a .devstack-base sibling. A repository that holds several services gets one worktree, with a directory for each service. " +
-	"The checkout is the template that devstack builds the replica from. base is not a stack. "
+const stackTermDesc = "A stack runs the services you name, the members of the groups you name, and the services they need. Each one runs in its own git worktree, on its own ports. " +
+	"A shared service is a service in the workspace \"shared:\" list. It runs once for the workspace, and never in a stack. Every stack uses it. The shared set is all the shared services. " +
+	"The shared set runs from the replica: one git worktree per repository, detached at the default branch tip. Nothing runs in the user's checkout. "
 
-// serviceLinksDesc defines the "service links" these tools return: one
-// http://localhost:<port> URL per port the stack allocated.
-const serviceLinksDesc = "A service link is 'service/portKey=http://localhost:<port>'. It is the localhost URL of one port that this stack allocated for one of its overlay services. " +
-	"The portKey is a key from the manifest ports of that service, for example 'http'. These ports belong to the stack. Reach its copies here, not on the ports of base. " +
-	"A service link is a localhost URL, so it works on this machine only. If a person on another machine needs an address for the same copy, call the urls tool."
+const serviceLinksDesc = "A service link is 'service/portKey=http://localhost:<port>'. It is the localhost URL of one port that this stack allocated for one of its services. " +
+	"The portKey is a key from the manifest ports of that service, for example 'http'. These ports belong to the stack. " +
+	"A service link is a localhost URL, so it works on this machine only. If a person on another machine needs an address for the same service, call the urls tool."
 
 func registerStackTools(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	registerStackCreateTool(mcpServer, ws)
@@ -80,19 +68,25 @@ func stackBranchNote(wt stack.WorktreeResult) string {
 
 func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_create",
-		mcp.WithDescription("Create a feature stack that overlays THIS workspace (the base). A stack runs its own copy of only the services it changes, plus the services that call them. Each one runs in its own git worktree, on a port devstack allocates. Every other service resolves to base's copy. Use this tool for the request 'I need a stack to work on X in services A and B'.\n"+
-			"devstack cuts each worktree from that repo's DEFAULT BRANCH as origin has it, and not from whatever the user's checkout has checked out. So a stack starts from what the team shipped, and half-finished work parked in a checkout is not dragged into it. To override this, use the 'from' parameter.\n"+
-			"Creation does not start the stack. A new stack is down, and stack_up is what runs it. Base does not have to run for you to create one. A base that is down is returned as a warning, and not as an error. A stack does reuse base's copies for every service it does not overlay, so bring base up before you use the stack.\n"+
-			"The tool returns the overlay set with a reason for each member, the worktree paths, the ref each worktree was cut from, the service links, and any warnings. A warning names a checkout that holds work the stack does not have, or a base daemon that does not run.\n"+
+		mcp.WithDescription("Create a feature stack in THIS workspace. A stack runs only the services you name, the members of the groups you name, and the services they need. Each one runs in its own git worktree, on a port devstack allocates. Use this tool for the request 'I need a stack to work on X in services A and B'.\n"+
+			"A 'needs' edge in devstack.service.yaml pulls a service in. A 'calls' edge does not. devstack never pulls in the services that call a member. If a member calls or references a service that the stack does not run, devstack warns and names stack_add. Decide if the change needs that service. "+
+			"A shared service is never in a stack. Every stack uses the one shared set. "+
+			"A named service gets the stack's branch. A service that comes in through needs is detached at the default branch tip. To commit in one, name it with stack_add.\n"+
+			"devstack cuts each worktree from that repo's DEFAULT BRANCH as origin has it, and not from whatever the user's checkout has checked out. So a stack starts from what the team shipped, and half-finished work in a checkout does not come into the stack. To override this, use the 'from' parameter. To run the default branch with no branch of your own, use detach=true.\n"+
+			"Creation does not start the stack. A new stack is down, and stack_up is what runs it.\n"+
+			"Every stack stops 24 hours after create. stack_up sets the stop time to 24 hours from then. stack_extend adds up to 24 hours. devstack only stops a stack at its stop time. It never removes one.\n"+
+			"The tool returns each member with the reason it is in the stack, the worktree paths, the ref that devstack cut each worktree from, the service links, and any warnings. A warning names a checkout that holds work the stack does not have, or a service the stack does not run.\n"+
 			"This workspace can declare lifecycle HOOKS: shell commands that devstack runs on its own for this action. They can change state outside this machine, for example register a callback URL or provision a resource. They fire on their own, and their output is in the result below. A hook failure is returned as an error, and it means that the stack exists and is NOT fully provisioned. Do not report success. See the hooks tool. If you do not know what this workspace fires, run the hooks tool with action=\"list\" first. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
-			mcp.Description("Short stack name (for example 'import-review'). The full stack identity becomes '<base>--<name>'. Every stack parameter across these tools takes the short name.")),
+			mcp.Description("Short stack name (for example 'import-review'). The full stack identity becomes '<workspace>--<name>'. Every stack parameter across these tools takes the short name. No stack can have the name \"shared\" or \"base\".")),
 		mcp.WithString("repos", mcp.Required(),
-			mcp.Description("Comma-separated exact service OR group names that this stack changes (for example 'frontend,backend' or 'core'). A group expands to its members. devstack pulls the services that call any of them into the overlay. A group reaches only as far as the overlay does. A member that devstack does not pull in keeps serving from base, and stack_list reports the shortfall.")),
+			mcp.Description("Comma-separated exact service OR group names that this stack changes (for example 'frontend,backend' or 'core'). A group expands to its members. devstack adds the services that they need. A service that they only call does not come in, and devstack warns about it. devstack refuses a shared service.")),
 		mcp.WithString("note",
-			mcp.Description("What this stack is for, in the author's words: a ticket URL, an issue key, or a sentence. devstack never derives this: the branch says what changed, and the note says why. stack_list shows it. It is optional, and you can edit it later with the CLI: devstack stack note <name> \"...\"")),
+			mcp.Description("What this stack is for, in the author's words: a ticket URL, an issue key, or a sentence. devstack never derives this: the branch says what changed, and the note says why. stack_list shows it. It is optional. To edit it later, call stack_note.")),
 		mcp.WithString("branch",
 			mcp.Description("Git branch for the worktrees of the changed repos. devstack creates it where it is absent, and attaches to it where it already exists. The default is the stack name.")),
+		mcp.WithBoolean("detach",
+			mcp.Description("If true, devstack cuts every worktree detached at the default branch tip, with no branch. Use it to run the default branch. Do not combine it with branch.")),
 		mcp.WithString("from",
 			mcp.Description("The git ref that devstack cuts the worktrees from, for example 'origin/release-2' or a commit SHA. The default is each repo's default branch, as origin has it. The default is never whatever the user's checkout has checked out, because that checkout is a template and it can hold parked work. This applies only where devstack creates the branch. Where the branch already exists, the worktree attaches to it with the history it already has.")),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -103,7 +97,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if ws == nil {
-			return mcp.NewToolResultError("no base workspace resolved for stacks"), nil
+			return mcp.NewToolResultError("devstack resolved no workspace, so it can not manage stacks"), nil
 		}
 		name := strings.TrimSpace(request.GetString("name", ""))
 		if name == "" {
@@ -125,39 +119,33 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			Name:   name,
 			Repos:  repos,
 			Branch: strings.TrimSpace(request.GetString("branch", "")),
+			Detach: request.GetBool("detach", false),
 			From:   strings.TrimSpace(request.GetString("from", "")),
 		}
 		if caller := auth.CallerFrom(ctx); caller.Scope != auth.ScopeOwner {
-			limits := agentLimitsFrom(ctx)
-			if err := agentQuota(ws.Name, limits.MaxStacks); err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
 			in.Owner = caller.Name
-			in.TTL = limits.TTL
 		}
 		res, err := stack.Create(in)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		bindPane(ctx, ws, name)
+		defer herdr.Notify()
 
-		overlay := make([]string, 0, len(res.Overlay))
-		for _, m := range res.Overlay {
-			overlay = append(overlay, m.Service)
+		members := make([]string, 0, len(res.Members))
+		for _, m := range res.Members {
+			members = append(members, m.Service)
 		}
 		var hookOut strings.Builder
-		hookErr := hooks.Fire(ws, name, config.EventStackCreate, overlay, &hookOut)
+		hookErr := hooks.Fire(ws, name, config.EventStackCreate, members, &hookOut)
 
 		var sb strings.Builder
-		fmt.Fprintf(&sb, "Stack %q created (base %s).\n", res.StackName, res.BaseName)
+		fmt.Fprintf(&sb, "Stack %q created (workspace %s).\n", res.StackName, res.BaseName)
 		fmt.Fprintf(&sb, "Stack root: %s\n\n", res.StackRoot)
 
-		sb.WriteString("Overlay set (changed ∪ transitive callers):\n")
-		for _, m := range res.Overlay {
-			reason := "calls a changed service"
-			if m.Reason == "changed" {
-				reason = "changed"
-			}
-			fmt.Fprintf(&sb, "  %-16s %s\n", m.Service, reason)
+		sb.WriteString("Members (the services you named, and the services they need):\n")
+		for _, m := range res.Members {
+			fmt.Fprintf(&sb, "  %-16s %s\n", m.Service, m.Describe())
 		}
 
 		sb.WriteString("\nWorktrees:\n")
@@ -195,13 +183,13 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 func registerStackAddTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_add",
 		mcp.WithDescription("Add services to a feature stack of THIS workspace that already exists. Use this tool for 'the stack needs service C as well'. The alternative is stack_rm plus stack_create, and that throws away the stack's branches, its worktrees, and any uncommitted work in them.\n"+
-			"Each named service gets its own git worktree on the stack's existing branch, and its own allocated port. devstack pulls in the services that call it, exactly as stack_create pulls them in. Everything already in the stack is left alone: the same worktrees, the same branch tips, and the same ports its copies already serve on.\n"+
-			"The stack stays as up, or as down, as it was. If it is up, the added copies become resources in the host daemon, and devstack does NOT start them. Start them with the start tool, or report the command to the user. A service already in the stack is reported as already present, and it is not an error. If every name you give is already there, the call fails, because there is nothing to add.\n"+
+			"Each named service gets its own git worktree on the stack's existing branch, and its own allocated port. devstack also adds the services they need, exactly as stack_create does. It never adds the services that call them. devstack does not change what is already in the stack: the same worktrees, the same branch tips, and the same ports its services already serve on. The one exception: a named member on a detached HEAD moves to the stack's branch, so you can commit in it.\n"+
+			"The stack stays as up, or as down, as it was. If it is up, the added services become resources in the host daemon, and devstack does NOT start them. Start them with the start tool, or report the command to the user. If a service is already in the stack on its branch, devstack reports it. That is not an error. If every name you give is already there, the call fails, because there is nothing to add.\n"+
 			"This workspace can declare lifecycle HOOKS: shell commands that devstack runs on its own. Here they are scoped to the ADDED services only, so devstack re-provisions nothing that is already in the stack. stack.create fires for them, and stack.up fires too when the stack is up. Their output is in the result below. A hook failure is returned as an error, and it means that the services were added and are NOT fully provisioned. Do not report success. See the hooks tool. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(requiredStackNameDesc)),
 		mcp.WithString("services", mcp.Required(),
-			mcp.Description("Comma-separated exact service OR group names to add (for example 'billing' or 'core'). A group expands to its members, and devstack records the group on the stack. devstack pulls the services that call any of them into the overlay.")),
+			mcp.Description("Comma-separated exact service OR group names to add (for example 'billing' or 'core'). A group expands to its members, and devstack records the group on the stack. devstack adds the services that they need. devstack refuses a shared service.")),
 		mcp.WithString("from",
 			mcp.Description("The git ref that devstack cuts the NEW worktrees from, for example 'origin/release-2' or a commit SHA. The default is each repo's default branch, as origin has it. This applies only where the stack's branch does not yet exist in that repo. Where it does exist, the worktree attaches to it with the history it already has. It never affects the worktrees the stack already has.")),
 		mcp.WithReadOnlyHintAnnotation(false),
@@ -212,7 +200,7 @@ func registerStackAddTool(mcpServer *server.MCPServer, ws *workspace.Workspace) 
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if ws == nil {
-			return mcp.NewToolResultError("no base workspace resolved for stacks"), nil
+			return mcp.NewToolResultError("devstack resolved no workspace, so it can not manage stacks"), nil
 		}
 		name := strings.TrimSpace(request.GetString("name", ""))
 		if name == "" {
@@ -250,11 +238,7 @@ func registerStackAddTool(mcpServer *server.MCPServer, ws *workspace.Workspace) 
 			fmt.Fprintf(&sb, "Added %s to stack %q (branch %s).\n", strings.Join(added, ", "), res.StackName, res.Branch)
 		}
 		for _, m := range res.Added {
-			reason := "calls an added service"
-			if m.Reason == "changed" {
-				reason = "added"
-			}
-			fmt.Fprintf(&sb, "  %-16s %s\n", m.Service, reason)
+			fmt.Fprintf(&sb, "  %-16s %s\n", m.Service, m.Describe())
 		}
 		sb.WriteString("\nNew worktrees:\n")
 		for _, wt := range res.Worktrees {
@@ -276,7 +260,7 @@ func registerStackAddTool(mcpServer *server.MCPServer, ws *workspace.Workspace) 
 		if len(res.AlreadyPresent) > 0 {
 			fmt.Fprintf(&sb, "\nAlready in the stack, left alone: %s\n", strings.Join(res.AlreadyPresent, ", "))
 		}
-		fmt.Fprintf(&sb, "\nOverlay is now: %s\n", strings.Join(res.Overlay, ", "))
+		fmt.Fprintf(&sb, "\nMembers are now: %s\n", strings.Join(res.Overlay, ", "))
 		for _, w := range res.Warnings {
 			fmt.Fprintf(&sb, "WARNING: %s\n", w)
 		}
@@ -314,7 +298,7 @@ func registerStackAddTool(mcpServer *server.MCPServer, ws *workspace.Workspace) 
 			return mcp.NewToolResultError(sb.String()), nil
 		}
 
-		fmt.Fprintf(&sb, "\nThe stack was already up, and it still is. devstack stopped and restarted nothing that it ran. The added copies are registered, and they are NOT started. Start each one with the start tool (stack=%q), or leave them stopped.\n", name)
+		fmt.Fprintf(&sb, "\nThe stack was already up, and it still is. devstack stopped and restarted nothing that it ran. devstack registered the added services, and it did NOT start them. Start each one with the start tool (stack=%q), or leave them stopped.\n", name)
 		return mcp.NewToolResultText(sb.String()), nil
 	})
 }
@@ -322,8 +306,8 @@ func registerStackAddTool(mcpServer *server.MCPServer, ws *workspace.Workspace) 
 func registerStackDropTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_remove",
 		mcp.WithDescription("Take services out of a feature stack of THIS workspace, and keep the rest of the stack as it is. Use this tool for 'the stack does not need service C any more'. To delete the whole stack, use stack_rm instead. This tool mirrors 'devstack stack remove'.\n"+
-			"devstack removes the named services from the stack record and the stack manifest, and releases only their ports. The other copies keep their worktrees, their branches and their ports. If the stack is up, the host daemon drops the removed copies.\n"+
-			"It refuses to remove a service that another service of the stack still depends on, and it names that service. Remove both together, or keep it.\n"+
+			"devstack removes the named services from the stack record and the stack manifest, and releases only their ports. The other members keep their worktrees, their branches and their ports. If the stack is up, the host daemon drops the removed services.\n"+
+			"It refuses to remove a service that another member still needs, and it names that member. Remove both together, or keep it.\n"+
 			"devstack keeps the worktrees of the removed services on disk, and the result gives the git command that deletes each one. Never edit stacks.json, ports.json or a stack manifest by hand; use stack_add and stack_remove."),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(requiredStackNameDesc)),
@@ -337,7 +321,7 @@ func registerStackDropTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if ws == nil {
-			return mcp.NewToolResultError("no base workspace resolved for stacks"), nil
+			return mcp.NewToolResultError("devstack resolved no workspace, so it can not manage stacks"), nil
 		}
 		name := strings.TrimSpace(request.GetString("name", ""))
 		if name == "" {
@@ -371,7 +355,7 @@ func registerStackDropTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 		if len(res.ReleasedPorts) > 0 {
 			fmt.Fprintf(&sb, "Released ports: %s\n", strings.Join(res.ReleasedPorts, ", "))
 		}
-		fmt.Fprintf(&sb, "Overlay is now: %s\n", strings.Join(res.Overlay, ", "))
+		fmt.Fprintf(&sb, "Members are now: %s\n", strings.Join(res.Overlay, ", "))
 		sb.WriteString("\ndevstack kept these worktrees on disk:\n")
 		for _, k := range res.Kept {
 			fmt.Fprintf(&sb, "  %-16s %s\n", k.Service, k.Path)
@@ -396,7 +380,7 @@ func registerStackDropTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 		for _, note := range hostdaemon.SyncAndReload(tilt.NewClient("localhost", workspace.HostTiltPort), hostdaemon.ScopeStack(ws.Name, res.Namespace)) {
 			fmt.Fprintf(&sb, "%s\n", note)
 		}
-		fmt.Fprintf(&sb, "\nThe stack is still up. The host daemon dropped %s, and it left the other copies running.\n", strings.Join(res.Removed, ", "))
+		fmt.Fprintf(&sb, "\nThe stack is still up. The host daemon dropped %s, and it left the other members running.\n", strings.Join(res.Removed, ", "))
 		return mcp.NewToolResultText(sb.String()), nil
 	})
 }
@@ -404,18 +388,20 @@ func registerStackDropTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_list",
 		mcp.WithDescription("List the feature stacks of THIS workspace. For each stack it shows:\n"+
-			"  overlays  the services this stack runs its own copy of.\n"+
+			"  members   the services this stack runs.\n"+
 			"  branch    the stack's git branch.\n"+
 			"  env       the config env the stack is pointed at.\n"+
 			"  note      the stack's purpose: what it is for.\n"+
 			"  latest    the newest dated entry of the stack's note log, written by stack_note. It says where the work got to.\n"+
-			"  covers    how much of each group the stack was cut to cover.\n"+
+			"  owner     the agent that created the stack, if an agent did.\n"+
+			"  state     when an up stack stops, or when devstack stopped it.\n"+
+			"  covers    how much of each group devstack cut the stack to cover.\n"+
 			"  links     the stack's allocated service links.\n"+
-			"It also shows each stack's status, and the port of the host daemon its copies run in while it is up.\n"+
+			"It also shows each stack's status, and the port of the host daemon its services run in while it is up.\n"+
 			"A status of up means that devstack folded the stack's resources into the host daemon. A status of down means that the worktrees and the record exist, and that nothing of the stack is registered. So the tools that act on running services error \"not up\" for it.\n"+
-			"A stack that is up can still hold copies that do not run. \"up\" is about the stack, and each copy has its own state: running, starting, building, erroring, stopped, disabled, down, or unknown. Read those states with status.\n"+
-			"Telemetry and daemon resources name a stack by its full identity '<base>--<name>'. This tool prints the short '<name>' half, and every stack parameter across these tools takes that short half.\n"+
-			"A 'covers group ...' line appears for each group the stack was cut to cover. 'covers group core (3/4 — importer serves from base)' means that the stack overlays three of that group's four members. The fourth is base's copy, which everybody shares. A group action against the stack reaches only the members it overlays. "+serviceLinksDesc),
+			"A stack that is up can still hold services that do not run. \"up\" is about the stack, and each service has its own state: running, starting, building, erroring, stopped, disabled, down, or unknown. Read those states with status.\n"+
+			"Telemetry and daemon resources name a stack by its full identity '<workspace>--<name>'. This tool prints the short '<name>' half, and every stack parameter across these tools takes that short half.\n"+
+			"A 'covers group ...' line appears for each group that devstack cut the stack to cover. 'covers group core (3/4). importer is not in this stack' means that the stack runs three of that group's four members. A group action against the stack reaches only the members it runs. "+serviceLinksDesc),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
@@ -424,7 +410,7 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if ws == nil {
-			return mcp.NewToolResultError("no workspace resolved for stacks"), nil
+			return mcp.NewToolResultError("devstack resolved no workspace, so it can not manage stacks"), nil
 		}
 		stacks, err := stack.List(ws.Name)
 		if err != nil {
@@ -440,12 +426,12 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 		var sb strings.Builder
 		for _, s := range stacks {
 			short := strings.TrimPrefix(s.Name, s.BaseName+"--")
-			fmt.Fprintf(&sb, "%s (%s, base :%d)\n", short, s.Status, s.BasePort)
+			fmt.Fprintf(&sb, "%s (%s, host :%d)\n", short, s.Status, s.BasePort)
 			services := "-"
 			if len(s.Services) > 0 {
 				services = strings.Join(s.Services, ", ")
 			}
-			fmt.Fprintf(&sb, "  overlays: %s\n", services)
+			fmt.Fprintf(&sb, "  members:  %s\n", services)
 			fmt.Fprintf(&sb, "  branch:   %s\n", s.Branch)
 			if s.Env != "" {
 				fmt.Fprintf(&sb, "  env:      %s\n", s.Env)
@@ -453,8 +439,8 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 			if s.Owner != "" {
 				fmt.Fprintf(&sb, "  owner:    %s\n", s.Owner)
 			}
-			if !s.Expires.IsZero() {
-				fmt.Fprintf(&sb, "  expires:  %s\n", s.Expires.Local().Format(time.RFC3339))
+			if d := s.Deadline(stack.Now()); d != "" {
+				fmt.Fprintf(&sb, "  state:    %s\n", d)
 			}
 			if s.AdoptedFrom != "" {
 				fmt.Fprintf(&sb, "  adopted:  from %s\n", s.AdoptedFrom)
@@ -476,7 +462,7 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 				fmt.Fprintf(&sb, "  links:    %s\n", strings.Join(links, " "))
 			}
 		}
-		sb.WriteString("\noverlays are the services this stack runs its own copy of. It borrows every other service from base.\n")
+		sb.WriteString("\nThe members are the services this stack runs. It uses the shared services of the workspace. It runs no other service.\n")
 		return mcp.NewToolResultText(sb.String()), nil
 	})
 }
@@ -484,7 +470,7 @@ func registerStackListTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 func registerStackNoteTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_note",
 		mcp.WithDescription("Read, set or add to what a feature stack is for, and where it got to. "+
-			"devstack derives everything else about a stack: which services it overlays, its branch, and its age. It does not derive why the stack exists, or how far the work got. A week later, those two are the parts nobody can reconstruct. "+
+			"devstack derives everything else about a stack: which services it runs, its branch, and its age. It does not derive why the stack exists, or how far the work got. A week later, those two are the parts nobody can reconstruct. "+
 			"'note' is the standing purpose, and it replaces what is there. 'append' adds one dated entry to a log of at most "+strconv.Itoa(stack.NoteLogEntries)+" entries. Pass neither to read both. This tool mirrors 'devstack stack note'."),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
@@ -559,7 +545,7 @@ func registerStackNoteTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_rm",
 		mcp.WithDescription("Tear down a feature stack of THIS workspace. devstack removes its worktrees, releases its ports, deletes its record, and deletes its stack root. "+
-			"There is no daemon of its own to stop. If the stack is up, call stack_down first, so the host daemon drops its copies. "+
+			"If the stack is up, devstack first takes its services out of the host daemon. It does not fire stack.down hooks. "+
 			"It refuses a worktree that has uncommitted changes, until you set force. "+
 			"devstack keeps the branch of the stack, and somebody must decide what happens to it. Before you call this tool, ask the user: merge the branch of this stack, or discard it? NEVER merge it without an answer. After a merge, delete the branch with `git branch -d <branch>`. "+
 			"This workspace can declare lifecycle HOOKS that de-provision external state on stack.destroy. They fire before devstack removes anything, while the ports and the record can still be read. "+
@@ -577,12 +563,13 @@ func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if ws == nil {
-			return mcp.NewToolResultError("no workspace resolved for stacks"), nil
+			return mcp.NewToolResultError("devstack resolved no workspace, so it can not manage stacks"), nil
 		}
 		name := strings.TrimSpace(request.GetString("name", ""))
 		if name == "" {
 			return mcp.NewToolResultError("name must not be empty"), nil
 		}
+		defer herdr.Notify()
 		return removeStack(ws, name, request.GetBool("force", false)), nil
 	})
 }
@@ -592,15 +579,34 @@ func removeStack(ws *workspace.Workspace, name string, force bool) *mcp.CallTool
 		return mcp.NewToolResultError(err.Error())
 	}
 
+	rec, err := stack.Resolve(ws.Name, name)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error())
+	}
+
 	var hookOut strings.Builder
 	hookErr := hooks.Fire(ws, name, config.EventStackDestroy, nil, &hookOut)
+
+	det, err := hostdaemon.DetachStack(ws.Name, rec.Name)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error())
+	}
 
 	res, err := stack.Remove(ws, name, force)
 
 	var sb strings.Builder
 	appendHookOutput(&sb, config.EventStackDestroy, hookOut.String(), hookErr)
+	for _, w := range det.Warnings {
+		fmt.Fprintf(&sb, "WARNING: %s\n", w)
+	}
+	if det.RegenErr != nil {
+		fmt.Fprintf(&sb, "warning: failed to regenerate host Tiltfile: %v\n", det.RegenErr)
+	}
+	if note := hostdaemon.KeptNote(det.Kept); note != "" {
+		fmt.Fprintf(&sb, "%s\n", note)
+	}
 	if res != nil {
-		fmt.Fprintf(&sb, "Removing stack %q (base %s)\n", res.Name, res.BaseName)
+		fmt.Fprintf(&sb, "Removing stack %q (workspace %s)\n", res.Name, res.BaseName)
 		for _, p := range res.RemovedWorktrees {
 			fmt.Fprintf(&sb, "  removed worktree %s\n", p)
 		}
@@ -629,9 +635,11 @@ func removeStack(ws *workspace.Workspace, name string, force bool) *mcp.CallTool
 
 func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_up",
-		mcp.WithDescription("Bring a feature stack up. devstack marks the stack up, marks its base workspace active, and folds its <base>:<service>:<stack> resources into the one host Tilt daemon. It then enables and triggers them, so that the stack's services start. A resource that is only registered does not run.\n"+
+		mcp.WithDescription("Bring a feature stack up. devstack marks the stack up, marks its workspace active, and folds its <workspace>:<service>:<stack> resources into the one host Tilt daemon. It then enables and triggers them, so that the stack's services start. A resource that is only registered does not run.\n"+
+			"devstack also builds the replica if it is absent, and starts the shared set. The stack stops 24 hours from now. To keep it up longer, use stack_extend.\n"+
 			"The tool reports which services it started. They are starting, and not started, so read status before you draw a conclusion. This tool mirrors 'devstack stack up'.\n"+
-			"This is the remedy when another tool reports that the stack is not up. status, process_logs, restart, start, stop and configure all refuse a stack that is down, rather than fall through to base.\n"+
+			"devstack checks each worktree against origin: a repo on the stack's branch against that branch, and a detached repo against the default branch. If a worktree is behind, the result names stack_resync. stack_up does not resync.\n"+
+			"This is the remedy when another tool reports that the stack is not up. status, process_logs, restart, start, stop and configure all refuse a stack that is down.\n"+
 			"There is no daemon per stack. A stack's services run on their own ports inside the host daemon. The tool returns the stack's allocated service links and the daemon status.\n"+
 			"This workspace can declare lifecycle HOOKS: shell commands that devstack runs on its own for this action. They can change state outside this machine. They fire on their own, and their output is in the result. A hook failure is returned as an error, and it means that the action succeeded and the stack is NOT fully provisioned. Do not report success. Retry with the hooks tool (action=\"run\"). If you do not know what this workspace fires, call the hooks tool with action=\"list\" first. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
@@ -644,7 +652,7 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if ws == nil {
-			return mcp.NewToolResultError("no base workspace resolved for stacks"), nil
+			return mcp.NewToolResultError("devstack resolved no workspace, so it can not manage stacks"), nil
 		}
 		name := strings.TrimSpace(request.GetString("name", ""))
 		if name == "" {
@@ -656,10 +664,18 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 		}
 
 		if err := workspace.SetWorkspaceActive(ws.Name, true); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("can not mark the base workspace active: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("can not mark the workspace active: %v", err)), nil
 		}
-		if err := stack.SetActive(ws.Name, rec.Name, true); err != nil {
+		if err := stack.MarkUp(ws.Name, rec.Name); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
+		}
+		bindPane(ctx, ws, rec.Name)
+		defer herdr.Notify()
+		var sharedOut strings.Builder
+		if !config.HasWorkspaceManifest(replica.Root(ws)) {
+			if err := sharedReplicaBuild(ws, &sharedOut); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
 		}
 		_, genWarnings, _, err := hostdaemon.RegenerateScope(hostdaemon.ScopeStack(ws.Name, rec.Name))
 		if err != nil {
@@ -670,8 +686,14 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		for _, w := range genWarnings {
+		for _, w := range append(genWarnings, stack.RecordWarnings(rec)...) {
 			daemonMsg += "\nWARNING: " + w
+		}
+		if err := hostdaemon.StartShared(&sharedOut, ws); err != nil {
+			daemonMsg += "\nWARNING: " + err.Error()
+		}
+		if out := strings.TrimSpace(sharedOut.String()); out != "" {
+			daemonMsg += "\n" + out
 		}
 
 		tiltClient := tilt.NewClient("localhost", workspace.HostTiltPort)
@@ -698,6 +720,13 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 		for _, k := range sortedPortKeys(rec.Ports) {
 			fmt.Fprintf(&sb, "  %-24s http://localhost:%d\n", k, rec.Ports[k])
 		}
+		behind, notes := stack.BehindWarnings(rec, "Run `stack_resync`.")
+		for _, w := range behind {
+			fmt.Fprintf(&sb, "WARNING: %s\n", w)
+		}
+		for _, n := range notes {
+			fmt.Fprintf(&sb, "note: %s\n", n)
+		}
 		appendHookOutput(&sb, config.EventStackUp, hookOut.String(), hookErr)
 		if hookErr != nil {
 			return mcp.NewToolResultError(sb.String()), nil
@@ -709,8 +738,8 @@ func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 
 func registerStackDownTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_down",
-		mcp.WithDescription("Stop a feature stack's services in the host daemon. devstack marks the stack down, so nothing of it runs any more. It then regenerates the host Tiltfile, so that the running daemon drops the stack's <base>:<service>:<stack> resources. This tool mirrors 'devstack stack down'. "+
-			"It leaves the stack's worktrees and its record intact. To remove those, use stack_rm. "+
+		mcp.WithDescription("Stop a feature stack's services in the host daemon. devstack marks the stack down, so nothing of it runs any more. It then regenerates the host Tiltfile, so that the running daemon drops the stack's <workspace>:<service>:<stack> resources. This tool mirrors 'devstack stack down'. "+
+			"It leaves the stack's worktrees and its record intact. To remove those, use stack_rm. It does not stop the shared set. "+
 			"This workspace can declare lifecycle HOOKS on stack.down. They fire on their own. A failure does not block the stack from coming down, so it means that the external cleanup probably did not happen. Retry with the hooks tool (action=\"run\", event=\"stack.down\")."),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(requiredStackNameDesc)),
@@ -722,31 +751,45 @@ func registerStackDownTool(mcpServer *server.MCPServer, ws *workspace.Workspace)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if ws == nil {
-			return mcp.NewToolResultError("no base workspace resolved for stacks"), nil
+			return mcp.NewToolResultError("devstack resolved no workspace, so it can not manage stacks"), nil
 		}
 		name := strings.TrimSpace(request.GetString("name", ""))
 		if name == "" {
 			return mcp.NewToolResultError("name must not be empty"), nil
 		}
-		return stackDown(ws, name), nil
+		defer herdr.Notify()
+		res, _ := stackDown(ws, name, stack.StoppedByUser, time.Time{})
+		return res, nil
 	})
 }
 
-func stackDown(ws *workspace.Workspace, name string) *mcp.CallToolResult {
+func stackDown(ws *workspace.Workspace, name, by string, dueBy time.Time) (*mcp.CallToolResult, bool) {
 	rec, err := stack.Resolve(ws.Name, name)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error())
+		return mcp.NewToolResultError(err.Error()), true
+	}
+	if !dueBy.IsZero() && !rec.DueAt(dueBy) {
+		return nil, false
 	}
 
 	var hookOut strings.Builder
 	hookErr := hooks.Fire(ws, rec.Name, config.EventStackDown, nil, &hookOut)
 
-	if err := stack.SetActive(ws.Name, rec.Name, false); err != nil {
-		return mcp.NewToolResultError(err.Error())
+	if dueBy.IsZero() {
+		err = stack.MarkDown(ws.Name, rec.Name, by)
+	} else {
+		var due bool
+		due, err = stack.MarkDownIfDue(ws.Name, rec.Name, by, dueBy)
+		if err == nil && !due {
+			return nil, false
+		}
+	}
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), true
 	}
 	_, genWarnings, kept, err := hostdaemon.RegenerateScope(hostdaemon.ScopeStack(ws.Name, rec.Name))
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("can not generate the host Tiltfile again: %v", err))
+		return mcp.NewToolResultError(fmt.Sprintf("can not generate the host Tiltfile again: %v", err)), true
 	}
 
 	var sb strings.Builder
@@ -759,9 +802,9 @@ func stackDown(ws *workspace.Workspace, name string) *mcp.CallToolResult {
 	appendHookOutput(&sb, config.EventStackDown, hookOut.String(), hookErr)
 	return mcp.NewToolResultText(sb.String() + fmt.Sprintf(
 		"Stack %q is now down. The host daemon will drop its resources. devstack keeps the worktrees and the record (remove them with stack_rm %s).\n"+
-			"While it is down, status, process_logs, restart, stop and configure against it error \"not up\" instead of falling through to base. "+
+			"While it is down, status, process_logs, restart, stop and configure against it error \"not up\". "+
 			"service_env still reads and writes its worktree config. investigate returns only what the stack emitted while it was up.",
-		rec.Name, rec.Name))
+		rec.Name, rec.Name)), true
 }
 
 func sortedPortKeys(m map[string]int) []string {

@@ -46,7 +46,7 @@ groups:
 
 // A stack half-covering a group resolves to that half and says nothing, so
 // "start core" reads as three services started when it started one.
-func TestGroupActionInAStackNamesWhatStaysOnBase(t *testing.T) {
+func TestGroupActionInAStackNamesWhatIsNotInIt(t *testing.T) {
 	ws := baseWithCore(t)
 	stackCfg := &config.WorkspaceConfig{Groups: map[string][]string{"core": {"api"}}}
 
@@ -62,7 +62,7 @@ func TestGroupActionInAStackNamesWhatStaysOnBase(t *testing.T) {
 
 	// The wording is Coverage.Sentence, the one formatter every shortfall
 	// notice shares. A second hand-rolled sentence here drifted from it.
-	for _, want := range []string{"(1/3)", "feat", "frontend", "orbit", "base"} {
+	for _, want := range []string{"(1/3)", "feat", "frontend", "orbit", "not in this stack"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("shortfall notice must mention %q, got: %s", want, out)
 		}
@@ -95,7 +95,7 @@ func TestGroupMissingEntirelyFromAStackExplainsWhy(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for a group with no services in the stack")
 	}
-	for _, want := range []string{"core", "feat", "runs entirely on base", "--stack base"} {
+	for _, want := range []string{"core", "feat", "has no services in stack", "devstack stack add feat core"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error must mention %q, got: %v", want, err)
 		}
@@ -112,7 +112,7 @@ func TestUnknownGroupStaysUnknown(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for a group nothing declares")
 	}
-	if strings.Contains(err.Error(), "runs entirely on base") {
+	if strings.Contains(err.Error(), "has no services in stack") {
 		t.Errorf("a group base does not declare must not be reported as a shortfall: %v", err)
 	}
 }

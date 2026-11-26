@@ -5,29 +5,9 @@ import (
 	"sort"
 )
 
-func OverlaySet(g *TopologyGraph, changed []string) ([]string, error) {
-	set := map[string]bool{}
-	for _, name := range changed {
-		if _, ok := g.Services[name]; !ok {
-			return nil, fmt.Errorf("the topology does not know the changed service %q", name)
-		}
-		set[name] = true
-		for _, caller := range g.TransitiveCallers(name) {
-			set[caller] = true
-		}
-	}
-
-	overlay := make([]string, 0, len(set))
-	for name := range set {
-		overlay = append(overlay, name)
-	}
-	sort.Strings(overlay)
-	return overlay, nil
-}
-
 func GenerateStackManifest(base *ResolvedWorkspace, stackName string, overlay []string, pathFor func(string) string) (*WorkspaceManifest, error) {
 	if base == nil || base.Manifest == nil {
-		return nil, fmt.Errorf("devstack can not resolve the base workspace")
+		return nil, fmt.Errorf("devstack can not resolve the workspace")
 	}
 
 	inOverlay := map[string]bool{}
@@ -45,7 +25,7 @@ func GenerateStackManifest(base *ResolvedWorkspace, stackName string, overlay []
 	for _, name := range members {
 		path := pathFor(name)
 		if path == "" {
-			return nil, fmt.Errorf("the overlay service %q has no worktree path", name)
+			return nil, fmt.Errorf("the stack member %q has no worktree path", name)
 		}
 		repos = append(repos, path)
 	}
@@ -63,15 +43,16 @@ func GenerateStackManifest(base *ResolvedWorkspace, stackName string, overlay []
 			Orchestrator: base.Manifest.Runtime.Orchestrator,
 		},
 		Env:          cloneWorkspaceEnv(base.Manifest.Env),
-		Groups:       filterEdges(base.Manifest.Groups, inOverlay, false),
-		Dependencies: filterEdges(base.Manifest.Dependencies, inOverlay, true),
-		Calls:        filterEdges(base.Manifest.Calls, inOverlay, true),
-		StartsAfter:  filterEdges(base.Manifest.StartsAfter, inOverlay, true),
+		Groups:       filterEdges(base.Manifest.Groups, inOverlay, nil, false),
+		Dependencies: filterEdges(base.Manifest.Dependencies, inOverlay, base.SharedSet(), true),
+		Calls:        filterEdges(base.Manifest.Calls, inOverlay, base.SharedSet(), true),
+		StartsAfter:  filterEdges(base.Manifest.StartsAfter, inOverlay, base.SharedSet(), true),
+		Partial:      true,
 	}
 	return manifest, nil
 }
 
-func filterEdges(in map[string][]string, inOverlay map[string]bool, keyIsService bool) map[string][]string {
+func filterEdges(in map[string][]string, inOverlay, shared map[string]bool, keyIsService bool) map[string][]string {
 	if len(in) == 0 {
 		return nil
 	}
@@ -82,7 +63,7 @@ func filterEdges(in map[string][]string, inOverlay map[string]bool, keyIsService
 		}
 		kept := make([]string, 0, len(values))
 		for _, v := range values {
-			if inOverlay[v] {
+			if inOverlay[v] || shared[v] {
 				kept = append(kept, v)
 			}
 		}

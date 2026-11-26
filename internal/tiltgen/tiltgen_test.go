@@ -37,8 +37,6 @@ env:
 groups:
   backend: [api]
   web: [frontend]
-dependencies:
-  frontend: [api]
 `)
 	write(t, filepath.Join(apiDir, config.ServiceManifestFileName), `version: 1
 service:
@@ -63,6 +61,7 @@ runtime:
   autoStart: true
   healthcheck: { type: http, port: 4200, path: /health }
 ports: { http: 4200 }
+needs: [api]
 `)
 
 	rw, err := config.ResolveWorkspace(dir)
@@ -84,6 +83,7 @@ ports: { http: 4200 }
 		// serve_cmd is the run command alone: all env now flows through serve_env
 		`serve_cmd="dotnet run"`,
 		filepath.Join(apiDir, "src/App"), // serve_dir with workDir
+		"\n    dir=\"" + filepath.Join(apiDir, "src/App") + "\",\n",
 		// merged env: managed + workspace + service, sorted
 		`"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317"`,
 		`"OTEL_EXPORTER_OTLP_PROTOCOL": "grpc"`,
@@ -319,10 +319,10 @@ runtime:
 	if !ok {
 		t.Fatalf("expected a block per service; got:\n%s", out)
 	}
-	if !strings.Contains(aBlock, `"PEER_URL": "http://localhost:1111"`) || strings.Contains(aBlock, "2222") {
+	if !strings.Contains(aBlock, `"PEER_URL": "http://localhost:1111"`) || strings.Contains(aBlock, "localhost:2222") {
 		t.Errorf("service a should get only its own PEER_URL; got:\n%s", aBlock)
 	}
-	if !strings.Contains(bBlock, `"PEER_URL": "http://localhost:2222"`) || strings.Contains(bBlock, "1111") {
+	if !strings.Contains(bBlock, `"PEER_URL": "http://localhost:2222"`) || strings.Contains(bBlock, "localhost:1111") {
 		t.Errorf("service b should get only its own PEER_URL; got:\n%s", bBlock)
 	}
 }
@@ -438,16 +438,20 @@ runtime:
 	}
 }
 
-func resourceDepsFor(t *testing.T, edges string) string {
+func resourceDepsFor(t *testing.T, edges, apiEdges string) string {
 	t.Helper()
 	dir := t.TempDir()
 	for _, name := range []string{"api", "worker", "db"} {
+		extra := ""
+		if name == "api" {
+			extra = apiEdges
+		}
 		write(t, filepath.Join(dir, "repos", name, config.ServiceManifestFileName), `version: 1
 service:
   name: `+name+`
 runtime:
   run: { command: ./bin/`+name+` }
-`)
+`+extra)
 	}
 	write(t, filepath.Join(dir, config.WorkspaceManifestFileName), `version: 1
 workspace:
@@ -468,39 +472,38 @@ workspace:
 	return out
 }
 
-// TestResourceDepsLegacyDependencies pins the regression: a manifest that only
-// uses the legacy dependencies: field emits exactly the resource_deps it did
-// before calls/startsAfter existed.
-func TestResourceDepsLegacyDependencies(t *testing.T) {
-	out := resourceDepsFor(t, `dependencies:
-  api: [worker]
-`)
-	if !strings.Contains(out, `resource_deps=["worker"]`) {
-		t.Errorf("legacy dependencies must still drive resource_deps; got:\n%s", out)
-	}
-}
-
-// TestResourceDepsCallsOnly proves a calls: edge alone produces resource_deps —
-// a called service must be up before its caller, so calls fold into ordering.
-func TestResourceDepsCallsOnly(t *testing.T) {
-	out := resourceDepsFor(t, `calls:
-  api: [worker]
-`)
-	if !strings.Contains(out, `resource_deps=["worker"]`) {
-		t.Errorf("calls must drive resource_deps; got:\n%s", out)
-	}
-}
-
-// TestResourceDepsUnionDeduped pins that startsAfter and calls on one service
-// merge into a single deduped, sorted resource_deps list.
-func TestResourceDepsUnionDeduped(t *testing.T) {
-	out := resourceDepsFor(t, `startsAfter:
-  api: [worker, db]
-calls:
-  api: [worker]
+func TestResourceDepsComeFromNeeds(t *testing.T) {
+	out := resourceDepsFor(t, "", `needs:
+  - worker
+  - service: db
+    via: sql
 `)
 	if !strings.Contains(out, `resource_deps=["db", "worker"]`) {
-		t.Errorf("resource_deps should be the deduped union of startsAfter and calls; got:\n%s", out)
+		t.Errorf("needs must drive resource_deps; got:\n%s", out)
+	}
+}
+
+func TestResourceDepsIgnoreCalls(t *testing.T) {
+	out := resourceDepsFor(t, "", `calls:
+  - worker
+  - service: db
+    via: sql
+`)
+	if strings.Contains(out, "resource_deps") {
+		t.Errorf("a calls edge must add no resource_deps; got:\n%s", out)
+	}
+}
+
+func TestResourceDepsIgnoreLegacyMaps(t *testing.T) {
+	out := resourceDepsFor(t, `dependencies:
+  api: [worker]
+startsAfter:
+  api: [db]
+calls:
+  api: [worker]
+`, "")
+	if strings.Contains(out, "resource_deps") {
+		t.Errorf("the legacy maps load as calls and must add no resource_deps; got:\n%s", out)
 	}
 }
 
@@ -955,8 +958,6 @@ workspace:
 groups:
   web: [frontend]
   api: [backend]
-dependencies:
-  frontend: [backend]
 `)
 	write(t, filepath.Join(dir, "repos", "backend", config.ServiceManifestFileName), `version: 1
 service:
@@ -971,6 +972,7 @@ service:
 runtime:
   run: { command: ./bin/frontend }
 ports: { http: `+itoa(fePort)+` }
+needs: [backend]
 `)
 	rw, err := config.ResolveWorkspace(dir)
 	if err != nil {

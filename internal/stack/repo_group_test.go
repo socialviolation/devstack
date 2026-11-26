@@ -122,32 +122,16 @@ func TestCreateCutsOneWorktreeForARepositoryWithTwoServices(t *testing.T) {
 		t.Errorf("manifest RepoPath = %q, want %q", got, wt.Path)
 	}
 
-	// The sibling's code is in the worktree, because a repository has one
-	// checkout. The stack still does not run it, and the output must say so.
 	if _, err := os.Stat(filepath.Join(wt.RepoPath, "agent-psql", "devstack.service.yaml")); err != nil {
 		t.Errorf("the sibling service's code is missing from the worktree: %v", err)
-	}
-	var shared string
-	for _, w := range res.Warnings {
-		if strings.Contains(w, "agent-psql") {
-			shared = w
-		}
-	}
-	if shared == "" {
-		t.Fatalf("no warning that agent-psql shares the repository and stays on base: %v", res.Warnings)
-	}
-	for _, want := range []string{"mono", "Base runs them", "devstack stack add feat agent-psql"} {
-		if !strings.Contains(shared, want) {
-			t.Errorf("warning must contain %q, got: %s", want, shared)
-		}
 	}
 
 	rec, err := FindStack(base.Name, "feat")
 	if err != nil {
 		t.Fatalf("FindStack: %v", err)
 	}
-	if !reflect.DeepEqual(rec.Overlay, []string{"agent-rag"}) {
-		t.Errorf("record overlay = %v, want only the service that was named", rec.Overlay)
+	if !reflect.DeepEqual(rec.Members, []string{"agent-rag"}) {
+		t.Errorf("record overlay = %v, want only the service that was named", rec.Members)
 	}
 
 	// One worktree, so one removal. Removing it once for each service failed on
@@ -258,7 +242,7 @@ func TestAStackRecordedAtTheOldRootStillResolvesAndRemoves(t *testing.T) {
 	base := newBase(t)
 	noDaemon(t)
 
-	created, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"backend"}})
+	created, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"frontend"}})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -274,7 +258,7 @@ func TestAStackRecordedAtTheOldRootStillResolvesAndRemoves(t *testing.T) {
 		t.Fatal(err)
 	}
 	moved := map[string]string{}
-	for _, s := range rec.Overlay {
+	for _, s := range rec.Members {
 		from := rec.Worktrees[s]
 		to := filepath.Join(oldRoot, filepath.Base(from))
 		git(t, filepath.Join(base.Path, s), "worktree", "move", from, to)
@@ -370,7 +354,7 @@ func TestCreateUnwindsItsWorktreesWhenItFailsPartWay(t *testing.T) {
 
 	// startpoint exists in aaa and not in zzz, so aaa's worktree is built and
 	// zzz then fails.
-	_, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"aaa"}, From: "refs/heads/startpoint"})
+	_, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"aaa", "zzz"}, From: "refs/heads/startpoint"})
 	if err == nil {
 		t.Fatal("Create with a ref that one repository does not have = nil, want an error")
 	}
@@ -387,7 +371,7 @@ func TestCreateUnwindsItsWorktreesWhenItFailsPartWay(t *testing.T) {
 	}
 
 	// The retry must not die on "already exists".
-	res, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"aaa"}})
+	res, err := Create(CreateInput{Base: base, Name: "feat", Repos: []string{"aaa", "zzz"}})
 	if err != nil {
 		t.Fatalf("the retry after a failed create: %v", err)
 	}
@@ -405,7 +389,7 @@ func TestCreateUnwindsItsWorktreesWhenItFailsPartWay(t *testing.T) {
 // the retry is clean. The worktrees the stack already had are untouched.
 func TestAddUnwindsItsWorktreesWhenItFailsPartWay(t *testing.T) {
 	base := newAddBase(t)
-	created := newStack(t, base, "api")
+	created := newStack(t, base, "web")
 
 	// startpoint exists in billing and not in worker.
 	git(t, filepath.Join(base.Path, "billing"), "branch", "startpoint")
@@ -425,8 +409,8 @@ func TestAddUnwindsItsWorktreesWhenItFailsPartWay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindStack: %v", err)
 	}
-	if !reflect.DeepEqual(rec.Overlay, []string{"api", "web"}) {
-		t.Errorf("record overlay = %v, want the stack as it was", rec.Overlay)
+	if !reflect.DeepEqual(rec.Members, []string{"api", "web"}) {
+		t.Errorf("record overlay = %v, want the stack as it was", rec.Members)
 	}
 	if got := gitOut(t, worktreesByService(created)["api"].Path, "rev-parse", "HEAD"); got != apiHead {
 		t.Errorf("the failed add moved the api worktree to %s, want %s", got, apiHead)
@@ -446,31 +430,28 @@ func TestAddUnwindsItsWorktreesWhenItFailsPartWay(t *testing.T) {
 	}
 }
 
-// A caller is pulled into a stack on a detached HEAD, so nobody can commit in
-// it. Naming it in stack add used to answer "nothing to add", which left stack
-// rm plus stack create as the only route, and that destroys the stack's work.
-func TestAddPromotesADetachedCallerOntoTheStackBranch(t *testing.T) {
+func TestAddPromotesADetachedMemberOntoTheStackBranch(t *testing.T) {
 	base := newAddBase(t)
-	created := newStack(t, base, "api")
+	created := newStack(t, base, "web")
 
-	web := worktreesByService(created)["web"].Path
+	web := worktreesByService(created)["api"].Path
 	if got := gitOut(t, web, "rev-parse", "--abbrev-ref", "HEAD"); got != "HEAD" {
-		t.Fatalf("web worktree branch = %q, want a detached HEAD to promote", got)
+		t.Fatalf("api worktree branch = %q, want a detached HEAD to promote", got)
 	}
 	head := gitOut(t, web, "rev-parse", "HEAD")
 
-	res, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"web"}})
+	res, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"api"}})
 	if err != nil {
 		t.Fatalf("Add of a detached caller: %v", err)
 	}
-	if !reflect.DeepEqual(res.Promoted, []string{"web"}) {
-		t.Errorf("Promoted = %v, want [web]", res.Promoted)
+	if !reflect.DeepEqual(res.Promoted, []string{"api"}) {
+		t.Errorf("Promoted = %v, want [api]", res.Promoted)
 	}
 	if len(res.Added) != 0 {
 		t.Errorf("Added = %+v, want none: a promotion is not an addition", res.Added)
 	}
 	if got := gitOut(t, web, "rev-parse", "--abbrev-ref", "HEAD"); got != "feat" {
-		t.Fatalf("web worktree branch = %q, want the stack's branch feat", got)
+		t.Fatalf("api worktree branch = %q, want the stack's branch feat", got)
 	}
 	if got := gitOut(t, web, "rev-parse", "HEAD"); got != head {
 		t.Errorf("promotion moved the worktree to %s, want the commit it had, %s", got, head)
@@ -480,12 +461,12 @@ func TestAddPromotesADetachedCallerOntoTheStackBranch(t *testing.T) {
 	writeFile(t, filepath.Join(web, "work.txt"), "committed in the stack\n")
 	git(t, web, "add", "-f", ".")
 	git(t, web, "commit", "-q", "-m", "work")
-	if got := gitOut(t, filepath.Join(base.Path, "web"), "rev-parse", "refs/heads/feat"); got == head {
+	if got := gitOut(t, filepath.Join(base.Path, "api"), "rev-parse", "refs/heads/feat"); got == head {
 		t.Errorf("the commit did not advance branch feat in the source repository")
 	}
 
 	// A second call has nothing left to do.
-	if _, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"web"}}); err == nil {
+	if _, err := Add(AddInput{Base: base, Name: "feat", Members: []string{"api"}}); err == nil {
 		t.Error("Add of a service already on the branch = nil, want the nothing-to-add error")
 	}
 
@@ -493,8 +474,8 @@ func TestAddPromotesADetachedCallerOntoTheStackBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindStack: %v", err)
 	}
-	if !reflect.DeepEqual(rec.Overlay, []string{"api", "web"}) {
-		t.Errorf("record overlay = %v, want the stack unchanged", rec.Overlay)
+	if !reflect.DeepEqual(rec.Members, []string{"api", "web"}) {
+		t.Errorf("record overlay = %v, want the stack unchanged", rec.Members)
 	}
 }
 

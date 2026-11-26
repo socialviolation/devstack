@@ -71,10 +71,7 @@ func TestResyncFastForwardsAndRestartsDependents(t *testing.T) {
 	if got := gitOut(t, apiWT, "rev-parse", "HEAD"); got != tip {
 		t.Errorf("api worktree at %s, want %s", got, tip)
 	}
-	if web := repoNamed(t, res, "web"); web.Status != ResyncUnchanged || !strings.Contains(web.Reason, "detached caller") {
-		t.Errorf("web = %+v, want unchanged as a detached caller", web)
-	}
-	want := []string{"api", "web"}
+	want := []string{"api"}
 	if !reflect.DeepEqual(res.Restart, want) || !reflect.DeepEqual(f.calls, [][]string{want}) || !reflect.DeepEqual(res.Restarted, want) {
 		t.Errorf("Restart = %v, calls = %v, Restarted = %v, want %v", res.Restart, f.calls, res.Restarted, want)
 	}

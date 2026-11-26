@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/mcp/auth"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
@@ -22,6 +22,8 @@ const (
 	allow
 	ownStack
 	ownStackIfGiven
+	ownStackOrSharedRead
+	ownStackNotShared
 )
 
 const agentStackPrefix = "agent-"
@@ -57,12 +59,12 @@ var agentPolicies = map[string]toolPolicy{
 	"urls":          {Default: allow},
 	"topology":      {Default: allow},
 	"wiring":        {StackArg: "stack", Default: ownStack},
-	"process_logs":  {StackArg: "stack", Default: ownStack},
+	"process_logs":  {StackArg: "stack", Default: ownStackOrSharedRead},
 	"investigate":   {Default: deny},
 	"stack_list":    {Default: allow},
-	"start":         {StackArg: "stack", Default: ownStack},
-	"restart":       {StackArg: "stack", Default: ownStack},
-	"stop":          {StackArg: "stack", Default: ownStack},
+	"start":         {StackArg: "stack", Default: ownStackNotShared},
+	"restart":       {StackArg: "stack", Default: ownStackNotShared},
+	"stop":          {StackArg: "stack", Default: ownStackNotShared},
 	"stack_config":  {StackArg: "stack", Default: ownStack},
 	"env_which":     {StackArg: "stack", Default: ownStack},
 	"stack_create":  {StackArg: "name", Default: ownStack},
@@ -83,7 +85,7 @@ var agentPolicies = map[string]toolPolicy{
 	"env_set":       {Default: deny},
 	"env_use":       {Default: deny},
 	"migrate":       {Default: deny},
-	"base":          {Actions: map[string]rule{"path": allow}, Default: deny},
+	"shared":        {Actions: map[string]rule{"path": allow}, Default: deny},
 	"observability": {Actions: map[string]rule{"status": allow, "variants": allow}, Default: deny},
 	"hooks":         {StackArg: "stack", Actions: map[string]rule{"": allow, "list": allow, "run": ownStack}, Default: deny},
 	"service_env": {StackArg: "stack", Actions: map[string]rule{
@@ -93,30 +95,13 @@ var agentPolicies = map[string]toolPolicy{
 
 var mutating sync.Mutex
 
-type AgentLimits struct {
-	MaxStacks int
-	TTL       time.Duration
-}
-
-var DefaultAgentLimits = AgentLimits{MaxStacks: 2, TTL: 24 * time.Hour}
-
-type limitsKey struct{}
-
-func agentLimitsFrom(ctx context.Context) AgentLimits {
-	if l, ok := ctx.Value(limitsKey{}).(AgentLimits); ok {
-		return l
-	}
-	return DefaultAgentLimits
-}
-
 type guard struct {
 	ws     *workspace.Workspace
-	limits AgentLimits
 	server *server.MCPServer
 }
 
-func GuardOptions(ws *workspace.Workspace, limits AgentLimits) []server.ServerOption {
-	g := &guard{ws: ws, limits: limits}
+func GuardOptions(ws *workspace.Workspace) []server.ServerOption {
+	g := &guard{ws: ws}
 	return []server.ServerOption{
 		func(s *server.MCPServer) { g.server = s },
 		server.WithToolHandlerMiddleware(g.middleware),
@@ -135,7 +120,7 @@ func (g *guard) middleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 				return mcp.NewToolResultError(reason), nil
 			}
 		}
-		return next(context.WithValue(ctx, limitsKey{}, g.limits), req)
+		return next(ctx, req)
 	}
 }
 
@@ -185,7 +170,7 @@ func (g *guard) check(caller auth.Caller, req mcp.CallToolRequest) string {
 	name := req.Params.Name
 	p, ok := agentPolicies[name]
 	if !ok {
-		return fmt.Sprintf("agents may not call %s", name)
+		return fmt.Sprintf("agents can not call %s", name)
 	}
 	action := strings.ToLower(strings.TrimSpace(req.GetString("action", "")))
 	switch p.ruleFor(action) {
@@ -198,11 +183,31 @@ func (g *guard) check(caller auth.Caller, req mcp.CallToolRequest) string {
 			return g.checkOwnStack(caller, name, p.StackArg, given)
 		}
 		return ""
+	case ownStackOrSharedRead:
+		given := strings.TrimSpace(req.GetString(p.StackArg, ""))
+		if given == "" && g.isShared(strings.TrimSpace(req.GetString("service", ""))) {
+			return ""
+		}
+		return g.checkOwnStack(caller, name, p.StackArg, given)
+	case ownStackNotShared:
+		given := strings.TrimSpace(req.GetString(p.StackArg, ""))
+		if svc := strings.TrimSpace(req.GetString("service", "")); given == "" && g.isShared(svc) {
+			return fmt.Sprintf("agents can not call %s on shared service %q, because every stack uses it. Ask the owner", name, svc)
+		}
+		return g.checkOwnStack(caller, name, p.StackArg, given)
 	}
 	if action != "" {
-		return fmt.Sprintf("agents may not call %s with action=%q", name, action)
+		return fmt.Sprintf("agents can not call %s with action=%q", name, action)
 	}
-	return fmt.Sprintf("agents may not call %s", name)
+	return fmt.Sprintf("agents can not call %s", name)
+}
+
+func (g *guard) isShared(svc string) bool {
+	if svc == "" || g.ws == nil {
+		return false
+	}
+	m, err := config.LoadWorkspaceManifest(g.ws.Path)
+	return err == nil && m.IsShared(svc)
 }
 
 func (g *guard) checkOwnStack(caller auth.Caller, tool, arg, name string) string {

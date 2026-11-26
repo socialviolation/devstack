@@ -10,38 +10,21 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/socialviolation/devstack/internal/herdr"
 	"github.com/socialviolation/devstack/internal/stack"
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
-func agentQuota(workspaceName string, max int) error {
-	recs, err := stack.LoadStore(workspaceName)
-	if err != nil {
-		return err
-	}
-	var held []string
-	for _, r := range recs {
-		if r.Owner == "" {
-			continue
-		}
-		held = append(held, fmt.Sprintf("%s (owner %s, expires %s)", r.Name, r.Owner, r.ExpiresAt.Local().Format(time.RFC3339)))
-	}
-	if len(held) < max {
-		return nil
-	}
-	return fmt.Errorf("agents hold %d of %d agent stacks, so devstack creates no more. Remove one with stack_rm first. Agent stacks: %s",
-		len(held), max, strings.Join(held, "; "))
-}
-
 func registerStackExtendTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_extend",
-		mcp.WithDescription(fmt.Sprintf("Push back the expiry of a feature stack that an agent created. An expired stack is removed, the same way stack_rm removes it. "+
-			"The new expiry is the later of the current expiry and now, plus the hours you give. No stack lives past %d hours from its creation, so devstack caps the expiry there. "+
-			"A stack that the owner created has no expiry, and this tool refuses it.", int(stack.MaxLifetime.Hours()))),
+		mcp.WithDescription(fmt.Sprintf("Push back the stop time of a feature stack. When the stop time passes, devstack stops the stack, the same way stack_down stops it. devstack never removes it. "+
+			"The new stop time is the later of the current stop time and now, plus the hours you give. You can add %d hours at most in one call. "+
+			"stack_up also sets a new stop time: %s after the up. "+
+			"This tool mirrors 'devstack stack extend'.", int(stack.MaxExtend.Hours()), WindowText(stack.StopAfter))),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(requiredStackNameDesc)),
 		mcp.WithNumber("hours", mcp.Required(),
-			mcp.Description("How many hours to add. It must be more than 0.")),
+			mcp.Description(fmt.Sprintf("How many hours to add. It must be more than 0 and %d or less.", int(stack.MaxExtend.Hours())))),
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),
@@ -50,61 +33,96 @@ func registerStackExtendTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		if ws == nil {
-			return mcp.NewToolResultError("no workspace resolved for stacks"), nil
+			return mcp.NewToolResultError("devstack resolved no workspace, so it can not manage stacks"), nil
 		}
 		name := strings.TrimSpace(request.GetString("name", ""))
 		if name == "" {
 			return mcp.NewToolResultError("name must not be empty"), nil
 		}
-		hours := request.GetFloat("hours", 0)
-		if hours <= 0 {
-			return mcp.NewToolResultError("hours must be more than 0"), nil
-		}
-		expires, err := stack.Extend(ws.Name, name, time.Duration(hours*float64(time.Hour)), time.Now())
+		out, err := ExtendStack(ctx, ws, name, request.GetFloat("hours", 0))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf("Stack %q now expires at %s.", name, expires.Local().Format(time.RFC3339))), nil
+		return mcp.NewToolResultText(out), nil
 	})
 }
 
-func CollectExpired(ws *workspace.Workspace, now time.Time, dryRun bool, w io.Writer) error {
+func ExtendStack(ctx context.Context, ws *workspace.Workspace, name string, hours float64) (string, error) {
+	if hours <= 0 {
+		return "", fmt.Errorf("hours must be more than 0")
+	}
+	stopAt, err := stack.Extend(ws.Name, name, time.Duration(hours*float64(time.Hour)), stack.Now())
+	if err != nil {
+		return "", err
+	}
+	bindPane(ctx, ws, name)
+	herdr.Notify()
+	return fmt.Sprintf("Stack %q now stops at %s.", name, stopAt.Local().Format(time.RFC3339)), nil
+}
+
+func Sweep(dryRun bool, w io.Writer) (int, error) {
 	mutating.Lock()
 	defer mutating.Unlock()
 
-	expired, err := stack.Expired(ws.Name, now)
+	all, err := workspace.All()
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if len(expired) == 0 {
-		fmt.Fprintf(w, "No expired stacks in workspace %q.\n", ws.Name)
-		return nil
-	}
+	now := stack.Now()
 	var failed []string
-	for _, rec := range expired {
-		if dryRun {
-			fmt.Fprintf(w, "would remove %s (owner %s, expired %s)\n", rec.Name, rec.Owner, rec.ExpiresAt.Local().Format(time.RFC3339))
+	found := 0
+	for i := range all {
+		ws := &all[i]
+		due, err := stack.Due(ws.Name, now)
+		if err != nil {
+			failed = append(failed, fmt.Sprintf("%s (%v)", ws.Name, err))
 			continue
 		}
-		fmt.Fprintf(w, "removing %s (owner %s, expired %s)\n", rec.Name, rec.Owner, rec.ExpiresAt.Local().Format(time.RFC3339))
-		if rec.Active {
-			res := stackDown(ws, rec.Name)
-			fmt.Fprintln(w, toolResultText(res))
-			if res.IsError {
-				failed = append(failed, rec.Name)
+		for _, rec := range due {
+			found++
+			stopAt := rec.StopAt.Local().Format(time.RFC3339)
+			if dryRun {
+				fmt.Fprintf(w, "would stop %s (stop time %s)\n", rec.FullName(), stopAt)
 				continue
 			}
+			fmt.Fprintf(w, "stopping %s (stop time %s)\n", rec.FullName(), stopAt)
+			res, stopped := stackDown(ws, rec.Name, stack.StoppedBySweep, now)
+			if !stopped {
+				found--
+				fmt.Fprintf(w, "devstack does not stop %s. It is down now, or its stop time moved.\n", rec.FullName())
+				continue
+			}
+			fmt.Fprintln(w, toolResultText(res))
+			if res.IsError {
+				failed = append(failed, rec.FullName())
+				continue
+			}
+			if _, _, err := stack.AppendNote(ws.Name, rec.Name, "stopped by devstack: "+WindowText(stack.StopAfter)+" since up"); err != nil {
+				fmt.Fprintf(w, "devstack can not add the log entry to %s: %v\n", rec.FullName(), err)
+			}
 		}
-		res := removeStack(ws, rec.Name, rec.Owner != "")
-		fmt.Fprintln(w, toolResultText(res))
-		if res.IsError {
-			failed = append(failed, rec.Name)
-		}
+	}
+	if found == 0 && len(failed) == 0 {
+		fmt.Fprintln(w, "No stack that is up is past its stop time.")
+	}
+	if found > 0 && !dryRun {
+		herdr.Notify()
 	}
 	if len(failed) > 0 {
-		return fmt.Errorf("devstack did not remove these expired stacks: %s", strings.Join(failed, ", "))
+		return found, fmt.Errorf("devstack did not stop these stacks: %s", strings.Join(failed, ", "))
 	}
-	return nil
+	return found, nil
+}
+
+func WindowText(d time.Duration) string {
+	s := d.String()
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
+	}
+	return s
 }
 
 func toolResultText(res *mcp.CallToolResult) string {

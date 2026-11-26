@@ -29,8 +29,8 @@ var upgradeCmd = &cobra.Command{
      'devstack migrate' through the devstack that was just installed, and never
      through this one.
   3. Transform the running state. devstack regenerates the daemon's Tiltfile and
-     restarts each copy that runs now, so that what runs comes from the replica
-     and not from your checkout.
+     restarts each shared service that runs now, so that it runs from the
+     replica. It restarts no copy in a stack.
 
 An upgrade is explicit on purpose. devstack manages a daemon that runs services
 right now. If you replace the binary under a live MCP server, the running process
@@ -41,8 +41,8 @@ An MCP server reads its tool descriptions once, when it starts. A session that
 already runs therefore keeps the old tool list. Restart that session after the
 upgrade.
 
-CAUTION: Step 3 restarts services that serve right now. devstack restarts only
-the copies that were already running. It starts no copy that is stopped, and it
+CAUTION: Step 3 restarts shared services that serve right now. Every stack
+uses them. devstack restarts only the copies that were already running. It starts no copy that is stopped, and it
 starts no daemon. Each replica worktree is a new checkout, so a service can need
 its own dependency install before it serves again. This step is slow.
 
@@ -149,7 +149,7 @@ func transformStep(noMigrate, noRestart bool, step step2Result) error {
 	if noRestart {
 		fmt.Println("You gave --no-restart, so devstack restarts nothing.")
 		fmt.Println("Each copy that runs keeps serving the code it started with.")
-		fmt.Println("To move one copy to the replica, run: devstack service restart <svc> --stack base")
+		fmt.Println("To move one shared service to the replica, run: devstack service restart <svc>")
 		return nil
 	}
 	if noMigrate {
@@ -414,10 +414,10 @@ func writeUpgradeIntent(w io.Writer, noMigrate, noRestart bool) {
 		fmt.Fprintln(w, "You gave --no-migrate, so devstack installs the binary and changes nothing else.")
 		fmt.Fprintln(w, "Your configuration stays on its current version. To read what is pending, run: devstack migrate --list")
 	case noRestart:
-		fmt.Fprintln(w, "It writes files in your repositories, and it builds the replica that base runs from.")
+		fmt.Fprintln(w, "It writes files in your repositories, and it builds the replica that the shared set runs from.")
 		fmt.Fprintln(w, "You gave --no-restart, so each copy that runs keeps serving the old code.")
 	default:
-		fmt.Fprintln(w, "It writes files in your repositories. It builds the replica that base runs from.")
+		fmt.Fprintln(w, "It writes files in your repositories. It builds the replica that the shared set runs from.")
 		fmt.Fprintln(w, "It then restarts each copy that runs, so that copy serves the code in the replica.")
 		fmt.Fprintln(w, "To install the binary and change nothing else, run: devstack upgrade --no-migrate")
 	}

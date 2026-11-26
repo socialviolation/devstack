@@ -86,3 +86,16 @@ func viperHasValue(envName string) bool {
 	}
 	return false
 }
+
+func TestHerdrHelpNamesEveryCommandThatBindsAPane(t *testing.T) {
+	if !strings.Contains(herdrCmd.Long, "resynced, adopted or extended") {
+		t.Errorf("devstack herdr --help does not name stack extend as a command that binds a pane:\n%s", herdrCmd.Long)
+	}
+	reference, err := os.ReadFile(filepath.Join("..", "REFERENCE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(reference), "`stack adopt` or `stack extend` in it") {
+		t.Error("REFERENCE.md does not name stack extend as a command that binds a herdr pane")
+	}
+}
