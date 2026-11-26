@@ -42,7 +42,7 @@ func ReplicaDrift(ws *workspace.Workspace) []Drift {
 				out = append(out, Drift{name, "the replica declares this service, and the workspace does not: " + rw.Services[name].RepoPath})
 			}
 		}
-		for _, name := range resolvedServiceNames(template.Services) {
+		for _, name := range template.SharedNames() {
 			if _, ok := rw.Services[name]; !ok {
 				out = append(out, Drift{name, "the workspace declares this service, and the replica does not: " + template.Services[name].RepoPath})
 			}
