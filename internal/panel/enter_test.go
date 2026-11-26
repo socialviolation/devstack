@@ -41,6 +41,9 @@ func TestCtrlOStillOpensWhenEnterCopies(t *testing.T) {
 	if out.String() != "" {
 		t.Fatalf("ctrl+o copied instead of opening: wrote %q", out.String())
 	}
+	if len(openedURLs) == 0 || openedURLs[len(openedURLs)-1] != "https://example.test:8443" {
+		t.Fatalf("ctrl+o opened %v, want https://example.test:8443", openedURLs)
+	}
 }
 
 func TestThePickerPrintsWhatItTookAfterItCloses(t *testing.T) {
