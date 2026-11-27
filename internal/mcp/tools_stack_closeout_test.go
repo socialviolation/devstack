@@ -9,24 +9,23 @@ import (
 	"github.com/socialviolation/devstack/internal/workspace"
 )
 
-// stack_rm deletes the worktrees and keeps the branch, so the session that
-// closes a stack meets a decision: merge the work, or throw it away. It is not
-// the session's decision to make, and the tool that removes the stack is where
-// the agent reads that.
-func TestStackRemoveStatesTheCloseOutOfTheBranch(t *testing.T) {
+func TestStackRemoveStatesWhatHappensToTheBranch(t *testing.T) {
 	s := server.NewMCPServer("test", "0.0.0")
 	registerStackRemoveTool(s, &workspace.Workspace{Name: "navexa"})
 
 	got := listTools(t, s)["stack_rm"].Description
 
 	for _, want := range []string{
-		"ask the user",
-		"merge the branch of this stack, or discard it",
-		"NEVER merge it without an answer",
-		"git branch -d",
+		"devstack keeps the branch of the stack in git. It does not merge the branch, and it does not delete it.",
+		"It refuses a worktree that has uncommitted changes, until you set force.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the stack_rm description never states %q:\n%s", want, got)
+		}
+	}
+	for _, policy := range []string{"ask the user", "NEVER merge", "git branch -d"} {
+		if strings.Contains(got, policy) {
+			t.Errorf("the stack_rm description prescribes a workflow (%q):\n%s", policy, got)
 		}
 	}
 }

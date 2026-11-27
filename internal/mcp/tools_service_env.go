@@ -55,7 +55,7 @@ func registerServiceEnvTool(mcpServer *server.MCPServer, ws *workspace.Workspace
 		mcp.WithString("target",
 			mcp.Description(
 				"Where to write (required for set). "+
-					"'manifest' — the env.values of the service's own manifest. That file is devstack.service.yaml, or devstack.<name>.yaml for each service after the first one in that directory. devstack writes the file that declares THIS service, and never another service's file. devstack treats it as machine-local and expects your repo to gitignore it, because it holds absolute tool paths. Each repo decides that for itself. Make sure that the file is ignored: run git check-ignore -v on it before you trust it. "+
+					"'manifest' — the env.values of the service's own manifest. That file is devstack.service.yaml, or devstack.<name>.yaml for each service after the first one in that directory. devstack writes the file that declares THIS service, and never another service's file. The file holds absolute tool paths of this machine, so devstack treats it as machine-local. Each repo decides whether git ignores it. To see whether git ignores it, run git check-ignore -v on it. "+
 					"Use 'manifest' for devstack-managed config: service addresses, ports, URLs of other services, and feature flags. "+
 					"'envrc' — the service's local .envrc. Nobody commits it. "+
 					"Use 'envrc' for secrets and for anything that carries a credential: API keys, tokens, passwords, and DSNs with credentials. "+

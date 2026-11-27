@@ -272,7 +272,7 @@ func writePrimeOtherStackTask(b *strings.Builder, working *workingStack, service
 	}
 	writePrimeStackNote(b, rec)
 
-	fmt.Fprintf(b, "\n1. Ask the user: is this session for %s? Change no code until you have the answer.\n", rec.Name)
+	fmt.Fprintf(b, "\n1. %s is a guess. devstack does not know that this session is for that stack.\n", rec.Name)
 	if dir := rec.Worktrees[taskService(rec, service)]; dir != "" {
 		fmt.Fprintf(b, "2. Work in the directory of that stack: %s\n", dir)
 		b.WriteString("   You are not in it now. A change you make here does not reach that stack.\n")
@@ -289,11 +289,10 @@ func writePrimeNoStackTask(b *strings.Builder, inReplica bool, candidates []stac
 	b.WriteString("no stack. Nothing in this directory belongs to one, and devstack can not guess which feature\n")
 	b.WriteString("this session is for.\n")
 	writePrimeCandidates(b, candidates)
-	b.WriteString("\n1. Ask the user which feature this session is for.\n")
-	b.WriteString("2. To see a change run, cut a stack for it: devstack stack create <name> --repos <service>\n")
-	b.WriteString("   Use a short lowercase name, such as the ticket key (nvxa-9999). The branch name is the stack\n")
-	b.WriteString("   name. For a real branch name, pass --branch <b>. Then work in the directory that command prints.\n")
-	b.WriteString("3. See what runs now, and where: devstack status\n")
+	b.WriteString("\n1. To see a change run, cut a stack for it: devstack stack create <name> --repos <service>\n")
+	b.WriteString("   The branch name is the stack name. For a different branch name, pass --branch <b>.\n")
+	b.WriteString("   Then work in the directory that command prints.\n")
+	b.WriteString("2. See what runs now, and where: devstack status\n")
 	if inReplica {
 		b.WriteString("This directory is the replica: the git worktrees that the shared set runs from, at the default\n")
 		b.WriteString("branch tip. Every hour devstack overwrites it. Do not edit here.\n")
@@ -333,7 +332,7 @@ func writePrimeCandidates(b *strings.Builder, recs []stack.Record) {
 	if n := len(ranked) - len(shown); n > 0 {
 		fmt.Fprintf(b, "  %d more. To see every one, run: devstack stack list\n", n)
 	}
-	b.WriteString("  The marker ? shows a guess about intent, and never a fact. Ask the user before you work on one.\n")
+	b.WriteString("  The marker ? shows a guess about intent, and never a fact.\n")
 }
 
 func rankStackCandidates(recs []stack.Record) []stack.Record {
@@ -543,18 +542,15 @@ func writePrimeCloseOut(b *strings.Builder, branch string) {
 	if branch == "" {
 		branch = "<branch>"
 	}
-	b.WriteString("5. If this feature is finished, ask the user: merge this branch, or discard it?\n")
-	b.WriteString("   Never merge it without an answer.\n")
-	fmt.Fprintf(b, "   After a merge, delete the branch: git branch -d %s\n", branch)
+	fmt.Fprintf(b, "devstack does not merge the branch %s, and it does not delete it. `stack rm` keeps the branch.\n", branch)
 }
 
 func writePrimeSafety(b *strings.Builder) {
-	section(b, "BEFORE YOU COMMIT")
-	b.WriteString("  Never commit `devstack.service.yaml`, or the `devstack.<name>.yaml` of each service after the first one\n")
-	b.WriteString("  in that directory. Each one holds absolute paths of this machine. Add them to `.gitignore`.\n")
-	b.WriteString("  If it is committed already, keep every real secret out of it, and out of `devstack.workspace.yaml`.\n")
-	b.WriteString("  For a value that must come from the environment, declare the key under `env.required`, and supply the\n")
-	b.WriteString("  value from `.envrc`. devstack then reads the value at run time, and no manifest holds it.\n")
+	section(b, "MANIFESTS AND SECRETS")
+	b.WriteString("  `devstack.service.yaml`, and the `devstack.<name>.yaml` of each service after the first one in that\n")
+	b.WriteString("  directory, hold absolute paths of this machine.\n")
+	b.WriteString("  A secret belongs under `env.required`, with its value in `.envrc`. devstack reads the value at run\n")
+	b.WriteString("  time, so no manifest holds it. `devstack.workspace.yaml` holds each `env set` value as plaintext.\n")
 }
 
 func writePrimeApplies(b *strings.Builder, ws *workspace.Workspace, rw *config.ResolvedWorkspace) {
@@ -623,8 +619,8 @@ func countHooks(ws *workspace.Workspace, rw *config.ResolvedWorkspace) int {
 
 func writePrimeWhatThisIs(b *strings.Builder) {
 	section(b, "DEVSTACK")
-	b.WriteString("devstack runs the local development services of this machine, and nothing else. Never point it at a\n")
-	b.WriteString("staging or a production system.\n")
+	b.WriteString("devstack runs the local development services of this machine. An environment can point a stack at\n")
+	b.WriteString("any system. devstack does not check where.\n")
 	b.WriteString("devstack is a CLI and an MCP server. The tools share the names of the commands. This briefing already\n")
 	b.WriteString("says where you are and what runs. Call the `environment` tool for the list of tools this workspace\n")
 	b.WriteString("has, or later, when this briefing is old. Among the commands with no tool: upgrade, init,\n")
@@ -659,7 +655,8 @@ func writePrimeTerms(b *strings.Builder) {
 	b.WriteString("With no flag it uses the stack your directory is in. Outside a stack, it acts only on a shared service.\n")
 	b.WriteString("An agent can read a shared service. It can not start, stop or restart one, because every stack uses it.\n")
 	b.WriteString("Each command names the copy it changed. A shared copy has no :stack suffix, so read that line to confirm it.\n")
-	b.WriteString("Never edit stacks.json, ports.json or a stack manifest by hand. Use stack add and stack remove.\n")
+	b.WriteString("stacks.json, ports.json and each stack manifest are devstack's files. A hand edit can break them.\n")
+	b.WriteString("stack add and stack remove change them.\n")
 	writePrimeStates(b)
 }
 
@@ -882,7 +879,7 @@ func writePrimeInstances(b *strings.Builder, ws *workspace.Workspace, rw *config
 		b.WriteString("  No marker ▸ is on this table. You are in the directory of no copy.\n")
 	}
 	if suggested != "" {
-		fmt.Fprintf(b, "  The marker ? shows a guess. %s is the only stack that runs %s, but you are not in it.\n  Ask the user before you work on it.\n", suggested, service)
+		fmt.Fprintf(b, "  The marker ? shows a guess. %s is the only stack that runs %s, but you are not in it.\n", suggested, service)
 	}
 	b.WriteString("  The directory under each copy is the directory that copy RUNS.\n")
 	if shared {

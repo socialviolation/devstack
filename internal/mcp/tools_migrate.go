@@ -36,7 +36,7 @@ func registerMigrateTool(mcpServer *server.MCPServer, ws *workspace.Workspace, p
 		mcp.WithString("action", mcp.Required(),
 			mcp.Description("\"list\" prints the version of each workspace, and it changes nothing. Use it first: it reports what a run changes. \"run\" applies each pending migration. It writes and deletes files in repositories that devstack does not own. \"shared-stacks\" converts this workspace to the shared set. It changes nothing without apply=true.")),
 		mcp.WithBoolean("force",
-			mcp.Description("Migrate a file that holds a change nobody committed. Without it, devstack refuses such a file and changes nothing in any workspace. With it, devstack removes its block from that file, or deletes the file, and the change is lost. Ask the user before you set it.")),
+			mcp.Description("Migrate a file that holds a change nobody committed. Without it, devstack refuses such a file and changes nothing in any workspace. With it, devstack removes its block from that file, or deletes the file, and the change is lost.")),
 		mcp.WithBoolean("apply",
 			mcp.Description("Only for action=\"shared-stacks\". Write the changes. The default is false, and then devstack changes nothing.")),
 		mcp.WithString("shared",

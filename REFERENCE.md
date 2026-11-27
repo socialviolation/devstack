@@ -18,7 +18,7 @@ devstack is, and how to install it, read the [README](README.md).
 - [devstack writes no instructions into your repositories](#devstack-writes-no-instructions-into-your-repositories)
 - [Per-repo setup](#per-repo-setup)
 - [Configuration](#configuration)
-- [Files, and what to commit](#files-and-what-to-commit)
+- [Files, and which ones are portable](#files-and-which-ones-are-portable)
 - [Updating devstack](#updating-devstack)
 
 ## The shared set and the replica
@@ -287,7 +287,7 @@ devstack stack add <name> <service|group> [service|group...]
 devstack stack remove <name> <service> [service...]
 ```
 
-`stack remove` removes the services from the stack record and the stack manifest, and releases only their ports. It refuses to remove a service that another member needs, and names that member. It keeps the worktrees on disk, and prints the `git worktree remove` command for each one. If the stack is up, the host daemon drops the removed copies. Never edit `stacks.json`, `ports.json` or a stack manifest by hand. Use `stack add` and `stack remove`.
+`stack remove` removes the services from the stack record and the stack manifest, and releases only their ports. It refuses to remove a service that another member needs, and names that member. It keeps the worktrees on disk, and prints the `git worktree remove` command for each one. If the stack is up, the host daemon drops the removed copies. `stacks.json`, `ports.json` and each stack manifest are devstack's files. A hand edit can break them. `stack add` and `stack remove` change them.
 
 `stack remove` fires the `stack.destroy` hooks for the removed services first, while their ports and record still exist; a hook failure does not stop the removal.
 
@@ -351,7 +351,7 @@ devstack env remove <name>
 
 `env which` names the rung that each value came from. The rungs are, in order: `.envrc`, `env.files`, manifest `env.values`, the active environment, then the values that devstack computes. Each rung overrides the rung before it. `--shadowed` lists the values that a later rung overrode.
 
-devstack redacts credentials in place, so a connection string still shows its server and its database. `--reveal` prints them in the clear. The redaction changes the output only, and never the file. Before you put a secret in an environment, read [what to commit](#files-and-what-to-commit).
+devstack redacts credentials in place, so a connection string still shows its server and its database. `--reveal` prints them in the clear. The redaction changes the output only, and never the file. For what an environment value means on disk, read [Files, and which ones are portable](#files-and-which-ones-are-portable).
 
 ## Hooks
 
@@ -695,7 +695,7 @@ The sample is a short form. The briefing also names the shared set, the stop tim
 
 `prime` also names the stack that a session is probably for. That is a different question from where you are. Where you are comes from the filesystem, and `prime` marks it `▸`. What you are here for is a guess, and `prime` marks it `?`.
 
-When `prime` cannot name one stack, it lists the stacks in flight as ranked candidates, each marked `?`. It ranks a stack that is up first, then the newest note entry, then the newest stack. It shows 5 rows at most, and it names the count it left out. A candidate is a guess about intent, and never a fact. Ask the user before you work on one.
+When `prime` cannot name one stack, it lists the stacks in flight as ranked candidates, each marked `?`. It ranks a stack that is up first, then the newest note entry, then the newest stack. It shows 5 rows at most, and it names the count it left out. A candidate is a guess about intent, and never a fact.
 
 To brief a session without a request, wire `prime` into Claude Code:
 
@@ -778,12 +778,12 @@ If an older file still carries `DEVSTACK_WORKSPACE` or `TILT_PORT`, refresh it w
 
 You cannot configure the port of the daemon. One daemon serves the machine on `:10300`, and every command reaches the daemon there.
 
-## Files, and what to commit
+## Files, and which ones are portable
 
-| Artifact | Location | Commit? | Why |
+| Artifact | Location | Portable? | Why |
 |----------|----------|---------|-----|
 | `devstack.workspace.yaml` | workspace root | Yes | The source of truth: services, groups, the shared set, environments and templates. It is portable and holds no machine paths. |
-| `devstack.service.yaml`, `devstack.<name>.yaml` | service repo | No | The service manifests of that directory. Machine-local: each one holds absolute tool paths. Gitignore them. |
+| `devstack.service.yaml`, `devstack.<name>.yaml` | service repo | No | The service manifests of that directory. Machine-local: each one holds absolute tool paths. |
 | `.mcp.json` | service repo | Yes | Generated, and it does not depend on the machine. |
 | `AGENTS.md` | service repo | Yes | Yours. devstack writes nothing in it. `devstack migrate` removes the block an older devstack wrote. |
 | `CLAUDE.md` / `GEMINI.md` / `.cursorrules` / `.github/copilot-instructions.md` | service repo | Yes | Yours. devstack writes nothing in them, and it creates none of them. |
@@ -792,7 +792,7 @@ You cannot configure the port of the daemon. One daemon serves the machine on `:
 | `~/.config/devstack/workspaces.json` | home | n/a | Machine-local registry of workspaces and their ports. |
 | `~/.local/share/devstack/**` | home | n/a | Host daemon state: pids, `stacks.json` and the generated host Tiltfile. Without systemd, also `tilt.log` and `tilt.log.1`. |
 
-A `.gitignore` for each service repository:
+devstack commits no file. A repository that keeps the machine-local files out of git can use this `.gitignore`:
 
 ```
 devstack.*.yaml
@@ -809,7 +809,7 @@ A service manifest is machine-local and gitignored, so the worktree of a stack d
 
 CAUTION: `env set <env> KEY=VALUE` writes the value into `devstack.workspace.yaml` as plaintext. devstack masks the value when it shows the value, and never on disk. What that means for you depends on how you treat the file.
 
-If you commit the file, which the table above recommends, keep real secrets out of it. Declare each secret in the `env.required` list of a service. Supply the secret at runtime from `.envrc`, or from your own secret store. Use `env set` for URLs, ports and feature flags only. A secret written into a committed file is a committed secret.
+If you commit the file, git holds each value that `env set` wrote. A secret in the `env.required` list of a service stays out of every manifest. Its value comes at runtime from `.envrc`, or from your own secret store. A secret written into a committed file is a committed secret.
 
 If the file is machine-local, `env set` is safe for API keys. The file is machine-local when you gitignore it, or when the workspace root is not a repository. devstack built `env set` for that case. The file is still plaintext on disk.
 
