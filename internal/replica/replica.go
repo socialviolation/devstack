@@ -24,7 +24,7 @@ import (
 	"github.com/socialviolation/devstack/internal/worktree"
 )
 
-const rootDirName = ".devstack-base"
+const rootDirName = config.ReplicaDirName
 
 // Worktree is one repository's worktree in the replica. It carries the services
 // that live in it, because a repository can hold more than one.

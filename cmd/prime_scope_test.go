@@ -177,7 +177,7 @@ func TestTheTaskBlockSaysTheReplicaIsOverwritten(t *testing.T) {
 	var b strings.Builder
 	writePrimeTask(&b, "api", "", nil, nil, false, true, nil)
 
-	if got := b.String(); !strings.Contains(got, "replica of the shared set") || !strings.Contains(got, "overwrites it. Do not edit here.") {
+	if got := b.String(); !strings.Contains(got, "the git worktrees that the shared set runs from") || !strings.Contains(got, "overwrites it. Do not edit here.") {
 		t.Errorf("the task block must say an edit in the replica is overwritten:\n%s", got)
 	}
 }

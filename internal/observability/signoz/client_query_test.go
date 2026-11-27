@@ -193,3 +193,17 @@ func TestQueryTracesReportsUnreachableBackend(t *testing.T) {
 		t.Error("expected an error from an unreachable backend")
 	}
 }
+
+func TestQueryLogsAppliesStackFilter(t *testing.T) {
+	srv, reqs := signozServer(t, nil)
+	c := NewClient(srv.URL, "")
+
+	if _, err := c.QueryLogs(context.Background(), observability.LogQuery{
+		Workspace: "navexa", Stack: "perf",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !hasFilter((*reqs)[0], "devstack.stack", "perf") {
+		t.Errorf("stack filter missing: %+v", filtersOf((*reqs)[0]))
+	}
+}

@@ -177,11 +177,7 @@ func (c *Client) QueryTraces(ctx context.Context, req observability.TraceQuery) 
 		where = append(where, serviceFilter(req.Service, "traces"))
 	}
 	if req.Stack != "" {
-		var values []string
-		for _, v := range observability.StackValues(req.Stack) {
-			values = append(values, quote(v))
-		}
-		where = append(where, fmt.Sprintf("%s IN (%s)", attrColumn("devstack.stack", "traces"), strings.Join(values, ", ")))
+		where = append(where, stackCondition(req.Stack, "traces"))
 	}
 	if req.Attribute != "" {
 		col := attrColumn(req.Attribute, "traces")
@@ -267,6 +263,9 @@ func (c *Client) QueryLogs(ctx context.Context, req observability.LogQuery) ([]o
 	}
 	if req.Service != "" {
 		where = append(where, serviceFilter(req.Service, "logs"))
+	}
+	if req.Stack != "" {
+		where = append(where, stackCondition(req.Stack, "logs"))
 	}
 
 	limit := req.Limit
@@ -479,6 +478,14 @@ func serviceFilter(service, streamType string) string {
 // workspaceFilter scopes a query to one workspace. The traces stream prefixes
 // resource attributes with service_ while the logs stream does not, so the
 // column name depends on which stream is being queried.
+func stackCondition(stack, streamType string) string {
+	var values []string
+	for _, v := range observability.StackValues(stack) {
+		values = append(values, quote(v))
+	}
+	return fmt.Sprintf("%s IN (%s)", attrColumn("devstack.stack", streamType), strings.Join(values, ", "))
+}
+
 func workspaceFilter(workspace, streamType string) []string {
 	if workspace == "" {
 		return nil

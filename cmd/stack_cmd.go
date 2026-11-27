@@ -37,13 +37,14 @@ A shared service is a service in the workspace "shared:" list. It runs once for
 the workspace, and never in a stack. Every stack uses it. Every other service
 runs only in a stack.
 
-No stack can carry the name "shared" or "base". A command that starts, stops
-or writes a service that is not shared takes --stack <name>. With no --stack,
-it acts on the stack that your directory is in.
+The names "shared" and "base" are reserved. No stack can have either name.
 
-The telemetry queries are the exception. 'devstack otel traces' with no --stack
-searches every stack and the shared set. Pass --stack <name> for one stack.
-Pass --stack shared for the shared set.
+A command that starts, stops or writes a service that is not shared takes
+--stack <name>. With no --stack, it acts on the stack that your directory is in.
+
+The telemetry queries are the exception. 'devstack otel traces' and
+'devstack otel logs' with no --stack search every stack and the shared set.
+Pass --stack <name> for one stack. Pass --stack shared for the shared set.
 
 Never edit stacks.json, ports.json or a stack manifest by hand. Use
 'devstack stack add' and 'devstack stack remove'.`,
@@ -70,7 +71,9 @@ half-finished work in a checkout does not come into the stack. --from names a
 different ref: a release branch, a tag, or a commit.
 
 If the branch already exists, devstack attaches to it with the history that it
-already has. --from does not apply to a branch that already exists.
+already has. --from does not apply to a branch that already exists. If the
+branch exists on origin, devstack fetches it and the stack tracks it. To work
+on a branch that somebody else pushed, pass --branch <b>.
 
 If a checkout holds uncommitted work, the command says so and carries on. It
 does the same if the checkout holds commits that the stack's ref does not have.
@@ -82,8 +85,14 @@ The template gives the services and groups, and --repos adds more. If the
 template names an environment, the stack uses it, as 'env use --stack' does.
 To list the templates, run 'devstack stack templates'.
 
-A new stack is down. Run 'devstack stack up <name>' to start it. Every stack
-stops 24 hours after create. 'stack up' sets a new stop time, 24 hours later.`,
+Use a short lowercase name, such as the ticket key (nvxa-9999). The branch
+name is the stack name. For a real branch name, pass --branch <b>.
+
+A new stack is down. Run 'devstack stack up <name>' to start it. The stop time
+starts at create. A stack that is down stays down. 'stack up' sets a new stop
+time: DEVSTACK_STOP_AFTER after the up (default 24h). To push the stop time
+back, run 'devstack stack extend'. You can extend again and again: no limit
+applies to the total.`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackCreate,
@@ -167,7 +176,7 @@ at the point of failure. Keep them.`,
 var stackListCmd = &cobra.Command{
 	Use:          "list",
 	Aliases:      []string{"ls"},
-	Short:        "List registered feature stacks",
+	Short:        "List the feature stacks of this workspace",
 	SilenceUsage: true,
 	RunE:         runStackList,
 }
@@ -201,7 +210,8 @@ var stackUpCmd = &cobra.Command{
 If the replica does not exist, devstack builds it. devstack also starts the
 shared set.
 
-The stack stops 24 hours from now. A later 'stack up' sets a new stop time.
+The stack stops DEVSTACK_STOP_AFTER from now (default 24h). A later 'stack up'
+sets a new stop time. To push it back, run 'devstack stack extend'.
 
 devstack checks each worktree against origin. If one is behind, the command
 says so and names 'devstack stack resync'. It does not resync.`,
@@ -280,12 +290,12 @@ var stackExtendCmd = &cobra.Command{
 devstack stops the stack, the same way 'devstack stack down' stops it.
 devstack never removes it.
 
-The new stop time is the later of the current stop time and now, plus the
-hours you give. You can add %d hours at most in one call. 'devstack stack up'
-also sets a new stop time.
+%s
+
+'devstack stack up' also sets a new stop time.
 
 Example:
-  devstack stack extend perf 8`, int(stack.MaxExtend.Hours())),
+  devstack stack extend perf 8`, wrapText(stack.ExtendRule(), 78)),
 	Args:         cobra.ExactArgs(2),
 	SilenceUsage: true,
 	RunE:         runStackExtend,
@@ -327,7 +337,10 @@ devstack does not add services. It reports each repo outside the stack that
 has the stack's branch on origin. It reports each service that a member now
 needs and the stack does not run. If the new commits change a service's
 migrations directory, devstack says so. A migration changes the shared
-database for every stack. Resync runs no migration.`,
+database for every stack. Resync runs no migration.
+
+Resync never moves a stack to a different branch. To work on another branch,
+create a new stack with --branch <b>.`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackResync,
@@ -730,9 +743,10 @@ func runStackList(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 	color.New(color.Faint).Println("SERVICES are the members: the services this stack runs. It uses the shared set, and runs no other service.")
-	color.New(color.Faint).Println("STATUS up means registered, not running. Each service has its own state. Show it with: devstack status --stack <name>")
+	color.New(color.Faint).Println("STATUS up means that the stack's copies are in the daemon. It does not mean that they run. Each copy has its own state. Show it with: devstack status --stack <name>")
 	color.New(color.Faint).Println("\"covers group g (3/4). x is not in this stack\" is a group that devstack cut this stack to cover. The stack runs 3 of the 4 members. A group action reaches only the members the stack runs.")
-	color.New(color.Faint).Println("Set what a stack is for with: devstack stack note <name> \"...\". Record where the work got to with --add")
+	color.New(color.Faint).Println("To replace what a stack is for, run: devstack stack note <name> \"...\"")
+	color.New(color.Faint).Println("To add a dated entry on where the work got to, run: devstack stack note <name> --add \"...\"")
 	return nil
 }
 
@@ -809,10 +823,11 @@ var stackNoteCmd = &cobra.Command{
 sentence. devstack never derives this text. A branch says what changed. A note
 says why. A week later, the note is the part that you can not reconstruct.
 
---add appends a dated entry instead of replacing the purpose. Write where the
-work got to. Then you can pick the work up next week without a read of the diff.
-devstack keeps the last %d entries, each one of %d characters at most. One entry
-for each step pushes out the entry that is worth a read.
+[text] replaces the purpose. --add appends a dated entry, and keeps the
+purpose. Write where the work got to. Then you can pick the work up next week
+without a read of the diff. devstack keeps the last %d entries, each one of %d
+characters at most. One entry for each step pushes out the entry that is worth
+a read.
 
 With no text, this command prints the purpose and its entries. Pass an empty
 string to clear both. 'devstack prime' labels these two "purpose" and "latest".

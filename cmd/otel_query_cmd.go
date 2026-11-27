@@ -45,11 +45,16 @@ var otelLogsCmd = &cobra.Command{
 	Short: "Query collected logs from whatever backend this workspace uses",
 	Long: `Query OTEL logs without a backend name, a URL or a credential.
 
-This command has no --stack flag. To read the logs of one execution, pass
---trace <id>.
+With no --stack, the query covers every stack and the shared set. If a service
+runs in more than one place, pass --stack <name> to read one copy. Pass
+--stack shared for the shared set alone. To read the logs of one execution,
+pass --trace <id>.
+
+To read the raw stdout and stderr of a process, run 'devstack service logs'.
 
 Examples:
   devstack otel logs --service=api
+  devstack otel logs --service=api --stack=feat-x
   devstack otel logs --trace=5b8efff798038103d269b633813fc60c`,
 	RunE: runOtelLogs,
 }
@@ -84,13 +89,14 @@ func init() {
 	otelTracesCmd.Flags().Int("limit", 10, "Maximum traces to return")
 
 	otelLogsCmd.Flags().String("service", "", "Only logs from this service. Default: the service you stand in. Pass \"all\" for the whole workspace")
+	otelLogsCmd.Flags().String("stack", "", "Whose logs to search. "+observability.StackScopeDesc)
 	otelLogsCmd.Flags().String("trace", "", "Only logs correlated with this trace ID")
 	otelLogsCmd.Flags().Int("limit", 50, "Maximum log lines to return")
 }
 
 // queryBackend resolves the workspace's backend with no input from the caller.
 // The returned backend only ever answers with this workspace's telemetry.
-func queryBackend(cmd *cobra.Command) (observability.Backend, error) {
+var queryBackend = func(cmd *cobra.Command) (observability.Backend, error) {
 	ws, err := resolveOtelWorkspace(cmd)
 	if err != nil {
 		return nil, err
@@ -287,10 +293,16 @@ func runOtelLogs(cmd *cobra.Command, args []string) error {
 	limit, _ := cmd.Flags().GetInt("limit")
 	service := resolveQueryService(cmd)
 	traceID, _ := cmd.Flags().GetString("trace")
+	stackName, _ := cmd.Flags().GetString("stack")
+	stackName, err = resolveStackFlag(cmd, stackName)
+	if err != nil {
+		return err
+	}
 
 	entries, err := backend.QueryLogs(context.Background(), observability.LogQuery{
 		TraceID: traceID,
 		Service: service,
+		Stack:   stackName,
 		Since:   since,
 		Limit:   limit,
 	})

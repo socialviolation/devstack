@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/socialviolation/devstack/internal/config"
 	"github.com/socialviolation/devstack/internal/migrate"
 	"github.com/socialviolation/devstack/internal/stack"
 )
@@ -58,6 +59,7 @@ func Execute() {
 func init() {
 	cobra.OnInitialize(initConfig)
 	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		scopeLegacyWarnings()
 		if cmd != tickCmd && cmd != stackSweepCmd && cmd != stackGCCmd && cmd != stackExtendCmd && cmd != stackUpCmd {
 			sweepIfDirect(time.Now())
 		}
@@ -84,6 +86,16 @@ func init() {
 	viper.BindPFlag("tilt.host", rootCmd.PersistentFlags().Lookup("daemon-host"))
 	viper.BindPFlag("default_service", rootCmd.PersistentFlags().Lookup("default-service"))
 	viper.BindPFlag("workspace", rootCmd.PersistentFlags().Lookup("workspace"))
+}
+
+func scopeLegacyWarnings() {
+	if ws, err := resolveWorkspace(viper.GetString("workspace")); err == nil {
+		config.SetLegacyWarningScope(ws.Path)
+		return
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		config.SetLegacyWarningScope(cwd)
+	}
 }
 
 func initConfig() {

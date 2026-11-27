@@ -31,7 +31,7 @@ var helpGroups = []helpGroup{
 		{"devstack urls", "the address that reaches it from another machine"},
 		{"devstack panel", "watch every service, and act on one"},
 		{"devstack service restart <svc> --stack <name>", "restart one copy"},
-		{"devstack stack note <name> --add \"...\"", "where the work got to"},
+		{"devstack stack note <name> --add \"...\"", "add a dated entry on where the work got to"},
 		{"devstack stack rm <name>", "tear it down"},
 	}},
 	{"POINT IT SOMEWHERE", []helpRow{

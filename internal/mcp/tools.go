@@ -210,10 +210,10 @@ func registerStatusTool(mcpServer *server.MCPServer, tiltClient *tilt.Client, se
 			"  running   the process is up.\n"+
 			"  starting  the copy is on its way up.\n"+
 			"  building  the daemon builds or updates it now.\n"+
-			"  stopped   devstack knows the service, and the service does not run. Nobody started it, or somebody stopped it.\n"+
+			"  stopped   the copy is in the daemon, and it does not run. Nobody started it, or somebody stopped it.\n"+
 			"  erroring  the service failed, or its build failed. Read its logs.\n"+
 			"  disabled  somebody switched the resource off in the daemon.\n"+
-			"  down      the copy is not registered in the daemon, because its stack is down. Bring the stack up with stack_up.\n"+
+			"  down      the copy is not in the daemon, because its stack is down. Bring the stack up with stack_up.\n"+
 			"  unknown   the daemon reported no state for it.\n"+
 			"With no stack, status shows the shared set, then each stack. Pass stack to see one stack and a summary of its groups."),
 		mcp.WithString("stack", mcp.Description("Optional. The SHORT name of one stack to show. With no stack, status shows the shared set, then each stack.")),
@@ -1234,204 +1234,175 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 	)
 
 	mcpServer.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		name := request.GetString("service", "")
-		groupName := request.GetString("group", "")
-
-		if name != "" && groupName != "" {
-			return mcp.NewToolResultError("specify either service or group, not both"), nil
-		}
-
-		t, err := resolveLocalTarget(ws, localTarget{client: tiltClient, cfg: cfg, defaultSvc: defaultService}, request.GetString("stack", ""))
+		out, err := ProcessLogs(ws, tiltClient, defaultService, cfg, ProcessLogsRequest{
+			Service:      request.GetString("service", ""),
+			Group:        request.GetString("group", ""),
+			Stack:        request.GetString("stack", ""),
+			Lines:        int(request.GetFloat("lines", 100)),
+			Offset:       int(request.GetFloat("offset", 0)),
+			Grep:         request.GetString("grep", ""),
+			Context:      int(request.GetFloat("context", 0)),
+			SinceRestart: request.GetBool("since_restart", true),
+			ErrorsOnly:   request.GetBool("errors_only", false),
+		})
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		tiltClient, defaultService, cfg := t.client, t.defaultSvc, t.cfg
+		return mcp.NewToolResultText(out), nil
+	})
+}
 
-		// Only apply defaultService when no group is specified.
-		if name == "" && groupName == "" {
-			name = defaultService
+type ProcessLogsRequest struct {
+	Service      string
+	Group        string
+	Stack        string
+	Lines        int
+	Offset       int
+	Grep         string
+	Context      int
+	SinceRestart bool
+	ErrorsOnly   bool
+}
+
+func ProcessLogs(ws *workspace.Workspace, tiltClient *tilt.Client, defaultService string, cfg *config.WorkspaceConfig, req ProcessLogsRequest) (string, error) {
+	name := req.Service
+	groupName := req.Group
+
+	if name != "" && groupName != "" {
+		return "", fmt.Errorf("specify either service or group, not both")
+	}
+
+	t, err := resolveLocalTarget(ws, localTarget{client: tiltClient, cfg: cfg, defaultSvc: defaultService}, req.Stack)
+	if err != nil {
+		return "", err
+	}
+	tiltClient, defaultService, cfg = t.client, t.defaultSvc, t.cfg
+
+	if name == "" && groupName == "" {
+		name = defaultService
+	}
+	if name != "" {
+		if err := requireSharedNoStack(ws, t, []string{name}); err != nil {
+			return "", err
 		}
-		if name != "" {
-			if err := requireSharedNoStack(ws, t, []string{name}); err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-		}
+	}
 
-		lines := int(request.GetFloat("lines", 100))
-		offset := int(request.GetFloat("offset", 0))
-		grepPattern := request.GetString("grep", "")
-		contextLines := int(request.GetFloat("context", 0))
-		sinceRestart := request.GetBool("since_restart", true)
-		errorsOnly := request.GetBool("errors_only", false)
+	lines := req.Lines
+	offset := req.Offset
+	grepPattern := req.Grep
+	contextLines := req.Context
+	sinceRestart := req.SinceRestart
+	errorsOnly := req.ErrorsOnly
 
-		// Compile grep regex if provided.
-		var grepRe *regexp.Regexp
-		if grepPattern != "" {
-			var err error
-			grepRe, err = regexp.Compile(grepPattern)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("invalid grep pattern %q: %v", grepPattern, err)), nil
-			}
-		}
-
-		view, err := tiltClient.GetView()
+	var grepRe *regexp.Regexp
+	if grepPattern != "" {
+		var err error
+		grepRe, err = regexp.Compile(grepPattern)
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return "", fmt.Errorf("invalid grep pattern %q: %v", grepPattern, err)
 		}
+	}
 
-		emptyNote := func() string {
-			return coreLogEmptyNote(coreLogFilters{
-				Service:      name,
-				Group:        groupName,
-				Stack:        t.namespace,
-				Lines:        lines,
-				Offset:       offset,
-				Grep:         grepPattern,
-				SinceRestart: sinceRestart,
-				ErrorsOnly:   errorsOnly,
-			})
+	view, err := tiltClient.GetView()
+	if err != nil {
+		return "", err
+	}
+
+	emptyNote := func() string {
+		return coreLogEmptyNote(coreLogFilters{
+			Service:      name,
+			Group:        groupName,
+			Stack:        t.namespace,
+			Lines:        lines,
+			Offset:       offset,
+			Grep:         grepPattern,
+			SinceRestart: sinceRestart,
+			ErrorsOnly:   errorsOnly,
+		})
+	}
+
+	processOutput := func(raw string) string {
+		allLines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
+
+		// offset + lines paging: fetch window is [len-offset-lines .. len-offset].
+		total := len(allLines)
+		end := total - offset
+		if end <= 0 {
+			return fmt.Sprintf("(offset %d is more than the %d lines available)", offset, total)
 		}
-
-		processOutput := func(raw string) string {
-			allLines := strings.Split(strings.TrimRight(raw, "\n"), "\n")
-
-			// offset + lines paging: fetch window is [len-offset-lines .. len-offset].
-			total := len(allLines)
-			end := total - offset
-			if end <= 0 {
-				return fmt.Sprintf("(offset %d is more than the %d lines available)", offset, total)
-			}
-			start := end - lines
-			if start < 0 {
-				start = 0
-			}
-			allLines = allLines[start:end]
-
-			// errors_only filter.
-			if errorsOnly {
-				var matched []string
-				for _, l := range allLines {
-					if errorRegex.MatchString(l) {
-						matched = append(matched, l)
-					}
-				}
-				allLines = matched
-			}
-
-			// grep filter with optional context.
-			if grepRe != nil {
-				allLines = applyGrep(allLines, grepRe, contextLines)
-			}
-
-			if len(allLines) == 0 {
-				return ""
-			}
-			return strings.Join(allLines, "\n")
+		start := end - lines
+		if start < 0 {
+			start = 0
 		}
+		allLines = allLines[start:end]
 
-		// Build the tilt logs args for a single service.
-		// When since_restart is set, use --since=<duration> derived from LastDeployTime.
-		// Otherwise use --tail to fetch enough lines for offset+lines paging.
-		buildLogArgs := func(svcName string) []string {
-			args := []string{"logs"}
-			if sinceRestart {
-				since := lastDeploySince(view, svcName)
-				if since != "" {
-					args = append(args, "--since="+since)
+		// errors_only filter.
+		if errorsOnly {
+			var matched []string
+			for _, l := range allLines {
+				if errorRegex.MatchString(l) {
+					matched = append(matched, l)
 				}
 			}
-			if !sinceRestart {
-				fetchLines := (lines + offset) * 3
-				if fetchLines < 300 {
-					fetchLines = 300
-				}
-				if fetchLines > 5000 {
-					fetchLines = 5000
-				}
-				args = append(args, fmt.Sprintf("--tail=%d", fetchLines))
-			}
-			args = append(args, svcName)
-			return args
+			allLines = matched
 		}
 
-		// Group logs: fetch each service's logs concurrently, interleave with prefix.
-		if groupName != "" {
-			members, ok := cfg.Groups[groupName]
-			if !ok {
-				return mcp.NewToolResultError(fmt.Sprintf("group %q not found — available groups: %s", groupName, availableGroups(cfg))), nil
-			}
-
-			type logResult struct {
-				svc string
-				out string
-				err error
-			}
-			results := make([]logResult, len(members))
-			var wg sync.WaitGroup
-			for i, svc := range members {
-				wg.Add(1)
-				go func(idx int, svcName string) {
-					defer wg.Done()
-					raw, err := tiltClient.RunCLI(buildLogArgs(resourceName(ws.Name, svcName, t.namespace))...)
-					results[idx] = logResult{svc: svcName, out: processOutput(raw), err: err}
-				}(i, svc)
-			}
-			wg.Wait()
-
-			var sb strings.Builder
-			anyOutput := false
-			for _, r := range results {
-				if r.err != nil {
-					fmt.Fprintf(&sb, "[%s] devstack can not read the logs: %v\n", r.svc, r.err)
-					continue
-				}
-				if r.out == "" {
-					fmt.Fprintf(&sb, "[%s] (no output)\n", r.svc)
-					continue
-				}
-				anyOutput = true
-				prefix := fmt.Sprintf("[%s] ", r.svc)
-				for _, line := range strings.Split(r.out, "\n") {
-					fmt.Fprintf(&sb, "%s%s\n", prefix, line)
-				}
-			}
-			if !anyOutput {
-				sb.WriteString("\n" + emptyNote() + "\n")
-			}
-			return mcp.NewToolResultText(targetHeader(t.label) + sb.String()), nil
+		// grep filter with optional context.
+		if grepRe != nil {
+			allLines = applyGrep(allLines, grepRe, contextLines)
 		}
 
-		if name != "" {
-			resolved, err := tilt.ResolveService(resourceName(ws.Name, name, t.namespace), view)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+		if len(allLines) == 0 {
+			return ""
+		}
+		return strings.Join(allLines, "\n")
+	}
+
+	// Build the tilt logs args for a single service.
+	// When since_restart is set, use --since=<duration> derived from LastDeployTime.
+	// Otherwise use --tail to fetch enough lines for offset+lines paging.
+	buildLogArgs := func(svcName string) []string {
+		args := []string{"logs"}
+		if sinceRestart {
+			since := lastDeploySince(view, svcName)
+			if since != "" {
+				args = append(args, "--since="+since)
 			}
-			raw, err := tiltClient.RunCLI(buildLogArgs(resolved)...)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("devstack can not read the logs of %q: %v\n%s", resolved, err, raw)), nil
+		}
+		if !sinceRestart {
+			fetchLines := (lines + offset) * 3
+			if fetchLines < 300 {
+				fetchLines = 300
 			}
-			out := processOutput(raw)
-			if out == "" {
-				return mcp.NewToolResultText(targetHeader(t.label) + fmt.Sprintf("No matching output in %s.\n\n", resolved) + emptyNote()), nil
+			if fetchLines > 5000 {
+				fetchLines = 5000
 			}
-			return mcp.NewToolResultText(targetHeader(t.label) + out), nil
+			args = append(args, fmt.Sprintf("--tail=%d", fetchLines))
+		}
+		args = append(args, svcName)
+		return args
+	}
+
+	// Group logs: fetch each service's logs concurrently, interleave with prefix.
+	if groupName != "" {
+		members, ok := cfg.Groups[groupName]
+		if !ok {
+			return "", fmt.Errorf("group %q not found — available groups: %s", groupName, availableGroups(cfg))
 		}
 
-		// All services in parallel.
-		type result struct {
-			name string
-			out  string
-			err  error
+		type logResult struct {
+			svc string
+			out string
+			err error
 		}
-		services := stackResourceNames(view, ws.Name, t.namespace)
-		results := make([]result, len(services))
+		results := make([]logResult, len(members))
 		var wg sync.WaitGroup
-		for i, svc := range services {
+		for i, svc := range members {
 			wg.Add(1)
 			go func(idx int, svcName string) {
 				defer wg.Done()
-				raw, err := tiltClient.RunCLI(buildLogArgs(svcName)...)
-				results[idx] = result{name: svcName, out: processOutput(raw), err: err}
+				raw, err := tiltClient.RunCLI(buildLogArgs(resourceName(ws.Name, svcName, t.namespace))...)
+				results[idx] = logResult{svc: svcName, out: processOutput(raw), err: err}
 			}(i, svc)
 		}
 		wg.Wait()
@@ -1439,22 +1410,79 @@ func registerProcessLogsTool(mcpServer *server.MCPServer, tiltClient *tilt.Clien
 		var sb strings.Builder
 		anyOutput := false
 		for _, r := range results {
-			fmt.Fprintf(&sb, "=== %s ===\n", r.name)
 			if r.err != nil {
-				fmt.Fprintf(&sb, "devstack can not read the logs: %v\n\n", r.err)
-			} else if r.out == "" {
-				sb.WriteString("(no output)\n\n")
-			} else {
-				anyOutput = true
-				sb.WriteString(r.out)
-				sb.WriteString("\n\n")
+				fmt.Fprintf(&sb, "[%s] devstack can not read the logs: %v\n", r.svc, r.err)
+				continue
+			}
+			if r.out == "" {
+				fmt.Fprintf(&sb, "[%s] (no output)\n", r.svc)
+				continue
+			}
+			anyOutput = true
+			prefix := fmt.Sprintf("[%s] ", r.svc)
+			for _, line := range strings.Split(r.out, "\n") {
+				fmt.Fprintf(&sb, "%s%s\n", prefix, line)
 			}
 		}
 		if !anyOutput {
-			sb.WriteString(emptyNote() + "\n")
+			sb.WriteString("\n" + emptyNote() + "\n")
 		}
-		return mcp.NewToolResultText(targetHeader(t.label) + sb.String()), nil
-	})
+		return targetHeader(t.label) + sb.String(), nil
+	}
+
+	if name != "" {
+		resolved, err := tilt.ResolveService(resourceName(ws.Name, name, t.namespace), view)
+		if err != nil {
+			return "", err
+		}
+		raw, err := tiltClient.RunCLI(buildLogArgs(resolved)...)
+		if err != nil {
+			return "", fmt.Errorf("devstack can not read the logs of %q: %v\n%s", resolved, err, raw)
+		}
+		out := processOutput(raw)
+		if out == "" {
+			return targetHeader(t.label) + fmt.Sprintf("No matching output in %s.\n\n", resolved) + emptyNote(), nil
+		}
+		return targetHeader(t.label) + out, nil
+	}
+
+	// All services in parallel.
+	type result struct {
+		name string
+		out  string
+		err  error
+	}
+	services := stackResourceNames(view, ws.Name, t.namespace)
+	results := make([]result, len(services))
+	var wg sync.WaitGroup
+	for i, svc := range services {
+		wg.Add(1)
+		go func(idx int, svcName string) {
+			defer wg.Done()
+			raw, err := tiltClient.RunCLI(buildLogArgs(svcName)...)
+			results[idx] = result{name: svcName, out: processOutput(raw), err: err}
+		}(i, svc)
+	}
+	wg.Wait()
+
+	var sb strings.Builder
+	anyOutput := false
+	for _, r := range results {
+		fmt.Fprintf(&sb, "=== %s ===\n", r.name)
+		if r.err != nil {
+			fmt.Fprintf(&sb, "devstack can not read the logs: %v\n\n", r.err)
+		} else if r.out == "" {
+			sb.WriteString("(no output)\n\n")
+		} else {
+			anyOutput = true
+			sb.WriteString(r.out)
+			sb.WriteString("\n\n")
+		}
+	}
+	if !anyOutput {
+		sb.WriteString(emptyNote() + "\n")
+	}
+	return targetHeader(t.label) + sb.String(), nil
 }
 
 // lastDeploySince returns a --since duration string (for example "127s") for the given service,

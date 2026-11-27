@@ -444,3 +444,20 @@ func TestQueryTracesStackFilter(t *testing.T) {
 		}
 	}
 }
+
+func TestQueryLogsStackFilter(t *testing.T) {
+	cases := map[string]string{
+		"perf":   `devstack_stack IN ('perf')`,
+		"shared": `devstack_stack IN ('shared', 'base')`,
+	}
+	for stack, want := range cases {
+		srv, queries := captureServer(t, nil)
+		c := NewClient(srv.URL, "token")
+		if _, err := c.QueryLogs(context.Background(), observability.LogQuery{Workspace: "navexa", Stack: stack}); err != nil {
+			t.Fatal(err)
+		}
+		if len(*queries) == 0 || !strings.Contains((*queries)[0], want) || strings.Contains((*queries)[0], "service_devstack_stack") {
+			t.Errorf("stack %q: query = %v, want it to contain %s", stack, *queries, want)
+		}
+	}
+}

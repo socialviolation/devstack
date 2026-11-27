@@ -107,7 +107,7 @@ func TestWiringShowsBaseAndStackCopies(t *testing.T) {
 	for _, want := range []string{
 		"web → api",
 		"API_URL  via ${api.url}",
-		"no stack: http://localhost:5001/v1-base → api at its declared port",
+		`no stack: http://localhost:5001/v1-base → api runs only in a stack\n`,
 		"agent-mine: http://localhost:5001/v1-stack → api at its declared port",
 		"! stack agent-mine web → api at its declared port",
 	} {
@@ -125,7 +125,7 @@ func TestWiringHidesBaseValuesFromAgents(t *testing.T) {
 	if strings.Contains(out, "v1-base") {
 		t.Errorf("agent output shows a base value:\n%s", out)
 	}
-	if !strings.Contains(out, "no stack: → api at its declared port") || !strings.Contains(out, "v1-stack") {
+	if !strings.Contains(out, "no stack: → api runs only in a stack") || !strings.Contains(out, "v1-stack") {
 		t.Errorf("agent output must show the edge and its own stack's value:\n%s", out)
 	}
 
@@ -164,5 +164,31 @@ workspace:
 `)
 	if out := callAs(t, wiringServer(t, ws), owner, "wiring", `{}`); !strings.Contains(out, "web → api  (needs, via http)") {
 		t.Errorf("a needs edge must show its kind and via:\n%s", out)
+	}
+}
+
+func TestWiringWithNoStackSaysATargetRunsOnlyInAStack(t *testing.T) {
+	ws := seedWiringWorkspace(t)
+	out := callAs(t, wiringServer(t, ws), owner, "wiring", `{}`)
+	if !strings.Contains(out, "no stack: http://localhost:5001/v1-base → api runs only in a stack. Pass --stack ") {
+		t.Errorf("a target that is not shared must say it runs only in a stack:\n%s", out)
+	}
+	if strings.Contains(out, "at its declared port") {
+		t.Errorf("with no stack, wiring must not send the reader to a declared port:\n%s", out)
+	}
+
+	writeFile(t, filepath.Join(ws.Path, config.WorkspaceManifestFileName), `version: 1
+workspace:
+  name: navexa
+  repoDiscovery:
+    mode: explicit
+    repos: [./api, ./web]
+dependencies:
+  web: [api]
+shared: [api]
+`)
+	out = callAs(t, wiringServer(t, ws), owner, "wiring", `{}`)
+	if !strings.Contains(out, `no stack: http://localhost:5001/v1-base → shared api\n`) {
+		t.Errorf("a shared target must keep its shared label:\n%s", out)
 	}
 }
