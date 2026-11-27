@@ -55,7 +55,7 @@ func registerEnvironmentTool(mcpServer *server.MCPServer, obsURL, workspaceName,
 			sb.WriteString(line)
 		}
 		sb.WriteString("shared set: the services in the workspace \"shared:\" list. They run once for the workspace, from the replica, and never in a stack. Every stack uses them. Nothing runs in the user's checkouts.\n" +
-			"  stacks: a stack runs only the services you name and the services they need. Each stack stops 24 hours after create or stack_up. stack_extend adds time.\n" +
+			"  stacks: a stack runs only the services you name and the services they need. stack_up sets a stop time: DEVSTACK_STOP_AFTER after the up (default 24h). A stack that is down stays down. stack_extend adds time, and you can call it again.\n" +
 			"  start, stop and restart take the stack from stack=\"<name>\". With no stack, devstack reads it from the working directory. Outside a stack worktree, they reach only the shared services.\n" +
 			"  The shared tool works on the replica. action=\"path\" prints where a shared service runs from. action=\"sync\" moves the replica to the default branch tip and restarts the shared services that moved. devstack also runs that sync every hour. To see a change run now, put it in a stack.\n")
 		if line := servicesSummary(workspacePath, defaultService); line != "" {

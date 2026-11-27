@@ -85,8 +85,14 @@ The template gives the services and groups, and --repos adds more. If the
 template names an environment, the stack uses it, as 'env use --stack' does.
 To list the templates, run 'devstack stack templates'.
 
-A new stack is down. Run 'devstack stack up <name>' to start it. Every stack
-stops 24 hours after create. 'stack up' sets a new stop time, 24 hours later.`,
+Use a short lowercase name, such as the ticket key (nvxa-9999). The branch
+name is the stack name. For a real branch name, pass --branch <b>.
+
+A new stack is down. Run 'devstack stack up <name>' to start it. The stop time
+starts at create. A stack that is down stays down. 'stack up' sets a new stop
+time: DEVSTACK_STOP_AFTER after the up (default 24h). To push the stop time
+back, run 'devstack stack extend'. You can extend again and again: no limit
+applies to the total.`,
 	Args:         cobra.ExactArgs(1),
 	SilenceUsage: true,
 	RunE:         runStackCreate,
@@ -204,7 +210,8 @@ var stackUpCmd = &cobra.Command{
 If the replica does not exist, devstack builds it. devstack also starts the
 shared set.
 
-The stack stops 24 hours from now. A later 'stack up' sets a new stop time.
+The stack stops DEVSTACK_STOP_AFTER from now (default 24h). A later 'stack up'
+sets a new stop time. To push it back, run 'devstack stack extend'.
 
 devstack checks each worktree against origin. If one is behind, the command
 says so and names 'devstack stack resync'. It does not resync.`,
@@ -738,7 +745,8 @@ func runStackList(cmd *cobra.Command, args []string) error {
 	color.New(color.Faint).Println("SERVICES are the members: the services this stack runs. It uses the shared set, and runs no other service.")
 	color.New(color.Faint).Println("STATUS up means that the stack's copies are in the daemon. It does not mean that they run. Each copy has its own state. Show it with: devstack status --stack <name>")
 	color.New(color.Faint).Println("\"covers group g (3/4). x is not in this stack\" is a group that devstack cut this stack to cover. The stack runs 3 of the 4 members. A group action reaches only the members the stack runs.")
-	color.New(color.Faint).Println("Set what a stack is for with: devstack stack note <name> \"...\". Record where the work got to with --add")
+	color.New(color.Faint).Println("To replace what a stack is for, run: devstack stack note <name> \"...\"")
+	color.New(color.Faint).Println("To add a dated entry on where the work got to, run: devstack stack note <name> --add \"...\"")
 	return nil
 }
 
@@ -815,10 +823,11 @@ var stackNoteCmd = &cobra.Command{
 sentence. devstack never derives this text. A branch says what changed. A note
 says why. A week later, the note is the part that you can not reconstruct.
 
---add appends a dated entry instead of replacing the purpose. Write where the
-work got to. Then you can pick the work up next week without a read of the diff.
-devstack keeps the last %d entries, each one of %d characters at most. One entry
-for each step pushes out the entry that is worth a read.
+[text] replaces the purpose. --add appends a dated entry, and keeps the
+purpose. Write where the work got to. Then you can pick the work up next week
+without a read of the diff. devstack keeps the last %d entries, each one of %d
+characters at most. One entry for each step pushes out the entry that is worth
+a read.
 
 With no text, this command prints the purpose and its entries. Pass an empty
 string to clear both. 'devstack prime' labels these two "purpose" and "latest".

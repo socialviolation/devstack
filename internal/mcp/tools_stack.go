@@ -75,11 +75,12 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			"A named service gets the stack's branch. A service that comes in through needs is detached at the default branch tip. To commit in one, name it with stack_add.\n"+
 			"devstack cuts each worktree from that repo's DEFAULT BRANCH as origin has it, and not from whatever the user's checkout has checked out. So a stack starts from what the team shipped, and half-finished work in a checkout does not come into the stack. To override this, use the 'from' parameter. To run the default branch with no branch of your own, use detach=true.\n"+
 			"Creation does not start the stack. A new stack is down, and stack_up is what runs it.\n"+
-			"Every stack stops 24 hours after create. stack_up sets the stop time to 24 hours from then. stack_extend adds up to 24 hours. devstack only stops a stack at its stop time. It never removes one.\n"+
+			"The stop time starts at create. A stack that is down stays down. stack_up sets a new stop time: DEVSTACK_STOP_AFTER after the up (default 24h). "+
+			"stack_extend adds up to 24 hours per call. You can call it again: no limit applies to the total. devstack only stops a stack at its stop time. It never removes one.\n"+
 			"The tool returns each member with the reason it is in the stack, the worktree paths, the ref that devstack cut each worktree from, the service links, and any warnings. A warning names a checkout that holds work the stack does not have, or a service the stack does not run.\n"+
 			"This workspace can declare lifecycle HOOKS: shell commands that devstack runs on its own for this action. They can change state outside this machine, for example register a callback URL or provision a resource. They fire on their own, and their output is in the result below. A hook failure is returned as an error, and it means that the stack exists and is NOT fully provisioned. Do not report success. See the hooks tool. If you do not know what this workspace fires, run the hooks tool with action=\"list\" first. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
-			mcp.Description("Short stack name (for example 'import-review'). The full stack identity becomes '<workspace>--<name>'. Every stack parameter across these tools takes the short name. The names \"shared\" and \"base\" are reserved. No stack can have either name.")),
+			mcp.Description("Short lowercase stack name, for example the ticket key 'nvxa-9999'. The branch defaults to this name. For a real branch name, pass branch. The full stack identity becomes '<workspace>--<name>'. Every stack parameter across these tools takes the short name. The names \"shared\" and \"base\" are reserved. No stack can have either name.")),
 		mcp.WithString("repos",
 			mcp.Description("Comma-separated exact service OR group names that this stack changes (for example 'frontend,backend' or 'core'). A group expands to its members. devstack adds the services that they need. A service that they only call does not come in, and devstack warns about it. devstack refuses a shared service. Give repos, template, or both.")),
 		mcp.WithString("template",
@@ -651,7 +652,7 @@ func removeStack(ws *workspace.Workspace, name string, force bool) *mcp.CallTool
 func registerStackUpTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_up",
 		mcp.WithDescription("Bring a feature stack up. devstack marks the stack up, marks its workspace active, and folds its <workspace>:<service>:<stack> resources into the one host Tilt daemon. It then enables and triggers them, so that the stack's services start. A resource that is only registered does not run.\n"+
-			"devstack also builds the replica if it is absent, and starts the shared set. The stack stops 24 hours from now. To keep it up longer, use stack_extend.\n"+
+			"devstack also builds the replica if it is absent, and starts the shared set. The stack stops DEVSTACK_STOP_AFTER from now (default 24h). To keep it up longer, use stack_extend.\n"+
 			"The tool reports which services it started. They are starting, and not started, so read status before you draw a conclusion. This tool mirrors 'devstack stack up'.\n"+
 			"devstack checks each worktree against origin: a repo on the stack's branch against that branch, and a detached repo against the default branch. If a worktree is behind, the result names stack_resync. stack_up does not resync.\n"+
 			"This is the remedy when another tool reports that the stack is not up. status, process_logs, restart, start, stop and configure all refuse a stack that is down.\n"+
