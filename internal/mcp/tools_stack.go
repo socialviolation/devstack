@@ -80,7 +80,7 @@ func registerStackCreateTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			"The tool returns each member with the reason it is in the stack, the worktree paths, the ref that devstack cut each worktree from, the service links, and any warnings. A warning names a checkout that holds work the stack does not have, or a service the stack does not run.\n"+
 			"This workspace can declare lifecycle HOOKS: shell commands that devstack runs on its own for this action. They can change state outside this machine, for example register a callback URL or provision a resource. They fire on their own, and their output is in the result below. A hook failure is returned as an error, and it means that the stack exists and is NOT fully provisioned. Do not report success. See the hooks tool. If you do not know what this workspace fires, run the hooks tool with action=\"list\" first. "+serviceLinksDesc),
 		mcp.WithString("name", mcp.Required(),
-			mcp.Description("Short lowercase stack name, for example the ticket key 'nvxa-9999'. The branch defaults to this name. For a real branch name, pass branch. The full stack identity becomes '<workspace>--<name>'. Every stack parameter across these tools takes the short name. The names \"shared\" and \"base\" are reserved. No stack can have either name.")),
+			mcp.Description("Stack name, for example 'login-fix'. The branch defaults to this name. For a real branch name, pass branch. The full stack identity becomes '<workspace>--<name>'. Every stack parameter across these tools takes the short name. The names \"shared\" and \"base\" are reserved. No stack can have either name.")),
 		mcp.WithString("repos",
 			mcp.Description("Comma-separated exact service OR group names that this stack changes (for example 'frontend,backend' or 'core'). A group expands to its members. devstack adds the services that they need. A service that they only call does not come in, and devstack warns about it. devstack refuses a shared service. Give repos, template, or both.")),
 		mcp.WithString("template",
@@ -563,7 +563,7 @@ func registerStackRemoveTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 		mcp.WithDescription("Tear down a feature stack of THIS workspace. devstack removes its worktrees, releases its ports, deletes its record, and deletes its stack root. "+
 			"If the stack is up, devstack first takes its services out of the host daemon. It does not fire stack.down hooks. "+
 			"It refuses a worktree that has uncommitted changes, until you set force. "+
-			"devstack keeps the branch of the stack, and somebody must decide what happens to it. Before you call this tool, ask the user: merge the branch of this stack, or discard it? NEVER merge it without an answer. After a merge, delete the branch with `git branch -d <branch>`. "+
+			"devstack keeps the branch of the stack in git. It does not merge the branch, and it does not delete it. "+
 			"This workspace can declare lifecycle HOOKS that de-provision external state on stack.destroy. They fire before devstack removes anything, while the ports and the record can still be read. "+
 			"A hook failure does NOT block the teardown. So it means that the external cleanup probably did not happen. You can not retry it afterwards, because the removal deletes the record that its ${self...} references resolve against. "+
 			"devstack prints the resolved URLs at the point of failure. Pass those on, rather than report a clean teardown."),

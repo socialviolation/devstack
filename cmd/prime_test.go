@@ -206,22 +206,24 @@ func TestPrimeSectionsAreNamedAndContextual(t *testing.T) {
 	}
 }
 
-// The two rules about what a repository commits. devstack no longer writes them
-// into AGENTS.md, and no live fact replaces them, so the briefing is the only
-// place left that states them.
-func TestPrimeCarriesTheTwoCommitRules(t *testing.T) {
+func TestPrimeStatesTheFactsAboutManifestsAndSecrets(t *testing.T) {
 	var b strings.Builder
 	writePrimeSafety(&b)
 	got := b.String()
 
 	for _, want := range []string{
-		"Never commit `devstack.service.yaml`",
-		"`.gitignore`",
-		"keep every real secret out of it",
+		"hold absolute paths of this machine",
 		"`env.required`",
+		"`.envrc`",
+		"no manifest holds it",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the briefing never states %q:\n%s", want, got)
+		}
+	}
+	for _, policy := range []string{"Never commit", "`.gitignore`"} {
+		if strings.Contains(got, policy) {
+			t.Errorf("the briefing prescribes a policy (%q):\n%s", policy, got)
 		}
 	}
 }

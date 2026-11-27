@@ -80,8 +80,11 @@ func TestACandidateRowIsMarkedAsAGuess(t *testing.T) {
 	if strings.Contains(got, "▸") {
 		t.Errorf("a candidate is a guess and must never be marked ▸:\n%s", got)
 	}
-	if !strings.Contains(got, "Ask the user before you work on one.") {
-		t.Errorf("the candidate block must send the agent to the user:\n%s", got)
+	if !strings.Contains(got, "The marker ? shows a guess about intent, and never a fact.") {
+		t.Errorf("the candidate block must say what ? means:\n%s", got)
+	}
+	if strings.Contains(got, "Ask the user") {
+		t.Errorf("the candidate block states facts, not a workflow:\n%s", got)
 	}
 }
 
@@ -110,15 +113,15 @@ func TestNoStacksAddsNothingToTheTaskBlock(t *testing.T) {
 	}
 }
 
-func TestTheTaskBlockStillAsksWhenItHasCandidates(t *testing.T) {
+func TestTheTaskBlockStillOffersStackCreateWhenItHasCandidates(t *testing.T) {
 	var b strings.Builder
 	writePrimeTask(&b, "api", "", nil, nil, false, false, []stack.Record{
 		{Name: "fx-rates", Active: true, Note: "NAV-412 daily value spike"},
 	})
 	got := b.String()
 
-	if !strings.Contains(got, "1. Ask the user which feature this session is for.") {
-		t.Errorf("the task block must still ask:\n%s", got)
+	if !strings.Contains(got, "1. To see a change run, cut a stack for it") {
+		t.Errorf("the task block must still name stack create:\n%s", got)
 	}
 	if !strings.Contains(got, "fx-rates") {
 		t.Errorf("the task block must name the candidate it holds:\n%s", got)

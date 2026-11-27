@@ -75,7 +75,7 @@ func TestTheTaskBlockIsTheLoopWithRealNames(t *testing.T) {
 		"devstack service restart navexa-api --stack fx-rates",
 		"devstack otel traces --stack fx-rates",
 		`devstack stack note fx-rates --add "what you found"`,
-		"git branch -d nick/fx",
+		"devstack does not merge the branch nick/fx",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the task block must name %q with the real names, got:\n%s", want, got)
@@ -124,11 +124,7 @@ func TestBriefingSaysHowToWidenTheStack(t *testing.T) {
 	}
 }
 
-// A stack the session is not standing in is a guess about intent. The task
-// block has to ask before it edits anything, and it has to name the directory
-// the work belongs in — an agent that acts on a guess edits a worktree nobody
-// asked about.
-func TestTheTaskBlockAsksBeforeItActsOnAGuessedStack(t *testing.T) {
+func TestTheTaskBlockMarksAGuessedStackAsAGuess(t *testing.T) {
 	rec := &stack.Record{
 		Name:      "bybit",
 		Branch:    "nick/bybit",
@@ -142,8 +138,7 @@ func TestTheTaskBlockAsksBeforeItActsOnAGuessedStack(t *testing.T) {
 
 	for _, want := range []string{
 		"a guess: this is the only stack that runs nxFileProcessor",
-		"1. Ask the user: is this session for bybit?",
-		"Change no code until you have the answer",
+		"1. bybit is a guess. devstack does not know that this session is for that stack.",
 		"/tmp/bybit/nxFileProcessor",
 	} {
 		if !strings.Contains(got, want) {
@@ -155,16 +150,14 @@ func TestTheTaskBlockAsksBeforeItActsOnAGuessedStack(t *testing.T) {
 	}
 }
 
-// With no stack in sight the task block asks, and it says how a change is made
-// to run at all. Naming a stack here would be a guess with no evidence.
-func TestTheTaskBlockAsksWhenThereIsNoStack(t *testing.T) {
+func TestTheTaskBlockNamesStackCreateWhenThereIsNoStack(t *testing.T) {
 	var b strings.Builder
 	writePrimeTask(&b, "api", "", nil, nil, false, false, nil)
 	got := b.String()
 
 	for _, want := range []string{
 		"no stack",
-		"1. Ask the user which feature this session is for.",
+		"devstack can not guess which feature",
 		"devstack stack create <name> --repos <service>",
 	} {
 		if !strings.Contains(got, want) {

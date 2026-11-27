@@ -46,8 +46,9 @@ The telemetry queries are the exception. 'devstack otel traces' and
 'devstack otel logs' with no --stack search every stack and the shared set.
 Pass --stack <name> for one stack. Pass --stack shared for the shared set.
 
-Never edit stacks.json, ports.json or a stack manifest by hand. Use
-'devstack stack add' and 'devstack stack remove'.`,
+stacks.json, ports.json and each stack manifest are devstack's files. A hand
+edit can break them. 'devstack stack add' and 'devstack stack remove' change
+them.`,
 	RunE: runStackList,
 }
 
@@ -85,8 +86,8 @@ The template gives the services and groups, and --repos adds more. If the
 template names an environment, the stack uses it, as 'env use --stack' does.
 To list the templates, run 'devstack stack templates'.
 
-Use a short lowercase name, such as the ticket key (nvxa-9999). The branch
-name is the stack name. For a real branch name, pass --branch <b>.
+The branch name is the stack name. For a different branch name, pass
+--branch <b>.
 
 A new stack is down. Run 'devstack stack up <name>' to start it. The stop time
 starts at create. A stack that is down stays down. 'stack up' sets a new stop
@@ -147,14 +148,9 @@ var stackRemoveCmd = &cobra.Command{
 	Long: `Tear a feature stack down. devstack stops its services, deletes its worktrees,
 releases its ports, and deletes its record and its stack root.
 
-The branch stays. The commits that you pushed stay. Work that is only in a
-worktree does not stay. devstack deletes the worktree, and that work goes with
-it.
-
-BEFORE YOU REMOVE A STACK
-devstack keeps the branch, and somebody must decide what happens to it. Ask the
-user: merge the branch of this stack, or discard it? Never merge it without an
-answer. After a merge, delete the branch: git branch -d <branch>
+The branch stays in git. devstack does not merge it, and it does not delete
+it. The commits that you pushed stay. Work that is only in a worktree does
+not stay. devstack deletes the worktree, and that work goes with it.
 
 CAUTION: You can not undo this command.
 

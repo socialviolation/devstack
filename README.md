@@ -125,6 +125,6 @@ The flags are in [Updating devstack](REFERENCE.md#updating-devstack).
 - [Addresses](REFERENCE.md#addresses) print the tailnet URL of a service, across all three hops. [Tunnels](REFERENCE.md#tunnels) forward the ports to another machine over SSH.
 - [The panel](REFERENCE.md#the-panel) watches the machine in a terminal, and starts, stops and opens one service.
 - [MCP](REFERENCE.md#mcp) lists the tools that an agent gets, and the commands that still need a shell.
-- [Files, and what to commit](REFERENCE.md#files-and-what-to-commit) says which artifact belongs in git, and which one is machine-local.
+- [Files, and which ones are portable](REFERENCE.md#files-and-which-ones-are-portable) says which artifact is portable, and which one is machine-local.
 
 Every command, flag and file is in the [reference](REFERENCE.md).

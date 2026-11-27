@@ -177,33 +177,37 @@ func TestTheWholeBriefingFromASiblingDirectory(t *testing.T) {
 	}
 }
 
-// The close-out of a stack: `stack rm` keeps the branch, so somebody has to
-// decide what happens to it, and the agent that closes the stack is not that
-// somebody.
-func TestTheBriefingCarriesTheCloseOutOfAStack(t *testing.T) {
+func TestTheBriefingStatesWhatHappensToTheBranchOfAStack(t *testing.T) {
 	var b strings.Builder
 	writePrimeCloseOut(&b, "nick/feat")
 	got := b.String()
 
-	for _, want := range []string{"ask the user", "merge this branch, or discard it", "Never merge", "git branch -d nick/feat"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the close-out never states %q:\n%s", want, got)
+	if want := "devstack does not merge the branch nick/feat, and it does not delete it. `stack rm` keeps the branch."; !strings.Contains(got, want) {
+		t.Errorf("the close-out never states %q:\n%s", want, got)
+	}
+	for _, policy := range []string{"ask the user", "Never merge", "git branch -d"} {
+		if strings.Contains(got, policy) {
+			t.Errorf("the close-out prescribes a workflow (%q):\n%s", policy, got)
 		}
 	}
 }
 
-// The same close-out, on the command that performs the removal. `stack rm` is
-// where an agent arrives with the branch still in its hand.
-func TestStackRemoveHelpStatesTheCloseOutOfTheBranch(t *testing.T) {
+func TestStackRemoveHelpStatesTheDestructiveFacts(t *testing.T) {
 	got := strings.Join(strings.Fields(stackRemoveCmd.Long), " ")
 
 	for _, want := range []string{
-		"Ask the user: merge the branch of this stack, or discard it?",
-		"Never merge it without an answer.",
-		"git branch -d",
+		"The branch stays in git. devstack does not merge it, and it does not delete it.",
+		"devstack deletes the worktree, and that work goes with it.",
+		"destroys those changes",
+		"You can not undo this command.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the help of `stack rm` never states %q:\n%s", want, got)
+		}
+	}
+	for _, policy := range []string{"Ask the user", "Never merge", "BEFORE YOU REMOVE"} {
+		if strings.Contains(got, policy) {
+			t.Errorf("the help of `stack rm` prescribes a workflow (%q):\n%s", policy, got)
 		}
 	}
 }
