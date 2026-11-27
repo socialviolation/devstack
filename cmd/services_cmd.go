@@ -33,7 +33,7 @@ If you run this command outside every registered workspace, devstack shows a
 summary table of all the workspaces and their daemon status instead.
 
 A group or a feature stack with nothing running collapses to one line. It stays
-open when one of its services is erroring, starting or building. Pass --all to
+open when one of its copies is erroring, starting or building. Pass --all to
 list every group and stack, and to show the directory that each copy runs from.
 
 That directory, and the BRANCH beside it, are the code that the process runs:
@@ -41,17 +41,18 @@ the replica worktree for a shared service, and the stack's own worktree for a st
 never your checkout. If you do not expect that branch there, the copy does not
 contain the work that you look for.
 
-A stack is up or down. Up means that its services are registered in the daemon.
-It does not mean that they run. Each copy has its own state below.
+A stack is up or down. Up means that its copies are in the daemon. It does not
+mean that they run. Down means that none of its copies are in the daemon. Each
+copy has its own state below.
 
 Copy states:
   running   — the process is up and healthy
   starting  — the process starts
   building  — the daemon builds or updates the service
-  stopped   — the service is registered, but it does not run now
+  stopped   — the copy is in the daemon, but it does not run now
   erroring  — the service or its build failed (read the logs)
   disabled  — somebody stopped the service
-  down      — the copy is not registered at all, because its stack is down
+  down      — the copy is not in the daemon, because its stack is down
               (run: devstack stack up <name>)
   unknown   — the daemon does not answer (run: devstack workspace up)`,
 	RunE: runStatus,
@@ -344,7 +345,7 @@ func runWorkspaceStatus(ws *workspace.Workspace, expand bool) error {
 	}
 	fmt.Println()
 
-	color.New(color.Faint).Printf("  within a group, top-to-bottom = startup order   ·   blank ENV = no env   ·   erroring? read its log with the process_logs tool, or `devstack workspace open`\n")
+	color.New(color.Faint).Printf("  within a group, top-to-bottom = startup order   ·   blank ENV = no env   ·   erroring? read its log: devstack service logs <service> [--stack <name>]\n")
 	color.New(color.Faint).Printf("  devstack service start <shared service>   ·   devstack service start <service> --stack <name>\n")
 	color.New(color.Faint).Printf("  devstack stack up <name>   ·   devstack stack config <svc> --stack <name>\n")
 	color.New(color.Faint).Printf("  devstack condenses a group with nothing running, starting, building or erroring   ·   devstack status --all shows every one\n")

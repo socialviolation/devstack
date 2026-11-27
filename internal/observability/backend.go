@@ -53,6 +53,7 @@ type LogQuery struct {
 	TraceID   string
 	Workspace string // devstack.workspace filter; set for you by ScopedTo
 	Service   string
+	Stack     string // Optional devstack.stack resource-attribute filter ("shared" for the shared set)
 	Since     time.Duration
 	Limit     int
 }

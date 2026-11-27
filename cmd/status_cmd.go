@@ -271,6 +271,23 @@ func wrapCommaList(names []string, width int) []string {
 	return append(lines, cur)
 }
 
+func wrapText(s string, width int) string {
+	var lines []string
+	cur := ""
+	for _, w := range strings.Fields(s) {
+		switch {
+		case cur == "":
+			cur = w
+		case len(cur)+1+len(w) > width:
+			lines = append(lines, cur)
+			cur = w
+		default:
+			cur += " " + w
+		}
+	}
+	return strings.Join(append(lines, cur), "\n")
+}
+
 // printCondensedSection prints a section with nothing running as one line: the
 // marker, the section's coloured name, a count or state tag, then the member
 // names wrapped under the first name.

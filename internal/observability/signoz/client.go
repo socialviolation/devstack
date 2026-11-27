@@ -631,6 +631,7 @@ func (c *Client) QueryLogs(ctx context.Context, req observability.LogQuery) ([]o
 	}
 
 	extraFilters = append(extraFilters, workspaceFilter(req.Workspace)...)
+	extraFilters = append(extraFilters, stackFilter(req.Stack)...)
 
 	queryReq := buildQueryRangeRequest("logs", req.Service, limit, since, extraFilters)
 

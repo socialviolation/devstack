@@ -413,9 +413,43 @@ func LoadWorkspaceManifest(workspacePath string) (*WorkspaceManifest, error) {
 var (
 	legacyEdgeWarnings io.Writer = os.Stderr
 	legacyEdgeWarned   sync.Map
+	legacyEdgeScope    string
 )
 
+const (
+	ReplicaDirName = ".devstack-base"
+	StacksDirName  = ".devstack-stacks"
+)
+
+var generatedRootDirs = []string{ReplicaDirName, StacksDirName}
+
+func SetLegacyWarningScope(dir string) {
+	legacyEdgeScope = dir
+}
+
+func generatedManifest(path string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(filepath.Dir(path)), "/") {
+		for _, g := range generatedRootDirs {
+			if part == g {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func inLegacyScope(path string) bool {
+	if legacyEdgeScope == "" {
+		return true
+	}
+	rel, err := filepath.Rel(legacyEdgeScope, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 func warnLegacyEdges(path string, m *WorkspaceManifest) {
+	if generatedManifest(path) || !inLegacyScope(path) {
+		return
+	}
 	var used []string
 	if len(m.Dependencies) > 0 {
 		used = append(used, "dependencies")

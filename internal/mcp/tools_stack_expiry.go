@@ -18,9 +18,9 @@ import (
 func registerStackExtendTool(mcpServer *server.MCPServer, ws *workspace.Workspace) {
 	tool := mcp.NewTool("stack_extend",
 		mcp.WithDescription(fmt.Sprintf("Push back the stop time of a feature stack. When the stop time passes, devstack stops the stack, the same way stack_down stops it. devstack never removes it. "+
-			"The new stop time is the later of the current stop time and now, plus the hours you give. You can add %d hours at most in one call. "+
+			"%s "+
 			"stack_up also sets a new stop time: %s after the up. "+
-			"This tool mirrors 'devstack stack extend'.", int(stack.MaxExtend.Hours()), WindowText(stack.StopAfter))),
+			"This tool mirrors 'devstack stack extend'.", stack.ExtendRule(), WindowText(stack.StopAfter))),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(requiredStackNameDesc)),
 		mcp.WithNumber("hours", mcp.Required(),

@@ -16,7 +16,7 @@ import (
 var serviceCmd = &cobra.Command{
 	Use:     "service",
 	Aliases: []string{"svc"},
-	Short:   "Start, stop and restart the services of this workspace",
+	Short:   "Start, stop, restart and read the logs of the services of this workspace",
 	Long: `Act on one service. The name must be a service. To act on a group, run
 'devstack group <action> <name>'.
 

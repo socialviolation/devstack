@@ -21,7 +21,7 @@ func registerWiringTool(mcpServer *server.MCPServer, ws *workspace.Workspace, wo
 	tool := mcp.NewTool("wiring",
 		mcp.WithDescription("Show how each service reaches the services it talks to. For every edge A → B it names the env key of A that carries the address of B, and how devstack knows: a ${B.url}, ${B.host} or ${B.port.<key>} reference, a ${stack.suffix:B} messaging name, or a literal port that B listens on. "+
 			"For each key it shows the value that A resolves to with no stack, and the service that value reaches. Pass stack to add that stack's value of each key.\n\n"+
-			"\"shared B\" means the shared service B. \"B at its declared port\" means a port where no stack serves B. If a stack's A reaches B at its declared port, nothing answers there: add B to the stack with stack_add. "+
+			"\"shared B\" means the shared service B. With no stack, \"B runs only in a stack\" means that B is not shared, so no copy of B answers outside a stack. Pass stack to see the value in that stack. \"B at its declared port\" means a port where no stack serves B. If a stack's A reaches B at its declared port, nothing answers there: add B to the stack with stack_add. "+
 			"\"A with no stack → stack X B\" means a value outside the stack points into stack X. "+
 			"Read both before you change config: they show what a change moves. An env key that names a service which does not exist is an error. "+
 			"Each edge shows its declared kind: needs or calls, and the via value if the edge has one. "+
@@ -146,12 +146,16 @@ func renderWiring(m wiring.Map, edges map[[2]string]string, service string, stac
 			declared = "  (undeclared)"
 		}
 		fmt.Fprintf(&sb, "  %s  via %s%s\n", l.Key, l.Via, declared)
-		writeHop(&sb, "no stack", l.Key, l.To, l.Base, showBase, isShared)
+		onlyInStack := l.To + " runs only in a stack"
+		if stackCopy == nil {
+			onlyInStack += ". Pass --stack <name>"
+		}
+		writeHop(&sb, "no stack", l.Key, l.To, l.Base, showBase, isShared, onlyInStack)
 		if stackCopy != nil {
 			if _, runs := stackCopy.Env[l.From]; !runs {
 				fmt.Fprintf(&sb, "    %s: does not run %s\n", label, l.From)
 			} else {
-				writeHop(&sb, label, l.Key, l.To, l.Stack, true, isShared)
+				writeHop(&sb, label, l.Key, l.To, l.Stack, true, isShared, "")
 			}
 		}
 		if flag := l.Flag(label, isShared); flag != "" {
@@ -180,12 +184,15 @@ func renderWiring(m wiring.Map, edges map[[2]string]string, service string, stac
 	return sb.String()
 }
 
-func writeHop(sb *strings.Builder, copyLabel, key, to string, hop *wiring.Hop, showValue bool, isShared func(string) bool) {
+func writeHop(sb *strings.Builder, copyLabel, key, to string, hop *wiring.Hop, showValue bool, isShared func(string) bool, onlyInStack string) {
 	if hop == nil {
 		fmt.Fprintf(sb, "    %s: does not set %s\n", copyLabel, key)
 		return
 	}
 	target := to + " at its declared port"
+	if onlyInStack != "" {
+		target = onlyInStack
+	}
 	if isShared(to) {
 		target = "shared " + to
 	}

@@ -59,6 +59,11 @@ var (
 
 const MaxExtend = 24 * time.Hour
 
+func ExtendRule() string {
+	return fmt.Sprintf("Each call sets the stop time to <hours> after the current stop time, or after now if the stack is already past it. "+
+		"The hours can be at most %d per call. Call it again to add more.", int(MaxExtend.Hours()))
+}
+
 func (r *Record) UnmarshalJSON(data []byte) error {
 	type plain Record
 	var v struct {

@@ -24,6 +24,7 @@ func registerStackResyncTool(mcpServer *server.MCPServer, ws *workspace.Workspac
 			"The result lists each repo with its old and new commit, its status (updated, unchanged or refused) and the reason, then the services it restarted. "+
 			"devstack does not add services. It reports each repo outside the stack that has the stack's branch on origin, and each service that a member now needs and the stack does not run. Each report names `stack add`. "+
 			"If the new commits change a service's migrations directory, the result says so. A migration changes the shared database for every stack. Resync runs no migration. "+
+			"Resync never moves a stack to a different branch. To work on another branch, create a new stack with stack_create and branch=<b>. "+
 			"This tool mirrors 'devstack stack resync'."),
 		mcp.WithString("name", mcp.Required(),
 			mcp.Description(requiredStackNameDesc)),

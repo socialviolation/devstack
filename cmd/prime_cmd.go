@@ -365,10 +365,11 @@ func pluralStack(n int) string {
 // always names it sends half the workspaces to a tool that is not there.
 func writePrimeReadStep(b *strings.Builder, name string, telemetry bool) {
 	if telemetry {
-		fmt.Fprintf(b, "3. Read what broke: the process_logs and investigate tools, or `devstack otel traces --stack %s`\n", name)
+		fmt.Fprintf(b, "3. Read what broke: `devstack service logs <service> --stack %s` or `devstack otel traces --stack %s`.\n", name, name)
+		b.WriteString("   The tools are process_logs and investigate.\n")
 		return
 	}
-	b.WriteString("3. Read what broke: the process_logs tool, or `devstack status`\n")
+	fmt.Fprintf(b, "3. Read what broke: `devstack service logs <service> --stack %s` (the process_logs tool), or `devstack status`\n", name)
 }
 
 func writePrimeStackNote(b *strings.Builder, rec *stack.Record) {
@@ -635,15 +636,19 @@ func writePrimeTerms(b *strings.Builder) {
 	section(b, "TERMS")
 	b.WriteString("  stack       the services you cut for one feature: the services you name, and the services they need.\n")
 	b.WriteString("              It has its own branch, its own worktrees and its own ports. It runs no caller of a member\n")
+	b.WriteString("  member      a service that a stack runs. `stack add` and `stack remove` change the members of a stack\n")
 	b.WriteString("  needs       a service edge in devstack.service.yaml. A stack runs each service its members need.\n")
 	b.WriteString("              A `calls` edge pulls in nothing: if the stack does not run the callee, devstack warns\n")
 	b.WriteString("  shared set  the services every stack uses, for example databases. They run once per workspace, from\n")
 	b.WriteString("              the replica: worktrees at the default branch tip. devstack refreshes it every hour.\n")
 	b.WriteString("              An edit in your checkout reaches the shared set only through the default branch\n")
-	b.WriteString("  copy        one running process of a service. Each stack runs its own copy, on its own port. Run\n")
-	b.WriteString("              `devstack status` before you decide that a service is down\n")
+	b.WriteString("  copy        one running instance of a service: the shared copy, or the copy in one stack. Each stack\n")
+	b.WriteString("              runs its own copy of each member, on its own port. Run `devstack status` before you\n")
+	b.WriteString("              decide that a copy is down\n")
 	fmt.Fprintf(b, "devstack stops a stack %s after `stack create` or `stack up`, and keeps its worktrees. To push the\n", stopWindowText())
-	b.WriteString("stop time back, call the stack_extend tool. To start a stopped stack, run `devstack stack up <name>`.\n")
+	b.WriteString("stop time back, call the stack_extend tool (CLI: `devstack stack extend <name> <hours>`).\n")
+	b.WriteString(wrapText(stack.ExtendRule(), 104) + "\n")
+	b.WriteString("To start a stopped stack, run `devstack stack up <name>`.\n")
 	b.WriteString("A command that starts, stops or restarts a stack service names the stack with `--stack <name>`.\n")
 	b.WriteString("With no flag it uses the stack your directory is in. Outside a stack, it acts only on a shared service.\n")
 	b.WriteString("An agent can read a shared service. It can not start, stop or restart one, because every stack uses it.\n")
@@ -661,15 +666,16 @@ func writePrimeHerdr(b *strings.Builder, pane string) {
 }
 
 func writePrimeStates(b *strings.Builder) {
-	b.WriteString("\nSTATES. A stack is up or down. A copy has one of these states:\n")
+	b.WriteString("\nSTATES. A stack is up or down. Up means that its copies are in the daemon. It does not mean that\n")
+	b.WriteString("they run. Down means that none of its copies are in the daemon. A copy has one of these states:\n")
 	b.WriteString("  running    the process is up and healthy\n")
 	b.WriteString("  starting   devstack started it and it is not ready yet\n")
 	b.WriteString("  building   its build step runs now\n")
 	b.WriteString("  erroring   it failed. Read its logs. If its memory limit killed it, raise `runtime.limits.memory`\n")
 	b.WriteString("             If it failed because a dependency was not up yet, restart this copy\n")
-	b.WriteString("  stopped    it is registered but not started. This is not a fault\n")
+	b.WriteString("  stopped    it is in the daemon, and it does not run. This is not a fault\n")
 	b.WriteString("  disabled   somebody stopped it on purpose\n")
-	b.WriteString("  down       the copy is not registered in the daemon. Usually its stack is down: run `devstack stack up <name>`\n")
+	b.WriteString("  down       it is not in the daemon. For a stack copy, its stack is down: run `devstack stack up <name>`\n")
 	b.WriteString("  unknown    the daemon does not answer. Run `devstack workspace up`\n")
 }
 
